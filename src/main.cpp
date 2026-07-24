@@ -7,7 +7,19 @@
 
 #include "world.h"
 #include "render.h"
-#include "panel.h"   /* layout constants, tool ids and the BRUSHES palette */
+
+/* The window is a fixed-size left-hand tool panel plus the sim viewport. The
+   viewport keeps a clean integer scale so pixels stay crisp and the
+   window->cell mapping is a plain divide; the panel is its own strip of the
+   window rather than an overlay, so buttons never hide playfield and a stroke
+   can never paint underneath them. */
+static const int SCALE   = 2;
+static const int PANEL_W = 150;
+static const int VIEW_W  = SIM_W * SCALE;
+static const int VIEW_H  = SIM_H * SCALE;
+static const int WIN_W   = PANEL_W + VIEW_W;
+static const int WIN_H   = VIEW_H;
+static const double FRAME_SECONDS = 1.0 / 60.0;
 
 static u32         g_pixels[SIM_W * SIM_H];
 static BITMAPINFO  g_bmi;
@@ -20,6 +32,38 @@ static bool        g_running = true;
 static HDC     g_backDC;
 static HBITMAP g_backBmp;
 static HGDIOBJ g_backOldBmp;
+
+/* Brush selections past MAT_COUNT are tools that act on temperature rather than
+   placing a material. */
+static const int TOOL_HEAT = MAT_COUNT;
+static const int TOOL_COOL = MAT_COUNT + 1;
+static const int HEAT_STEP = 12;   /* degrees per frame under the brush */
+
+/* --- the palette ---------------------------------------------------------
+   One row here is one button. Adding a material to the picker is a single line
+   (plus its row in materials.cpp); the swatch colour is taken straight from
+   the material's own palette, so it just works. */
+struct BrushDef { int brush; const char* label; };
+static const BrushDef BRUSHES[] = {
+    { MAT_SAND,  "Sand"  },
+    { MAT_WATER, "Water" },
+    { MAT_DIRT,  "Dirt"  },
+    { MAT_STONE, "Stone" },
+    { MAT_WOOD,  "Wood"  },
+    { MAT_IRON,  "Iron"  },
+    { MAT_LAVA,  "Lava"  },
+    { MAT_FIRE,  "Fire"  },
+    { MAT_STEAM, "Steam" },
+    { MAT_WALL,  "Wall"  },
+    { MAT_CLONE, "Clone" },
+    { MAT_VOID,  "Void"  },
+    { TOOL_HEAT, "Heat"  },
+    { TOOL_COOL, "Cool"  },
+    { MAT_EMPTY, "Erase" },
+};
+static const int N_BRUSH = (int)(sizeof(BRUSHES) / sizeof(BRUSHES[0]));
+
+enum ActionId { ACT_OVERWRITE, ACT_VIEW, ACT_PAUSE, ACT_CLEAR, N_ACT };
 
 /* Layout rects, filled once by layoutPanel(). */
 static RECT g_brushRect[N_BRUSH];
@@ -313,9 +357,20 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     g_borderBrush = CreateSolidBrush(RGB(88, 94, 108));
     g_accentBrush = CreateSolidBrush(RGB(226, 190, 90));
 
+    /* Swatch colours come from each material's own palette (a dry, mid-tint
+       sample), so the picker always matches what lands in the world. Tools and
+       the eraser get synthetic swatches. */
     for (int i = 0; i < N_BRUSH; ++i) {
-        u32 c = brushSwatch(BRUSHES[i].brush);
-        g_swatchBrush[i] = CreateSolidBrush(RGB((c >> 16) & 0xFF, (c >> 8) & 0xFF, c & 0xFF));
+        int b = BRUSHES[i].brush;
+        COLORREF cr;
+        if      (b == TOOL_HEAT) cr = RGB(226, 96, 40);
+        else if (b == TOOL_COOL) cr = RGB(80, 152, 226);
+        else if (b == MAT_EMPTY) cr = RGB(38, 40, 48);
+        else {
+            u32 c = g_colorLut[(b << 8) | 0x08];
+            cr = RGB((c >> 16) & 0xFF, (c >> 8) & 0xFF, c & 0xFF);
+        }
+        g_swatchBrush[i] = CreateSolidBrush(cr);
     }
 
     memset(&g_bmi, 0, sizeof(g_bmi));
