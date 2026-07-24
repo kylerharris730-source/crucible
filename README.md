@@ -1,14 +1,59 @@
 # Powder
 
-A pixel-based falling-sand physics sim. C++11, Win32 + GDI, no external dependencies.
+A pixel-based falling-sand physics sim. C++11, runs on Windows, macOS and Linux.
 
 ## Build & run
 
-```bash
+**Windows** — no dependencies, just a compiler:
+
+```bat
 build.bat
 ```
 
 Then `build\powder.exe`. (`mingw32-make` and `mingw32-make run` also work.)
+
+**macOS / Linux** — needs SDL2:
+
+```bash
+brew install sdl2            # macOS
+sudo apt install libsdl2-dev # Debian/Ubuntu
+
+./build.sh
+```
+
+Then `./build/powder`. (`make` and `make run` also work.)
+
+### The two shells
+
+The simulation is plain, portable C++11 with no platform code in it at all.
+Only the outermost layer — window, input, timing, blit — knows what OS it is
+on, and there are two interchangeable versions of it:
+
+| Backend | File | Notes |
+|---|---|---|
+| `win32` | `src/main.cpp` | Win32 + GDI. **Default on Windows.** No external dependencies. |
+| `sdl` | `src/main_sdl.cpp` | SDL2. **Default everywhere else**, and usable on Windows too. |
+
+`make BACKEND=sdl` builds the portable shell on Windows as well (point it at an
+unpacked SDL2 dev package with `SDL_CFLAGS=-IC:/SDL2/include
+SDL_LIBS=-LC:/SDL2/lib`). The Win32 shell only exists to keep the
+zero-dependency Windows build; the two are deliberately kept behaviourally
+identical, sharing their layout constants and palette through `src/panel.h`, so
+this is one program with two backends rather than two diverging programs.
+
+Two things the SDL shell does that the Win32 one does not, both because laptops
+and Retina displays make them matter: it **shrinks the window to fit** a display
+too small for the full 1174×768 (the Win32 one just hangs off the bottom edge),
+and it renders through a fixed logical coordinate system, so the window is
+freely resizable and stays crisp on a Retina Mac. Because all the layout and
+hit-testing works in those logical coordinates, none of that code has to know
+the window was resized.
+
+Text is drawn from a 5×7 bitmap font baked into `src/font8.h` rather than via
+SDL2_ttf. That avoids a second dependency and a font file to locate at runtime
+(font paths differ per OS, which is exactly what this port exists to stop
+caring about), and it suits a pixel sim: every glyph lands on exact pixel
+boundaries at any integer scale.
 
 ## Controls
 
@@ -54,9 +99,10 @@ one when judging whether a change costs anything.
 
 ### Adding a material to the picker
 
-The palette is data-driven: one row in the `BRUSHES[]` table in `main.cpp` adds
+The palette is data-driven: one row in the `BRUSHES[]` table in `panel.h` adds
 a labelled button, and its swatch colour is pulled straight from the material's
-own palette, so it always matches what lands in the world. The panel widens the
+own palette, so it always matches what lands in the world. That table is shared
+by both shells, so one edit adds the button on every platform. The panel widens the
 window by a fixed strip and the sim blits to the right of it at a clean integer
 scale, so the window→cell mapping stays a plain divide.
 
@@ -68,7 +114,13 @@ scale, so the window→cell mapping stays a plain divide.
 | `src/materials.*` | The material table and the colour LUT |
 | `src/world.*` | Grid, chunk system, all movement, moisture and heat rules |
 | `src/render.*` | Cell → pixel, heat glow, heat view |
-| `src/main.cpp` | Window, input, timing, blit |
+| `src/panel.h` | Layout constants, tool ids, the `BRUSHES[]` palette — shared by both shells |
+| `src/main.cpp` | Win32/GDI shell: window, input, timing, blit |
+| `src/main_sdl.cpp` | SDL2 shell: the same, portably |
+| `src/font8.h` | 5×7 bitmap font, for the SDL shell's panel text |
+
+Everything above `panel.h` in that table is free of platform code entirely —
+which is why the macOS port only had to add a shell, not touch the physics.
 
 ### The three things that make it fast
 

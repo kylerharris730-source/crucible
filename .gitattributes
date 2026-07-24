@@ -1,0 +1,12 @@
+# The repo is developed on Windows but builds on macOS and Linux, so the files
+# the Unix build depends on must arrive with LF endings. A CRLF build.sh fails
+# with "bad interpreter" because the \r ends up part of the shebang path, and a
+# CRLF Makefile is worse than it looks: the \r lands inside variable values, so
+# NAME := powder silently becomes "powder\r" and the binary is written to a
+# filename nothing else refers to.
+* text=auto
+
+*.sh      text eol=lf
+Makefile  text eol=lf
+
+*.bat text eol=crlf
