@@ -57,6 +57,12 @@ static const BrushDef BRUSHES[] = {
     { MAT_WALL,  "Wall"  },
     { MAT_CLONE, "Clone" },
     { MAT_VOID,  "Void"  },
+    /* Heater/Cooler are placed blocks that hold a temperature forever; the
+       Heat/Cool rows below them are brushes that nudge temperature while you
+       drag. Similar names, but one is scenery and the other is a tool, so they
+       sit next to each other where the difference is easy to see. */
+    { MAT_HEATER,"Heater"},
+    { MAT_COOLER,"Cooler"},
     { TOOL_HEAT, "Heat"  },
     { TOOL_COOL, "Cool"  },
     { MAT_EMPTY, "Erase" },

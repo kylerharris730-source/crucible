@@ -71,6 +71,33 @@ static const int FIRE_SPREAD    = 34;  /* chance/255 per frame that a flammable
                                           cell catches from each touching flame;
                                           higher = fire races through wood */
 
+/* Heater and cooler setpoints. These are the extremes of the u8 scale on
+   purpose: the heater sits above stone's melting point (220) and so above
+   every other threshold in the table, and the cooler sits below every
+   coolTemp, so both are unambiguously "all the way" rather than tuned to
+   beat one particular material. Neither is a starting temperature -- the
+   machine is pinned back to it every frame (see updateCell), which is what
+   makes it a source of unlimited capacity instead of a hot rock that cools. */
+static const int HEATER_TEMP    = 255;
+static const int COOLER_TEMP    = 0;
+/* Degrees per frame each machine forces into (or out of) each of its four
+   orthogonal neighbours, on top of ordinary conduction.
+
+   Holding the machine at its setpoint and letting plain conduction spread it
+   is not enough, and the reason is worth keeping: conduction runs at
+   min(condA, condB), so the rate is set by the POORER conductor -- the
+   neighbour. A heater touching stone therefore delivers at stone's rate
+   however conductive the heater is, and the stone settles into a gradient
+   that levels off around 150: short of its 220 melting point, so a max-heat
+   machine could not melt rock. Raising the heater's own heatCond does nothing
+   at all about this, which is the trap.
+
+   Driving the neighbour directly is what makes it a source rather than merely
+   a hot object. It stays bounded because it is a step toward the setpoint and
+   never past it, so the machine can only ever drag its neighbourhood to the
+   setpoint -- never beyond, and never without limit. */
+static const int MACHINE_DRIVE  = 24;
+
 /* ---- liquid spreading ---------------------------------------------------
    Liquids fall at a flat one cell per frame, so a poured body stays coherent
    on the way down rather than stretching out and shedding droplets. (An

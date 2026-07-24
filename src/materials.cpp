@@ -46,6 +46,24 @@ MatInfo MATS[MAT_COUNT] = {
      dispenser full of lava does not cook everything around it. */
   { "Clone", KIND_STATIC, 255,   0,    0,   0,   0,   0,  0,   40,  0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0x3FA66A, 0x3FA66A, 0x3FA66A, 0x3FA66A, 0 },
   { "Void",  KIND_STATIC, 255,   0,    0,   0,   0,   0,  0,   40,  0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0x6A2A7A, 0x6A2A7A, 0x6A2A7A, 0x6A2A7A, 0 },
+  /* Heater and Cooler are machines too, and the only ones whose whole job is
+     heat, so unlike Clone and Void they conduct WELL (200, close to iron) --
+     a source that could not deliver would be decoration. What actually makes
+     them permanent is not in this table: world.cpp pins their temperature
+     every frame, so the setpoint below is only what they start at.
+
+     Note the asymmetry in `spawn`: the heater's 255 is real, but the cooler
+     wants to start at 0 and cannot say so here, because spawnTemp treats 0 as
+     "use ambient". It is placed at ambient and pinned to 0 on its first
+     update instead -- one frame of lag, invisible in practice. Do not try to
+     fix that by making 0 meaningful; every other material relies on it.
+
+     Both are flat-coloured like the other machines. The heater spends its life
+     at 255, where the heat glow blends ~150/255 toward white, so in Glow view
+     it reads as white-hot and its own red barely shows -- that is the point.
+     Material view is where you see the device itself. */
+  { "Heater",KIND_STATIC, 255,   0,    0,   0,   0,   0,  0,  200,  0, 255,    0,  MAT_EMPTY,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0xC4392B, 0xC4392B, 0xC4392B, 0xC4392B, 0 },
+  { "Cooler",KIND_STATIC, 255,   0,    0,   0,   0,   0,  0,  200,  0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0x58C4DC, 0x58C4DC, 0x58C4DC, 0x58C4DC, 0 },
 };
 
 u32 g_colorLut[MAT_COUNT * 256];

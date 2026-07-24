@@ -552,9 +552,16 @@ void World::updateClone(int x, int y) {
             if (nx < 0 || nx >= SIM_W || ny < 0 || ny >= SIM_H) continue;
             const u8 nm = cells[ny * SIM_W + nx].mat;
             /* Machines and scenery are not cloneable: copying a wall would let
-               you wall off the box, and copying another clone or void would
-               make self-replicating machines. */
-            if (nm == MAT_EMPTY || nm == MAT_WALL || nm == MAT_CLONE || nm == MAT_VOID) continue;
+               you wall off the box, and copying another machine would make
+               self-replicating machines. Heater and cooler matter most here --
+               a clone loaded with heaters emits them into every empty
+               neighbour, and each new one is itself a permanent source that
+               holds a chunk awake, so the thing grows without bound in both
+               temperature and cost. Clone and void have always been excluded
+               for the same reason; these two just make it expensive as well as
+               silly. */
+            if (nm == MAT_EMPTY || nm == MAT_WALL || nm == MAT_CLONE || nm == MAT_VOID
+                || nm == MAT_HEATER || nm == MAT_COOLER) continue;
             c.moisture = nm;
             dirtyPoint(x, y);
             break;
@@ -715,6 +722,53 @@ void World::updateCell(int x, int y) {
     }
 
     /* Machines act on their neighbours and never move; nothing below applies. */
+    if (c.mat == MAT_HEATER || c.mat == MAT_COOLER) {
+        /* The whole machine, and it deliberately does no work on its
+           neighbours: it just restores its own setpoint. updateHeat ran at the
+           top of this function and already pushed some of that temperature out
+           into the four neighbours (and let a little drift toward ambient);
+           putting the setpoint back is what makes the supply inexhaustible.
+           Everything that follows -- conduction along an iron bar, boiling a
+           pool, melting stone, lighting wood -- is then the ordinary heat model
+           doing its ordinary job, with no special cases anywhere for these two.
+
+           Writing the setpoint rather than adding a delta is what bounds it.
+           An "add N degrees to my neighbours" version has no fixed point: the
+           heat has nowhere to settle, so the region around it climbs until it
+           saturates at 255 and every chunk in reach stays awake forever. Pinned
+           to a value, the neighbourhood converges on a gradient and quietly
+           stops changing.
+
+           This is the one place the "do not dirty unless something really
+           happened" rule is deliberately broken, because a permanent source is
+           by definition never finished. The cost is bounded and visible: each
+           machine holds its own chunk awake and no more. */
+        const int set = (c.mat == MAT_HEATER) ? HEATER_TEMP : COOLER_TEMP;
+        temp[i] = (u8)set;
+
+        /* Drive the four orthogonal neighbours toward the setpoint, on top of
+           whatever ordinary conduction already moved. Orthogonal only, matching
+           clone's emission: a machine should not reach through the diagonal gap
+           between two blocks.
+
+           Clamping at the setpoint is what keeps this stable. The step can only
+           ever close the gap, so a neighbour converges on the setpoint and then
+           stops changing; it can never overshoot, and heat cannot accumulate
+           anywhere beyond it. That is also why this cannot be written as a
+           plain "+= N" -- that has no fixed point, and the region around the
+           machine would climb until it saturated and never settle. */
+        for (int k = 0; k < 4; ++k) {
+            const int nx = x + NB_DX[k], ny = y + NB_DY[k];
+            const int j = ny * SIM_W + nx;
+            const int tj = temp[j];
+            if (tj == set) continue;
+            temp[j] = (u8)(tj < set ? imin(set, tj + MACHINE_DRIVE)
+                                    : imax(set, tj - MACHINE_DRIVE));
+            dirtyPoint(nx, ny);
+        }
+        dirtyPoint(x, y);
+        return;
+    }
     if (c.mat == MAT_CLONE) { updateClone(x, y); return; }
     if (c.mat == MAT_VOID)  { updateVoid(x, y);  return; }
 

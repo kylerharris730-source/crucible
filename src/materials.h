@@ -22,6 +22,8 @@ enum MatId {
     MAT_WOOD,        /* catches fire and is consumed */
     MAT_CLONE,       /* copies the first material it touches, forever */
     MAT_VOID,        /* destroys whatever it touches */
+    MAT_HEATER,      /* holds itself at max temperature, forever */
+    MAT_COOLER,      /* holds itself at min temperature, forever */
     MAT_COUNT
 };
 

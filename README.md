@@ -22,7 +22,7 @@ work as accelerators but are no longer needed — new materials just get a butto
 |---|---|
 | Left mouse (over the sim) | Draw with the current material / apply the current tool |
 | Right mouse (over the sim) | Erase |
-| Panel swatch, or `1`–`9` / `B` | Pick a material (Clone and Void are panel-only) |
+| Panel swatch, or `1`–`9` / `B` | Pick a material (Clone, Void, Heater and Cooler are panel-only) |
 | Panel Heat/Cool, or `H` `J` | Heat / Cool tool (warms or chills under the brush) |
 | Panel Erase, or `0` / `E` | Eraser |
 | Panel size `-`/`+`, wheel, `[` `]` | Brush size |
@@ -334,12 +334,79 @@ The one hard rule: **void never deletes `MAT_WALL`.** The movement rules do no
 bounds checking whatsoever — they rely on the border ring of wall to stop a cell
 walking off the grid — so a void able to chew through it would corrupt the sim.
 
+### Heater and Cooler
+
+Two more machines: static blocks pinned to `HEATER_TEMP` (255) and `COOLER_TEMP`
+(0) forever. Put a heater under a basin and it boils; embed one in a wooden wall
+and it burns the wall down; drop coolers on a lava flow and it sets to stone.
+They are the standing-source counterpart to the **Heat**/**Cool** brushes, which
+only act while you drag — hence the four similar names sitting together in the
+panel.
+
+Each machine does two things per frame, and the second one is the one that
+matters:
+
+1. **Pins its own temperature** to the setpoint. Ordinary conduction then
+   carries that outward like any other hot or cold cell.
+2. **Drives its four orthogonal neighbours** one `MACHINE_DRIVE` step (24°)
+   toward the setpoint, never past it.
+
+Step 1 alone is not enough, and the reason is the interesting part.
+Conduction runs at `min(condA, condB)` — **the poorer conductor sets the rate,
+and that is the neighbour, not the machine.** A heater against stone therefore
+delivers at *stone's* rate no matter how conductive the heater is, and the rock
+settles into a gradient that levels off near 150 — short of its 220 melting
+point. Turning the heater's own `heatCond` up does nothing whatsoever about
+this. Measured: pinning only, the hottest stone next to a heater plateaus at
+~150 and never melts.
+
+Step 2 is what makes it a *source* rather than a hot *object*. Clamping at the
+setpoint is what keeps it stable: the step can only close the gap, so a
+neighbourhood converges on the setpoint and then stops changing. Writing it as
+a plain `+= N` instead would have no fixed point — the region would climb until
+it saturated and never settle, holding chunks awake forever.
+
+That clamp is load-bearing for cost, and it is worth knowing how insensitive it
+makes things. A lone heater in open air holds **4 chunks and 85 warm cells
+awake, and those numbers are identical at `MACHINE_DRIVE` of 24, 40, 64 and 96**
+— the drive rate sets how *fast* equilibrium arrives, not how *far* it reaches.
+Steady from frame 600 out to 6000.
+
+A heater does keep its own chunk awake permanently, which is the one place the
+"don't dirty unless something really happened" rule is deliberately broken. A
+permanent source is by definition never finished; the cost is bounded and it is
+one chunk per machine.
+
+Two behaviours worth expecting:
+
+- **Melting stone is transient.** The rock at the contact melts, the lava flows
+  out of the hole it made, and it refreezes once below 100 — so a snapshot at
+  an arbitrary frame often shows no lava at all even though plenty melted.
+- **Embedding beats touching.** Against a single face, heat leaks into the
+  surrounding rock nearly as fast as it arrives and only a little melts right at
+  the contact. Buried in the block, all four faces drive and it melts properly.
+
+Like clone and void, neither is cloneable — and here that matters more than
+elsewhere. A clone latched onto a heater would emit heaters into every empty
+neighbour, each one itself a permanent source holding a chunk awake, so the
+thing would grow without bound in both temperature and cost.
+
 ## Adding a material
 
 1. Add an id to `MatId` in `materials.h`, above `MAT_COUNT`.
 2. Add a row to `MATS[]` in `materials.cpp` (rows must stay in id order).
 3. Only if it needs behaviour no existing `MatKind` covers, add a rule in
    `world.cpp`.
+
+> **Two ceilings are close, as of Heater and Cooler.** `MAT_COUNT` is now **15
+> of a hard maximum 16** — the `static_assert` in `world.cpp` explains why (clone
+> packs a material id into the moisture byte, which the colour LUT indexes as
+> `moisture & 0xF0`). And the tool panel is down to **15px of clearance** above
+> the stats block with 17 buttons on it. So there is room for exactly one more
+> material before *both* need attention: the id limit means reworking how clone
+> stores its latched id, and the panel means scrolling, two columns, or a
+> shorter button pitch. Neither is hard, but neither is a one-liner, and the
+> `static_assert` is the only one of the two that will tell you.
 
 Most materials need steps 1 and 2 only — even ones that boil, freeze, burn out
 or quench, since those are all table fields. Knobs worth knowing: `slideDry` /
