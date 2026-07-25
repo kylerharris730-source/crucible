@@ -27,15 +27,19 @@ int renderWorld(const World& w, u32* out, int view) {
         return count;
     }
 
-    /* VIEW_NORMAL: material plus a heat glow. Anything at ambient skips the
-       blend entirely, and since almost every cell in a typical scene is at
-       ambient, that branch predicts nearly perfectly. The glow alpha is capped
-       in the LUT so hot material stays visible rather than washing to white. */
+    /* VIEW_NORMAL: material plus a temperature tint -- a heat glow above
+       ambient and a cold blue below it. Anything AT ambient skips the blend
+       entirely, and since almost every cell in a typical scene is at ambient,
+       that branch predicts nearly perfectly. The test is != rather than >
+       because the scale now has a cold half; with > it, everything frozen
+       rendered as untinted material and ice was invisible as ice. The alpha is
+       capped in the LUT at both ends, so material stays recognisable rather
+       than washing out to white or to flat blue. */
     for (int i = 0; i < n; ++i) {
         Cell c = cells[i];
         u32 col = g_colorLut[((u32)c.mat << 8) | (u32)(c.moisture & 0xF0) | (u32)(c.tint >> 4)];
         const u8 t = temp[i];
-        if (t > AMBIENT_TEMP) col = lerpColor(col, g_heatLut[t], g_heatAlpha[t]);
+        if (t != AMBIENT_TEMP) col = lerpColor(col, g_heatLut[t], g_heatAlpha[t]);
         out[i] = col;
         count += (c.mat != MAT_EMPTY && c.mat != MAT_WALL);
     }

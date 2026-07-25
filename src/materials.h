@@ -1,6 +1,31 @@
 #pragma once
 #include "common.h"
 
+/* --- how temperature is stored -------------------------------------------
+   A cell's temperature is one byte holding **degrees Celsius plus
+   TEMP_OFFSET**, so the scale runs -40 C .. +215 C instead of 0 .. 255.
+
+   The offset exists because ice does. With 0 meaning 0 C there was nowhere to
+   put anything frozen, and the heat view had no cold half to colour. Paying
+   for that in headroom is unavoidable: the byte was already full at the top
+   (lava sat at exactly 255), so every degree of cold has to come off the hot
+   end. 40 buys a usable frozen range while costing only the three hottest
+   values, which were the only ones with slack -- see materials.cpp.
+
+   Write temperatures as degC(100), never as a bare 140. Everything the sim
+   compares -- thresholds, ambient, setpoints -- is in stored units, so the
+   raw numbers are meaningless on their own and shift if the offset ever
+   changes again.
+
+   One sharp edge: 0 is the "feature disabled" sentinel in every temperature
+   column of MATS[], and degC(-40) is also 0. A material therefore cannot have
+   a threshold at exactly -40 C. Nothing wants one, and the cooler reaches it
+   by being pinned rather than by a table entry. */
+static const int TEMP_OFFSET = 40;
+static constexpr u8 degC(int c) { return (u8)(c + TEMP_OFFSET); }
+static const int TEMP_MIN_C = -TEMP_OFFSET;        /* -40 */
+static const int TEMP_MAX_C = 255 - TEMP_OFFSET;   /* +215 */
+
 /* Adding a material:
      1. add an id here, above MAT_COUNT
      2. add a row to MATS[] in materials.cpp (rows must stay in id order)
@@ -15,9 +40,12 @@ enum MatId {
     MAT_SAND,
     MAT_DIRT,
     MAT_WATER,
+    MAT_ICE,         /* frozen water; melts back above freezing */
     MAT_STEAM,
     MAT_FIRE,
     MAT_IRON,        /* static, extremely heat-conductive */
+    MAT_COPPER,      /* better than iron -- carries heat further per frame */
+    MAT_GRAPHENE,    /* near-instant along a sheet */
     MAT_LAVA,        /* molten stone; freezes back to stone as it cools */
     MAT_WOOD,        /* catches fire and is consumed */
     MAT_CLONE,       /* copies the first material it touches, forever */
@@ -79,6 +107,35 @@ struct MatInfo {
        (This is not energy-conserving, deliberately: it stands in for latent
        heat, which for rock is enormous.) */
     u8  heatMassShift;
+    /* How many cells along an unbroken run of conductive material this cell
+       ALSO exchanges heat with each frame, on top of its four neighbours.
+       0 = ordinary material, conducts only to what it touches.
+
+       This column exists because `heatCond` ran out of room, and the reason is
+       worth understanding before reaching for either number. Conduction moves
+       (adiff * cond) >> 9, capped at half the gap so a value can never cross
+       the pairwise average -- that cap is what keeps the in-place symmetric
+       exchange stable without a second buffer. It also means cond saturates:
+       measured over every gap, cond 255 already achieves 99.2% of the cap, and
+       256, 400 and 100000 are all bit-identical to each other. Iron sat at 255
+       from the beginning, so it was ALREADY the most conductive material
+       expressible, and nothing could be placed above it.
+
+       Reach is the axis with headroom left. Ordinary conduction only ever
+       touches the 4-neighbourhood, so a heat front crawls at one cell per frame
+       however conductive the material is -- that limit is geometric, not
+       thermal, and it is the honest thing to relax for a better conductor.
+       A material with spread N moves its front up to N cells per frame instead.
+
+       Each extra exchange uses exactly the same capped, symmetric, mass-scaled
+       formula as a neighbour exchange, so energy still moves rather than
+       appearing, and temperatures still cannot leave [0,255].
+
+       Cost is O(spread) per cell per frame and is paid ONLY by materials that
+       set it, so ordinary scenery is unaffected. Keep graphene's value sane for
+       that reason -- it is the one number here that can make a large sheet
+       expensive. */
+    u8  heatSpread;
     u8  spawnTemp;   /* temperature when placed by hand; 0 means ambient */
     u8  coolTemp;    /* below this it turns into coolsTo; 0 disables */
     u8  coolsTo;
@@ -126,3 +183,6 @@ static inline u32 lerpColor(u32 a, u32 b, int t) {
 }
 
 void initMaterials();
+/* Verifies the property Clone's id-in-moisture packing relies on. Called by
+   initMaterials(); see the definition for what it protects. */
+void checkCloneColorInvariant();

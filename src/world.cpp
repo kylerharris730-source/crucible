@@ -65,6 +65,23 @@ static inline int scaleByMass(int move, int shift) {
     return q + ((r && (int)rngBits((u32)shift) < r) ? 1 : 0);
 }
 
+/* A phase change consumes latent heat: pull the cell LATENT_HEAT toward
+   ambient, and never past it.
+
+   The "toward ambient" part is what melting made necessary. This used to be a
+   plain imax(AMBIENT, t - LATENT_HEAT), which is right for every transition
+   that happens above ambient -- boiling, evaporating -- but ice melts BELOW
+   it, and subtracting there drove the new water colder than the freeze
+   threshold it had just crossed. The cell refroze on the next frame, so ice
+   sat flickering between the two states instead of melting. Moving toward
+   ambient from whichever side the cell is on makes the two directions
+   symmetric and leaves the hot path behaving exactly as it always did. */
+static inline u8 latentDrain(int t) {
+    if (t > AMBIENT_TEMP) return (u8)imax(AMBIENT_TEMP, t - LATENT_HEAT);
+    if (t < AMBIENT_TEMP) return (u8)imin(AMBIENT_TEMP, t + LATENT_HEAT);
+    return (u8)t;
+}
+
 void World::reset() {
     memset(cells, 0, sizeof(cells));
     memset(temp, AMBIENT_TEMP, sizeof(temp));
@@ -322,42 +339,44 @@ void World::updateGas(int x, int y) {
    it just does not pay to look for one itself. Anything off-ambient dirties
    itself, so a hot region stays awake exactly until it has cooled.
    ====================================================================== */
-void World::updateHeat(int x, int y) {
-    const int i = y * SIM_W + x;
-    const int condI = (int)MATS[cells[i].mat].heatCond;
-    const int massI = (int)MATS[cells[i].mat].heatMassShift;
+/* One symmetric exchange between two cells. Split out of updateHeat so the
+   long-range pass below can reuse it EXACTLY -- the cap and the mass scaling
+   are what keep temperatures inside [0,255] with no second buffer, and a
+   second hand-written copy of that arithmetic is precisely the kind of thing
+   that drifts out of sync and starts quietly manufacturing heat. */
+void World::heatPair(int i, int jx, int jy) {
+    const int j = jy * SIM_W + jx;
+    const int ti = temp[i], tj = temp[j];
+    int diff = ti - tj;
+    int adiff = diff < 0 ? -diff : diff;
+    if (adiff <= HEAT_MIN_DIFF) return;
 
-    /* Exchange with every neighbour, not one random one. The old single-random
-       version only pushed heat a quarter of the time in any given direction,
-       and with each cell also drifting toward ambient every frame the drift
-       won past about ten cells -- so a heated iron bar stayed cold two
-       centimetres from the flame. Touching all four neighbours makes the front
-       advance a full cell per frame.
-
-       Each exchange conserves energy (what one cell loses the other gains) and
-       the per-neighbour move is capped at half the gap, so a value can never
-       cross past the pairwise average -- temperatures stay within [0,255] no
-       matter the order the neighbours are visited, and there is no need for a
-       second buffer. */
-    for (int k = 0; k < 4; ++k) {
-        const int nx = x + NB_DX[k], ny = y + NB_DY[k];
-        if (nx < 0 || nx >= SIM_W || ny < 0 || ny >= SIM_H) continue;
-        const int j = ny * SIM_W + nx;
-        const int ti = temp[i], tj = temp[j];
-        int diff = ti - tj;
-        int adiff = diff < 0 ? -diff : diff;
-        if (adiff <= HEAT_MIN_DIFF) continue;
-
+    {
         /* The poorer of the two conductors sets the rate, so metal-on-metal is
-           quick while a hot cell next to air barely bleeds. */
-        const int cond = imin(condI, (int)MATS[cells[j].mat].heatCond);
+           quick while a hot cell next to air barely bleeds. Air touching air is
+           the one exception, and uses AIR_MIX instead -- see the note there for
+           why the same number cannot serve both cases. */
+        const bool airPair = cells[i].mat == MAT_EMPTY && cells[j].mat == MAT_EMPTY;
+        const int cond = airPair ? AIR_MIX
+                                 : imin((int)MATS[cells[i].mat].heatCond,
+                                        (int)MATS[cells[j].mat].heatCond);
         int move = (adiff * cond) >> 9;
         if (move > (adiff >> 1)) move = adiff >> 1;   /* never cross the average */
         /* Round up to 1 only for real conductors. A near-insulator -- steam,
            air -- keeps its true (often zero) rate so it holds heat and cools
            mainly by drift, which is what lets steam ride far up before it
-           condenses instead of shedding a degree a frame into cold air. */
-        if (move < 1) { if (cond < 40) continue; move = 1; }
+           condenses instead of shedding a degree a frame into cold air.
+
+           Air-to-air is excluded from the round-up as well, despite AIR_MIX
+           being well over 40, and that exclusion is what makes AIR_MIX a real
+           dial instead of an on/off switch. With the round-up, every value from
+           40 to 96 behaved identically -- the flat 1-degree floor swamped the
+           proportional term, so air always mixed at exactly one degree per
+           neighbour per frame. Without it, mixing is proportional to the
+           gradient: brisk across a sharp front, gentle once the field has
+           smoothed out, which is both what diffusion should look like and what
+           lets a warm patch settle instead of grinding to ambient. */
+        if (move < 1) { if (cond < 40 || airPair) return; move = 1; }
 
         /* Thermal mass. The same quantity of heat moves, but each side's
            TEMPERATURE responds in proportion to its own mass -- so lava barely
@@ -372,12 +391,66 @@ void World::updateHeat(int x, int y) {
            integer division rounds small transfers to zero, which would make a
            heavy material a perpetual heat source that never cools and never
            lets its chunk sleep. */
-        const int deltaI = scaleByMass(move, massI);
+        const int deltaI = scaleByMass(move, (int)MATS[cells[i].mat].heatMassShift);
         const int deltaJ = scaleByMass(move, (int)MATS[cells[j].mat].heatMassShift);
 
         if (diff < 0) { temp[i] = (u8)(ti + deltaI); temp[j] = (u8)(tj - deltaJ); }
         else          { temp[i] = (u8)(ti - deltaI); temp[j] = (u8)(tj + deltaJ); }
-        dirtyPoint(nx, ny);
+        dirtyPoint(jx, jy);
+    }
+}
+
+void World::updateHeat(int x, int y) {
+    const int i = y * SIM_W + x;
+
+    /* Exchange with every neighbour, not one random one. The old single-random
+       version only pushed heat a quarter of the time in any given direction,
+       and with each cell also drifting toward ambient every frame the drift
+       won past about ten cells -- so a heated iron bar stayed cold two
+       centimetres from the flame. Touching all four neighbours makes the front
+       advance a full cell per frame. */
+    for (int k = 0; k < 4; ++k) {
+        const int nx = x + NB_DX[k], ny = y + NB_DY[k];
+        if (nx < 0 || nx >= SIM_W || ny < 0 || ny >= SIM_H) continue;
+        heatPair(i, nx, ny);
+    }
+
+    /* Long-range conduction, for the good conductors only.
+       ------------------------------------------------------------------
+       The neighbour loop above advances a heat front at exactly one cell per
+       frame, and that ceiling is geometric rather than thermal: it holds no
+       matter how conductive the material is, which is why iron at the maximum
+       possible heatCond still warms a long bar visibly slowly. Relaxing it is
+       the only way to make one conductor genuinely better than another once
+       heatCond has saturated -- see the heatSpread note in materials.h.
+
+       So a material with heatSpread also exchanges with the cell `spread` steps
+       away along each axis, provided the whole run between them is conductive
+       too. Walking to the FAR end and exchanging once, rather than exchanging
+       with every cell along the way, is deliberate: it is O(1) exchanges for
+       O(spread) steps of walking, and the intermediate cells are filled in by
+       their own neighbour loops on the same frame anyway.
+
+       The run is "any material with heatSpread > 0", not "the same material",
+       so a copper bar bolted to an iron one conducts across the joint. It stops
+       at the first non-conductor, so a gap of air or a wooden handle insulates
+       exactly as you would expect -- the long-range hop cannot jump a break. */
+    const int spread = (int)MATS[cells[i].mat].heatSpread;
+    if (spread >= 2) {
+        for (int k = 0; k < 4; ++k) {
+            const int dx = NB_DX[k], dy = NB_DY[k];
+            int cx = x, cy = y, fx = -1, fy = -1;
+            for (int s = 0; s < spread; ++s) {
+                cx += dx; cy += dy;
+                if (cx < 0 || cx >= SIM_W || cy < 0 || cy >= SIM_H) break;
+                if (MATS[cells[cy * SIM_W + cx].mat].heatSpread == 0) break;
+                fx = cx; fy = cy;
+            }
+            /* Only if we got past the immediate neighbour -- that pair was
+               already handled above, and doing it twice would just double
+               iron's rate to its nearest neighbour for no reason. */
+            if (fx >= 0 && (fx != x + dx || fy != y + dy)) heatPair(i, fx, fy);
+        }
     }
 
     /* Heat leaves mainly through the air: air cells drift toward ambient fast,
@@ -509,10 +582,26 @@ void World::updateMoisture(int x, int y) {
 /* Clone keeps the id of the material it copies in its `moisture` byte, which
    is otherwise dead weight for a material with no capacity. That costs no
    extra memory and keeps Cell at a tidy 4 bytes. */
-static_assert(MAT_COUNT <= 16,
-              "Clone stores its material id in the moisture byte, and the colour "
-              "LUT indexes moisture as (moisture & 0xF0). Ids must stay below 16 "
-              "or a loaded clone would render as a different wetness bucket.");
+/* This used to assert MAT_COUNT <= 16, on the grounds that the colour LUT
+   indexes moisture as (moisture & 0xF0), so an id of 16 or more sets a nonzero
+   wetness nibble and a latched clone would render from a different bucket.
+   Adding Copper and Graphene took the count to 18 and tripped it.
+
+   16 was a proxy for the real invariant, though, and a stricter one than
+   necessary. What actually has to hold is that all 16 wetness buckets of
+   MAT_CLONE are the SAME COLOUR -- which materials.cpp already guarantees on
+   purpose, by giving Clone a flat palette (dryA == dryB == wetA == wetB) and no
+   capacity. Given that, which bucket a stored id selects cannot matter.
+
+   So the bound here is now just the byte, and the invariant the code truly
+   depends on is checked directly, at startup, in initMaterials(). That is the
+   better place for it: it fails if someone gives Clone a colour range or a
+   capacity -- the changes that would genuinely break this -- rather than when
+   the material list happens to get longer. */
+static_assert(MAT_COUNT <= 256,
+              "Clone stores its material id in the moisture byte, so ids must "
+              "fit in a u8. See checkCloneColorInvariant() in materials.cpp for "
+              "the rendering constraint that goes with it.");
 
 /* Place a brand new cell of `mat`, as a source would: it gets the material's
    spawn temperature (so cloned fire arrives genuinely alight rather than
@@ -631,7 +720,7 @@ void World::updateEvaporation(int x, int y) {
     if ((rngNext() & 0xFFFF) >= chance) return;
 
     convert(x, y, m.boilsTo);
-    temp[i] = (u8)imax(AMBIENT_TEMP, (int)temp[i] - LATENT_HEAT);
+    temp[i] = latentDrain((int)temp[i]);
 }
 
 /* ======================================================================
@@ -668,7 +757,7 @@ void World::updateCell(int x, int y) {
         convert(x, y, m.boilsTo);
         /* Boiling absorbs latent heat. Without this a single hot cell flashes
            an entire pool to steam in one frame instead of simmering. */
-        temp[i] = (u8)imax(AMBIENT_TEMP, t - LATENT_HEAT);
+        temp[i] = latentDrain(t);
         return;
     }
     if (m.igniteTemp) {

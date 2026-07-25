@@ -47,10 +47,13 @@ struct BrushDef { int brush; const char* label; };
 static const BrushDef BRUSHES[] = {
     { MAT_SAND,  "Sand"  },
     { MAT_WATER, "Water" },
+    { MAT_ICE,   "Ice"   },
     { MAT_DIRT,  "Dirt"  },
     { MAT_STONE, "Stone" },
     { MAT_WOOD,  "Wood"  },
     { MAT_IRON,  "Iron"  },
+    { MAT_COPPER,"Copper"},
+    { MAT_GRAPHENE,"Graphene"},
     { MAT_LAVA,  "Lava"  },
     { MAT_FIRE,  "Fire"  },
     { MAT_STEAM, "Steam" },
@@ -71,10 +74,25 @@ static const int N_BRUSH = (int)(sizeof(BRUSHES) / sizeof(BRUSHES[0]));
 
 enum ActionId { ACT_OVERWRITE, ACT_VIEW, ACT_PAUSE, ACT_CLEAR, N_ACT };
 
+/* --- simulation speed ----------------------------------------------------
+   A multiplier on how many sim steps run per displayed frame, NOT a change to
+   the frame rate: the window still presents at 60fps and the sim still uses a
+   fixed step, so at 2x every rule simply happens twice before you see the
+   result. Doing it this way means nothing in world.cpp has to know about it --
+   there is no dt anywhere in the sim to scale, and introducing one to support
+   this would have changed every rate constant in the model.
+
+   The cost is real and linear: 4x is four times the sim work per frame, so a
+   busy scene that just holds 60fps at 1x will drop frames at 4x. That shows up
+   honestly in the ms/frame readout, which times all the substeps together. */
+static const int SPEEDS[]  = { 1, 2, 4 };
+static const int N_SPEED   = (int)(sizeof(SPEEDS) / sizeof(SPEEDS[0]));
+
 /* Layout rects, filled once by layoutPanel(). */
 static RECT g_brushRect[N_BRUSH];
 static RECT g_actRect[N_ACT];
 static RECT g_sizeDec, g_sizeInc, g_sizeBox;
+static RECT g_speedRect[N_SPEED];
 
 /* GDI objects, all created once -- object churn per frame is not free. */
 static HBRUSH g_panelBg, g_btnBg, g_btnBgHot, g_btnBgSel, g_borderBrush, g_accentBrush;
@@ -91,6 +109,7 @@ static int  g_brushMat = MAT_SAND;
 static int  g_brushRadius = 6;
 static bool g_paused = false;
 static bool g_stepOnce = false;
+static int  g_speedIdx = 0;      /* index into SPEEDS */
 
 /* stats */
 static double g_fps = 0.0, g_simMs = 0.0;
@@ -104,12 +123,35 @@ static bool inRect(const RECT& r, int x, int y) {
    Layout
    ====================================================================== */
 static void layoutPanel() {
-    const int pad = 10, w = PANEL_W - pad * 2, h = 24, gap = 5;
-    int y = 34;   /* leave room for the title */
+    /* The pitch is DERIVED from the space available rather than hard-coded, and
+       that is a fix for a real trap rather than tidiness. Twice now the palette
+       has grown and silently overflowed the stats block at the foot of the
+       panel: nothing warns, the buttons just draw on top of the text. The fixed
+       22+4 pitch had room for one more row and this change adds three (Copper,
+       Graphene, and the speed selector), so it would have overflowed again.
+
+       Now the rows divide up whatever is between the title and the stats, so
+       adding a button can never overlap anything -- it just makes every row a
+       little shorter. Capped at 26 so a short palette does not stretch into
+       comically tall buttons. */
+    const int pad = 10, w = PANEL_W - pad * 2;
+    const int top = 34;              /* leave room for the title */
+    const int statsTop = WIN_H - 74; /* keep clear of the stats block */
+    const int sepTotal = 12;         /* the two 6px group separators below */
+    const int rowCount = N_BRUSH + 2 + N_ACT;   /* +2: size row, speed row */
+
+    int pitch = (statsTop - top - sepTotal) / rowCount;
+    if (pitch > 26) pitch = 26;
+    if (pitch < 14) pitch = 14;   /* past this the labels are unreadable anyway;
+                                     better to overflow visibly than to compute
+                                     a zero or negative row height */
+    const int gap = 4;
+    const int h = pitch - gap;
+    int y = top;
 
     for (int i = 0; i < N_BRUSH; ++i) {
         SetRect(&g_brushRect[i], pad, y, pad + w, y + h);
-        y += h + gap;
+        y += pitch;
     }
 
     y += 6;
@@ -117,11 +159,21 @@ static void layoutPanel() {
     SetRect(&g_sizeDec, pad,            y, pad + 24,     y + h);
     SetRect(&g_sizeBox, pad + 24 + 4,   y, pad + w - 28, y + h);
     SetRect(&g_sizeInc, pad + w - 24,   y, pad + w,      y + h);
-    y += h + gap + 6;
+    y += pitch;
+
+    /* speed: [1x][2x][4x], one segment each, as a radio row rather than a
+       -/+ stepper because there are only three values and showing which one is
+       live matters more than nudging between them. */
+    for (int i = 0; i < N_SPEED; ++i) {
+        const int x0 = pad + (w * i) / N_SPEED;
+        const int x1 = pad + (w * (i + 1)) / N_SPEED;
+        SetRect(&g_speedRect[i], x0, y, x1 - 3, y + h);
+    }
+    y += pitch + 6;
 
     for (int i = 0; i < N_ACT; ++i) {
         SetRect(&g_actRect[i], pad, y, pad + w, y + h);
-        y += h + gap;
+        y += pitch;
     }
 }
 
@@ -135,6 +187,9 @@ static void changeSize(int d){ g_brushRadius = imax(1, imin(64, g_brushRadius + 
 static bool handlePanelClick(int mx, int my) {
     for (int i = 0; i < N_BRUSH; ++i) {
         if (inRect(g_brushRect[i], mx, my)) { g_brushMat = BRUSHES[i].brush; return true; }
+    }
+    for (int i = 0; i < N_SPEED; ++i) {
+        if (inRect(g_speedRect[i], mx, my)) { g_speedIdx = i; return true; }
     }
     if (inRect(g_sizeDec, mx, my)) { changeSize(-1); return true; }
     if (inRect(g_sizeInc, mx, my)) { changeSize(+1); return true; }
@@ -195,6 +250,8 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case '6': g_brushMat = MAT_STEAM; break;
         case '7': g_brushMat = MAT_WOOD;  break;
         case '8': g_brushMat = MAT_IRON;  break;
+        case 'M': g_brushMat = MAT_COPPER;   break;   /* M for metal */
+        case 'G': g_brushMat = MAT_GRAPHENE; break;
         case '9': g_brushMat = MAT_LAVA;  break;
         case 'B': g_brushMat = MAT_WALL;  break;
         case '0':
@@ -205,6 +262,7 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case 'O': g_overwrite = !g_overwrite; break;
         case 'V': cycleView();                break;
         case VK_SPACE:  g_paused = !g_paused; break;
+        case 'S': g_speedIdx = (g_speedIdx + 1) % N_SPEED; break;
         case VK_OEM_PERIOD: g_stepOnce = true; break;
         case VK_OEM_4: changeSize(-1); break;  /* [ */
         case VK_OEM_6: changeSize(+1); break;  /* ] */
@@ -295,6 +353,17 @@ static void drawPanel(HDC hdc) {
         char s[32]; sprintf(s, "Size %d", g_brushRadius);
         SetTextColor(hdc, RGB(214, 216, 224));
         DrawTextA(hdc, s, -1, &rr, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    }
+
+    /* speed row */
+    for (int i = 0; i < N_SPEED; ++i) {
+        char sp[8]; sprintf(sp, "%dx", SPEEDS[i]);
+        RECT rr = g_speedRect[i];
+        const bool sel = (i == g_speedIdx);
+        FillRect(hdc, &rr, sel ? g_btnBgSel : (inRect(rr, g_mx, g_my) ? g_btnBgHot : g_btnBg));
+        FrameRect(hdc, &rr, sel ? g_accentBrush : g_borderBrush);
+        SetTextColor(hdc, sel ? RGB(255, 236, 180) : RGB(214, 216, 224));
+        DrawTextA(hdc, sp, -1, &rr, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     }
 
     /* toggles / actions, with live state in the label */
@@ -408,9 +477,13 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
 
         LARGE_INTEGER tA, tB;
         QueryPerformanceCounter(&tA);
-        if (!g_paused || g_stepOnce) {
+        if (g_stepOnce) {
+            /* Frame-advance stays one step regardless of the multiplier -- the
+               whole point of it is to inspect a single frame of the sim. */
             g_world.step();
             g_stepOnce = false;
+        } else if (!g_paused) {
+            for (int s = 0; s < SPEEDS[g_speedIdx]; ++s) g_world.step();
         }
         QueryPerformanceCounter(&tB);
         g_simMs = 1000.0 * (double)(tB.QuadPart - tA.QuadPart) / (double)freq.QuadPart;

@@ -22,16 +22,29 @@ work as accelerators but are no longer needed — new materials just get a butto
 |---|---|
 | Left mouse (over the sim) | Draw with the current material / apply the current tool |
 | Right mouse (over the sim) | Erase |
-| Panel swatch, or `1`–`9` / `B` | Pick a material (Clone, Void, Heater and Cooler are panel-only) |
+| Panel swatch, or `1`–`9` / `B` | Pick a material (Ice, Clone, Void, Heater and Cooler are panel-only) |
+| `M` / `G` | Copper / Graphene |
 | Panel Heat/Cool, or `H` `J` | Heat / Cool tool (warms or chills under the brush) |
 | Panel Erase, or `0` / `E` | Eraser |
 | Panel size `-`/`+`, wheel, `[` `]` | Brush size |
 | Panel Overwrite, or `O` | Toggle whether the brush replaces existing cells |
 | Panel View, or `V` | Cycle view: Glow → Material → Heat |
 | Panel Pause, or `Space` | Pause |
+| Panel `1x`/`2x`/`4x`, or `S` | Simulation speed (`S` cycles) |
 | `.` | Single step while paused |
 | Panel Clear, or `C` | Clear |
 | `Esc` | Quit |
+
+**Simulation speed** is a multiplier on how many sim steps run per displayed
+frame, *not* a change to the frame rate: the window still presents at 60 fps and
+the step is still fixed, so at 2× every rule simply happens twice before you see
+the result. Doing it this way means nothing in `world.cpp` knows about it — there
+is no `dt` anywhere in the sim, and introducing one to support this would have
+meant rescaling every rate constant in the model. The cost is linear and honest:
+4× is four times the sim work per frame, so a busy scene that only just holds
+60 fps at 1× will drop frames at 4×, and the ms/frame readout shows it. Frame
+advance (`.`) stays a single step at any multiplier, since the point of it is to
+inspect one frame.
 
 With **Overwrite off**, the brush only fills empty space, so you can pour a
 material into a scene without carving through what is already there. Erasing
@@ -43,7 +56,10 @@ There are three **views**, cycled with `V` or the button:
   capped so even white-hot material stays recognisable rather than washing out.
 - **Material** — materials only, no heat shown at all. Use it when the glow is
   in the way of reading the sim.
-- **Heat** — temperature as false colour, for inspecting where heat is.
+- **Heat** — temperature as false colour, for inspecting where heat is. The
+  ramp runs blue → neutral → red → white, with ambient sitting at the neutral
+  point, so anything below room temperature reads as blue and a frozen pool is
+  as obvious as a fire.
 
 The **Heat**/**Cool** tools plus the heat view are the way to explore the
 temperature system: heat a pool until it boils to steam, watch the steam
@@ -59,6 +75,12 @@ a labelled button, and its swatch colour is pulled straight from the material's
 own palette, so it always matches what lands in the world. The panel widens the
 window by a fixed strip and the sim blits to the right of it at a clean integer
 scale, so the window→cell mapping stays a plain divide.
+
+Row height is **derived** from the space between the title and the stats block
+rather than hard-coded, which fixes a trap that had already bitten twice: the
+palette grew, the buttons quietly overflowed the stats text at the foot of the
+panel, and nothing warned — they simply drew on top of it. Adding a button now
+just makes every row slightly shorter instead.
 
 ## How it's put together
 
@@ -182,10 +204,39 @@ a settled full-width pool measures about 0.04 ms/frame.
 
 ### Heat and phase changes
 
-Every cell — air and walls included — carries a `temp` byte of degrees, kept in
-its own array (`World::temp`) rather than inside `Cell`, so the movement rules
-never pay for heat they do not read. Ambient is 20, water boils at 100, fire
-burns near 230, so the whole useful range fits in a `u8` without scaling.
+Every cell — air and walls included — carries a `temp` byte, kept in its own
+array (`World::temp`) rather than inside `Cell`, so the movement rules never
+pay for heat they do not read.
+
+The byte holds **degrees Celsius plus `TEMP_OFFSET` (40)**, giving a range of
+−40 °C to +215 °C. Ambient is 20 °C, water freezes at 0 and boils at 100. The
+offset exists because ice does: the scale used to start at 0 °C, so there was
+nothing below freezing to represent and the heat view had no cold half to
+colour. Write temperatures as `degC(100)`, never as a bare `140` — the raw
+numbers mean nothing on their own and all shift together if the offset ever
+changes.
+
+Paying for the cold end in headroom was unavoidable, because the byte was
+already full at the top: lava sat at exactly 255. Only the three hottest values
+had any slack, and all three were lowered — lava to 215 °C, fire to 205, stone's
+melting point to 185. Everything else simply shifted by the offset, so its
+distance from ambient — which is what actually drives the sim — is unchanged.
+Steam still has exactly 70 units to cool through before it condenses, so it
+rides just as far up as it ever did.
+
+One consequence looks worse on paper than it is. Lava's molten band is spawn
+minus freeze, and freezing cannot drop below water's boiling point without
+breaking "lava is always hot enough to boil water", so the band narrowed from
+155 units to 115. Measured, that barely matters: **2418 frames before against
+2423 after** for a thick blob, 81 against 71 for a thin puddle. The narrower
+band is offset by a shallower gradient to ambient (195 units where it was 235),
+so lava sheds heat more slowly by almost exactly as much as it has less heat to
+shed. Worth knowing before "fixing" it.
+
+`0` is the "disabled" sentinel in every temperature column of `MATS[]`, and
+`degC(-40)` is also 0 — so no material can have a threshold at exactly −40 °C.
+Nothing wants one, and the cooler reaches it by being pinned rather than
+through the table.
 
 Conduction: each off-ambient cell exchanges heat with **all four** neighbours
 each frame. The rate is set by the poorer of the two materials' `heatCond`, so
@@ -194,6 +245,99 @@ conducts poorly on purpose**, or a single flame would heat the whole room in
 seconds. Each exchange conserves energy and is capped at half the gap, so a
 temperature can never cross the pairwise average; that keeps every value in
 `[0,255]` regardless of the order neighbours are visited, with no second buffer.
+
+**Air-to-air is the one exception**, and uses `AIR_MIX` rather than air's own
+`heatCond`. Those are two different jobs that were wearing one number, and as a
+single number it could only do one of them. Air's `heatCond` has to stay tiny so
+a hot *solid* next to air barely bleeds; but at that value air-to-air was not
+slow, it was **off**. `move = (adiff * cond) >> 9` needs a large gap before it
+even reaches 1, and the round-up-to-1 rule deliberately skips near-insulators —
+so a single air cell 20° above ambient never warmed its neighbour *at all*, and
+a hot patch sat exactly where it was, dithering toward ambient in place for half
+a minute. In the heat view it stayed a visible hard-edged rectangle.
+
+Splitting them lets air mix properly while air-to-solid keeps its own rate. Two
+things are worth knowing before touching either:
+
+- **This makes heat leave the scene faster, not slower** — the opposite of the
+  usual intuition about raising a conductivity. Conduction only *moves* energy;
+  `AIR_COOL` is what removes it, and it is a per-cell chance, so spreading a hot
+  patch over more cells multiplies the places it can drain from. A hot blob now
+  clears in ~850 frames instead of ~1900.
+- **The air-to-air path skips the round-up-to-1**, even though `AIR_MIX` is well
+  over the threshold. With it, every value from 40 to 255 behaved *identically*
+  — the flat 1°/frame floor swamped the proportional term and made the knob an
+  on/off switch. Without it, mixing scales with the gradient, which is both what
+  diffusion should look like and what makes the value tunable at all.
+
+#### Conductivity saturates, so better conductors are ranked by *reach*
+
+`heatCond` looks like a 0–255 dial, and it is not. The cap that keeps the
+exchange stable — never move more than half the gap — also means the rate
+saturates well before the byte does. Measured across every possible gap:
+
+| `heatCond` | fraction of the hard cap achieved |
+|---|---|
+| 200 | 77.7% |
+| 240 | 93.4% |
+| 255 | **99.2%** |
+| 256 | 100% |
+| 400, 1000, 100000 | 100% — bit-identical to 256 |
+
+Iron has sat at 255 since it was added, so it was already the most conductive
+material the rule can express. There was no room above it, and "turn iron up"
+was not a thing the table could say.
+
+The axis with headroom left is **reach**, not rate. Ordinary conduction only
+touches the 4-neighbourhood, so a heat front advances at most one cell per frame
+*however conductive the material is* — a geometric limit, not a thermal one, and
+the honest one to relax for a better conductor. `heatSpread` is how many cells
+along an unbroken run of conductive material a cell *also* exchanges with each
+frame:
+
+| | `heatCond` | `heatSpread` | front after 60 frames |
+|---|---|---|---|
+| Stone | 85 | 0 | 10 cells |
+| Iron (before) | 255 | — | 22 cells |
+| **Iron** | 255 | 2 | **42 cells** |
+| **Copper** | 255 | 5 | **89 cells** |
+| **Graphene** | 255 | 28 | **227 cells** |
+
+Four details that matter:
+
+- **The extra exchange reuses the neighbour exchange verbatim** (`heatPair`), so
+  it is capped, symmetric and mass-scaled identically. Energy is moved, never
+  created — measured, total heat peaks at exactly its starting value and falls
+  from there — and temperatures still cannot leave `[0,255]`.
+- **It hops to the far end of the run only**, not to every cell along the way:
+  one exchange for O(spread) steps of walking. The intermediate cells are filled
+  in by their own neighbour loops on the same frame.
+- **It cannot jump a break.** The walk stops at the first non-conductor, so a gap
+  of air or a wooden handle insulates exactly as expected. The run is "anything
+  with `heatSpread > 0`" rather than "the same material", so copper bolted to
+  iron conducts across the joint.
+- **Only materials that set it pay for it.** Ordinary scenery is untouched — with
+  the column forced to zero everywhere, the sim is bit-identical to before the
+  feature existed.
+
+Graphene is the one value with a real cost, since the walk is O(spread) per cell
+per frame:
+
+| scene | ms/frame |
+|---|---|
+| bare heater in air | 0.17 |
+| iron slab 300×40 | 0.47 |
+| copper slab 300×40 | 0.57 |
+| graphene slab 300×40 | 2.24 |
+| graphene filling the playfield | 3.83 |
+
+That last case at **4× speed is ~15 ms/frame**, which is right at the 16.6 ms
+budget for 60 fps. It is the worst case the sim can be put in, and it takes
+deliberately covering the screen in graphene to reach it.
+
+The ratios (2.5× copper over iron, 14× graphene) are exaggerated against reality
+— copper is about 1.7× iron, and graphene is off the scale entirely. At this grid
+size the difference has to be visible across a bar you would actually draw.
 
 **Thermal mass** (`heatMassShift`, a right-shift: 0 = normal, 3 = holds 8×)
 splits apart two things `heatCond` alone conflates — how fast a material
@@ -213,9 +357,58 @@ transfers to zero, which would turn a heavy material into a perpetual heat
 source that never cools and never lets its chunk sleep.
 
 Turning conductivity down instead is the obvious-looking alternative and it does
-not work. Transfer uses `min(a, b)` and air is 12, so any value above that
+not work. Transfer uses `min(a, b)` and air is small, so any value above it
 leaves loss-to-air unchanged; going below it does slow the bleed, but then lava
 can no longer heat anything up to its ignition or boiling point.
+
+#### What air mixing cost, and why air's own conductivity moved
+
+Air that spreads heat is also air that **carries heat off a hot solid**, and
+that is not a tuning detail — it is the same mechanism seen from the other side.
+The old model insulated hot objects by accident: the air touching them saturated
+and the gradient collapsed, so they stopped losing heat. Once air disperses,
+that blanket is gone and hot things bleed continuously. Lava's lifetime fell to
+a quarter. Air's solid-facing `heatCond` came down 12 → 6 to compensate, and the
+two numbers are now **coupled — change them together**. Measured against the
+pre-change build:
+
+| | before | after |
+|---|---|---|
+| hot air blob, spread | 15 cells | **26** |
+| hot air blob, fully gone | 1911f | **856f** |
+| lava, thick blob | 2103f | 1760f |
+| lava, thin puddle | 1104f | 1227f |
+| steam rise | 339 | 339 |
+| ms/frame | 0.017 | 0.020 |
+
+The value is 6 and not 5 on purpose: 5 restores the thick-blob lifetime exactly
+but overshoots on thin lava (1104 → 2164), flattening the difference between a
+deep pool and a shallow puddle to nothing. At 6 every geometry lands within 16%
+*and* a thick blob still outlasts a thin one by 1.4×. The curve is steep — 7
+already halves lava's life — so **re-run the puddle measurements before nudging
+it**. (Lava's own `heatMassShift` 3 → 2 lands every lava figure closer still,
+but that halves its heat capacity to chase a 16% metric, so it was left alone.)
+
+Two knock-on effects, both traced to the same cause — a heat source no longer
+gets to pool warmth in the air pocket beside it:
+
+- **A heater under a wood pile stopped igniting it.** The heater never lit wood
+  by touching it; it heated the adjacent air pocket, which pooled at ~250 and
+  slow-cooked the pile past wood's ignition point. With air dispersing, the
+  pocket settles at ~194, the pile asymptotes at 97 against an ignition point of
+  120, and it burns exactly one cell and stalls **forever**. Fixed by raising
+  `MACHINE_DRIVE` 24 → 64, which puts the pocket back over the line. It is a
+  knee rather than a slope: 48 suffices and 48/96/160/255 are identical.
+- **A heater buried in rock melts a pocket rather than the whole blob** (104
+  cells → 20). This one is *not* recovered — melting is limited by the blob's
+  equilibrium against air, not by how hard the machine pushes, so it is flat at
+  20 cells for `MACHINE_DRIVE` 24 through 255. Arguably the more defensible
+  result (heat now has somewhere to go), but it is a visible difference.
+
+Both were caught by *measurement*, not by the test suite — the assertions were
+`d1 < d0` and `peakLava > 0`, which a pile burning one single cell and a blob
+melting almost nothing both sail straight through. Both have been tightened to
+assert the actual behaviour.
 
 Where heat *leaves* matters as much as how it spreads, and this is the part that
 was reworked: only **air** dissipates heat quickly (it stands in for an open
@@ -266,8 +459,9 @@ lot, fire less.
 **Steam** has a very low `heatCond` and condenses only once fairly cool, so it
 rides a long way up before turning back to water. Two things keep it from
 cooling too fast: the "round the rate up to at least 1 degree" floor in the
-conduction code is applied *only* to real conductors (`cond >= 40`), so a
-near-insulator like steam conducts its true (often zero) amount into passing
+conduction code is applied *only* to real conductors (`cond >= 40`, and never to
+an air-air pair), so a near-insulator like steam conducts its true (often zero)
+amount into passing
 air; and its cooling toward ambient uses the middling `GAS_COOL` rate. Tune
 `GAS_COOL` up for steam that condenses sooner, down for steam that climbs
 higher.
@@ -288,10 +482,54 @@ top of the `u8` scale) and carries a thermal mass of 3, which together are what
 keep it molten for ~9 s rather than ~1 s; freezing at 100 also guarantees any
 lava is still hot enough to boil water. It sets wood alight on contact, the same
 way an open flame does, so ignition is instant instead of waiting on a
-conduction ramp. **Iron** is a static
-solid with near-perfect conductivity, so a bar of it carries a flame's heat from
-one end to the other; stone, by contrast, is a poor conductor, so heat stays
-local to where it is applied.
+conduction ramp.
+
+**Iron**, **copper** and **graphene** are static solids that exist to move heat.
+All three share the maximum conductivity the exchange rule can express, and are
+ranked against each other by `heatSpread` — how many cells of bar a heat front
+crosses per frame — because `heatCond` had no room left above iron. A copper bar
+carries a flame's warmth roughly twice as far as an iron one in the same time,
+and a graphene sheet is close to isothermal the moment you heat any part of it.
+
+All three are **flat-coloured** (`dryA == dryB == wetA == wetB`) rather than
+speckled — speckle reads as loose grains, and a milled bar should read as one
+uniform material. Graphene's dark indigo is a legibility fix, not a style
+choice: as a flat neutral grey it sat 25 units from Wall's dark end by a
+green-weighted RGB distance, against 729 for Wall vs Stone, and on screen it
+simply read as wall. The palette already has three dark greys. Keeping it dark
+and low-chroma but pushing the cast to indigo gets it to 610, clear of
+everything, without making it a bright new primary.
+Stone, by contrast, is a poor conductor, so heat stays local to where it is
+applied. See [Conductivity saturates](#conductivity-saturates-so-better-conductors-are-ranked-by-reach)
+for why the ranking had to move off `heatCond`.
+
+### Freezing and ice
+
+Water freezes below 0 °C into **Ice**, and ice melts back above +6 °C. Both are
+ordinary table rows — `coolTemp`/`coolsTo` one way, `boilTemp`/`boilsTo` the
+other — so freezing needed no new code in `world.cpp` at all, only somewhere on
+the scale to put it.
+
+The 6 °C gap is hysteresis, the same trick stone and lava use: it leaves a band
+(40..45 in stored units) where *both* states are stable, so a cell sitting right
+at freezing cannot flip back and forth every frame.
+
+Ice is `KIND_STATIC`, so it never flows and never gets displaced — `tryMove`
+refuses to swap with anything that is not a liquid or gas, which is what stops
+water tunnelling through a frozen sheet regardless of the densities. Hand-placed
+ice arrives at −16 °C; without that it would spawn at ambient and melt on the
+very next frame, which reads as a broken brush.
+
+One subtlety worth knowing, because it produced a real bug. Latent heat used to
+be `imax(AMBIENT, t - LATENT_HEAT)`, which is right for every transition that
+happens *above* ambient — boiling, evaporating — but **ice melts below it**, and
+subtracting there drove the new water back under the freeze threshold it had
+just crossed. The cell refroze the next frame and ice sat flickering instead of
+melting. `latentDrain()` now moves the cell toward ambient from whichever side
+it is on, which makes the two directions symmetric and leaves the hot path
+behaving exactly as before.
+
+The simplest way to make ice: a **Cooler** under a pool.
 
 ### Clone and Void
 
@@ -348,7 +586,7 @@ matters:
 
 1. **Pins its own temperature** to the setpoint. Ordinary conduction then
    carries that outward like any other hot or cold cell.
-2. **Drives its four orthogonal neighbours** one `MACHINE_DRIVE` step (24°)
+2. **Drives its four orthogonal neighbours** one `MACHINE_DRIVE` step (64°)
    toward the setpoint, never past it.
 
 Step 1 alone is not enough, and the reason is the interesting part.
@@ -366,11 +604,17 @@ neighbourhood converges on the setpoint and then stops changing. Writing it as
 a plain `+= N` instead would have no fixed point — the region would climb until
 it saturated and never settle, holding chunks awake forever.
 
-That clamp is load-bearing for cost, and it is worth knowing how insensitive it
-makes things. A lone heater in open air holds **4 chunks and 85 warm cells
-awake, and those numbers are identical at `MACHINE_DRIVE` of 24, 40, 64 and 96**
-— the drive rate sets how *fast* equilibrium arrives, not how *far* it reaches.
-Steady from frame 600 out to 6000.
+That clamp is load-bearing for cost: a lone heater reaches an equilibrium and
+then stops changing. It holds **8 chunks and ~2200 warm cells awake, steady from
+frame 3000 out to 6000**.
+
+Those figures used to be 4 chunks and 85 cells, and were *identical* across
+`MACHINE_DRIVE` 24–96 — the drive rate set how fast equilibrium arrived, not how
+far it reached. Air mixing changed both halves of that: warmth now genuinely
+travels, so the halo is far wider, and the drive rate does now affect its extent
+(warm cells roughly double from drive 24 to 64). It still converges, which is
+the property that matters — but the old "insensitive to `MACHINE_DRIVE`" claim
+no longer holds, so raising it is no longer free.
 
 A heater does keep its own chunk awake permanently, which is the one place the
 "don't dirty unless something really happened" rule is deliberately broken. A
@@ -398,15 +642,19 @@ thing would grow without bound in both temperature and cost.
 3. Only if it needs behaviour no existing `MatKind` covers, add a rule in
    `world.cpp`.
 
-> **Two ceilings are close, as of Heater and Cooler.** `MAT_COUNT` is now **15
-> of a hard maximum 16** — the `static_assert` in `world.cpp` explains why (clone
-> packs a material id into the moisture byte, which the colour LUT indexes as
-> `moisture & 0xF0`). And the tool panel is down to **15px of clearance** above
-> the stats block with 17 buttons on it. So there is room for exactly one more
-> material before *both* need attention: the id limit means reworking how clone
-> stores its latched id, and the panel means scrolling, two columns, or a
-> shorter button pitch. Neither is hard, but neither is a one-liner, and the
-> `static_assert` is the only one of the two that will tell you.
+> **The id space is now FULL.** Ice took `MAT_COUNT` to **16, which is the hard
+> maximum** — the `static_assert` in `world.cpp` explains why: clone packs a
+> material id into the spare moisture byte, and the colour LUT indexes moisture
+> as `moisture & 0xF0`, so an id of 16 or more would make a loaded clone render
+> as a different wetness bucket. **The next material added will not compile**
+> until that is dealt with. The fix is to stop overloading `moisture` — give
+> clone its own storage, or widen `Cell` past 4 bytes and accept the cache cost.
+> The assert will stop you, which is the point of it.
+>
+> The panel has more room: the row pitch dropped from 24+5 to 22+4 when Ice made
+> an 18th button, leaving about **54px of clearance** above the stats block, so
+> two more rows fit. Nothing warns about *that* one — the buttons simply draw
+> over the stats text — so check `layoutPanel()` by eye if the palette grows.
 
 Most materials need steps 1 and 2 only — even ones that boil, freeze, burn out
 or quench, since those are all table fields. Knobs worth knowing: `slideDry` /

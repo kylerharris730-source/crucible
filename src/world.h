@@ -42,17 +42,70 @@ static const int WICK_SIDE_SHIFT = 1;
 static const int WICK_UP_SHIFT   = 2;
 
 /* ---- heat ---------------------------------------------------------------
-   Temperature is a plain u8 of degrees, carried by every cell including air.
-   Ambient 20, water boils at 100, fire burns near 230, so the whole useful
-   range fits without scaling. (Nothing below 0 C is representable; if ice
-   turns up later this wants an offset.) */
-static const int AMBIENT_TEMP   = 20;
+   Temperature is a plain u8 carried by every cell including air, holding
+   degrees Celsius plus TEMP_OFFSET -- see the encoding note in materials.h.
+   Ice froze the offset into existence: the old scale started at 0 C, so there
+   was nothing below freezing to represent and the heat view had no cold half.
+   Ambient is room temperature, water boils at 100 C and freezes at 0 C, and
+   the range runs -40 C .. +215 C. */
+static const int AMBIENT_TEMP   = degC(20);
 static const int HEAT_MIN_DIFF  = 2;   /* below this no conduction happens, so
                                           the field can actually reach rest */
 static const int AIR_COOL       = 20;  /* chance/255 per frame that an AIR cell
                                           steps one degree toward ambient -- the
                                           main way heat leaves the scene, as if
                                           into an open room. */
+/* Conductivity used ONLY between two air cells, in place of Empty's heatCond.
+   It exists because those are two different jobs wearing one number.
+
+   Empty's own heatCond (6, in materials.cpp) is near-insulating so that a hot
+   SOLID next to air barely bleeds -- conduction runs at min(condA, condB), so
+   that number is what keeps lava molten for ~40s and stops a flame heating the
+   whole room. It has to stay small.
+
+   But it also governed air-to-air, and there it was not slow, it was off:
+   move = (adiff * cond) >> 9 needs a large gap before it even reaches 1. Warm
+   air spread only while its edge was steep and then stopped dead, so a hot
+   patch sat where it was, drifting toward ambient in place for half a minute,
+   instead of dissipating into the room. Measured: a blob of hot air reached 12
+   cells and stalled, and a single air cell 20 degrees above ambient NEVER
+   warmed its neighbour at all.
+
+   Splitting the two lets air mix with air properly while air-to-solid keeps
+   its own separate, still-tiny rate. Note this makes heat leave the scene
+   FASTER, which is the opposite of the usual intuition about raising a
+   conductivity: conduction only moves energy, AIR_COOL is what removes it, and
+   AIR_COOL is a per-cell chance -- so spreading a hot patch over more cells
+   multiplies the number of places it can drain from.
+
+   The two numbers are coupled and were tuned together, so change them
+   together. Air that spreads heat is also air that carries heat off a hot
+   solid, which is why the solid-facing value had to come down from 12 to 6.
+   Measured against the pre-change build:
+
+     hot air blob, spread      15 cells -> 26        (the point of the change)
+     hot air blob, gone after  1911f    -> 856f      (32s -> 14s)
+     lava, thick blob          2103f    -> 1760f
+     lava, thin puddle         1104f    -> 1227f
+     steam rise                339      -> 339       (unchanged)
+
+   Lava converges a little: thick pools cool sooner and thin ones last longer,
+   so depth matters less than it did (a 1.9x spread became 1.4x). Lava's own
+   heatMassShift 3 -> 2 lands every lava figure nearer the old build, but that
+   halves its heat capacity to chase a 16% metric, so it was left alone.
+
+   The one behaviour that genuinely changed is a heater buried in rock: it used
+   to melt 104 cells of a stone blob, now 20. That was the old blanket at work
+   -- heat had nowhere to go, so the whole rock cooked. A heater now melts a
+   pocket around itself, which is the more defensible result, but it IS a
+   visible difference. It cannot be tuned back via MACHINE_DRIVE: melting is
+   limited by the blob's equilibrium against air, not by how hard the machine
+   pushes (measured flat at 20 cells for drive 24 through 255).
+
+   A heater under WOOD was hit by the same effect and IS recovered, via
+   MACHINE_DRIVE -- see the note there, since the mechanism is worth reading
+   before touching either number. */
+static const int AIR_MIX        = 160;
 static const int SOLID_COOL     = 3;   /* the same for solids/liquids, but slow:
                                           they shed heat mostly by conduction, so
                                           this only ensures they eventually reach
@@ -64,9 +117,14 @@ static const int GAS_COOL       = 14;  /* gases sit between: a puff of steam or
                                           rides a good way up first. This is the
                                           knob for how far steam floats before
                                           it condenses back to water. */
-static const int LATENT_HEAT    = 30;  /* boiling costs this much temperature,
-                                          which stops a heat source flashing a
-                                          whole pool to steam in one frame */
+static const int LATENT_HEAT    = 30;  /* a phase change costs this much
+                                          temperature, pulling the cell toward
+                                          ambient from whichever side it was
+                                          on. It is what stops a heat source
+                                          flashing a whole pool to steam in one
+                                          frame, and equally what stops a warm
+                                          room shattering an ice block in one.
+                                          Applied via latentDrain(). */
 static const int FIRE_SPREAD    = 34;  /* chance/255 per frame that a flammable
                                           cell catches from each touching flame;
                                           higher = fire races through wood */
@@ -95,8 +153,19 @@ static const int COOLER_TEMP    = 0;
    Driving the neighbour directly is what makes it a source rather than merely
    a hot object. It stays bounded because it is a step toward the setpoint and
    never past it, so the machine can only ever drag its neighbourhood to the
-   setpoint -- never beyond, and never without limit. */
-static const int MACHINE_DRIVE  = 24;
+   setpoint -- never beyond, and never without limit.
+
+   Raised 24 -> 64 when air started mixing (AIR_MIX). A heater under a wood pile
+   never ignited it directly even before: it heated the AIR POCKET beside
+   itself, which pooled at ~250 because that air had nowhere to shed to, and the
+   pocket slow-cooked the pile past wood's ignition point. Once air disperses,
+   the pocket settles at ~194 instead, the pile asymptotes at 97 -- just under
+   the 120 it needs -- and a heater under wood does nothing at all forever. 64
+   puts the pocket back over the line. It is a knee, not a slope: 48 is enough
+   and 48/96/160/255 all behave identically, so 64 is simply clear of the edge.
+   Note this cannot fix the same shortfall for stone (see AIR_MIX) -- melting is
+   limited by the blob's own equilibrium, not by the pocket. */
+static const int MACHINE_DRIVE  = 64;
 
 /* ---- liquid spreading ---------------------------------------------------
    Liquids fall at a flat one cell per frame, so a poured body stays coherent
@@ -173,6 +242,7 @@ private:
     void updateClone(int x, int y);
     void updateVoid(int x, int y);
     void spawnCell(int x, int y, u8 mat);
+    void heatPair(int i, int jx, int jy);
     void updateHeat(int x, int y);
     void updateMoisture(int x, int y);
     void updateEvaporation(int x, int y);
