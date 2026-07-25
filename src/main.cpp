@@ -14,12 +14,22 @@
    window rather than an overlay, so buttons never hide playfield and a stroke
    can never paint underneath them. */
 static const int SCALE   = 2;
-static const int PANEL_W = 150;
+/* Wide enough for two columns of material buttons. The palette outgrew a single
+   column: at 25 entries the derived row pitch had squeezed down to 20px, and
+   the fix for "make the buttons taller" is more width, not less content. */
+static const int PANEL_W = 264;
 static const int VIEW_W  = SIM_W * SCALE;
 static const int VIEW_H  = SIM_H * SCALE;
 static const int WIN_W   = PANEL_W + VIEW_W;
 static const int WIN_H   = VIEW_H;
 static const double FRAME_SECONDS = 1.0 / 60.0;
+
+/* Top of the stats block. layoutPanel() stops the buttons above this and
+   drawPanel() writes from it downward, so the two cannot drift apart -- which
+   is the failure this panel has already had twice, buttons silently drawn on
+   top of the stats text. Five lines now: the hover readout joins fps, sim ms,
+   cells and chunks. */
+static const int STATS_TOP = VIEW_H - 92;
 
 static u32         g_pixels[SIM_W * SIM_H];
 static BITMAPINFO  g_bmi;
@@ -51,6 +61,11 @@ static const BrushDef BRUSHES[] = {
     { MAT_DIRT,  "Dirt"  },
     { MAT_STONE, "Stone" },
     { MAT_WOOD,  "Wood"  },
+    /* Rubber only -- molten rubber, molten iron and molten copper are all
+       simulated but unplaceable, for the same reason mercury's vapour and
+       frozen forms are: they are states you put a material INTO, not things
+       you build with. */
+    { MAT_RUBBER,"Rubber"},
     { MAT_IRON,  "Iron"  },
     { MAT_COPPER,"Copper"},
     { MAT_GRAPHENE,"Graphene"},
@@ -131,6 +146,33 @@ static int  g_speedIdx = 0;      /* index into SPEEDS */
 static double g_fps = 0.0, g_simMs = 0.0;
 static int    g_cellCount = 0;
 
+/* What is under the cursor, for the panel readout. Returns false when the
+   pointer is off the playfield (over the panel, or outside the window), so the
+   caller can show a placeholder instead of a stale name.
+
+   Air is reported as "Air" with its temperature rather than skipped: pointing
+   at apparently empty space to see how hot it is turns out to be one of the
+   more useful things the readout does, since heat is invisible in Material
+   view and only roughly shaded in Glow view. */
+static bool hoverCell(char* out, int cap, u32* colOut) {
+    const int cx = (g_mx - PANEL_W) / SCALE, cy = g_my / SCALE;
+    if (g_mx < PANEL_W || cx < 0 || cx >= SIM_W || cy < 0 || cy >= SIM_H) return false;
+    const Cell& c = g_world.at(cx, cy);
+    const int t = (int)g_world.temp[cy * SIM_W + cx] - TEMP_OFFSET;
+    const char* name = (c.mat == MAT_EMPTY) ? "Air" : MATS[c.mat].name;
+    _snprintf(out, cap, "%s  %+d C", name, t);
+    out[cap - 1] = 0;
+    if (colOut) {
+        /* the material's own dry colour, so the label is tinted like the thing
+           it names -- and a mid-tone floor so dark materials stay readable */
+        u32 col = (c.mat == MAT_EMPTY) ? 0x9AA0AA : MATS[c.mat].dryA;
+        int r = (col >> 16) & 0xFF, g = (col >> 8) & 0xFF, b = col & 0xFF;
+        if (r + g + b < 240) { r += 70; g += 70; b += 70; }
+        *colOut = ((u32)imin(r,255) << 16) | ((u32)imin(g,255) << 8) | (u32)imin(b,255);
+    }
+    return true;
+}
+
 static bool inRect(const RECT& r, int x, int y) {
     return x >= r.left && x < r.right && y >= r.top && y < r.bottom;
 }
@@ -152,12 +194,17 @@ static void layoutPanel() {
        comically tall buttons. */
     const int pad = 10, w = PANEL_W - pad * 2;
     const int top = 34;              /* leave room for the title */
-    const int statsTop = WIN_H - 74; /* keep clear of the stats block */
+    const int statsTop = STATS_TOP;  /* keep clear of the stats block */
     const int sepTotal = 12;         /* the two 6px group separators below */
-    const int rowCount = N_BRUSH + 2 + N_ACT;   /* +2: size row, speed row */
+
+    /* Materials go in TWO columns, everything below them stays full width. The
+       split is what buys the height: 25 buttons in one column forced a 20px
+       pitch, 13 rows of two leaves room for 30. */
+    const int brushRows = (N_BRUSH + 1) / 2;
+    const int rowCount  = brushRows + 2 + N_ACT;   /* +2: size row, speed row */
 
     int pitch = (statsTop - top - sepTotal) / rowCount;
-    if (pitch > 26) pitch = 26;
+    if (pitch > 30) pitch = 30;
     if (pitch < 14) pitch = 14;   /* past this the labels are unreadable anyway;
                                      better to overflow visibly than to compute
                                      a zero or negative row height */
@@ -165,9 +212,20 @@ static void layoutPanel() {
     const int h = pitch - gap;
     int y = top;
 
-    for (int i = 0; i < N_BRUSH; ++i) {
-        SetRect(&g_brushRect[i], pad, y, pad + w, y + h);
-        y += pitch;
+    /* Column-major, so the palette's grouping survives the split: the first
+       half of BRUSHES fills the left column top to bottom and the second half
+       the right, keeping related materials next to each other vertically
+       rather than interleaving them across the two columns. */
+    {
+        const int colGap = 8;
+        const int colW   = (w - colGap) / 2;
+        for (int i = 0; i < N_BRUSH; ++i) {
+            const int col = i / brushRows;
+            const int row = i % brushRows;
+            const int x0  = pad + col * (colW + colGap);
+            SetRect(&g_brushRect[i], x0, top + row * pitch, x0 + colW, top + row * pitch + h);
+        }
+        y = top + brushRows * pitch;
     }
 
     y += 6;
@@ -393,13 +451,25 @@ static void drawPanel(HDC hdc) {
     drawButton(hdc, g_actRect[ACT_CLEAR], "Clear", NULL, false, inRect(g_actRect[ACT_CLEAR], g_mx, g_my));
 
     /* stats, bottom of the panel */
-    char s[64];
-    int sy = WIN_H - 74;
-    sprintf(s, "%.0f fps", g_fps);                         drawText(hdc, 10, sy,      RGB(150, 200, 150), s);
-    sprintf(s, "sim %.2f ms", g_simMs);                    drawText(hdc, 10, sy + 16, RGB(170, 178, 190), s);
-    sprintf(s, "cells %d", g_cellCount);                   drawText(hdc, 10, sy + 32, RGB(170, 178, 190), s);
+    char s[96];
+    int sy = STATS_TOP;
+    /* What the cursor is over, in the material's own colour so it reads as a
+       label for the thing under the pointer rather than as another statistic.
+       Temperature comes along for free and is the number you usually want when
+       you are pointing at something anyway. */
+    {
+        u32 col = 0x9AA0AA;
+        if (hoverCell(s, sizeof(s), &col)) {
+            drawText(hdc, 10, sy, RGB((col >> 16) & 0xFF, (col >> 8) & 0xFF, col & 0xFF), s);
+        } else {
+            drawText(hdc, 10, sy, RGB(110, 116, 126), "-");
+        }
+    }
+    sprintf(s, "%.0f fps", g_fps);                         drawText(hdc, 10, sy + 20, RGB(150, 200, 150), s);
+    sprintf(s, "sim %.2f ms", g_simMs);                    drawText(hdc, 10, sy + 36, RGB(170, 178, 190), s);
+    sprintf(s, "cells %d", g_cellCount);                   drawText(hdc, 10, sy + 52, RGB(170, 178, 190), s);
     sprintf(s, "chunks %d/%d", g_world.activeChunks, CHUNK_COUNT);
-    drawText(hdc, 10, sy + 48, RGB(170, 178, 190), s);
+    drawText(hdc, 10, sy + 68, RGB(170, 178, 190), s);
 
     SelectObject(hdc, oldFont);
 }

@@ -181,13 +181,44 @@ MatInfo MATS[MAT_COUNT] = {
 
      Where fire dies by cooling (coolTemp 100 -> Empty), cold fire dies by
      WARMING, which is the boil column pointed at Empty: past +5 C it is gone.
-     The two are the same mechanism read in opposite directions.
+     The two are the same mechanism read in opposite directions -- but for cold
+     fire that mechanism alone is nowhere near enough, and it takes a timer
+     (g_matDecay, 6/255 per frame) to actually finish it off. The arithmetic is
+     in the g_matDecay note in materials.h; the short version is that its
+     gradient to open air is so much smaller than fire's that conduction
+     truncates to literally zero, leaving nothing to cool it to death. Untimed
+     it lived 503 frames against fire's 94 and rode 359 cells up against fire's
+     68, gathering in a layer under whatever it could not get past.
+
+     The counterintuitive part, and the reason the timer is not just a nerf:
+     killing it faster made it COLDER in practice. Spent cells were crowding out
+     their own replacements, so a bed that turns over quickly keeps delivering
+     fresh -39 C material where a lingering one delivers warmed-up leftovers.
+     Measured in a graphene bucket of water: the water reaches -25 C instead of
+     -18, peak ice goes 1198 -> 1459, and cells escaping past the bucket drop
+     863 -> 42.
+
+     6/255 puts cold fire almost exactly on top of fire, which is what "acts
+     like fire but cold" ought to mean: 116 frames and 88 cells of rise against
+     fire's 108 and 84. Beware measuring this with one run -- a puff's lifetime
+     is the last of eleven cells to expire, so it is the maximum of eleven
+     geometric draws and swings wildly. Single readings ranged 45..150 at fixed
+     settings and even put decay 8 below decay 10; the table above is a 25-run
+     mean, which is monotonic. Cooling power is nearly flat across this range
+     (1459 ice at decay 6 against 1476 at 10), so this number trades lifetime,
+     not potency.
+
+     heatMassShift 2 rather than 1 is the other half. Mass decides how much cold
+     ONE cell unloads before it warms up, and with the timer now bounding how
+     long cells stick around, mass can be raised for punch without the material
+     overstaying. Decoupling the payload from the lifetime is the whole point of
+     having two knobs.
 
      It rises, which real cold gas does not do. That is deliberate and comes
      straight from the brief -- "acts like fire but cold" -- so it behaves like
      a flame you can build with, rather than like a heavy gas pooling on the
      floor. */
-  { "ColdFire",KIND_GAS,    3,   0,    0,   3,  60,   0,  0,  200,  1,   0, degC(-38), 0, MAT_EMPTY, degC(5), MAT_EMPTY, 0, MAT_EMPTY,   0,  0xEAFBFF, 0x4FD2F0, 0xEAFBFF, 0x4FD2F0, 0 },
+  { "ColdFire",KIND_GAS,    3,   0,    0,   3,  60,   0,  0,  200,  2,   0, degC(-39), 0, MAT_EMPTY, degC(5), MAT_EMPTY, 0, MAT_EMPTY,   0,  0xEAFBFF, 0x4FD2F0, 0xEAFBFF, 0x4FD2F0, 0 },
 
   /* Liquid nitrogen. Real LN2 boils at -196 C, which this scale cannot express
      at all -- so what is modelled is the BEHAVIOUR that matters: it is far
@@ -277,7 +308,22 @@ MatInfo MATS[MAT_COUNT] = {
      (dryA==dryB==wetA==wetB) rather than the per-cell speckle sand and dirt get
      from a colour range. Speckle reads as loose grains; a milled bar should read
      as one uniform material. */
-  { "Iron",  KIND_STATIC, 220,   0,    0,   0,   0,   0,  0,  255,  0,   2,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0x8A9099, 0x8A9099, 0x8A9099, 0x8A9099, 0 },
+  { "Iron",  KIND_STATIC, 220,   0,    0,   0,   0,   0,  0,  255,  0,   2,   0,    0,  MAT_EMPTY, degC(200), MAT_IRON_MELT, 0, MAT_EMPTY, 0, 0x8A9099, 0x8A9099, 0x8A9099, 0x8A9099, 0 },
+  /* Molten iron. Freezing back at 160 C rather than just under the 200 C melting
+     point is forced, not chosen, and the same constraint sets molten copper and
+     molten rubber. A phase change runs latentDrain(), which pulls the new cell
+     30 units toward ambient -- so iron melting at 200 C arrives as molten iron
+     at 170 C. If it re-froze anywhere above that it would solidify on its very
+     next update, and the bar would sit flickering between the two states
+     without ever flowing. Every freeze-back point here is therefore more than
+     LATENT_HEAT below its own melting point, with room to spare.
+
+     heatSpread drops to 0 in the molten state, and that is the actual point of
+     the whole change. A solid copper bar carries heat five cells a frame; melt
+     it and you are left with a puddle that conducts only to what it touches.
+     Overheating your heat plumbing does not merely deform it, it destroys the
+     property you built it for. */
+  { "MoltIron",KIND_LIQUID,215,  0,    0,   4,   0,   0,  0,  255,  1,   0, degC(200), degC(160), MAT_IRON, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, 0xFFC46A, 0xE59A3C, 0xFFC46A, 0xE59A3C, 0 },
   /* The three metals are ranked by `sprd`, NOT by `cond`, and that is forced
      rather than chosen: all three sit at cond 255, which is already 99.2% of
      the hard cap on a single exchange, and 256 or 100000 would be identical to
@@ -296,7 +342,19 @@ MatInfo MATS[MAT_COUNT] = {
      since the walk is O(sprd) per cell per frame. 28 was picked as the point
      where a screen-wide bar equalises in about two frames; going much higher
      buys nothing visible and is paid for every frame by every graphene cell. */
-  { "Copper",KIND_STATIC, 224,   0,    0,   0,   0,   0,  0,  255,  0,   5,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0xC87838, 0xC87838, 0xC87838, 0xC87838, 0 },
+  { "Copper",KIND_STATIC, 224,   0,    0,   0,   0,   0,  0,  255,  0,   5,   0,    0,  MAT_EMPTY, degC(175), MAT_COPPER_MELT, 0, MAT_EMPTY, 0, 0xC87838, 0xC87838, 0xC87838, 0xC87838, 0 },
+  /* Copper melts 25 C BEFORE iron, which is the right way round both physically
+     (1085 C against 1538 C) and for play: the better conductor is the one that
+     gives out first, so choosing copper over iron becomes a genuine trade
+     rather than a free upgrade.
+
+     175 rather than 185 is set by one measurement. A bed of lava carries a slab
+     to about 178 C, so at 185 lava melted a token 3 cells of copper -- true in
+     principle and invisible in play. At 175 lava melts copper properly while
+     iron (200 C) shrugs it off, which turns a vague ordering into a rule worth
+     knowing: LAVA MELTS COPPER BUT NOT IRON. See the molten iron note for why
+     the freeze-back has to be 40 C down rather than just under the melt. */
+  { "MoltCopp",KIND_LIQUID,218,  0,    0,   4,   0,   0,  0,  255,  1,   0, degC(175), degC(140), MAT_COPPER, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, 0xE8873A, 0xCC6522, 0xE8873A, 0xCC6522, 0 },
   /* Graphene's dark indigo is not decoration. It started as a flat neutral grey
      (0x2F3540), which is the obvious colour for carbon and turned out to be
      nearly invisible: the palette already has three dark greys, and by a
@@ -305,6 +363,11 @@ MatInfo MATS[MAT_COUNT] = {
      On screen it read as wall. Holding it dark and low-chroma but pushing the
      cast to indigo gets it to 610, comfortably clear of everything, without
      turning it into a bright new primary. */
+  /* Graphene has NO melting point, and that is now its defining advantage
+     rather than a detail. Iron and copper both give out around 200 C, so above
+     that graphene is the only thing left that still conducts. That is the whole
+     shape of the conductor ladder: copper is fastest, iron takes more heat than
+     copper, and graphene is the only one that survives real heat. */
   { "Graph", KIND_STATIC, 190,   0,    0,   0,   0,   0,  0,  255,  0,  28,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0x1E1F4E, 0x1E1F4E, 0x1E1F4E, 0x1E1F4E, 0 },
   /* Lava spawns as hot as the u8 scale allows and stays molten all the way down
      to 100, which more than doubles the band it must fall through. The real
@@ -314,6 +377,64 @@ MatInfo MATS[MAT_COUNT] = {
      also guarantees any lava is hot enough to boil water. */
   { "Lava",  KIND_LIQUID, 200,   0,    0,   3,   0,   0,  0,  120,  3,   0, degC(215), degC(100), MAT_STONE, 0, MAT_EMPTY, 0, MAT_EMPTY,  0,  0xF0641E, 0x9A2408, 0xF0641E, 0x9A2408, 0 },
   { "Wood",  KIND_STATIC, 150,   0,    0,   0,   0,   0,  0,   70,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY, degC(80), MAT_FIRE,   0,  0x8A5A2C, 0x63401E, 0x8A5A2C, 0x63401E, 0 },
+  /* Rubber: the best insulator in the game, and the only one that is a solid.
+     heatCond 12 against wood's 70 and stone's 85 -- and conduction runs at
+     min(condA, condB), so a rubber layer throttles heat crossing it whatever is
+     on either side of it. Air itself is 6, so rubber is within a whisker of
+     being as good as an air gap while still being something you can build a
+     wall out of.
+
+     It melts at 100 C, exactly water's boiling point, so the insulator fails at
+     precisely the temperature the thing it is usually wrapped around starts to
+     boil. That is the interesting limit: rubber is superb right up until it is
+     asked to do anything genuinely hot -- which is why a proper
+     high-temperature insulator is still a real gap in the material list. */
+  { "Rubber",KIND_STATIC, 150,   0,    0,   0,   0,   0,  0,   12,  0,   0,   0,    0,  MAT_EMPTY, degC(100), MAT_RUBBER_MELT, 0, MAT_EMPTY, 0, 0x2E2E34, 0x212126, 0x2E2E34, 0x212126, 0 },
+  /* Molten rubber, and the only viscous liquid in the table. The 230 in the
+     jitter column is viscosity, not jitter -- for a LIQUID that byte means
+     "chance out of 255 of refusing to flow sideways this frame", which is 90%
+     here. See the field note in materials.h.
+
+     Viscosity had to become its own axis because dispersion ran out. Molten
+     rubber was already at dispersion 1, and 0 is not "thicker" -- it is "no
+     longer a liquid": measured, a dispersion-0 pool poured down one side of a
+     container had still not reached the far side after 6000 frames, and a
+     vessel draining through its floor kept 270 of 2370 cells welded to the
+     walls permanently. A probability gate degrades far more gracefully. A
+     stuck cell just tries again next frame, so the liquid still finds its level
+     and still drains completely -- it simply takes its time getting there.
+
+     Dispersion is back to 2 for the same reason: with flow gated to one frame
+     in ten, the rare frames it DOES move should be worth something, or the
+     thing crawls one pixel at a time and looks broken rather than thick.
+
+     Density 115 puts it above water's 100, so it sinks through water and sets on
+     the bottom rather than skinning over on the surface. Solid rubber is 150,
+     also above water -- though that number is never actually read: rubber is
+     KIND_STATIC, and tryMove refuses to displace anything that is not a liquid
+     or a gas, so a static material's density is decorative. Molten rubber's is
+     the one that does anything.
+
+     115 rather than something heavier keeps the ordering sensible against the
+     rest: it sinks through water (100) but still floats on mercury (250), and
+     it cannot displace powders at all regardless, since sand and dirt are not
+     fluids as far as tryMove is concerned.
+
+     heatMassShift 2 is what makes that density actually visible, and it was not
+     obvious until measured. At mass 0 a blob poured onto water sank for a
+     moment, cooled past its 65 C set point on the way down and solidified
+     halfway -- and solid rubber is KIND_STATIC, so it stopped there and read as
+     floating no matter what the density column said. Holding four times the
+     heat keeps it molten long enough to reach the bottom before it sets.
+     Measured against a pool: mean depth y=321 at mass 0 (above the water's
+     339), y=364 at mass 2 (below it). Being an insulator, rubber holding onto
+     its heat is the physically sensible reading anyway.
+
+     Not placeable -- the palette lists Rubber only. Melting is something you do
+     TO rubber rather than a thing you build with, and every palette row costs
+     height for all the others. It is still fully simulated: exactly the
+     treatment mercury vapour and frozen mercury already get. */
+  { "MoltRub",KIND_LIQUID,115,   0,    0,   2, 230,   0,  0,   12,  2,   0, degC(100), degC(65), MAT_RUBBER, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, 0x4A3A34, 0x352824, 0x4A3A34, 0x352824, 0 },
   /* Clone and Void are machines rather than substances, so they get flat
      colours (dryA==dryB==wetA==wetB). For Clone that is also load-bearing: it
      keeps the id of the material it copies in its unused `moisture` byte, and
@@ -346,6 +467,7 @@ u32 g_colorLut[MAT_COUNT * 256];
 u32 g_heatLut[256];
 u8  g_heatAlpha[256];
 u8  g_matGlows[MAT_COUNT];
+u8  g_matDecay[MAT_COUNT];
 
 /* --- the temperature ramp ------------------------------------------------
    The stops now run through ambient rather than starting there, because the
@@ -424,6 +546,10 @@ void initMaterials() {
         /* Full heat glow for everything except plasma -- see g_matGlows in
            materials.h for why it is the one exception. */
         g_matGlows[m] = (u8)(m != MAT_PLASMA);
+
+        /* Only cold fire expires on a timer -- see g_matDecay in materials.h
+           for why it cannot expire by cooling the way fire does. */
+        g_matDecay[m] = (m == MAT_COLDFIRE) ? 6 : 0;
 
         for (int w = 0; w < 16; ++w) {
             /* Representative moisture for this bucket. Bucket 0 must map to

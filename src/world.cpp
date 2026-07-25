@@ -228,6 +228,28 @@ void World::updateLiquid(int x, int y) {
 
     if (tryMove(x, y, x, y + 1)) return;
 
+    /* Viscosity. For a liquid the `jitter` byte is a chance out of 255 that the
+       cell simply refuses to flow sideways this frame -- see the note on the
+       field in materials.h for why it lives there. Straight-down falling above
+       is deliberately outside the gate: viscosity resists flow, not gravity, so
+       a thick liquid still drops at full speed and only crawls once it lands.
+
+       The dirtying here is the subtle part, and getting it wrong is the trap
+       this file warns about twice already. Refusing to move is not motion, so
+       it schedules nothing -- and a pool whose cells all refused on the same
+       frame would put its own chunk to sleep with somewhere left to flow,
+       freezing mid-ooze. So a cell that still has an empty neighbour dirties
+       itself to guarantee another attempt. A cell packed solid on all sides has
+       nothing to retry and is left to sleep, which is what keeps a settled
+       viscous pool free rather than spinning forever. */
+    if (m.jitter && rngChance(m.jitter)) {
+        if (cells[y * SIM_W + x - 1].mat == MAT_EMPTY ||
+            cells[y * SIM_W + x + 1].mat == MAT_EMPTY ||
+            cells[(y + 1) * SIM_W + x - 1].mat == MAT_EMPTY ||
+            cells[(y + 1) * SIM_W + x + 1].mat == MAT_EMPTY) dirtyPoint(x, y);
+        return;
+    }
+
     int dx = (c.flags & F_DIR) ? 1 : -1;
     if (tryMove(x, y, x + dx, y + 1)) return;
     if (tryMove(x, y, x - dx, y + 1)) return;
@@ -793,6 +815,16 @@ void World::updateCell(int x, int y) {
     }
     if (m.coolTemp && t < (int)m.coolTemp) {
         convert(x, y, m.coolsTo);   /* fire burns out, steam condenses, lava sets */
+        return;
+    }
+    /* Expiry on a timer rather than by temperature. Only cold fire uses this,
+       because it is the only material whose gradient to open air is too small
+       to conduct at all -- (58 * 6) >> 9 truncates to zero -- so it has no way
+       to cool itself to death the way fire does. See g_matDecay in materials.h.
+       The check is a single load against a MAT_COUNT-byte table that is 0 for
+       everything else, so it costs nothing for materials that do not opt in. */
+    if (g_matDecay[c.mat] && rngChance(g_matDecay[c.mat])) {
+        convert(x, y, MAT_EMPTY);
         return;
     }
     if (m.quenchedBy) {

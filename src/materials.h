@@ -51,11 +51,16 @@ enum MatId {
     MAT_MERCURY,     /* the only liquid metal -- boils to vapour, freezes solid */
     MAT_MERCURY_GAS, /* mercury vapour; condenses back to mercury as it cools */
     MAT_MERCURY_ICE, /* frozen mercury; melts back into mercury */
-    MAT_IRON,        /* static, extremely heat-conductive */
+    MAT_IRON,        /* static, extremely heat-conductive -- but it melts */
+    MAT_IRON_MELT,   /* molten iron; freezes back to iron as it cools */
     MAT_COPPER,      /* better than iron -- carries heat further per frame */
-    MAT_GRAPHENE,    /* near-instant along a sheet */
+    MAT_COPPER_MELT, /* molten copper; freezes back to copper */
+    MAT_GRAPHENE,    /* near-instant along a sheet, and the only conductor with
+                        no melting point at all */
     MAT_LAVA,        /* molten stone; freezes back to stone as it cools */
     MAT_WOOD,        /* catches fire and is consumed */
+    MAT_RUBBER,      /* the best insulator there is, until it melts */
+    MAT_RUBBER_MELT, /* molten rubber; sets again as it cools */
     MAT_CLONE,       /* copies the first material it touches, forever */
     MAT_VOID,        /* destroys whatever it touches */
     MAT_HEATER,      /* holds itself at max temperature, forever */
@@ -87,9 +92,28 @@ struct MatInfo {
     /* Liquids and gases: max cells travelled sideways in one frame. Higher =
        spreads out faster, at slightly more cost per cell. */
     u8  dispersion;
-    /* Gases only: chance out of 255 of drifting sideways instead of rising on
-       a given frame. This is what makes smoke and steam flit and billow
-       rather than shoot straight up in a rigid column. */
+    /* One byte, two meanings, split by kind -- nothing reads both.
+
+       GASES: chance out of 255 of drifting sideways instead of rising on a
+       given frame. This is what makes smoke and steam flit and billow rather
+       than shoot straight up in a rigid column.
+
+       LIQUIDS: viscosity. Chance out of 255 that the cell refuses to flow
+       sideways at all this frame. 0 is a freely running liquid, 230 is a
+       90%-of-the-time-stuck ooze. It falls straight down regardless -- gravity
+       is not what viscosity resists.
+
+       Sharing the byte is deliberate rather than stingy. `dispersion` alone
+       could not express this: it was already at its floor of 1 for molten
+       rubber, and 0 does not mean "very thick", it means "not a liquid" --
+       measured, a dispersion-0 pool poured down one side of a container never
+       reached the far side in 6000 frames and left cells welded to the walls of
+       a draining vessel. Viscosity as a probability is a separate axis with 255
+       steps of room, and it degrades gracefully: a stuck cell simply tries
+       again next frame, so the liquid still levels and still drains, just
+       slowly. Adding a proper column instead would have meant editing every
+       row of MATS[] to dodge -Wmissing-field-initializers, for a field one
+       material uses. */
     u8  jitter;
 
     /* --- moisture ---------------------------------------------------- */
@@ -197,6 +221,30 @@ extern u8  g_heatAlpha[256];
    bytes this whole table sits in a single cache line, where reading it in the
    render loop is cheaper than pulling in the much larger MatInfo. */
 extern u8 g_matGlows[MAT_COUNT];
+
+/* Chance out of 255 that a cell of this material simply expires each frame.
+   0 for everything except cold fire, and the reason it has to exist is worth
+   understanding before reaching for it again.
+
+   Fire needs no such thing: it is 185 degrees above ambient, and conduction
+   moves (adiff * cond) >> 9, so even against air's near-insulating cond of 6 a
+   flame sheds (185*6)>>9 = 2 degrees per neighbour per frame. It cools itself
+   to death in about 90 frames, and every degree it loses went into something.
+
+   Cold fire cannot do that, and not because it is merely weaker. The cold half
+   of the scale is 60 degrees against the hot half's 195, so cold fire sits only
+   58 degrees below ambient -- and (58*6)>>9 truncates to **zero**. It exchanges
+   literally nothing with open air. Its only route to expiry is the slow drift
+   toward ambient, which is why it used to live 546 frames against fire's 94 and
+   ride 359 cells up against fire's 68, piling up under anything it could not
+   get past instead of being spent on it.
+
+   Since temperature cannot govern its lifetime, lifetime becomes its own knob.
+   That also lets the two halves be tuned independently, which is what the
+   material actually needs: heatMassShift decides how much cold ONE cell
+   delivers before it warms, and this decides how long it hangs around. Cold
+   fire wants both -- a big payload and a short life. */
+extern u8 g_matDecay[MAT_COUNT];
 
 /* Blend two packed 0xRRGGBB colours. t is 0..255. */
 static inline u32 lerpColor(u32 a, u32 b, int t) {

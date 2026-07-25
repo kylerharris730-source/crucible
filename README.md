@@ -18,6 +18,19 @@ and toggle Overwrite / View / Pause / Clear. The selected brush shows a gold
 highlight; toggles show their live state in the label. Keyboard shortcuts still
 work as accelerators but are no longer needed — new materials just get a button.
 
+Materials sit in **two columns**, filled top-to-bottom down the left one and
+then the right, so the palette's grouping (solids, metals, hot, cold, machines,
+tools) stays contiguous vertically instead of interleaving across the split.
+The split is what buys the button height: 25 entries in a single column had
+squeezed the derived row pitch down to 20px.
+
+The foot of the panel shows **what the cursor is over** — material and
+temperature, tinted in that material's own colour — above the fps/sim-ms/cells/
+chunks readout. Air is reported too rather than skipped, since pointing at
+apparently empty space to check how hot it is turns out to be one of the more
+useful things it does: heat is invisible in Material view and only roughly
+shaded in Glow view.
+
 | Input | Action |
 |---|---|
 | Left mouse (over the sim) | Draw with the current material / apply the current tool |
@@ -610,16 +623,68 @@ one. (Also: `degC(-40)` is 0, and 0 is the "disabled" sentinel in every
 temperature column, so −39 °C is the coldest usable setpoint.)
 
 **Cold fire** is fire read backwards. It rises, wanders and expires like a
-flame, but chills instead of burns. This needed *no new code* — conduction is
-symmetric, so a very cold cell with a high `heatCond` pulls warmth out of its
-neighbours exactly as fire pushes warmth in. Where fire dies by cooling
-(`coolTemp` → Empty), cold fire dies by *warming*: the boil column pointed at
-Empty. Same mechanism, opposite direction. It rises, which real cold gas does
-not do — that is deliberate, from the brief "acts like fire but cold".
+flame, but chills instead of burns — conduction is symmetric, so a very cold
+cell with a high `heatCond` pulls warmth out of its neighbours exactly as fire
+pushes warmth in. Where fire dies by cooling (`coolTemp` → Empty), cold fire
+dies by *warming*: the boil column pointed at Empty. It rises, which real cold
+gas does not do — deliberate, from the brief "acts like fire but cold".
 
-It works in contact but not at a distance: a bed laid on an open pool rises off
-the surface within a frame and barely touches it, the same trap fire hits with
-wood. Sealed against water it drives the pool to −10 °C and forms ice.
+#### Why cold fire needs a decay timer when fire does not
+
+The sharpest consequence of the cold half of the scale being small, and it is
+not a matter of degree — it is a cliff. Conduction moves `(adiff * cond) >> 9`,
+and against air `cond` is only 6:
+
+| | gap to ambient | moved per neighbour per frame |
+|---|---|---|
+| fire | 185 | `(185*6)>>9` = **2** |
+| cold fire | 58 | `(58*6)>>9` = **0** |
+
+Cold fire exchanges **literally nothing** with open air; it truncates to zero.
+Fire cools itself to death in ~94 frames and every degree it sheds goes into
+something. Cold fire had no route to expiry but the slow ambient drift, so it
+lived **503 frames** and rode **359 cells** up (fire: 94 and 68), gathering in a
+layer under whatever it could not get past instead of being spent on it.
+
+Since temperature cannot govern its lifetime, lifetime became its own knob:
+`g_matDecay`, a chance out of 255 that a cell simply expires, non-zero only for
+cold fire. The counterintuitive part is that **killing it faster made it colder
+in practice** — spent cells were crowding out their own replacements, so a bed
+that turns over keeps putting fresh −39 °C material against the target:
+
+| graphene bucket of water, cold-fire bed underneath | before | after |
+|---|---|---|
+| coldest the water reaches | −18 °C | **−25 °C** |
+| peak ice | 1198 | **1459** |
+| cells escaping past the bucket | 863 | **42** |
+| open-air lifetime / rise | 503 / 359 | **116 / 88** |
+
+At 6/255 that lands cold fire almost exactly on fire — 116 frames and 88 cells
+against fire's 108 and 84 — which is what "acts like fire but cold" should mean.
+Cooling power is nearly flat across the useful range of this knob (1459 ice at
+decay 6 against 1476 at decay 10), so it trades lifetime, not potency.
+
+Measure it with more than one run. A puff's lifetime is the last of eleven cells
+to expire — the maximum of eleven geometric draws — so single readings swung
+45..150 at fixed settings and even placed decay 8 *below* decay 10. The figures
+here are 25-run means, which come out monotonic.
+
+`heatMassShift` went 1 → 2 at the same time, and the pairing is the point: mass
+decides how much cold *one* cell unloads before it warms, decay decides how long
+cells hang around. Splitting payload from lifetime is the whole reason to have
+two knobs rather than one.
+
+**What it cost.** A *sealed one-shot charge* of cold fire no longer freezes
+water — 461 peak ice before the timer, 58 after — because a fixed quantity runs
+out before it can unload. That is a genuine loss, accepted because the fed case
+(a bed under a target, the way a fire is used) is both the realistic one and
+hugely better. There is no decay value that keeps both: even 3/255 collapses the
+sealed charge to 79 ice.
+
+**Cold fire is still only 58 degrees below ambient**, against fire's 185 above,
+and nothing here changes that. Only widening the scale would, and that costs hot
+headroom which is already densely packed — mercury 150, copper 175, stone 185,
+iron 200, fire 205, lava/plasma/heater 215.
 
 **Liquid nitrogen** boils at −25 °C, so an exposed pool is always boiling — as
 real LN2 always is — and only stays liquid where something keeps it cold. It
@@ -672,6 +737,125 @@ state.** Sampling at the end reported that cold fire did nothing at all — at
 frame 400 the test pool sits at −3 °C with ice in it, and by frame 1500 it is
 uniformly +20 °C again with none. Three separate tests in this area failed that
 way before the measurements were fixed.
+
+### Rubber, and the conductor ladder
+
+**Rubber** is the best insulator in the game: `heatCond` 12, against wood's 70
+and stone's 85. Since conduction runs at `min(condA, condB)`, a rubber layer
+throttles heat crossing it whatever sits on either side. Air itself is 6, so
+rubber is within a whisker of an air gap while still being something you can
+build a wall out of. Measured through a 17-cell wall with the hot face held at
+90 °C, of a possible +70 rise:
+
+| wall | far-face rise |
+|---|---|
+| **rubber** | **+0** |
+| stone | +40 |
+| iron | +54 |
+| graphene | +68 |
+
+It melts at 100 °C — exactly water's boiling point — and the consequence is the
+interesting part:
+
+> **Insulating well is precisely what destroys it.** Heat cannot cross into
+> whatever rubber is protecting, so the *outer* face climbs past 100 °C and the
+> jacket fails. A stone jacket conducts heat away from itself and never gets hot
+> enough to be in danger. Measured with a fire underneath, a pot in a stone
+> jacket first steams at frame 115; in a rubber jacket, at frame **54** — the
+> better insulator is worse in practice, because it breaches.
+
+That is the gap a genuine high-temperature insulator would fill.
+
+**Molten rubber** is the only viscous liquid in the game, and viscosity is its
+own axis: for a **liquid**, the `jitter` byte (documented "gases only") is a
+chance out of 255 that the cell refuses to flow sideways this frame. Molten
+rubber sits at 230 — stuck 90% of frames. It still falls straight down at full
+speed; viscosity resists flow, not gravity.
+
+Measured, to run 100 cells along a floor:
+
+| liquid | frames |
+|---|---|
+| **molten rubber** | **~355** |
+| lava | 28 |
+| water | 17 |
+
+**Why viscosity is not just `dispersion`.** Dispersion ran out. Molten rubber
+was already at 1, and 0 is not "thicker" — it is "no longer a liquid": measured,
+a dispersion-0 pool poured down one side of a container had still not reached
+the far side after 6000 frames, and a vessel draining through its floor kept 270
+of 2370 cells welded to the walls permanently. A probability gate degrades
+gracefully instead. A stuck cell simply tries again next frame, so at 90%
+viscosity the liquid still **levels perfectly** (17 deep against 17 across a
+container filled from one side) and still **drains completely** (0 of 2370 cells
+left behind). It just takes its time. Dispersion went back up to 2 for the same
+reason: if flow is gated to one frame in ten, the frames it does move should be
+worth something, or it crawls a pixel at a time and reads as broken.
+
+Molten rubber is **denser than water** (115 against 100), so it sinks through a
+pool and sets on the bottom; it still floats on mercury (250). Solid rubber is
+150, also above water, though that number is never actually read — rubber is
+`KIND_STATIC`, and `tryMove` refuses to displace anything that is not a liquid
+or a gas, so a static material's density is decorative.
+
+Making that density *visible* took a second change, and it was not obvious until
+measured. At `heatMassShift` 0 a blob poured onto water sank briefly, cooled past
+its 65 °C set point on the way down and solidified halfway — and once solid it is
+static, so it stopped there and read as floating no matter what the density
+column said. Mass 2 keeps it molten long enough to reach the bottom first:
+measured mean depth y=321 at mass 0 (above the water's 339) against y=364 at
+mass 2 (below it). Rubber being an insulator, holding onto its heat is the
+physically sensible reading anyway.
+
+It sets again below 65 °C.
+
+> **The dirty-rect trap, third time.** A cell that refuses to move has not
+> moved, so it schedules nothing — and a pool whose cells all refused on the
+> same frame would put its own chunk to sleep mid-ooze. So a stuck cell with an
+> empty neighbour re-dirties itself; one packed solid on all sides does not, and
+> is left to sleep. A pool held *artificially* molten forever therefore never
+> sleeps, at a bounded 0.15 ms/frame over 8 of 192 chunks. Left alone it cools,
+> sets solid, and the world sleeps — measured at frame 9222.
+
+#### Iron and copper melt; graphene does not
+
+This is what makes the three conductors a real ladder rather than a strict
+upgrade path. Measured against every heat source in the game:
+
+| source | reaches | iron (melts 200 °C) | copper (melts 175 °C) |
+|---|---|---|---|
+| fire | ~130 °C | survives | survives |
+| lava | ~175 °C | **survives** | **melts** |
+| heater / plasma | ~215 °C | melts | melts |
+| — | — | graphene: **no melting point at all** |
+
+So: **lava melts copper but not iron.** Copper is the faster conductor and the
+first to give out, which makes choosing it a genuine trade instead of a free
+upgrade; iron is the tougher one; and above ~200 °C graphene is the only thing
+left that still conducts.
+
+Copper's 175 °C was set by measurement, not taste. At 185 a lava bed — which
+carries a slab to about 178 °C — melted a token 3 cells, true in principle and
+invisible in play. 175 turns a vague ordering into a rule worth knowing.
+
+**Melting destroys what you built the metal for.** Both molten forms have
+`heatSpread` 0, so a copper bar that carries heat five cells a frame becomes a
+puddle that only conducts to what it touches. Overheating your heat plumbing
+does not merely deform it.
+
+One consequence to know: **an iron vessel sitting directly on a heater now
+partly melts and re-freezes.** The mercury still still works (the vessel
+recovers), but graphene is now the correct material for anything in direct
+contact with a heater or plasma.
+
+#### The freeze-back point is not free to choose
+
+Every melt/freeze pair here has a gap wider than `LATENT_HEAT` (30), and that is
+forced. A phase change runs `latentDrain()`, pulling the new cell 30 units
+toward ambient — so iron melting at 200 °C arrives as molten iron at 170 °C. If
+it re-froze anywhere above that it would solidify on its very next update, and
+the bar would flicker between states without ever flowing. Iron sets at 160,
+copper at 140, rubber at 65.
 
 ### Freezing and ice
 
