@@ -778,7 +778,7 @@ void World::updateCell(int x, int y) {
                    after a conduction ramp, which is what you expect to see.
                    Any lava qualifies: it freezes back to stone below 100, well
                    above wood's ignition point. */
-                if ((nm == MAT_FIRE || nm == MAT_LAVA)
+                if ((nm == MAT_FIRE || nm == MAT_LAVA || nm == MAT_PLASMA)
                     && rngChance(FIRE_SPREAD)) { ignite = true; break; }
             }
         }

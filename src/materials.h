@@ -43,6 +43,14 @@ enum MatId {
     MAT_ICE,         /* frozen water; melts back above freezing */
     MAT_STEAM,
     MAT_FIRE,
+    MAT_PLASMA,      /* fire's hotter sibling: holds its heat instead of
+                        spending it, and water cannot put it out */
+    MAT_COLDFIRE,    /* fire's mirror image: rises and decays like a flame, but
+                        chills everything it touches instead of burning it */
+    MAT_NITROGEN,    /* liquid nitrogen; boils away into cold fire */
+    MAT_MERCURY,     /* the only liquid metal -- boils to vapour, freezes solid */
+    MAT_MERCURY_GAS, /* mercury vapour; condenses back to mercury as it cools */
+    MAT_MERCURY_ICE, /* frozen mercury; melts back into mercury */
     MAT_IRON,        /* static, extremely heat-conductive */
     MAT_COPPER,      /* better than iron -- carries heat further per frame */
     MAT_GRAPHENE,    /* near-instant along a sheet */
@@ -171,6 +179,24 @@ extern u32 g_colorLut[MAT_COUNT * 256];
    short of opaque so even white-hot material stays recognisable. */
 extern u32 g_heatLut[256];
 extern u8  g_heatAlpha[256];
+
+/* Whether a material takes the heat glow at all, filled in by initMaterials().
+   Almost everything does -- it is how you read temperature at a glance. Plasma
+   is the one exception, for a reason worth stating: the glow ramp is orange at
+   working temperatures, and blending orange over blue does not make a hotter
+   blue, it makes mud. Measured before this existed, a plasma cell rendered
+   #5652B4 -- a murky purple -- when its material colour is #3866FF. A material
+   that only ever exists at extreme heat also gains nothing from an overlay
+   whose whole job is to announce "this is hot"; its own colour already says so.
+   So plasma keeps its blue in the Glow view, and the Heat view still reports
+   its true temperature like everything else.
+
+   A standalone array rather than a MatInfo field on purpose. As a field it
+   would be the one column absent from all nineteen MATS[] rows, which trips
+   -Wmissing-field-initializers on every row under -Wextra; and at MAT_COUNT
+   bytes this whole table sits in a single cache line, where reading it in the
+   render loop is cheaper than pulling in the much larger MatInfo. */
+extern u8 g_matGlows[MAT_COUNT];
 
 /* Blend two packed 0xRRGGBB colours. t is 0..255. */
 static inline u32 lerpColor(u32 a, u32 b, int t) {

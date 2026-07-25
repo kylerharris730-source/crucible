@@ -39,7 +39,14 @@ int renderWorld(const World& w, u32* out, int view) {
         Cell c = cells[i];
         u32 col = g_colorLut[((u32)c.mat << 8) | (u32)(c.moisture & 0xF0) | (u32)(c.tint >> 4)];
         const u8 t = temp[i];
-        if (t != AMBIENT_TEMP) col = lerpColor(col, g_heatLut[t], g_heatAlpha[t]);
+        /* g_matGlows lets a material opt out of the overlay entirely (plasma does;
+           see materials.h). Deliberately a flag and not a 0..255 scale: a scale
+           would mean an extra multiply and shift on the alpha, which changes
+           every OTHER material's blend by a rounding step for no benefit, since
+           nothing wants a partial glow. The test also sits second in an && whose
+           first half is already false for the overwhelming majority of cells. */
+        if (t != AMBIENT_TEMP && g_matGlows[c.mat])
+            col = lerpColor(col, g_heatLut[t], g_heatAlpha[t]);
         out[i] = col;
         count += (c.mat != MAT_EMPTY && c.mat != MAT_WALL);
     }

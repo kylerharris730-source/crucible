@@ -503,6 +503,176 @@ Stone, by contrast, is a poor conductor, so heat stays local to where it is
 applied. See [Conductivity saturates](#conductivity-saturates-so-better-conductors-are-ranked-by-reach)
 for why the ranking had to move off `heatCond`.
 
+### Plasma
+
+**Plasma** is fire's hotter sibling, and the interesting part is that it could
+not actually be made hotter. Fire spawns at 205 °C and the scale ends at 215 °C
+(see the encoding note in `materials.h`), so there are ten degrees of headroom
+in the entire byte. Peak temperature was never going to be the difference.
+
+What actually limits fire is not how hot it is but how fast it spends itself.
+Fire has `heatMassShift` 0: every degree it hands to a pot comes straight off
+its own temperature, so it falls to its 100 °C cutoff and dies with the pot
+still full. Plasma has mass 3. It delivers heat at the same full rate but feels
+an eighth of the loss, so it stays in its working range far longer. **It is not
+hotter than fire; it is inexhaustible** — which is what actually boils a pot dry.
+
+| | fire | plasma |
+|---|---|---|
+| spawn temperature | 205 °C | 215 °C |
+| thermal mass shift | 0 | 3 |
+| quenched by water | yes | **no** |
+| dies below | 100 °C | 120 °C |
+| lifetime submerged | 1 frame | 21 frames |
+| **frames to boil 90% off a 961-cell pot** | **234** | **37** |
+
+Three other things differ:
+
+- **Water does not snuff it.** Fire has `quenchedBy = MAT_WATER` and is gone the
+  frame water touches it, so it can never do anything submerged. Plasma has no
+  quench rule and flash-boils instead — measured, it lasts 21 frames under water
+  against fire's 1, and makes five times the steam. It is *not* immune: a large
+  enough cold body still drags it under its cutoff and kills it. This is the
+  difference you feel most.
+- **`heatSpread` 2** puts it on the same long-range conduction path as the
+  metals. The run rule is "any material with `heatSpread` > 0", so a plasma
+  cloud conducts along its own body, and plasma touching a graphene rod couples
+  into the whole rod rather than just the cell it sits on.
+- **It jets rather than billows** — jitter 30 against fire's 60, density 1
+  against fire's 3, so it rises fast and climbs through ordinary flame.
+
+#### Making it stop loitering, and why the obvious knob was the wrong one
+
+Plasma first shipped dying below 90 °C and hung around far too long once it had
+nothing left to heat. The intuitive fix — halve its thermal mass — **does not
+work**, and the measurement is the point:
+
+| | cloud lifetime | pot boil-off |
+|---|---|---|
+| original (mass 3, dies < 90 °C) | 380 frames | 44 |
+| halve the mass (mass 2) | 357 — *barely moves* | 60 — **36% worse** |
+| raise the cutoff to 120 °C | **211** | 45 — *unchanged* |
+
+Thermal mass damps heat lost by **conduction**. What makes a cloud linger in
+open air is the flat per-frame drift toward ambient (`GAS_COOL`), which mass
+does not scale at all — so halving it pays full price in boiling power and buys
+almost no reduction in loitering. Raising the cutoff instead truncates a long
+cold tail that was doing no useful work, which is why it costs nothing.
+
+Two consequences worth knowing. A lone plasma cell now expires *faster* than a
+lone flame (57 frames against 78) — deliberate, since what plasma has over fire
+is delivered heat, not time on screen. And because plasma is glow-exempt it
+renders the same blue at every temperature, so there is no visible fade to lose:
+shortening the cold tail only shortens its time on screen.
+
+Fire's `boilTemp` was spare (fire had nowhere hotter to go), so it now points at
+plasma: **fire driven to the top of the scale becomes plasma.** That is only
+reachable by feeding it external heat — a heater, or lava tapped through a metal
+run — since fire spawns ten degrees short of it and cools from there. It is a
+deliberate reward for building the heat plumbing.
+
+#### Plasma is the one material that does not take the heat glow
+
+Worth knowing before adding another coloured-by-temperature material, because
+the failure is not obvious until you look at a pixel. The glow ramp is orange at
+working temperatures, and blending orange over blue does not produce a hotter
+blue — it produces mud. Plasma rendered `#5652B4`, a murky purple, when its
+material colour is `#3866FF`.
+
+The fix is `g_matGlows[]`, a flag saying whether a material takes the overlay at
+all. The justification is that the glow's entire job is to reveal temperature
+you cannot otherwise see, and a material that *only exists* at extreme heat is
+already saying that with its own colour. The Heat view still reports plasma's
+real temperature like everything else.
+
+Two implementation notes, both deliberate. It is a flag, not a 0–255 scale: a
+scale means a multiply and shift on the alpha, which perturbs every *other*
+material's blend by a rounding step to buy a partial glow nothing wants. And it
+is a standalone array rather than a `MatInfo` field, because as a field it would
+be the one column missing from all nineteen `MATS[]` rows, which trips
+`-Wmissing-field-initializers` on every row under `-Wextra`; at `MAT_COUNT`
+bytes the whole table also fits in one cache line.
+
+### The cold set: cold fire, liquid nitrogen, mercury
+
+Three materials that all live in the bottom of the temperature scale, plus the
+two extra phases mercury needs. Before any of the individual notes, the fact
+that shapes all of them:
+
+**The cold half of the scale is tiny.** Hot runs ambient → 215 °C, nearly 200
+units. Cold runs ambient → −40 °C, sixty. Fire gets to sit 120 degrees above
+wood's ignition point; cold fire, liquid nitrogen and frozen mercury share sixty
+units between them. Thresholds down here are packed close together out of
+necessity. Raising `TEMP_OFFSET` would buy more, but every degree comes off the
+top, where lava and stone's melting point are already tuned against each other
+with ~30 units of slack — a real option if the cold side grows, just not a free
+one. (Also: `degC(-40)` is 0, and 0 is the "disabled" sentinel in every
+temperature column, so −39 °C is the coldest usable setpoint.)
+
+**Cold fire** is fire read backwards. It rises, wanders and expires like a
+flame, but chills instead of burns. This needed *no new code* — conduction is
+symmetric, so a very cold cell with a high `heatCond` pulls warmth out of its
+neighbours exactly as fire pushes warmth in. Where fire dies by cooling
+(`coolTemp` → Empty), cold fire dies by *warming*: the boil column pointed at
+Empty. Same mechanism, opposite direction. It rises, which real cold gas does
+not do — that is deliberate, from the brief "acts like fire but cold".
+
+It works in contact but not at a distance: a bed laid on an open pool rises off
+the surface within a frame and barely touches it, the same trap fire hits with
+wood. Sealed against water it drives the pool to −10 °C and forms ice.
+
+**Liquid nitrogen** boils at −25 °C, so an exposed pool is always boiling — as
+real LN2 always is — and only stays liquid where something keeps it cold. It
+boils into cold fire rather than into nothing, which conserves the visual (a
+splash throws off a cold plume) and gives cold fire a natural source the way
+burning gives fire one.
+
+Its `heatMassShift` of 4 is what makes it usable rather than merely present. At
+mass 2 a poured pool of 820 cells was gone in **28 frames** — under half a
+second, before it could chill anything, freezing no mercury at all. Each step
+roughly doubles: 90 frames at mass 3, 158 at mass 4, 318 at mass 5. Mass 4 is
+where a splash lasts long enough to read as a splash and still does work.
+
+**Mercury** is the only liquid metal and the only material with a phase change
+at *both* ends, which is what makes it worth distilling. Denser than everything
+that moves, so it sinks under water and sand.
+
+Both its thresholds are deliberate departures from reality, for reasons worth
+recording:
+
+- **Freezes at −30 °C**, not the real −38.8 °C. The real figure sits one degree
+  off the coldest value the byte can hold, leaving no room for a cold source to
+  reach it and no gap for hysteresis. At −30 there are ten degrees of headroom
+  below, which is what makes freezing mercury *achievable* rather than merely
+  representable. It melts back at −24 °C; that 6-degree gap is hysteresis.
+- **Boils at 150 °C**, not the real 357 °C (off this scale entirely) and not the
+  200 °C first tried. 200 was reachable in theory and not in practice: a
+  **heater**, pinned at the top of the scale forever and the strongest sustained
+  source in the game, only carried a walled mercury charge to about 140 °C,
+  because a vessel loses heat to the room faster than conduction tops it up.
+  Measured, 200 °C gave 32 vapour cells against 94 at 150 °C.
+
+150 °C also puts it 50 degrees clear of water. The three boiling points now
+ladder — **LN2 −25, water 100, mercury 150** — so a mixture held between two of
+them separates. Measured at 125 °C, a checkerboard water/mercury charge gives
+off steam and mercury vapour in an **18:1** ratio. Not infinite, and correctly
+so: surface evaporation scales with distance above *ambient* regardless of
+boiling point, so warm mercury always gives off a little vapour. Real
+distillation is imperfect the same way.
+
+Mercury vapour is density 20 against steam's 8, so the two **separate by
+weight** on their own — steam rides above mercury vapour — which is the point of
+distilling a mixture rather than just boiling it.
+
+#### A note on testing anything here
+
+Everything in this section is transient: cold fire is consumed as it chills, LN2
+boils itself away, vapour condenses back. **Measure the peak, not the end
+state.** Sampling at the end reported that cold fire did nothing at all — at
+frame 400 the test pool sits at −3 °C with ice in it, and by frame 1500 it is
+uniformly +20 °C again with none. Three separate tests in this area failed that
+way before the measurements were fixed.
+
 ### Freezing and ice
 
 Water freezes below 0 °C into **Ice**, and ice melts back above +6 °C. Both are

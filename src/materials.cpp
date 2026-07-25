@@ -96,7 +96,176 @@ MatInfo MATS[MAT_COUNT] = {
      frame, which looks like the brush is broken. */
   { "Ice",   KIND_STATIC,  92,   0,    0,   0,   0,   0,  0,  120,  0,   0, degC(-16), 0, MAT_EMPTY, degC(6), MAT_WATER, 0, MAT_EMPTY,  0,  0xC8E8F7, 0x92C4E2, 0xC8E8F7, 0x92C4E2, 0 },
   { "Steam", KIND_GAS,      8,   0,    0,   7, 150,   0,  0,    5,  0,   0, degC(115), degC(45), MAT_WATER, 0, MAT_EMPTY, 0, MAT_EMPTY,  0,  0xD2DAE6, 0x9AA6B6, 0xD2DAE6, 0x9AA6B6, 0 },
-  { "Fire",  KIND_GAS,      3,   0,    0,   3,  60,   0,  0,  200,  0,   0, degC(205), degC(100), MAT_EMPTY, 0, MAT_EMPTY, 0, MAT_EMPTY, MAT_WATER, 0xFFE7A0, 0xE8410C, 0xFFE7A0, 0xE8410C, 0 },
+  /* Fire's boilTemp was spare (fire has nowhere hotter to go), so it now points
+     at Plasma: fire driven all the way to the top of the scale becomes plasma.
+     That is only reachable by feeding it external heat -- a heater, or lava
+     tapped through a metal run -- since fire spawns 10 C short of it and cools
+     from there. It is a deliberate reward for building the heat plumbing. */
+  { "Fire",  KIND_GAS,      3,   0,    0,   3,  60,   0,  0,  200,  0,   0, degC(205), degC(100), MAT_EMPTY, degC(215), MAT_PLASMA, 0, MAT_EMPTY, MAT_WATER, 0xFFE7A0, 0xE8410C, 0xFFE7A0, 0xE8410C, 0 },
+  /* Plasma. The brief was "a hotter fire", and the honest constraint is that
+     there is no room to be hotter: fire spawns at 205 C and the scale ends at
+     215 C. Ten degrees is nothing, so peak temperature is not where the
+     difference can live. Three other columns carry it instead:
+
+     heatMassShift 3 is the main one, and it is the whole reason plasma can do
+     what fire cannot. Fire has mass 0: every degree it hands to a pot comes
+     straight off its own temperature, so it drops to its 100 C cutoff and dies
+     long before a full pot of water is gone -- which is exactly the wall you
+     hit. Plasma delivers at the same full rate but feels only an eighth of the
+     loss, so it stays in its working range roughly an order of magnitude
+     longer. It is not hotter; it is inexhaustible, which is what actually
+     boils a pot dry.
+
+     quenchedBy is 0 rather than MAT_WATER. Fire is snuffed the instant water
+     touches it, so it can never work submerged. Plasma flash-boils its way
+     through instead, which is the behavioural difference you feel most.
+
+     heatSpread 2 puts it on the same long-range conduction path as the metals,
+     and the run rule is "any material with heatSpread > 0" -- so a plasma cloud
+     conducts along its own body, and a plasma flame touching a graphene rod
+     couples straight into it rather than only heating the one cell it sits on.
+
+     Movement: jitter 30 against fire's 60, so it jets upward instead of
+     billowing -- less lazy flame, more arc-torch. Density 1 (fire is 3) so
+     plasma rises through fire rather than mingling with it.
+
+     coolTemp 120 C is the anti-lingering knob, and which knob to use for that
+     is genuinely counter-intuitive, so it is worth writing down. Plasma first
+     shipped dying at 90 C and hung around far too long with nothing to heat.
+     The obvious fix -- halve heatMassShift -- does NOT work: measured, 3 -> 2
+     cut a cloud's life only 380 -> 357 frames while making it 36% worse at its
+     actual job (pot dry 44 -> 60). Mass damps heat lost by CONDUCTION, and what
+     makes a cloud linger in open air is the flat per-frame drift toward ambient
+     (GAS_COOL), which mass does not scale at all.
+
+     Raising the cutoff instead cost nothing and fixed it: 90 -> 120 C took the
+     cloud 380 -> 211 frames with pot-dry unmoved at 44 -> 45. It works because
+     plasma spends most of its life in a long cold tail that does no useful
+     work; truncating that tail removes only the loitering.
+
+     One thing this trades away: a lone plasma cell now expires FASTER than a
+     lone flame (53 frames against fire's 114), because the cutoff lops off the
+     tail fire still has. That is deliberate -- a high-energy state that is
+     ferocious briefly and then recombines -- but it does mean "plasma outlives
+     fire" is no longer true, and should not be re-asserted as if it were a
+     regression. What plasma has over fire is delivered heat, not longevity.
+
+     Free bonus of being glow-exempt (see g_matGlows): plasma renders the same
+     blue at every temperature, so shortening its cold tail is invisible. There
+     is nothing to see fade -- only a shorter time on screen. */
+  { "Plasma",KIND_GAS,      1,   0,    0,   6,  30,   0,  0,  255,  3,   2, degC(215), degC(120), MAT_EMPTY, 0, MAT_EMPTY, 0, MAT_EMPTY,    0,  0xF2F8FF, 0x2A5CFF, 0xF2F8FF, 0x2A5CFF, 0 },
+
+  /* ---- the cold set -----------------------------------------------------
+     Everything below lives in the bottom 60 units of the scale, and that is
+     the single most important fact about tuning any of it. The hot half runs
+     ambient..215 C, nearly 200 units; the cold half is ambient..-40 C, sixty.
+     Fire has room to be hotter than wood's ignition point by 120 degrees, but
+     cold fire has the entire cryogenic range of the game to share with liquid
+     nitrogen and frozen mercury. Thresholds down here are packed close
+     together by necessity, not by choice, and there is nowhere to move them.
+
+     Raising TEMP_OFFSET would buy cold headroom, but every degree comes off
+     the top, where lava (215) and stone's melting point (185) are already
+     tuned against each other with about 30 units of slack. That is a real
+     option if the cold side ever needs to grow -- it is just not a free one,
+     and it would invalidate the lava measurements in the notes above.
+
+     A hard floor to remember: degC(-40) is 0, and 0 is the "disabled"
+     sentinel in every temperature column. Nothing can have a threshold at
+     exactly -40 C, so the coldest usable setpoint is -39. */
+
+  /* Cold fire is fire's mirror: it rises, wanders and expires, but it chills
+     rather than burns. Nothing new in world.cpp was needed for that -- heat
+     conduction is symmetric, so a very cold cell with a high heatCond pulls
+     warmth OUT of its neighbours exactly as fire pushes warmth in.
+
+     Where fire dies by cooling (coolTemp 100 -> Empty), cold fire dies by
+     WARMING, which is the boil column pointed at Empty: past +5 C it is gone.
+     The two are the same mechanism read in opposite directions.
+
+     It rises, which real cold gas does not do. That is deliberate and comes
+     straight from the brief -- "acts like fire but cold" -- so it behaves like
+     a flame you can build with, rather than like a heavy gas pooling on the
+     floor. */
+  { "ColdFire",KIND_GAS,    3,   0,    0,   3,  60,   0,  0,  200,  1,   0, degC(-38), 0, MAT_EMPTY, degC(5), MAT_EMPTY, 0, MAT_EMPTY,   0,  0xEAFBFF, 0x4FD2F0, 0xEAFBFF, 0x4FD2F0, 0 },
+
+  /* Liquid nitrogen. Real LN2 boils at -196 C, which this scale cannot express
+     at all -- so what is modelled is the BEHAVIOUR that matters: it is far
+     colder than anything else placeable, and it boils away briskly in a room.
+     Boiling at -25 C means an exposed pool is always boiling, exactly as real
+     LN2 always is, and only stays liquid where something keeps it cold.
+
+     It boils into cold fire rather than into nothing, which does double duty:
+     it conserves the visual (a poured splash throws off a cold plume instead
+     of silently vanishing) and it gives cold fire a natural source, the way
+     burning gives fire one. Lighter than water, so it floats on top of it.
+
+     heatMassShift 4 is high, and it is what makes LN2 usable rather than
+     merely present. At mass 2 a poured pool of 820 cells boiled away in 28
+     frames -- under half a second, gone before it could chill anything, and it
+     froze no mercury at all. Each step up buys roughly double: 90 frames at
+     mass 3, 158 at mass 4, 318 at mass 5. Mass 4 is the point where a splash
+     lasts long enough to read as a splash and to do work (it freezes mercury
+     reliably from mass 3 up) without a puddle sitting around like a permanent
+     fixture. */
+  { "LiqN2", KIND_LIQUID,  80,   0,    0,   6,   0,   0,  0,  200,  4,   0, degC(-39), 0, MAT_EMPTY, degC(-25), MAT_COLDFIRE, 0, MAT_EMPTY, 0, 0xD8F4FF, 0x9BDFF7, 0xD8F4FF, 0x9BDFF7, 0 },
+
+  /* Mercury: the only liquid metal, and the only material with a phase change
+     at BOTH ends of the scale, which is what makes it worth distilling.
+     Flat-coloured like the other metals (see the note below them).
+
+     Denser than everything that moves, so it sinks through water and sand and
+     pools underneath -- which is most of the fun of pouring it into a scene.
+
+     Freezing at -30 C is a deliberate departure from the real -38.8 C, and the
+     reason is the floor: -38.8 would sit one degree off the coldest value the
+     byte can hold, leaving no room for a cold source to actually get there and
+     no gap for hysteresis. At -30 there are ten degrees of headroom below it,
+     which is what makes freezing mercury a thing you can achieve with LN2 or
+     cold fire rather than a thing that is technically representable.
+
+     Boiling at 150 C is likewise far below the real 357 C, which is off this
+     scale entirely -- but the number was set by measurement, not by taste. The
+     first attempt put it at 200 C, just under lava, on the theory that lava
+     should boil mercury. In a real walled boiler it barely worked: a HEATER,
+     which is pinned at the top of the scale forever and is the strongest
+     sustained source in the game, only carried a mercury charge to about
+     140 C, because a vessel loses heat to the room faster than conduction
+     tops it up. 200 C was technically reachable and practically not -- 32
+     vapour cells against 94 at 150 C.
+
+     150 C also lands it in a genuinely useful spot: 50 degrees clear of
+     water's 100 C. A mixture can be held between the two, boiling the water
+     off while the mercury stays put, which is the interesting half of
+     distilling. The three boiling points now ladder: LN2 at -25, water at
+     100, mercury at 150. */
+  { "Mercury",KIND_LIQUID,250,   0,    0,   5,   0,   0,  0,  240,  1,   0,   0, degC(-30), MAT_MERCURY_ICE, degC(150), MAT_MERCURY_GAS, 0, MAT_EMPTY, 0, 0xB9BEC4, 0xB9BEC4, 0xB9BEC4, 0xB9BEC4, 0 },
+
+  /* Mercury vapour condenses at 180 C, twenty degrees under mercury's boiling
+     point. That gap is hysteresis, the same trick stone/lava and water/ice
+     use, and here it is doing the actual work of a still: a cell has to be
+     carried a clear twenty degrees away from the boiler before it commits to
+     the other phase, so vapour survives the trip to a cold surface instead of
+     flickering back the moment it leaves the heat.
+
+     Density 20 against steam's 8, so mercury vapour rides BELOW steam when
+     both are present -- the two separate out on their own, which is the whole
+     point of distilling a mixture.
+
+     spawnTemp has to sit above the condensation point or a hand-placed cell
+     would turn straight back into a droplet on its first frame and the brush
+     would look broken. Same reasoning as ice's cold spawn. */
+  { "HgVapour",KIND_GAS,   20,   0,    0,   5, 120,   0,  0,   20,  0,   0, degC(150), degC(130), MAT_MERCURY, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, 0xCED3DA, 0xA7ADB6, 0xCED3DA, 0xA7ADB6, 0 },
+
+  /* Frozen mercury melts at -24 C, six degrees above the -30 C it freezes at
+     -- hysteresis again, without which a cell sitting exactly at the boundary
+     would flip states every frame. Static, so a frozen puddle holds its shape
+     and stops behaving like a liquid entirely.
+
+     Spawned at -35 C rather than ambient for the same reason ice is: placed at
+     room temperature it would melt on its first update and the brush would
+     look broken. */
+  { "FrozenHg",KIND_STATIC,255,  0,    0,   0,   0,   0,  0,  240,  1,   0, degC(-35), 0, MAT_EMPTY, degC(-24), MAT_MERCURY, 0, MAT_EMPTY, 0, 0x9FB0BE, 0x9FB0BE, 0x9FB0BE, 0x9FB0BE, 0 },
   /* All three metals are manufactured solids, so each gets a single flat colour
      (dryA==dryB==wetA==wetB) rather than the per-cell speckle sand and dirt get
      from a colour range. Speckle reads as loose grains; a milled bar should read
@@ -169,6 +338,7 @@ MatInfo MATS[MAT_COUNT] = {
 u32 g_colorLut[MAT_COUNT * 256];
 u32 g_heatLut[256];
 u8  g_heatAlpha[256];
+u8  g_matGlows[MAT_COUNT];
 
 /* --- the temperature ramp ------------------------------------------------
    The stops now run through ambient rather than starting there, because the
@@ -243,6 +413,10 @@ void initMaterials() {
            Nothing does today; this makes the assumption fail loudly rather
            than as mysterious drifting velocities if one ever is added. */
         mi.invCapQ8 = mi.capacity ? (u16)((255 * 256) / mi.capacity) : 0;
+
+        /* Full heat glow for everything except plasma -- see g_matGlows in
+           materials.h for why it is the one exception. */
+        g_matGlows[m] = (u8)(m != MAT_PLASMA);
 
         for (int w = 0; w < 16; ++w) {
             /* Representative moisture for this bucket. Bucket 0 must map to
