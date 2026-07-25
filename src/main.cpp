@@ -59,9 +59,19 @@ static const BrushDef BRUSHES[] = {
     { MAT_PLASMA,"Plasma"},
     { MAT_COLDFIRE,"Cold Fire"},
     { MAT_NITROGEN,"Liquid N2"},
+    /* Mercury only. Its vapour and frozen forms are still fully simulated -- a
+       mercury pool boiled past 150 C still gives off vapour, and chilled past
+       -30 C still freezes solid -- they are just not PLACEABLE. They are
+       "unusual forms" nobody pictures when they picture mercury, the way nobody
+       pictures water vapour when they picture water, so they were clutter in a
+       palette where every row costs height. (Steam and Ice are placeable
+       because they are the everyday forms of hot and cold water, and the tell
+       is that both earned their own names rather than being "water gas" and
+       "frozen water". "Hg Vapour" and "Frozen Hg" did not.)
+
+       Removing a row here does NOT remove the material: the two are independent,
+       which is exactly why this is only a BRUSHES edit. */
     { MAT_MERCURY,"Mercury"},
-    { MAT_MERCURY_GAS,"Hg Vapour"},
-    { MAT_MERCURY_ICE,"Frozen Hg"},
     { MAT_STEAM, "Steam" },
     { MAT_WALL,  "Wall"  },
     { MAT_CLONE, "Clone" },

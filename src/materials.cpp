@@ -239,7 +239,14 @@ MatInfo MATS[MAT_COUNT] = {
      off while the mercury stays put, which is the interesting half of
      distilling. The three boiling points now ladder: LN2 at -25, water at
      100, mercury at 150. */
-  { "Mercury",KIND_LIQUID,250,   0,    0,   5,   0,   0,  0,  240,  1,   0,   0, degC(-30), MAT_MERCURY_ICE, degC(150), MAT_MERCURY_GAS, 0, MAT_EMPTY, 0, 0xB9BEC4, 0xB9BEC4, 0xB9BEC4, 0xB9BEC4, 0 },
+  /* The colour is a silver rather than the near-white it started as (0xB9BEC4):
+     down 12 in luminance and up in cool cast, which is what stops it reading as
+     a pale wash. It cannot go much darker -- Steam's dark end is 0x9AA6B6 and
+     the pale-grey neighbourhood here is crowded, so 0xA3ACB6 lands 45 units off
+     Steam by a green-weighted RGB distance where this sits 181 clear. (Mercury's
+     own vapour and frozen forms are deliberately NOT counted as collisions: they
+     are the same substance and ought to look like it.) */
+  { "Mercury",KIND_LIQUID,250,   0,    0,   5,   0,   0,  0,  240,  1,   0,   0, degC(-30), MAT_MERCURY_ICE, degC(150), MAT_MERCURY_GAS, 0, MAT_EMPTY, 0, 0xAAB3BC, 0xAAB3BC, 0xAAB3BC, 0xAAB3BC, 0 },
 
   /* Mercury vapour condenses at 180 C, twenty degrees under mercury's boiling
      point. That gap is hysteresis, the same trick stone/lava and water/ice
