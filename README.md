@@ -12,6 +12,16 @@ ignition point, and a copper bar melts if you leave it in lava too long.
 
 C++11, Win32, no dependencies. About 2,800 lines.
 
+![Powder running: three vessels side by side, one being boiled by fire, one
+chilled by cold fire, one frozen solid, with a water reservoir draining down a
+channel on the left](powder.png)
+
+*Three vessels, same setup, different fuel underneath: fire boiling the first
+into steam, cold fire freezing the second, a heater glowing at the far right.
+The reservoir on the left is draining through a channel onto a dirt pile. 36,000
+live cells at 60 fps, 2.28 ms of simulation per frame — and only 139 of the 192
+chunks are being simulated at all, because the settled parts cost nothing.*
+
 ## Try it
 
 **[Download powder.exe from the latest release](https://github.com/kylerharris730-source/powder/releases/latest)**
@@ -128,8 +138,10 @@ that has finished settling costs **0.00 ms** — 91,000 cells at rest are free.
 Cells are 4 bytes, so sixteen fit in a cache line, and drawing one is a single
 lookup into a precomputed palette.
 
-A busy screen runs 2–3 ms per frame. The worst case in the benchmark suite is a
-full grid of sand with heat spreading through all of it, at about 9 ms.
+A busy screen runs 2–3 ms per frame — the screenshot above is 2.28 ms with
+36,000 live cells, and it is only simulating 139 of its 192 chunks. The worst
+case in the benchmark suite is a full grid of sand with heat spreading through
+every part of it, at about 9 ms.
 
 The long version — including why several obvious-looking optimisations are
 actively wrong — is in [INTERNALS.md](INTERNALS.md).
