@@ -1,5 +1,6 @@
 #include "projectile.h"
 #include "item.h"     /* the nearest-first disc table, for explosions */
+#include "render.h"   /* VIEW_CELLS_W/H */
 #include <math.h>
 
 Projectile g_proj[MAX_PROJ];
@@ -173,9 +174,11 @@ int projUpdate(World& w) {
     return destroyed;
 }
 
+/* Takes VIEW coordinates. Callers convert from world by subtracting the
+   camera, once, rather than every plot doing it again. */
 static inline void plot(u32* px, int x, int y, u32 c) {
-    if (x < 0 || x >= SIM_W || y < 0 || y >= SIM_H) return;
-    px[y * SIM_W + x] = c;
+    if (x < 0 || x >= VIEW_CELLS_W || y < 0 || y >= VIEW_CELLS_H) return;
+    px[y * VIEW_CELLS_W + x] = c;
 }
 
 /* Dim toward black by num/den, for the trail's falloff. */
@@ -186,7 +189,7 @@ static inline u32 fade(u32 c, int num, int den) {
     return ((u32)r << 16) | ((u32)g << 8) | (u32)b;
 }
 
-void projDraw(u32* px) {
+void projDraw(u32* px, int camX, int camY) {
     for (int i = 0; i < MAX_PROJ; ++i) {
         const Projectile& p = g_proj[i];
         if (!p.alive) continue;
@@ -204,11 +207,7 @@ void projDraw(u32* px) {
             float inv = 1.0f / (float)sqrt((double)sp);
             const float bx = -p.vx * inv, by = -p.vy * inv;
             for (int t = 1; t <= TRAIL; ++t) {
-                const int x = (int)(p.x + bx * t), y = (int)(p.y + by * t);
-                /* Trails draw only over empty space. Painting over the terrain
-                   it just bored through makes the tunnel look filled in for a
-                   frame, which reads as the shot failing. */
-                if (x < 0 || x >= SIM_W || y < 0 || y >= SIM_H) continue;
+                const int x = (int)(p.x + bx * t) - camX, y = (int)(p.y + by * t) - camY;
                 plot(px, x, y, fade(p.colour, TRAIL + 1 - t, TRAIL + 2));
             }
         }
@@ -217,7 +216,7 @@ void projDraw(u32* px) {
            bolt rather than a square. A single pixel -- and even the 2x2 this
            replaces -- is genuinely hard to follow across speckled terrain, and
            a shot you cannot see is a shot you cannot aim. */
-        const int cx = (int)p.x, cy = (int)p.y;
+        const int cx = (int)p.x - camX, cy = (int)p.y - camY;
         const u32 c = p.colour, e = fade(p.colour, 3, 5);
         plot(px, cx,     cy,     0xFFFFFF);
         plot(px, cx - 1, cy,     c);

@@ -1,4 +1,5 @@
 #include "player.h"
+#include "render.h"   /* VIEW_CELLS_W/H: draw() writes into the view buffer */
 
 Player g_player;
 
@@ -232,15 +233,16 @@ void Player::occupy(World& w) const {
     lastX0 = x0; lastY0 = y0; lastX1 = x1; lastY1 = y1;
 }
 
-void Player::draw(u32* px) const {
+void Player::draw(u32* px, int camX, int camY) const {
     if (!alive) return;
 
     const u32* spr = g_playerSpr[(frame >= 0 && frame < PF_COUNT) ? frame : PF_IDLE];
-    const int bx = left(), by = top();
+    /* World cell -> view cell. Everything below works in view space. */
+    const int bx = left() - camX, by = top() - camY;
 
     for (int yy = 0; yy < PSPR_H; ++yy) {
         const int wy = by + yy;
-        if (wy < 0 || wy >= SIM_H) continue;
+        if (wy < 0 || wy >= VIEW_CELLS_H) continue;
         for (int xx = 0; xx < PSPR_W; ++xx) {
             /* Mirrored by reading the source row backwards, rather than by
                keeping a second set of frames. Free, and the two directions can
@@ -248,8 +250,8 @@ void Player::draw(u32* px) const {
             const u32 c = spr[yy * PSPR_W + (facing < 0 ? PSPR_W - 1 - xx : xx)];
             if (c == 0) continue;
             const int wx = bx + xx;
-            if (wx < 0 || wx >= SIM_W) continue;
-            px[wy * SIM_W + wx] = c;
+            if (wx < 0 || wx >= VIEW_CELLS_W) continue;
+            px[wy * VIEW_CELLS_W + wx] = c;
         }
     }
 
@@ -260,7 +262,10 @@ void Player::draw(u32* px) const {
     const u32 EDGE = 0x10141C;
     for (int xx = 0; xx < PLAYER_W; ++xx) {
         const int wx = bx + xx, wy = by + PLAYER_H;
-        if (wx >= 0 && wx < SIM_W && wy >= 0 && wy < SIM_H && playerSolid(g_world, wx, wy))
-            px[wy * SIM_W + wx] = EDGE;
+        if (wx < 0 || wx >= VIEW_CELLS_W || wy < 0 || wy >= VIEW_CELLS_H) continue;
+        /* Solidity is a question about the WORLD, so it is asked in world
+           coordinates even though the pixel is written in view coordinates. */
+        if (playerSolid(g_world, wx + camX, wy + camY))
+            px[wy * VIEW_CELLS_W + wx] = EDGE;
     }
 }

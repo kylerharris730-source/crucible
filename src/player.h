@@ -116,7 +116,9 @@ struct Player {
     void reset(float cx, float cy);
     void update(const World& w, const PlayerInput& in);
     void animate();          /* called by update(); picks facing and frame */
-    void draw(u32* px) const;
+    /* Draws into the VIEW buffer, so it takes the camera's top-left cell.
+       Everything that draws into that buffer now needs it -- see render.h. */
+    void draw(u32* px, int camX, int camY) const;
 
     /* Publish the collision box to the world so material cannot move into it.
        Called once a frame from the host; the world knows nothing about players,

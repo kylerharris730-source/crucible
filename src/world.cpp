@@ -84,6 +84,7 @@ static inline u8 latentDrain(int t) {
 
 void World::reset() {
     clearBlockBox();
+    clearLiveWindow();
     memset(cells, 0, sizeof(cells));
     memset(temp, AMBIENT_TEMP, sizeof(temp));
     frame  = 0;
@@ -925,11 +926,42 @@ void World::step() {
     const bool leftFirst = (frame & 1) != 0;
     activeChunks = 0;
 
+    /* The live window in chunk coordinates, rounded outward so a partly
+       visible chunk is fully simulated -- material must not behave differently
+       depending on which half of it you can see. */
+    const int liveCX0 = imax(0, liveX0 >> CHUNK_SHIFT);
+    const int liveCY0 = imax(0, liveY0 >> CHUNK_SHIFT);
+    const int liveCX1 = imin(CHUNKS_X - 1, liveX1 >> CHUNK_SHIFT);
+    const int liveCY1 = imin(CHUNKS_Y - 1, liveY1 >> CHUNK_SHIFT);
+
     for (int cy = CHUNKS_Y - 1; cy >= 0; --cy) {
         for (int ci = 0; ci < CHUNKS_X; ++ci) {
             int cx = leftFirst ? ci : (CHUNKS_X - 1 - ci);
-            const Chunk& ch = cur[cy * CHUNKS_X + cx];
+            const int idx = cy * CHUNKS_X + cx;
+            const Chunk& ch = cur[idx];
             if (ch.minX > ch.maxX) continue;   /* settled: skipped entirely */
+
+            if (cx < liveCX0 || cx > liveCX1 || cy < liveCY0 || cy > liveCY1) {
+                /* Outside the window: FROZEN, not forgotten.
+
+                   The pending work has to be carried into next[], because cur
+                   is overwritten by next at the top of every step. Simply
+                   skipping would silently drop the rect, and the chunk would
+                   come back settled -- sand caught mid-fall would hang in the
+                   air forever, and the only clue would be that it happened to
+                   be off-screen at the time. Merged rather than assigned,
+                   since a simulated neighbour may already have dirtied across
+                   the boundary this frame. */
+                Chunk& n = next[idx];
+                if (n.minX > n.maxX) { n = ch; }
+                else {
+                    if (ch.minX < n.minX) n.minX = ch.minX;
+                    if (ch.minY < n.minY) n.minY = ch.minY;
+                    if (ch.maxX > n.maxX) n.maxX = ch.maxX;
+                    if (ch.maxY > n.maxY) n.maxY = ch.maxY;
+                }
+                continue;
+            }
             ++activeChunks;
 
             for (int y = ch.maxY; y >= ch.minY; --y) {

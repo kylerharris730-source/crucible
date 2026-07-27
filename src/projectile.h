@@ -50,5 +50,5 @@ extern int projExplosionsThisFrame;
 /* Steps every live projectile and applies it to the world. Returns how many
    cells were destroyed this frame. */
 int  projUpdate(World& w);
-void projDraw(u32* px);
+void projDraw(u32* px, int camX, int camY);
 int  projCount();

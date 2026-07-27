@@ -22,8 +22,10 @@ static const int SCALE   = 2;
    column: at 25 entries the derived row pitch had squeezed down to 20px, and
    the fix for "make the buttons taller" is more width, not less content. */
 static const int PANEL_W = 264;
-static const int VIEW_W  = SIM_W * SCALE;
-static const int VIEW_H  = SIM_H * SCALE;
+/* Window pixels. VIEW_CELLS_* (render.h) is how much WORLD that shows; the two
+   were the same thing back when the world was exactly one screen. */
+static const int VIEW_W  = VIEW_CELLS_W * SCALE;
+static const int VIEW_H  = VIEW_CELLS_H * SCALE;
 static const int WIN_W   = PANEL_W + VIEW_W;
 static const int WIN_H   = VIEW_H;
 static const double FRAME_SECONDS = 1.0 / 60.0;
@@ -35,7 +37,7 @@ static const double FRAME_SECONDS = 1.0 / 60.0;
    cells and chunks. */
 static const int STATS_TOP = VIEW_H - 92;
 
-static u32         g_pixels[SIM_W * SIM_H];
+static u32         g_pixels[VIEW_CELLS_W * VIEW_CELLS_H];
 static BITMAPINFO  g_bmi;
 static HFONT       g_font;
 static bool        g_running = true;
@@ -264,6 +266,22 @@ static ItemId g_creItem[ITEM_COUNT];     /* which item each rect belongs to */
 static RECT g_toolSlotRect[TOOL_SLOTS_MAX];
 static int  g_toolSlotCount = 0;
 static int  g_toolPackSlot  = -1;   /* which inventory slot the bench is showing */
+
+/* --- the camera ----------------------------------------------------------
+   Top-left cell of the visible window. Kept as floats so the follow can be
+   smoothed, and truncated to whole cells for every use -- a camera at a
+   fractional position would shimmer the whole world by a pixel as it drifts,
+   which is far more distracting than the character being a pixel off centre.
+
+   The margin is what the simulation runs beyond the edges of the view. It
+   exists so that things do not visibly start moving the moment they scroll
+   into frame: sand mid-fall just off-screen keeps falling, and arrives already
+   in motion. Half a screen was picked as the smallest margin where you cannot
+   catch the boundary by running at it -- the character crosses a screen in
+   about seven seconds, and the margin refills far faster than that. */
+static const int SIM_MARGIN = 192;   /* cells beyond the view that still tick */
+static float g_camXf = 0.0f, g_camYf = 0.0f;
+static int   g_camX  = 0,    g_camY  = 0;
 
 /* stats */
 static double g_fps = 0.0, g_simMs = 0.0;
@@ -518,8 +536,92 @@ static bool handleCreativeClick(int mx, int my, bool remove) {
 /* ======================================================================
    Input
    ====================================================================== */
+/* --- the camera ----------------------------------------------------------
+   Centres on the character, eased rather than snapped, and clamped so the
+   window never leaves the world.
+
+   Eased because a camera welded to the character makes the WORLD the thing
+   that moves, and at this pixel density that reads as the terrain sliding
+   about rather than as walking. A lag of a few frames keeps the character
+   near the middle while letting the background stay still enough to be a
+   background.
+
+   Snapping past a threshold matters as much as the easing: without it a
+   respawn or a fall across half the world would take several seconds to
+   catch up, during which the character is off screen entirely. */
+static void updateCamera(bool snap) {
+    float tx = g_camXf, ty = g_camYf;
+    if (g_playerOn) {
+        tx = g_player.centreX() - VIEW_CELLS_W * 0.5f;
+        ty = g_player.centreY() - VIEW_CELLS_H * 0.5f;
+    }
+
+    /* Clamp the TARGET, not the eased position, so easing never has to chase a
+       point outside the world and stall against the edge. */
+    const float maxX = (float)(SIM_W - VIEW_CELLS_W);
+    const float maxY = (float)(SIM_H - VIEW_CELLS_H);
+    if (tx < 0.0f) tx = 0.0f;
+    if (tx > maxX) tx = maxX;
+    if (ty < 0.0f) ty = 0.0f;
+    if (ty > maxY) ty = maxY;
+
+    const float dx = tx - g_camXf, dy = ty - g_camYf;
+    const float far2 = dx * dx + dy * dy;
+    if (snap || far2 > (float)(VIEW_CELLS_W * VIEW_CELLS_W)) {
+        g_camXf = tx; g_camYf = ty;
+    } else {
+        const float EASE = 0.16f;
+        g_camXf += dx * EASE;
+        g_camYf += dy * EASE;
+        /* Settle exactly, or the camera creeps by fractions forever and the
+           world jitters by a pixel while the character stands still. */
+        if (dx > -0.5f && dx < 0.5f) g_camXf = tx;
+        if (dy > -0.5f && dy < 0.5f) g_camYf = ty;
+    }
+    g_camX = (int)g_camXf;
+    g_camY = (int)g_camYf;
+}
+
+/* Pan the camera by hand. Only reachable with the character switched off,
+   where the arrow keys have nothing else to do -- the sandbox this grew out of
+   still has to be usable, and in a world sixteen screens across it is not
+   without some way to get about. */
+static void panCamera(float dx, float dy) {
+    g_camXf += dx; g_camYf += dy;
+    const float maxX = (float)(SIM_W - VIEW_CELLS_W);
+    const float maxY = (float)(SIM_H - VIEW_CELLS_H);
+    if (g_camXf < 0.0f) g_camXf = 0.0f;
+    if (g_camXf > maxX) g_camXf = maxX;
+    if (g_camYf < 0.0f) g_camYf = 0.0f;
+    if (g_camYf > maxY) g_camYf = maxY;
+    g_camX = (int)g_camXf; g_camY = (int)g_camYf;
+}
+
 static void cycleView()      { g_view = (g_view + 1) % VIEW_COUNT; }
 static void changeSize(int d){ g_brushRadius = imax(1, imin(64, g_brushRadius + d)); }
+
+/* --- placeholder ground ----------------------------------------------------
+   A flat floor with stone under dirt, laid across the top of the world so
+   there is something to stand on.
+
+   This is scaffolding, not terrain, and deliberately says nothing about
+   material layering -- that belongs with the progression design rather than
+   being quietly invented here. It exists because an empty world 3072 cells
+   deep drops the character three thousand cells on the first frame, which
+   makes the game impossible to look at.
+
+   World::reset() itself stays genuinely empty: every headless test depends on
+   getting a clean grid, and a test that has to dig its own floor out of
+   surprise dirt is a test that will eventually be wrong about something. */
+static const int GROUND_Y = 260;   /* cells from the top of the world */
+
+static void makeStartingGround() {
+    const int stoneTop = GROUND_Y + 40;
+    for (int y = GROUND_Y; y < stoneTop; ++y)
+        for (int x = PLAY_X0; x <= PLAY_X1; ++x) g_world.setCell(x, y, MAT_DIRT);
+    for (int y = stoneTop; y < stoneTop + 120; ++y)
+        for (int x = PLAY_X0; x <= PLAY_X1; ++x) g_world.setCell(x, y, MAT_STONE);
+}
 
 /* Returns true if the click was consumed by a panel control. */
 static bool handlePanelClick(int mx, int my) {
@@ -546,11 +648,17 @@ static bool handlePanelClick(int mx, int my) {
     if (inRect(g_actRect[ACT_VIEW],      mx, my)) { cycleView();                return true; }
     if (inRect(g_actRect[ACT_PLAYER],    mx, my)) {
         g_playerOn = !g_playerOn;
-        if (g_playerOn) g_player.reset(SIM_W * 0.5f, SIM_H * 0.25f);
+        /* Into the middle of the VIEW, not the middle of the world -- switching
+           the character on should put them where you are looking. */
+        if (g_playerOn) {
+            g_player.reset((float)(g_camX + VIEW_CELLS_W / 2),
+                           (float)(g_camY + VIEW_CELLS_H / 2));
+            updateCamera(true);
+        }
         return true;
     }
     if (inRect(g_actRect[ACT_PAUSE],     mx, my)) { g_paused = !g_paused;       return true; }
-    if (inRect(g_actRect[ACT_CLEAR],     mx, my)) { g_world.reset();            return true; }
+    if (inRect(g_actRect[ACT_CLEAR],     mx, my)) { g_world.reset(); makeStartingGround(); return true; }
     /* Any other spot on the panel is dead space: swallow it so it never paints. */
     return mx < PANEL_W;
 }
@@ -636,12 +744,13 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case 'I': g_survival = !g_survival; break;
         case 'H': g_brushMat = TOOL_HEAT; break;
         case 'J': g_brushMat = TOOL_COOL; break;
-        case 'C': g_world.reset();        break;
+        case 'C': g_world.reset(); makeStartingGround(); break;
         /* Respawn at the cursor. Indispensable while tuning movement, and the
            obvious escape hatch when you bury yourself. */
         case 'R':
             if (g_mx >= PANEL_W)
-                g_player.reset((float)((g_mx - PANEL_W) / SCALE), (float)(g_my / SCALE));
+                g_player.reset((float)((g_mx - PANEL_W) / SCALE + g_camX),
+                               (float)(g_my / SCALE + g_camY));
             break;
         case 'O': g_overwrite = !g_overwrite; break;
         case 'V': cycleView();                break;
@@ -687,8 +796,10 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
    window having lost focus. */
 static Aim currentAim() {
     Aim a;
-    a.ghostX = (g_mx - PANEL_W) / SCALE;
-    a.ghostY = g_my / SCALE;
+    /* Window pixel -> view cell -> WORLD cell. Everything downstream of here
+       works in world cells, because that is what the tools act on. */
+    a.ghostX = (g_mx - PANEL_W) / SCALE + g_camX;
+    a.ghostY = g_my / SCALE + g_camY;
     a.x = a.ghostX; a.y = a.ghostY;
     a.clamped = false;
 
@@ -969,7 +1080,7 @@ static void drawHeldTool(u32* px, const Aim& aim) {
 
     /* Start at the shoulder rather than the centre, so the tool reads as held
        rather than skewered through the middle of the body. */
-    const float ox = pcx + dx * 2.0f, oy = pcy - 1.0f + dy * 2.0f;
+    const float ox = pcx + dx * 2.0f - g_camX, oy = pcy - 1.0f + dy * 2.0f - g_camY;
     const float px2 = -dy, py2 = dx;   /* perpendicular, for thickness */
 
     for (int t = 0; t < len; ++t) {
@@ -981,10 +1092,11 @@ static void drawHeldTool(u32* px, const Aim& aim) {
 
         const float fx = ox + dx * t, fy = oy + dy * t;
         const int x = (int)fx, y = (int)fy;
-        if (x >= 0 && x < SIM_W && y >= 0 && y < SIM_H) px[y * SIM_W + x] = c;
+        if (x >= 0 && x < VIEW_CELLS_W && y >= 0 && y < VIEW_CELLS_H) px[y * VIEW_CELLS_W + x] = c;
         if (mk2 || t < grip) {
             const int x2 = (int)(fx + px2), y2 = (int)(fy + py2);
-            if (x2 >= 0 && x2 < SIM_W && y2 >= 0 && y2 < SIM_H) px[y2 * SIM_W + x2] = c;
+            if (x2 >= 0 && x2 < VIEW_CELLS_W && y2 >= 0 && y2 < VIEW_CELLS_H)
+                px[y2 * VIEW_CELLS_W + x2] = c;
         }
     }
 }
@@ -1023,11 +1135,11 @@ static void drawCursor(HDC hdc) {
 
     const Aim aim = currentAim();
     /* Where the tool acts -- inside the reach limit. */
-    const int ax = PANEL_W + aim.x * SCALE + SCALE / 2;
-    const int ay = aim.y * SCALE + SCALE / 2;
+    const int ax = PANEL_W + (aim.x - g_camX) * SCALE + SCALE / 2;
+    const int ay = (aim.y - g_camY) * SCALE + SCALE / 2;
     /* Where the mouse actually is. */
-    const int gx = PANEL_W + aim.ghostX * SCALE + SCALE / 2;
-    const int gy = aim.ghostY * SCALE + SCALE / 2;
+    const int gx = PANEL_W + (aim.ghostX - g_camX) * SCALE + SCALE / 2;
+    const int gy = (aim.ghostY - g_camY) * SCALE + SCALE / 2;
 
     if (aim.clamped) {
         /* The BRIGHT crosshair follows the mouse and the ghost is left behind
@@ -1074,7 +1186,7 @@ static void drawCursor(HDC hdc) {
    overlay. That is deliberate for the creative grid, where watching the hotbar
    fill up as you click is the point. */
 static void dimPixels() {
-    for (int i = 0; i < SIM_W * SIM_H; ++i)
+    for (int i = 0; i < VIEW_CELLS_W * VIEW_CELLS_H; ++i)
         g_pixels[i] = (g_pixels[i] >> 1) & 0x7F7F7F;
 }
 
@@ -1292,6 +1404,13 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     layoutPanel();
     layoutHotbar();
 
+    /* Start near the top middle. The world is four screens wide and eight deep,
+       so the old "middle of the world" would drop the character four screens
+       underground with no way to tell which way was up. */
+    makeStartingGround();
+    g_player.reset(SIM_W * 0.5f, (float)(GROUND_Y - PLAYER_H));
+    updateCamera(true);
+
     WNDCLASSA wc;
     memset(&wc, 0, sizeof(wc));
     wc.lpfnWndProc   = wndProc;
@@ -1350,8 +1469,8 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
 
     memset(&g_bmi, 0, sizeof(g_bmi));
     g_bmi.bmiHeader.biSize        = sizeof(BITMAPINFOHEADER);
-    g_bmi.bmiHeader.biWidth       = SIM_W;
-    g_bmi.bmiHeader.biHeight      = -SIM_H;   /* negative = top-down rows */
+    g_bmi.bmiHeader.biWidth       = VIEW_CELLS_W;
+    g_bmi.bmiHeader.biHeight      = -VIEW_CELLS_H;   /* negative = top-down rows */
     g_bmi.bmiHeader.biPlanes      = 1;
     g_bmi.bmiHeader.biBitCount    = 32;
     g_bmi.bmiHeader.biCompression = BI_RGB;
@@ -1393,6 +1512,13 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         if (g_playerOn) g_player.occupy(g_world);
         else            g_world.clearBlockBox();
 
+        /* Tell the world what to simulate. Everything outside is frozen in
+           place -- state is kept, it simply does not advance -- which is what
+           bounds the cost of a world this size. See setLiveWindow(). */
+        g_world.setLiveWindow(g_camX - SIM_MARGIN, g_camY - SIM_MARGIN,
+                              g_camX + VIEW_CELLS_W  + SIM_MARGIN,
+                              g_camY + VIEW_CELLS_H + SIM_MARGIN);
+
         LARGE_INTEGER tA, tB;
         QueryPerformanceCounter(&tA);
         if (g_stepOnce) {
@@ -1427,19 +1553,33 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
             g_player.update(g_world, in);
         }
 
-        g_cellCount = renderWorld(g_world, g_pixels, g_view);
+        /* After the character has moved, so the camera never lags a frame
+           behind what it is following. With the character off, the arrow keys
+           drive the camera instead. */
+        if (!g_playerOn && !g_menuOpen && !g_creativeOpen) {
+            const float PAN = 6.0f;
+            float px = 0.0f, py = 0.0f;
+            if ((GetAsyncKeyState('A') & 0x8000) || (GetAsyncKeyState(VK_LEFT)  & 0x8000)) px -= PAN;
+            if ((GetAsyncKeyState('D') & 0x8000) || (GetAsyncKeyState(VK_RIGHT) & 0x8000)) px += PAN;
+            if ((GetAsyncKeyState('W') & 0x8000) || (GetAsyncKeyState(VK_UP)    & 0x8000)) py -= PAN;
+            if ((GetAsyncKeyState('S') & 0x8000) || (GetAsyncKeyState(VK_DOWN)  & 0x8000)) py += PAN;
+            if (px != 0.0f || py != 0.0f) panCamera(px, py);
+        }
+        updateCamera(false);
+
+        g_cellCount = renderView(g_world, g_pixels, g_view, g_camX, g_camY);
         if (g_playerOn) {
-            g_player.draw(g_pixels);
+            g_player.draw(g_pixels, g_camX, g_camY);
             if (g_survival) drawHeldTool(g_pixels, currentAim());
         }
-        projDraw(g_pixels);
+        projDraw(g_pixels, g_camX, g_camY);
         /* Modals dim the world in the pixel buffer, before it becomes a blit --
            see dimPixels(). Doing it to the window instead cost 500ms a frame. */
         if (g_menuOpen || g_creativeOpen) dimPixels();
 
         /* Compose off-screen: sim into the viewport, then the panel, then out
            to the window in one BitBlt. */
-        StretchDIBits(g_backDC, PANEL_W, 0, VIEW_W, VIEW_H, 0, 0, SIM_W, SIM_H,
+        StretchDIBits(g_backDC, PANEL_W, 0, VIEW_W, VIEW_H, 0, 0, VIEW_CELLS_W, VIEW_CELLS_H,
                       g_pixels, &g_bmi, DIB_RGB_COLORS, SRCCOPY);
         drawPanel(g_backDC);
         if (g_survival && g_playerOn) drawHotbar(g_backDC);

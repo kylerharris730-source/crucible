@@ -2,8 +2,23 @@
 #include "common.h"
 #include "materials.h"
 
-static const int SIM_W = 512;
-static const int SIM_H = 384;
+/* The WORLD. Much larger than the view, which shows 512x384 of it -- four
+   screens across and eight down.
+
+   Making this bigger is nearly free, and the benchmark is the reason to
+   believe that rather than a hope: localised activity costs the same at every
+   size, because the chunk system only ever visits chunks something is
+   happening in. Fire and boiling across a few hundred chunks measured 12.5 ms
+   at 6.3M cells and 11.5 ms at 786k. A settled world is 0.005 ms at either.
+
+   What does NOT scale is work proportional to the whole grid. Rendering the
+   entire world every frame went from 0.3 ms to 8.8 ms across that range, which
+   is why renderView() draws only the window (see render.h), and a world where
+   every cell is churning at once costs 120 ms, which is why step() honours a
+   live window (see setLiveWindow below). Both of those are hard rules now: any
+   new per-frame pass over SIM_W*SIM_H undoes the whole thing. */
+static const int SIM_W = 2048;
+static const int SIM_H = 3072;
 
 /* Chunked dirty rectangles. Each chunk remembers the smallest box that had
    anything happen in it, and only that box is simulated next frame. A pile
@@ -218,6 +233,32 @@ struct World {
     Chunk next[CHUNK_COUNT];      /* being accumulated for the next frame */
     u32   frame;
     int   activeChunks;           /* stat, for the HUD */
+
+    /* --- the live window -------------------------------------------------
+       Chunks outside this rectangle are not simulated at all. Everything in
+       them keeps its state and resumes exactly where it left off when the
+       window returns; nothing is discarded.
+
+       This is what makes a big world safe. Without it, one world-wide event --
+       a cave-in, a runaway heat source -- costs 120 ms a frame at 2048x3072,
+       and the player cannot even see most of what they are paying for. With
+       it, the worst case is bounded by the window's area no matter how large
+       the world becomes.
+
+       Measured in CELLS, and rounded outward to whole chunks when tested, so
+       the caller can hand over a pixel rectangle without thinking about chunk
+       geometry.
+
+       Defaults to the entire world, which matters more than it looks: every
+       headless test and benchmark drives World directly and never sets one, so
+       the default has to be "simulate everything" or half the suite would
+       quietly stop simulating and still pass. */
+    i32 liveX0, liveY0, liveX1, liveY1;
+
+    void setLiveWindow(int x0, int y0, int x1, int y1) {
+        liveX0 = x0; liveY0 = y0; liveX1 = x1; liveY1 = y1;
+    }
+    void clearLiveWindow() { setLiveWindow(0, 0, SIM_W - 1, SIM_H - 1); }
 
     /* --- solid entity box ------------------------------------------------
        A single axis-aligned box that no material may move into. It exists so
