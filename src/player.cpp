@@ -2,6 +2,12 @@
 
 Player g_player;
 
+/* The sprite IS the hitbox here -- see the note in sprite.h. If these ever
+   drift apart, material rests visibly inside the character and the shed off the
+   shoulders stops making sense, so it is worth failing the build over. */
+static_assert(PSPR_W == PLAYER_W && PSPR_H == PLAYER_H,
+              "the character sprite must be exactly the size of the collision box");
+
 /* Tuning, in cells and frames at the fixed 60Hz step. Written as the numbers
    they are rather than derived, but the jump is worth showing the working for:
    peak height is v^2 / 2g, so 2.6 and 0.18 give about 18 cells of clearance and
@@ -43,6 +49,40 @@ void Player::reset(float cx, float cy) {
     onGround = false;
     buried   = false;
     alive    = true;
+    facing    = 1;
+    walkPhase = 0.0f;
+    frame     = PF_IDLE;
+}
+
+/* Picks the frame from what the body is actually doing, rather than from what
+   was pressed. Falling because the ground was mined out from under you has to
+   look the same as falling because you jumped off it. */
+void Player::animate() {
+    if (vx > 0.05f)       facing = 1;
+    else if (vx < -0.05f) facing = -1;
+
+    const float speed = (vx > 0.0f) ? vx : -vx;
+
+    if (!onGround) {
+        frame = (vy < 0.0f) ? PF_JUMP : PF_FALL;
+        return;
+    }
+    if (speed <= 0.05f) {
+        frame = PF_IDLE;
+        /* Reset so the next step always starts from a full stride rather than
+           wherever the last one happened to stop. */
+        walkPhase = 0.0f;
+        return;
+    }
+
+    /* One full four-frame cycle per STRIDE_CELLS travelled. At MAX_SPEED that
+       is a step roughly every 7 frames, which is about where a walk stops
+       looking like a shuffle and starts looking like walking. */
+    const float STRIDE_CELLS = 3.4f;
+    walkPhase += speed;
+    if (walkPhase > 4.0f * STRIDE_CELLS) walkPhase -= 4.0f * STRIDE_CELLS;
+    const int step = (int)(walkPhase / STRIDE_CELLS) & 3;
+    frame = PF_WALK0 + step;
 }
 
 void Player::update(const World& w, const PlayerInput& in) {
@@ -169,6 +209,8 @@ void Player::update(const World& w, const PlayerInput& in) {
        cells, but it means a player who steps off a ledge starts already falling
        at speed. Zeroing it keeps standing still genuinely still. */
     if (onGround && vy > 0.0f) vy = 0.0f;
+
+    animate();
 }
 
 void Player::occupy(World& w) const {
@@ -193,35 +235,29 @@ void Player::occupy(World& w) const {
 void Player::draw(u32* px) const {
     if (!alive) return;
 
-    /* Three bands rather than a flat rectangle. At 4x8 there is no room for
-       detail, but a lighter head and darker legs are enough to read as a figure
-       and, more usefully, to tell at a glance which way up it is. */
-    const u32 HEAD = 0xF2F6FF;
-    const u32 BODY = 0x7FA8D8;
-    const u32 LEGS = 0x3C5A80;
-    const u32 EDGE = 0x10141C;
-
-    /* Drawn to the same tapered outline as the collision shape. If the sprite
-       were a plain rectangle the head would visibly overlap material that is
-       really resting on the shoulders, and sand would appear to roll off thin
-       air -- the shed has to be legible or it just looks like a glitch. */
+    const u32* spr = g_playerSpr[(frame >= 0 && frame < PF_COUNT) ? frame : PF_IDLE];
     const int bx = left(), by = top();
-    for (int yy = 0; yy < PLAYER_H; ++yy) {
+
+    for (int yy = 0; yy < PSPR_H; ++yy) {
         const int wy = by + yy;
         if (wy < 0 || wy >= SIM_H) continue;
-        const u32 band = (yy < PLAYER_H / 4)     ? HEAD
-                       : (yy < PLAYER_H * 3 / 4) ? BODY
-                                                 : LEGS;
-        const int inset = playerRowInset(yy);
-        for (int xx = inset; xx < PLAYER_W - inset; ++xx) {
+        for (int xx = 0; xx < PSPR_W; ++xx) {
+            /* Mirrored by reading the source row backwards, rather than by
+               keeping a second set of frames. Free, and the two directions can
+               never disagree. */
+            const u32 c = spr[yy * PSPR_W + (facing < 0 ? PSPR_W - 1 - xx : xx)];
+            if (c == 0) continue;
             const int wx = bx + xx;
             if (wx < 0 || wx >= SIM_W) continue;
-            px[wy * SIM_W + wx] = band;
+            px[wy * SIM_W + wx] = c;
         }
     }
 
-    /* A one-cell dark outline under the feet and along the sides, so the figure
-       does not disappear when it stands against pale material like sand. */
+    /* A dark cell under the feet where they meet solid ground, so the figure
+       does not melt into pale material like sand. Only where there is actually
+       something to stand on -- an unconditional line would draw a shadow in
+       mid-air while falling. */
+    const u32 EDGE = 0x10141C;
     for (int xx = 0; xx < PLAYER_W; ++xx) {
         const int wx = bx + xx, wy = by + PLAYER_H;
         if (wx >= 0 && wx < SIM_W && wy >= 0 && wy < SIM_H && playerSolid(g_world, wx, wy))

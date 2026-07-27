@@ -1,5 +1,6 @@
 #pragma once
 #include "world.h"
+#include "sprite.h"
 
 /* The player is an ENTITY, not a cell. It has no id in MatId, never occupies a
    slot in the grid, and the simulation neither knows nor cares that it exists --
@@ -12,10 +13,18 @@
    head would swap you downward. As an overlay none of that can arise, and the
    cost is a handful of grid reads per frame. */
 
-static const int PLAYER_W = 6;   /* cells; 12 screen pixels at SCALE 2 */
-static const int PLAYER_H = 16;  /* 32 screen pixels -- roughly human proportions,
-                                    since a person is about four times as tall as
-                                    they are wide across the shoulders */
+static const int PLAYER_W = 8;   /* cells; 16 screen pixels at SCALE 2 */
+static const int PLAYER_H = 22;  /* 44 screen pixels. Grown from 6x16 to leave
+                                    room for a figure with readable parts -- a
+                                    helmet, a pack, a belt, two legs. At 6x16
+                                    the legs were two cells each and a walk
+                                    cycle had nothing to move.
+
+                                    Stockier than the four-heads-tall real
+                                    proportion on purpose: the head has to be
+                                    big enough to hold a visor, and a heavier
+                                    build reads better against terrain that is
+                                    itself one cell per grain. */
 
 /* How high a ledge you walk up without jumping. This number matters more for
    feel than any other here: terrain in a falling-sand world is never flat, and
@@ -25,8 +34,9 @@ static const int PLAYER_H = 16;  /* 32 screen pixels -- roughly human proportion
    It is a quarter of body height, which is about what a person manages without
    using their hands, and it wants to stay proportional -- when the character
    doubled in height this went 3 -> 4 for exactly that reason. Absolute step
-   height held constant against a taller body reads as tripping over things. */
-static const int PLAYER_STEP_UP = 4;
+   height held constant against a taller body reads as tripping over things.
+   3 -> 4 when the character doubled in height, 4 -> 5 when it grew again. */
+static const int PLAYER_STEP_UP = 5;
 
 /* --- the pointed head -------------------------------------------------
    The collision shape is not a rectangle. The top PLAYER_TAPER rows are inset
@@ -44,8 +54,15 @@ static const int PLAYER_STEP_UP = 4;
 
    One cell of inset per row is exactly the slope a falling-sand powder rule can
    see. A shallower taper would be geometry the simulation cannot act on, since
-   a powder only ever considers the three cells directly beneath it. */
-static const int PLAYER_TAPER = 2;
+   a powder only ever considers the three cells directly beneath it.
+
+   The taper has to GROW WITH THE WIDTH, and that is easy to miss: what matters
+   is the width of the apex, which is PLAYER_W - 2*PLAYER_TAPER. At 6 wide with
+   taper 2 the peak was 2 cells and shed everything. Widening the body to 8 and
+   leaving the taper alone made the peak 4 cells -- a flat roof again -- and
+   measured, it went straight back to keeping sand (4 cells stuck on the head
+   where the narrower peak kept none). 3 puts the apex back to 2 cells. */
+static const int PLAYER_TAPER = 3;
 
 /* Cells to inset each side on a given row measured from the top of the box. */
 static inline int playerRowInset(int rowFromTop) {
@@ -83,8 +100,22 @@ struct Player {
     bool  buried;      /* terrain closed over us and we could not be freed */
     bool  alive;
 
+    /* --- animation ----------------------------------------------------
+       facing is +1 right, -1 left, and it LATCHES: it only changes when the
+       character is actually moving, so releasing a key leaves them looking
+       the way they were going rather than snapping to a default.
+
+       walkPhase accumulates distance travelled, not frames elapsed. Driving
+       the cycle off a timer makes the feet skate whenever speed changes --
+       accelerating from a standstill would show a full-speed gait at walking
+       pace. Off distance, the legs are tied to the ground by construction. */
+    int   facing;
+    float walkPhase;
+    int   frame;       /* a PlayerFrame */
+
     void reset(float cx, float cy);
     void update(const World& w, const PlayerInput& in);
+    void animate();          /* called by update(); picks facing and frame */
     void draw(u32* px) const;
 
     /* Publish the collision box to the world so material cannot move into it.

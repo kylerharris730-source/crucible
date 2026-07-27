@@ -32,4 +32,31 @@ enum SpriteId {
 /* 0 = transparent, anything else is a packed 0xRRGGBB. */
 extern u32 g_sprite[SPR_COUNT][SPR_W * SPR_H];
 
+/* --- the character ---------------------------------------------------------
+
+   Its own canvas, exactly the size of the collision box, so what you see is
+   what you collide with. That is not a stylistic choice: this world buries you
+   in sand, and if the sprite were bigger than the hitbox (as it is in most
+   platformers) material would visibly rest partway inside the character and the
+   whole "stuff rolls off the pointed shoulders" behaviour would read as broken.
+   The art therefore respects the same taper -- see playerRowInset() in player.h.
+
+   Frames are composed at startup from ONE shared body and a set of leg
+   stances, rather than being seven independently drawn figures. Seven hand-
+   drawn frames drift: a pixel of helmet moves between two of them and the
+   character's head twitches every time you take a step. With a shared body
+   only the legs can differ, so only the legs do. */
+static const int PSPR_W = 8;
+static const int PSPR_H = 22;
+
+enum PlayerFrame {
+    PF_IDLE = 0,
+    PF_WALK0, PF_WALK1, PF_WALK2, PF_WALK3,   /* stride, pass, stride, pass */
+    PF_JUMP,                                  /* rising */
+    PF_FALL,                                  /* descending */
+    PF_COUNT
+};
+
+extern u32 g_playerSpr[PF_COUNT][PSPR_W * PSPR_H];
+
 void initSprites();

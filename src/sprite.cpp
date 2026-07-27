@@ -21,6 +21,24 @@ static u32 paletteOf(char c) {
     case 'B': return 0x2B3040;     /* module body */
     case 'K': return 0x9CE0FF;     /* shot symbol: the colour its shot is */
     case 'L': return 0xFFB040;     /* blast symbol */
+
+    /* The suit. Its own letters rather than reusing the tools' -- a shared
+       palette is only worth having while the colours mean the same thing, and
+       "helmet white" is not "highlight". */
+    case 'W': return 0xE4E9F2;     /* helmet shell */
+    case 'w': return 0xB4BCCA;     /* helmet shade */
+    case 'V': return 0x22405F;     /* visor glass */
+    case 'v': return 0x74B4E4;     /* visor glint */
+    case 'U': return 0xCBD3E0;     /* suit */
+    case 'u': return 0x98A1B2;     /* suit shade */
+    case 'P': return 0x545C6E;     /* life-support pack */
+    case 'O': return 0xE08442;     /* orange trim */
+    /* Gloves and boots. Mid slate rather than the near-black they started as:
+       at 0x30363F they were within a few values of the night sky and of dirt,
+       so the character's legs appeared to stop at the knee against both. Dark
+       enough to read as a different material from the suit, light enough to
+       have a silhouette of its own. */
+    case 'g': return 0x5C6472;
     default:  return 0xFF00FF;     /* unmapped: loud on purpose */
     }
 }
@@ -117,10 +135,92 @@ static void expand(int id, const char* const* art) {
     }
 }
 
+/* --- the character ---------------------------------------------------------
+
+   Drawn facing RIGHT: the visor is toward the right of the helmet and the
+   life-support pack sits on the left, so the silhouette says which way it is
+   looking before you can make out a face. Facing left is the same art
+   mirrored at draw time, which flips the pack to the correct side for free.
+
+   Rows 0 and 1 are inset by 2 and 1 to match the collision taper. That is not
+   decoration -- the helmet HAS to be the pointed part, because the taper is
+   what sheds falling sand, and a square-topped helmet drawn over a pointed
+   hitbox would show sand rolling off thin air. */
+static const int PBODY_ROWS = 14;
+
+static const char* ART_BODY[PBODY_ROWS] = {
+    "...WW...",   /* inset 3: the tapered crown, 2 cells wide at the peak */
+    "..WWWW..",   /* inset 2 */
+    ".WWWWWW.",   /* inset 1 */
+    "WWWVVVVw",
+    "WWWVVVVw",
+    "WWWVVVvw",
+    ".wWWWWw.",   /* neck ring */
+    "PPUUUUUU",
+    "PPUOOUUu",
+    "PPUOOUUu",
+    ".PUUUUUu",
+    ".uUUUUUu",
+    ".uUUUUUg",   /* the leading hand */
+    ".OUUUUO.",   /* belt */
+};
+
+static const int PLEG_ROWS = PSPR_H - PBODY_ROWS;   /* 8 */
+
+/* Stances. The walk is stride / pass / stride-mirrored / pass, which is the
+   whole cycle from two drawings -- and mirroring the stride rather than drawing
+   the opposite one guarantees the two halves of the gait match exactly. */
+static const char* LEG_STAND[PLEG_ROWS] = {
+    ".uUUUUu.", ".UUUUUU.", ".UU..UU.", ".UU..UU.",
+    ".UU..UU.", ".UU..UU.", ".gg..gg.", "ggg..ggg",
+};
+static const char* LEG_STRIDE[PLEG_ROWS] = {
+    ".uUUUUu.", ".UUUUUU.", ".UUU.UU.", ".UU...UU",
+    "UU....UU", "UU....UU", "gg....gg", "gg....gg",
+};
+static const char* LEG_PASS[PLEG_ROWS] = {
+    ".uUUUUu.", ".UUUUUU.", ".UUUUUU.", "..UUUU..",
+    "..UUUU..", "..UUUU..", "..gggg..", ".gggggg.",
+};
+static const char* LEG_JUMP[PLEG_ROWS] = {
+    ".uUUUUu.", ".UUUUUU.", ".UUUUUU.", ".UUUUUU.",
+    ".UU.UUU.", "UUU..UU.", "gg...gg.", ".g....g.",
+};
+static const char* LEG_FALL[PLEG_ROWS] = {
+    ".uUUUUu.", ".UUUUUU.", ".UU..UU.", "UU....UU",
+    "UU....UU", "U......U", "g......g", "gg....gg",
+};
+
+u32 g_playerSpr[PF_COUNT][PSPR_W * PSPR_H];
+
+static void composePlayer(int frame, const char* const* legs, bool mirrorLegs) {
+    u32* out = g_playerSpr[frame];
+    for (int y = 0; y < PSPR_H; ++y) {
+        const char* row = (y < PBODY_ROWS) ? ART_BODY[y] : legs[y - PBODY_ROWS];
+        const bool mirror = mirrorLegs && y >= PBODY_ROWS;
+        if ((int)strlen(row) != PSPR_W) {
+            fprintf(stderr, "player frame %d row %d is %d chars, expected %d\n",
+                    frame, y, (int)strlen(row), PSPR_W);
+            abort();
+        }
+        for (int x = 0; x < PSPR_W; ++x)
+            out[y * PSPR_W + x] = paletteOf(row[mirror ? PSPR_W - 1 - x : x]);
+    }
+}
+
 void initSprites() {
     memset(g_sprite, 0, sizeof(g_sprite));
     expand(SPR_TOOL1,     ART_TOOL1);
     expand(SPR_TOOL2,     ART_TOOL2);
     expand(SPR_MOD_SHOT,  ART_MOD_SHOT);
     expand(SPR_MOD_BLAST, ART_MOD_BLAST);
+
+    memset(g_playerSpr, 0, sizeof(g_playerSpr));
+    composePlayer(PF_IDLE,  LEG_STAND,  false);
+    composePlayer(PF_WALK0, LEG_STRIDE, false);
+    composePlayer(PF_WALK1, LEG_PASS,   false);
+    composePlayer(PF_WALK2, LEG_STRIDE, true);
+    composePlayer(PF_WALK3, LEG_PASS,   false);
+    composePlayer(PF_JUMP,  LEG_JUMP,   false);
+    composePlayer(PF_FALL,  LEG_FALL,   false);
 }
