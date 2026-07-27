@@ -24,7 +24,7 @@ void initItems() {
     for (int m = 0; m < MAT_COUNT; ++m) {
         ITEMS[m].name     = MATS[m].name;
         ITEMS[m].kind     = ITEMK_MATERIAL;
-        ITEMS[m].maxStack = 999;
+        ITEMS[m].maxStack = 9999;
         ITEMS[m].colour   = g_colorLut[(m << 8) | 0x08];
     }
     /* Air is not a thing you can carry. Leaving it named and stackable would

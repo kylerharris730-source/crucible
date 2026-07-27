@@ -353,9 +353,22 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_RBUTTONUP:
         g_rmb = false; ReleaseCapture(); return 0;
 
-    case WM_MOUSEWHEEL:
-        changeSize((short)HIWORD(wp) > 0 ? 1 : -1);
+    case WM_MOUSEWHEEL: {
+        const int dir = (short)HIWORD(wp) > 0 ? 1 : -1;
+        /* The wheel picks what you are holding, which is what it does in every
+           game with a hotbar, and Q turns it into a size dial. Sizing is the
+           rarer action once you are playing rather than drawing, so it is the
+           one that takes a modifier -- but it stays on the bare wheel whenever
+           the hotbar is not on screen, since then there is nothing to select. */
+        const bool hotbarUp = g_survival && g_playerOn;
+        if (!hotbarUp || (GetAsyncKeyState('Q') & 0x8000)) {
+            changeSize(dir);
+        } else {
+            /* Up scrolls left along the bar, matching the usual convention. */
+            g_inv.selected = (g_inv.selected - dir + INV_SLOTS) % INV_SLOTS;
+        }
         return 0;
+    }
 
     case WM_KEYDOWN:
         /* Shortcuts still work -- they are just no longer the only way in. */
@@ -384,7 +397,11 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             break;
         case 'O': g_overwrite = !g_overwrite; break;
         case 'V': cycleView();                break;
-        case VK_SPACE:  g_paused = !g_paused; break;
+        /* Space jumps. Pause moved to P -- in a sandbox you are drawing in,
+           space-to-pause is the obvious binding; the moment there is a
+           character to control it is the obvious binding for something else,
+           and every player will try it. The panel button still pauses too. */
+        case 'P': g_paused = !g_paused; break;
         case VK_OEM_PERIOD: g_stepOnce = true; break;
         case VK_OEM_4: changeSize(-1); break;  /* [ */
         case VK_OEM_6: changeSize(+1); break;  /* ] */
@@ -500,8 +517,18 @@ static void drawHotbar(HDC hdc) {
             FillRect(hdc, &sw, b);
             DeleteObject(b);
 
+            /* Four digits do not fit a 31px slot at this font, so anything
+               past 999 reads as thousands to one decimal: 1.2k, 9.9k.
+
+               TRUNCATED, not rounded, and that is the whole reason the stack
+               cap is 9999 rather than 10000. "%.1f" on a full stack rounds
+               9.999 up to "10.0k" -- five characters, which overflows the slot,
+               and reads as more than the cap allows. Integer division cannot
+               do that, and it renders a full stack as the 9.9k the cap was
+               picked to show. */
             char n[16];
-            sprintf(n, "%d", st.count);
+            if (st.count >= 1000) sprintf(n, "%d.%dk", st.count / 1000, (st.count % 1000) / 100);
+            else                  sprintf(n, "%d", st.count);
             RECT cr = r; cr.top = r.bottom - 14;
             SetTextColor(hdc, RGB(226, 230, 238));
             DrawTextA(hdc, n, -1, &cr, DT_CENTER | DT_TOP | DT_SINGLELINE);
@@ -752,7 +779,8 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
             PlayerInput in;
             in.left  = (GetAsyncKeyState('A') & 0x8000) || (GetAsyncKeyState(VK_LEFT)  & 0x8000);
             in.right = (GetAsyncKeyState('D') & 0x8000) || (GetAsyncKeyState(VK_RIGHT) & 0x8000);
-            in.jump  = (GetAsyncKeyState('W') & 0x8000) || (GetAsyncKeyState(VK_UP)    & 0x8000);
+            in.jump  = (GetAsyncKeyState('W') & 0x8000) || (GetAsyncKeyState(VK_UP) & 0x8000)
+                    || (GetAsyncKeyState(VK_SPACE) & 0x8000);
             g_player.update(g_world, in);
         }
 
