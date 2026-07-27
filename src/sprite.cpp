@@ -167,28 +167,49 @@ static const char* ART_BODY[PBODY_ROWS] = {
 
 static const int PLEG_ROWS = PSPR_H - PBODY_ROWS;   /* 8 */
 
-/* Stances. The walk is stride / pass / stride-mirrored / pass, which is the
-   whole cycle from two drawings -- and mirroring the stride rather than drawing
-   the opposite one guarantees the two halves of the gait match exactly. */
+/* --- stances ---------------------------------------------------------------
+
+   Every leg here is VERTICAL and stays inside the stance width. That is the
+   whole lesson of the first attempt, which drew the stride as both legs
+   fanning outward from the hips down to boots at the very edges of the sprite.
+   On paper that is "one leg forward, one leg back" in side view. On screen it
+   is a pair of brackets, and a bracket-shaped leg reads as a knee bending the
+   wrong way -- the figure looked bowlegged and its stride looked reversed.
+
+   At eight pixels across there is no room to draw a leg at an angle: a
+   two-cell-wide limb displaced by one cell per row is a 45-degree line, and a
+   human leg is nowhere near 45 degrees off vertical even at a full sprint. So
+   the gait is carried by which foot is LIFTED rather than by how far the legs
+   splay, which is legible at any size and cannot be misread as anatomy. */
 static const char* LEG_STAND[PLEG_ROWS] = {
     ".uUUUUu.", ".UUUUUU.", ".UU..UU.", ".UU..UU.",
     ".UU..UU.", ".UU..UU.", ".gg..gg.", "ggg..ggg",
 };
-static const char* LEG_STRIDE[PLEG_ROWS] = {
-    ".uUUUUu.", ".UUUUUU.", ".UUU.UU.", ".UU...UU",
-    "UU....UU", "UU....UU", "gg....gg", "gg....gg",
+/* One leg planted and vertical, the other swung forward with its boot two rows
+   clear of the ground. ASYMMETRIC on purpose: a symmetric stride, with both
+   legs fanning out to boots at opposite edges, is the shape that reads as bowed
+   -- and it is not avoidable by tweaking, it is what a symmetric stride
+   geometrically IS at this width. Only one leg ever leaves vertical, and the
+   mirror supplies the other half of the cycle. */
+static const char* LEG_STEP[PLEG_ROWS] = {
+    ".uUUUUu.", ".UUUUUU.", ".UU.UU..", ".UU.UU..",
+    ".UU..UU.", ".UU..ggg", ".UU.....", ".ggg....",
 };
+/* Both feet down and together, the moment the legs pass each other. */
 static const char* LEG_PASS[PLEG_ROWS] = {
-    ".uUUUUu.", ".UUUUUU.", ".UUUUUU.", "..UUUU..",
-    "..UUUU..", "..UUUU..", "..gggg..", ".gggggg.",
+    ".uUUUUu.", ".UUUUUU.", "..UUUU..", "..UUUU..",
+    "..UUUU..", "..UUUU..", "..UUUU..", ".gggggg.",
 };
+/* Toes pointed: legs together and tapering. Reads as a launch, and is the one
+   pose that cannot be confused with any of the walking frames. */
 static const char* LEG_JUMP[PLEG_ROWS] = {
-    ".uUUUUu.", ".UUUUUU.", ".UUUUUU.", ".UUUUUU.",
-    ".UU.UUU.", "UUU..UU.", "gg...gg.", ".g....g.",
+    ".uUUUUu.", ".UUUUUU.", "..UUUU..", "..UUUU..",
+    "..UUUU..", "...UU...", "...UU...", "..gggg..",
 };
+/* Straight and vertical, reaching for the ground. */
 static const char* LEG_FALL[PLEG_ROWS] = {
-    ".uUUUUu.", ".UUUUUU.", ".UU..UU.", "UU....UU",
-    "UU....UU", "U......U", "g......g", "gg....gg",
+    ".uUUUUu.", ".UUUUUU.", ".UU..UU.", ".UU..UU.",
+    ".UU..UU.", ".UU..UU.", ".UU..UU.", ".gg..gg.",
 };
 
 u32 g_playerSpr[PF_COUNT][PSPR_W * PSPR_H];
@@ -216,11 +237,12 @@ void initSprites() {
     expand(SPR_MOD_BLAST, ART_MOD_BLAST);
 
     memset(g_playerSpr, 0, sizeof(g_playerSpr));
-    composePlayer(PF_IDLE,  LEG_STAND,  false);
-    composePlayer(PF_WALK0, LEG_STRIDE, false);
-    composePlayer(PF_WALK1, LEG_PASS,   false);
-    composePlayer(PF_WALK2, LEG_STRIDE, true);
-    composePlayer(PF_WALK3, LEG_PASS,   false);
-    composePlayer(PF_JUMP,  LEG_JUMP,   false);
-    composePlayer(PF_FALL,  LEG_FALL,   false);
+    composePlayer(PF_IDLE,  LEG_STAND, false);
+    /* lift the leading foot, pass, lift the trailing foot, pass */
+    composePlayer(PF_WALK0, LEG_STEP,  false);
+    composePlayer(PF_WALK1, LEG_PASS,  false);
+    composePlayer(PF_WALK2, LEG_STEP,  true);
+    composePlayer(PF_WALK3, LEG_PASS,  false);
+    composePlayer(PF_JUMP,  LEG_JUMP,  false);
+    composePlayer(PF_FALL,  LEG_FALL,  false);
 }
