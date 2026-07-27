@@ -1,8 +1,11 @@
-# Powder — internals and material reference
+# Simulation internals and material reference
 
-Everything specific about how this thing actually works: the engine, the
+Everything specific about how the simulation actually works: the engine, the
 physical models, and the per-material numbers with the measurements behind them.
-[README.md](README.md) is the place to start if you just want to play with it.
+
+Inherited from [powder](https://github.com/kylerharris730-source/powder) and
+still accurate. [DESIGN.md](DESIGN.md) covers what is being built on top of it;
+[README.md](README.md) is the overview.
 
 Most of what follows is written as *why a number is what it is*, because nearly
 every constant here was set by measuring something rather than by taste, and a
