@@ -468,6 +468,50 @@ u32 g_heatLut[256];
 u8  g_heatAlpha[256];
 u8  g_matGlows[MAT_COUNT];
 u8  g_matDecay[MAT_COUNT];
+u8  g_matStrength[MAT_COUNT];
+
+/* The durability ladder, in one place, ordered so the ranking is readable at a
+   glance -- which is the whole reason this is not a MATS[] column.
+
+   Anything absent from this table is STR_NOTHING and a shot flies straight
+   through it. That default is right rather than lazy: it covers air, every gas
+   and every liquid, and "you cannot shoot a hole in water" is the correct
+   behaviour for all of them. A new material only needs a row here if it is
+   something you could reasonably expect to stop a projectile.
+
+   Molten forms are deliberately soft -- MoltIron is STR_NOTHING while Iron is
+   STR_METAL. Melting a wall is a way THROUGH it, which is the sort of thing the
+   heat model already makes possible and the tech tree should reward. */
+static void initStrength() {
+    for (int m = 0; m < MAT_COUNT; ++m) g_matStrength[m] = STR_NOTHING;
+
+    g_matStrength[MAT_SAND]        = STR_LOOSE;
+    g_matStrength[MAT_DIRT]        = STR_LOOSE;
+
+    g_matStrength[MAT_ICE]         = STR_SOFT;
+    g_matStrength[MAT_WOOD]        = STR_SOFT;
+    g_matStrength[MAT_RUBBER]      = STR_SOFT;
+
+    g_matStrength[MAT_STONE]       = STR_ROCK;
+
+    g_matStrength[MAT_IRON]        = STR_METAL;
+    g_matStrength[MAT_COPPER]      = STR_METAL;
+    g_matStrength[MAT_MERCURY_ICE] = STR_METAL;
+
+    g_matStrength[MAT_GRAPHENE]    = STR_HARD;
+
+    /* The border is made of Wall, so anything softer than ABSOLUTE here would
+       let a stray shot punch a hole in the edge of the world -- and every
+       movement rule in world.cpp assumes that ring is intact and skips its
+       bounds checks accordingly. Clone, Void, Heater and Cooler are machines
+       rather than scenery: destroying one by waving a gun at it would make
+       every contraption built around them fragile in a way nothing warns about. */
+    g_matStrength[MAT_WALL]        = STR_ABSOLUTE;
+    g_matStrength[MAT_CLONE]       = STR_ABSOLUTE;
+    g_matStrength[MAT_VOID]        = STR_ABSOLUTE;
+    g_matStrength[MAT_HEATER]      = STR_ABSOLUTE;
+    g_matStrength[MAT_COOLER]      = STR_ABSOLUTE;
+}
 
 /* --- the temperature ramp ------------------------------------------------
    The stops now run through ambient rather than starting there, because the
@@ -535,6 +579,7 @@ static int rampAlpha(int t) {
 }
 
 void initMaterials() {
+    initStrength();
     for (int m = 0; m < MAT_COUNT; ++m) {
         MatInfo& mi = MATS[m];
         /* Liquids keep their fall speed in the spare `moisture` byte, so a
@@ -550,6 +595,9 @@ void initMaterials() {
         /* Only cold fire expires on a timer -- see g_matDecay in materials.h
            for why it cannot expire by cooling the way fire does. */
         g_matDecay[m] = (m == MAT_COLDFIRE) ? 6 : 0;
+
+        /* Strength is filled from its own table below rather than here; see
+           initStrength() for why the ladder lives in one block. */
 
         for (int w = 0; w < 16; ++w) {
             /* Representative moisture for this bucket. Bucket 0 must map to

@@ -26,7 +26,11 @@ static const ItemId ITEM_NONE = MAT_EMPTY;   /* both are 0 */
 
 enum {
     /* Non-material items start where materials stop. */
-    ITEM_MULTITOOL = MAT_COUNT,
+    ITEM_MULTITOOL = MAT_COUNT,   /* Mk I: 3 module slots */
+    ITEM_MULTITOOL2,              /* Mk II: 5 slots, and quicker off the mark */
+    /* Modules. What a tool DOES lives here, not on the tool -- an empty
+       multitool is a stick. */
+    ITEM_MOD_SHOT,
     /* Reach extenders. They do nothing when held and everything when carried --
        see ITEMK_CARRIED below. */
     ITEM_LENS,
@@ -53,6 +57,20 @@ struct ItemDef {
        ladder into an inventory-stuffing puzzle -- and the slot pressure that is
        supposed to make carrying one a real choice would evaporate. */
     i16  reachBonus;
+
+    /* --- ITEMK_TOOL only --------------------------------------------- */
+    u8   toolSlots;   /* how many modules it holds; this IS the tier */
+    u8   baseDelay;   /* frames between shots before any module says otherwise */
+
+    /* --- ITEMK_MODULE only ------------------------------------------- */
+    /* Added to the tool's baseDelay. A module that hits harder should cost
+       something, and time-between-shots is the cost that stays legible when
+       several modules are stacked -- unlike, say, a damage multiplier, where
+       two modules interact in a way nobody can predict from the tooltips. */
+    u8   addDelay;
+    u8   power;       /* highest material strength the shot can break */
+    u8   pierce;      /* cells it can destroy before it is spent */
+    u32  shotColour;
 };
 
 extern ItemDef ITEMS[ITEM_COUNT];
@@ -68,9 +86,41 @@ void initItems();
    question about what a partial stack represents. */
 static const int INV_SLOTS = 10;
 
+/* --- tools carry state, materials do not -----------------------------------
+
+   A stack of stone is fully described by "stone" and "how many". A multitool is
+   not: two of them differ by what is installed in them and by where each is in
+   its firing cycle. So a tool in a slot is a HANDLE -- `inst` indexes a pool of
+   ToolInst records, and 0 means "no instance", which is what every material
+   stack has.
+
+   A pool rather than storing the modules inline in ItemStack, because ItemStack
+   is copied around and lives ten to an inventory; making every slot big enough
+   to hold six module ids so that one of them occasionally can is the wrong
+   trade. The pool also gives tools an identity that survives being moved
+   between slots, which is what stops a tool losing its loadout when the hotbar
+   gets reorganised -- and reorganising the hotbar is the very next thing this
+   inventory will grow. */
+static const int TOOL_SLOTS_MAX = 6;   /* the largest tier; not every tool uses all */
+static const int MAX_TOOL_INST  = 32;
+
+struct ToolInst {
+    ItemId slot[TOOL_SLOTS_MAX];
+    int    cooldown;   /* frames until it can fire again */
+    bool   used;
+};
+
+extern ToolInst g_toolInst[MAX_TOOL_INST];
+
+/* Returns a fresh instance handle in 1..MAX_TOOL_INST-1, or 0 if the pool is
+   full. Index 0 is deliberately never handed out so that 0 can mean "none". */
+u16  toolInstNew();
+void toolInstFree(u16 inst);
+
 struct ItemStack {
     ItemId item;
     u16    count;
+    u16    inst;    /* tool instance handle, 0 for everything else */
     bool empty() const { return item == ITEM_NONE || count == 0; }
 };
 
@@ -97,7 +147,25 @@ struct Inventory {
 
     /* Largest reachBonus among everything carried; 0 with nothing. */
     int  reachBonus() const;
+
+    /* The first tool in the pack, or -1. The inventory screen shows one tool's
+       loadout and this is the one it shows -- with a single multitool in play
+       that is unambiguous, and when there are two it is at least stable. */
+    int  firstToolSlot() const;
 };
+
+/* --- what a loaded tool does ----------------------------------------------
+   Resolved fresh from the tool and its installed modules rather than cached on
+   the instance, so pulling a module out takes effect immediately and there is
+   no second copy of the truth to keep in step. */
+struct ToolShot {
+    bool   canFire;
+    int    delay;      /* frames between shots: tool base + module */
+    int    power;
+    int    pierce;
+    u32    colour;
+};
+ToolShot toolResolve(const ItemStack& st);
 
 extern Inventory g_inv;
 

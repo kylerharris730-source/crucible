@@ -10,6 +10,7 @@
 #include "render.h"
 #include "player.h"
 #include "item.h"
+#include "projectile.h"
 
 /* The window is a fixed-size left-hand tool panel plus the sim viewport. The
    viewport keeps a clean integer scale so pixels stay crisp and the
@@ -182,6 +183,14 @@ static RECT g_crePanel, g_creClear;
 static int  g_creCount = 0;              /* entries actually laid out */
 static ItemId g_creItem[ITEM_COUNT];     /* which item each rect belongs to */
 
+/* The tool bench: the carried multitool's own slots, drawn inside the inventory
+   screen. It belongs here rather than in a screen of its own because installing
+   a module is a transfer between two containers, and putting both on screen at
+   once is what makes that legible without a drag-and-drop system. */
+static RECT g_toolSlotRect[TOOL_SLOTS_MAX];
+static int  g_toolSlotCount = 0;
+static int  g_toolPackSlot  = -1;   /* which inventory slot the bench is showing */
+
 /* stats */
 static double g_fps = 0.0, g_simMs = 0.0;
 static int    g_cellCount = 0;
@@ -339,10 +348,19 @@ static void layoutCreative() {
         if (ITEMS[i].maxStack == 0) continue;   /* air, and anything unfinished */
         g_creItem[g_creCount++] = (ItemId)i;
     }
+    /* The bench only appears when there is a tool to show, and its height is
+       part of the panel's height rather than an overlay -- so picking up a
+       multitool makes the window taller instead of pushing the grid under it. */
+    g_toolPackSlot   = g_inv.firstToolSlot();
+    g_toolSlotCount  = 0;
+    if (g_toolPackSlot >= 0)
+        g_toolSlotCount = imin(ITEMS[g_inv.slot[g_toolPackSlot].item].toolSlots, TOOL_SLOTS_MAX);
+
     const int rows = (g_creCount + CRE_COLS - 1) / CRE_COLS;
     const int cw = 168, ch = 26, gap = 4, pad = 14;
+    const int benchH = g_toolSlotCount ? 62 : 0;
     const int w = pad * 2 + CRE_COLS * cw + (CRE_COLS - 1) * gap;
-    const int h = pad + 26 + rows * (ch + gap) + 38;
+    const int h = pad + 26 + rows * (ch + gap) + benchH + 38;
     const int cx = PANEL_W + VIEW_W / 2, cy = VIEW_H / 2;
     const int x0 = cx - w / 2, y0 = cy - h / 2;
     SetRect(&g_crePanel, x0, y0, x0 + w, y0 + h);
@@ -353,13 +371,56 @@ static void layoutCreative() {
         const int by = y0 + pad + 26 + r * (ch + gap);
         SetRect(&g_creRect[i], bx, by, bx + cw, by + ch);
     }
+
+    /* Module slots: square, and noticeably bigger than a grid row, because they
+       are the one place on this screen where the arrangement carries meaning
+       (slot order decides which module is the shot). */
+    const int by = y0 + pad + 26 + rows * (ch + gap) + 22;
+    for (int i = 0; i < g_toolSlotCount; ++i) {
+        const int bx = x0 + pad + i * 40;
+        SetRect(&g_toolSlotRect[i], bx, by, bx + 34, by + 34);
+    }
+
     SetRect(&g_creClear, x0 + pad, y0 + h - 32, x0 + pad + 120, y0 + h - 8);
+}
+
+/* First module sitting loose in the pack, or -1. */
+static int packModuleSlot() {
+    for (int i = 0; i < INV_SLOTS; ++i) {
+        const ItemStack& s = g_inv.slot[i];
+        if (!s.empty() && ITEMS[s.item].kind == ITEMK_MODULE) return i;
+    }
+    return -1;
 }
 
 /* Returns true if the click was consumed, which while this is open is always:
    it is modal, and letting a click through to the world would paint under it. */
 static bool handleCreativeClick(int mx, int my, bool remove) {
-    if (inRect(g_creClear, mx, my)) { g_inv.clear(); return true; }
+    if (inRect(g_creClear, mx, my)) { g_inv.clear(); layoutCreative(); return true; }
+
+    /* Module slots. Click an empty one to install the first loose module in the
+       pack, click a filled one to pull it back out. No drag-and-drop: with one
+       module type and three slots, click-to-move says everything a drag would
+       and needs no notion of a cursor carrying something. */
+    if (g_toolPackSlot >= 0 && g_inv.slot[g_toolPackSlot].inst) {
+        ToolInst& ti = g_toolInst[g_inv.slot[g_toolPackSlot].inst];
+        for (int i = 0; i < g_toolSlotCount; ++i) {
+            if (!inRect(g_toolSlotRect[i], mx, my)) continue;
+            if (ti.slot[i] != ITEM_NONE) {
+                /* Only clear the slot if the pack actually took it back, or a
+                   full pack would quietly delete the module. */
+                if (g_inv.add(ti.slot[i], 1) == 0) ti.slot[i] = ITEM_NONE;
+            } else if (!remove) {
+                const int src = packModuleSlot();
+                if (src >= 0) {
+                    const ItemId m = g_inv.slot[src].item;
+                    if (g_inv.take(m, 1) == 1) ti.slot[i] = m;
+                }
+            }
+            return true;
+        }
+    }
+
     for (int i = 0; i < g_creCount; ++i) {
         if (!inRect(g_creRect[i], mx, my)) continue;
         const ItemId it = g_creItem[i];
@@ -371,6 +432,10 @@ static bool handleCreativeClick(int mx, int my, bool remove) {
         } else {
             g_inv.add(it, ITEMS[it].maxStack);
         }
+        /* Taking or dropping a tool changes whether the bench exists at all,
+           which changes the panel's height. Re-laying out here means the rects
+           the next click tests against are the ones actually on screen. */
+        layoutCreative();
         return true;
     }
     return true;
@@ -575,6 +640,39 @@ static Aim currentAim() {
    immediately rather than waiting out a stale cooldown. */
 static int g_digCool = 0;
 
+/* --- firing ---------------------------------------------------------------
+   Direction comes from the aim point, and it is worth noticing that the CLAMPED
+   aim gives the same answer as the raw mouse would: the clamp rescales the
+   offset from the body's centre without rotating it, so both lie on one line
+   through the player. So the crosshair always points where the shot goes, even
+   though the shot itself is not limited by reach -- a thrown thing does not care
+   how far your arm is. */
+static void fireTool(const Aim& aim) {
+    ItemStack& h = g_inv.held();
+    if (h.empty() || ITEMS[h.item].kind != ITEMK_TOOL || h.inst == 0) return;
+
+    const ToolShot s = toolResolve(h);
+    if (!s.canFire) return;                       /* a tool with no modules */
+
+    ToolInst& ti = g_toolInst[h.inst];
+    if (ti.cooldown > 0) return;
+    ti.cooldown = s.delay;
+
+    const float pcx = g_player.centreX(), pcy = g_player.centreY();
+    float dx = (float)aim.x - pcx, dy = (float)aim.y - pcy;
+    float d = sqrtf(dx * dx + dy * dy);
+    if (d < 0.001f) { dx = 1.0f; dy = 0.0f; d = 1.0f; }   /* aimed at own feet */
+    dx /= d; dy /= d;
+
+    /* Start clear of the body. Spawning at the centre would put the shot inside
+       whatever the character is standing in, so firing while waist-deep in sand
+       would spend the whole shot on the cells around your own legs. */
+    const float MUZZLE = PLAYER_H * 0.5f + 2.0f;
+    const float SPEED  = 3.5f;
+    projSpawn(pcx + dx * MUZZLE, pcy + dy * MUZZLE, dx * SPEED, dy * SPEED,
+              s.power, s.pierce, 90, s.colour);
+}
+
 static void applyBrush() {
     if (g_uiCapture || (!g_lmb && !g_rmb)) { g_pmx = -1; return; }
 
@@ -591,6 +689,16 @@ static void applyBrush() {
        and the rest of the stroke would do nothing, so a fast drag would chew a
        hole where the mouse WAS rather than where it is. Nibbling at the current
        aim point is both simpler and what it looks like it should do. */
+    /* Holding a tool replaces the build verb with the fire verb. Digging stays
+       on the right button either way -- you can always claw at the wall, and a
+       tool that took away your hands would be a strange upgrade. */
+    if (g_survival && g_playerOn && g_lmb && !g_rmb
+        && !g_inv.held().empty() && ITEMS[g_inv.held().item].kind == ITEMK_TOOL) {
+        fireTool(aim);
+        g_pmx = aim.x; g_pmy = aim.y;
+        return;
+    }
+
     if (g_survival && g_playerOn && g_rmb) {
         if (g_digCool <= 0) {
             digInto(g_world, g_inv, aim.x, aim.y, handRadius(), HAND.cellsPerBite);
@@ -733,11 +841,22 @@ static void drawHotbar(HDC hdc) {
        it, not down among the frame timings. The bonus is called out separately
        so it is obvious which part of it you would lose by dropping the item. */
     {
-        char s[64];
+        char s[96];
         const int bonus = g_inv.reachBonus();
-        if (bonus > 0) sprintf(s, "%s  r%d  reach %d (+%d)", HAND.name, handRadius(),
-                               currentReach(), bonus);
-        else           sprintf(s, "%s  r%d  reach %d", HAND.name, handRadius(), currentReach());
+        const ToolShot sh = toolResolve(h);
+        /* Holding a tool, the line describes the tool -- because that is what
+           the left button now does, and a readout that kept saying "Hands"
+           while you were shooting would be describing the wrong verb. */
+        if (!h.empty() && ITEMS[h.item].kind == ITEMK_TOOL) {
+            if (sh.canFire) sprintf(s, "%s  pow %d  pierce %d  %d/s  reach %d",
+                                    ITEMS[h.item].name, sh.power, sh.pierce,
+                                    60 / imax(1, sh.delay), currentReach());
+            else            sprintf(s, "%s  no module installed  reach %d",
+                                    ITEMS[h.item].name, currentReach());
+        }
+        else if (bonus > 0) sprintf(s, "%s  r%d  reach %d (+%d)", HAND.name, handRadius(),
+                                    currentReach(), bonus);
+        else                sprintf(s, "%s  r%d  reach %d", HAND.name, handRadius(), currentReach());
         /* Its own line ABOVE the name row, not sharing it. Left-aligned text and
            centred text on one line collide as soon as either gets long, and
            "Focusing Lens" over a reach of 84 (+28) was already long enough --
@@ -848,6 +967,45 @@ static void drawCreative(HDC hdc) {
             RECT cr = r; cr.right -= 7;
             SetTextColor(hdc, RGB(150, 210, 150));
             DrawTextA(hdc, n, -1, &cr, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+        }
+    }
+
+    /* --- the tool bench --- */
+    if (g_toolSlotCount > 0 && g_toolPackSlot >= 0) {
+        const ItemStack& ts = g_inv.slot[g_toolPackSlot];
+        const ToolShot sh = toolResolve(ts);
+
+        RECT lr = g_crePanel;
+        lr.left = g_toolSlotRect[0].left;
+        lr.top  = g_toolSlotRect[0].top - 20;
+        char s[128];
+        /* State the resolved numbers, not the tool's own -- the delay shown is
+           what it will actually fire at with the modules currently in it, which
+           is the only version of the number worth reading. */
+        if (sh.canFire)
+            sprintf(s, "%s  --  %d slots, %d frame delay, power %d, pierce %d",
+                    ITEMS[ts.item].name, g_toolSlotCount, sh.delay, sh.power, sh.pierce);
+        else
+            sprintf(s, "%s  --  %d slots, empty (install a module to fire)",
+                    ITEMS[ts.item].name, g_toolSlotCount);
+        SetTextColor(hdc, sh.canFire ? RGB(226, 190, 90) : RGB(150, 156, 168));
+        DrawTextA(hdc, s, -1, &lr, DT_LEFT | DT_TOP | DT_SINGLELINE);
+
+        for (int i = 0; i < g_toolSlotCount; ++i) {
+            RECT r = g_toolSlotRect[i];
+            const ItemId m = ts.inst ? g_toolInst[ts.inst].slot[i] : ITEM_NONE;
+            const bool hot = inRect(r, g_mx, g_my);
+            FillRect(hdc, &r, hot ? g_btnBgHot : g_btnBg);
+            FrameRect(hdc, &r, m != ITEM_NONE ? g_accentBrush : g_borderBrush);
+            if (m != ITEM_NONE) {
+                RECT sw = r;
+                sw.left += 6; sw.right -= 6; sw.top += 6; sw.bottom -= 6;
+                HBRUSH b = CreateSolidBrush(RGB((ITEMS[m].colour >> 16) & 0xFF,
+                                                (ITEMS[m].colour >> 8) & 0xFF,
+                                                 ITEMS[m].colour & 0xFF));
+                FillRect(hdc, &sw, b);
+                DeleteObject(b);
+            }
         }
     }
 
@@ -1063,6 +1221,12 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         /* Ticked unconditionally, so a cooldown can never outlive the drag that
            set it and the first click after a pause always acts at once. */
         if (g_digCool > 0) --g_digCool;
+        /* Tool cooldowns tick on the instance, not on a global, so two tools
+           recharge independently and swapping between them does not reset
+           either -- which is the whole reason firing state lives on the
+           instance rather than beside the input handler. */
+        for (int i = 1; i < MAX_TOOL_INST; ++i)
+            if (g_toolInst[i].used && g_toolInst[i].cooldown > 0) --g_toolInst[i].cooldown;
         if (!g_menuOpen && !g_creativeOpen) applyBrush();
         /* Whether the sim actually advanced this frame, so the character moves
            in lockstep with the world -- including on a single frame-advance. */
@@ -1085,6 +1249,12 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         } else if (!g_paused && !g_menuOpen) {
             for (int s = 0; s < SPEEDS[g_speedIdx]; ++s) g_world.step();
         }
+        /* Projectiles move with the world, so the speed multiplier speeds them
+           up too -- a shot that crawled at 1x speed through a 4x world would
+           look like it was fired underwater. */
+        if (steppedThisFrame) projUpdate(g_world);
+        else if (!g_paused && !g_menuOpen)
+            for (int s = 0; s < SPEEDS[g_speedIdx]; ++s) projUpdate(g_world);
         QueryPerformanceCounter(&tB);
         g_simMs = 1000.0 * (double)(tB.QuadPart - tA.QuadPart) / (double)freq.QuadPart;
 
@@ -1104,6 +1274,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
 
         g_cellCount = renderWorld(g_world, g_pixels, g_view);
         if (g_playerOn) g_player.draw(g_pixels);
+        projDraw(g_pixels);
         /* Modals dim the world in the pixel buffer, before it becomes a blit --
            see dimPixels(). Doing it to the window instead cost 500ms a frame. */
         if (g_menuOpen || g_creativeOpen) dimPixels();

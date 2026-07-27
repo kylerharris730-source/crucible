@@ -3,7 +3,7 @@ setlocal
 if not exist build mkdir build
 
 g++ -std=c++11 -O2 -Wall -Wextra -mwindows ^
-    src\common.cpp src\materials.cpp src\world.cpp src\render.cpp src\player.cpp src\item.cpp src\main.cpp ^
+    src\common.cpp src\materials.cpp src\world.cpp src\render.cpp src\player.cpp src\item.cpp src\projectile.cpp src\main.cpp ^
     -o build\powder.exe ^
     -lgdi32 -luser32 -lwinmm
 

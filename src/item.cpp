@@ -5,6 +5,23 @@
 
 ItemDef   ITEMS[ITEM_COUNT];
 Inventory g_inv;
+ToolInst  g_toolInst[MAX_TOOL_INST];
+
+u16 toolInstNew() {
+    for (int i = 1; i < MAX_TOOL_INST; ++i) {
+        if (g_toolInst[i].used) continue;
+        memset(&g_toolInst[i], 0, sizeof(ToolInst));
+        g_toolInst[i].used = true;
+        return (u16)i;
+    }
+    return 0;   /* pool full; the caller gets a tool with no state, which still
+                   works as an empty tool rather than crashing */
+}
+
+void toolInstFree(u16 inst) {
+    if (inst == 0 || inst >= MAX_TOOL_INST) return;
+    memset(&g_toolInst[inst], 0, sizeof(ToolInst));
+}
 
 const ToolSpec HAND = { "Hands", 6, 10, 6 };
 
@@ -80,10 +97,42 @@ void initItems() {
     ITEMS[MAT_EMPTY].name     = "";
     ITEMS[MAT_EMPTY].maxStack = 0;
 
-    ITEMS[ITEM_MULTITOOL].name     = "Multitool";
-    ITEMS[ITEM_MULTITOOL].kind     = ITEMK_TOOL;
-    ITEMS[ITEM_MULTITOOL].maxStack = 1;
-    ITEMS[ITEM_MULTITOOL].colour   = 0xC8B070;
+    /* Tiers. What separates them is slot count first and rate of fire second,
+       because slots change what the tool can BE and delay only changes how fast
+       it is at being it -- and an upgrade you have to re-plan around is worth
+       more than one that just multiplies a number. */
+    ITEMS[ITEM_MULTITOOL].name      = "Multitool Mk I";
+    ITEMS[ITEM_MULTITOOL].kind      = ITEMK_TOOL;
+    ITEMS[ITEM_MULTITOOL].maxStack  = 1;
+    ITEMS[ITEM_MULTITOOL].colour    = 0xC8B070;
+    ITEMS[ITEM_MULTITOOL].toolSlots = 3;
+    ITEMS[ITEM_MULTITOOL].baseDelay = 18;
+
+    ITEMS[ITEM_MULTITOOL2].name      = "Multitool Mk II";
+    ITEMS[ITEM_MULTITOOL2].kind      = ITEMK_TOOL;
+    ITEMS[ITEM_MULTITOOL2].maxStack  = 1;
+    ITEMS[ITEM_MULTITOOL2].colour    = 0xE0D090;
+    ITEMS[ITEM_MULTITOOL2].toolSlots = 5;
+    ITEMS[ITEM_MULTITOOL2].baseDelay = 11;
+
+    /* The starting module. Power STR_LOOSE means it clears sand and dirt and is
+       stopped dead by stone -- which is the entire tech gate, expressed as one
+       number.
+
+       Pierce is 10 so one shot bores a visible tunnel rather than stopping at
+       the first grain: it has to read as a beam, not a pebble. Even so, this is
+       NOT yet a faster way to move dirt than your hands -- 10 cells every 18
+       frames is 33 cells a second against the hands' 100. What it buys is
+       range, and a socket for everything that comes after. Overtaking bare
+       hands on raw throughput is what the ladder is for. */
+    ITEMS[ITEM_MOD_SHOT].name       = "Shot Module";
+    ITEMS[ITEM_MOD_SHOT].kind       = ITEMK_MODULE;
+    ITEMS[ITEM_MOD_SHOT].maxStack   = 1;
+    ITEMS[ITEM_MOD_SHOT].colour     = 0x70D0FF;
+    ITEMS[ITEM_MOD_SHOT].addDelay   = 0;
+    ITEMS[ITEM_MOD_SHOT].power      = STR_LOOSE;
+    ITEMS[ITEM_MOD_SHOT].pierce     = 10;
+    ITEMS[ITEM_MOD_SHOT].shotColour = 0x9CE0FF;
 
     /* Reach extenders. Two tiers so the ladder is visible; the numbers are
        relative to a base reach of 56, so the lens is "half again as far" and
@@ -103,7 +152,15 @@ void initItems() {
     ITEMS[ITEM_RELAY].reachBonus = 56;
 }
 
+/* Returning a tool's instance to the pool when the tool leaves the pack. Miss
+   this and the pool leaks: pick up and drop a multitool 32 times and the next
+   one comes out with no state at all, with nothing anywhere saying why. */
+static void releaseStack(ItemStack& s) {
+    if (s.inst) { toolInstFree(s.inst); s.inst = 0; }
+}
+
 void Inventory::clear() {
+    for (int i = 0; i < INV_SLOTS; ++i) releaseStack(slot[i]);
     memset(slot, 0, sizeof(slot));
     selected = 0;
 }
@@ -133,6 +190,10 @@ int Inventory::add(ItemId item, int count) {
         const int put = (count < cap) ? count : cap;
         slot[i].item  = item;
         slot[i].count = (u16)put;
+        /* A tool becomes a distinct object the moment it exists. Doing this
+           here rather than at every call site means there is no way to end up
+           holding a multitool that cannot remember its own modules. */
+        slot[i].inst  = (ITEMS[item].kind == ITEMK_TOOL) ? toolInstNew() : 0;
         count -= put;
     }
     return count;   /* whatever would not fit */
@@ -149,7 +210,7 @@ int Inventory::take(ItemId item, int count) {
     if (slot[selected].item == item && slot[selected].count > 0) {
         const int got = (count < slot[selected].count) ? count : slot[selected].count;
         slot[selected].count = (u16)(slot[selected].count - got);
-        if (slot[selected].count == 0) slot[selected].item = ITEM_NONE;
+        if (slot[selected].count == 0) { releaseStack(slot[selected]); slot[selected].item = ITEM_NONE; }
         taken += got;
         count -= got;
     }
@@ -157,7 +218,7 @@ int Inventory::take(ItemId item, int count) {
         if (slot[i].item != item || slot[i].count == 0) continue;
         const int got = (count < slot[i].count) ? count : slot[i].count;
         slot[i].count = (u16)(slot[i].count - got);
-        if (slot[i].count == 0) slot[i].item = ITEM_NONE;
+        if (slot[i].count == 0) { releaseStack(slot[i]); slot[i].item = ITEM_NONE; }
         taken += got;
         count -= got;
     }
@@ -186,6 +247,42 @@ int Inventory::reachBonus() const {
         if (b > best) best = b;
     }
     return best;
+}
+
+int Inventory::firstToolSlot() const {
+    for (int i = 0; i < INV_SLOTS; ++i)
+        if (!slot[i].empty() && ITEMS[slot[i].item].kind == ITEMK_TOOL) return i;
+    return -1;
+}
+
+ToolShot toolResolve(const ItemStack& st) {
+    ToolShot s;
+    s.canFire = false; s.delay = 0; s.power = 0; s.pierce = 0; s.colour = 0xFFFFFF;
+    if (st.empty() || ITEMS[st.item].kind != ITEMK_TOOL) return s;
+
+    const ItemDef& tool = ITEMS[st.item];
+    s.delay = tool.baseDelay;
+    if (st.inst == 0 || st.inst >= MAX_TOOL_INST) return s;   /* no state: a stick */
+
+    const ToolInst& ti = g_toolInst[st.inst];
+    const int n = imin(tool.toolSlots, TOOL_SLOTS_MAX);
+    for (int i = 0; i < n; ++i) {
+        const ItemId m = ti.slot[i];
+        if (m == ITEM_NONE || ITEMS[m].kind != ITEMK_MODULE) continue;
+        /* The FIRST module decides what the shot is; later ones only add to the
+           delay. That is a placeholder with a deliberate shape: it means slot
+           order already matters, so when modules start combining, "leftmost is
+           the shot, the rest modify it" is a rule players will already have
+           learned rather than a new one being introduced. */
+        if (!s.canFire) {
+            s.canFire = true;
+            s.power   = ITEMS[m].power;
+            s.pierce  = ITEMS[m].pierce;
+            s.colour  = ITEMS[m].shotColour;
+        }
+        s.delay += ITEMS[m].addDelay;
+    }
+    return s;
 }
 
 int digInto(World& w, Inventory& inv, int cx, int cy, int r, int maxCells) {

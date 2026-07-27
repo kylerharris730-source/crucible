@@ -246,6 +246,38 @@ extern u8 g_matGlows[MAT_COUNT];
    fire wants both -- a big payload and a short life. */
 extern u8 g_matDecay[MAT_COUNT];
 
+/* --- how hard a material is to break ---------------------------------------
+
+   A projectile carries a `power`; it destroys any cell whose strength is at or
+   below that and is stopped by anything above it. So strength is not "hit
+   points", it is a THRESHOLD -- a tier list, not a health bar. That is the
+   right shape for this game because the interesting question is always "can
+   this tool get through that", and a tool that eventually chews through granite
+   given enough time answers it with "yes, tediously" instead of "no".
+
+   The named tiers exist so gradation can be added between them without renaming
+   anything: there is room for six more steps between LOOSE and SOFT, and the
+   whole scale is deliberately spread across 0..255 rather than 0..10.
+
+   Standalone rather than a MatInfo column, matching g_matGlows and g_matDecay
+   above, and for the same two reasons: as a field it would be the one entry
+   missing from all twenty-eight MATS[] rows, which trips
+   -Wmissing-field-initializers on every one of them under -Wextra; and having
+   the whole durability ladder in one readable block is how you tune a ladder.
+   Scanning a 25-column row for the strength value would make the relative
+   ordering -- which is the only thing that matters here -- invisible. */
+enum MatStrength {
+    STR_NOTHING = 0,     /* air, fire, gases, liquids: a shot passes through */
+    STR_LOOSE   = 10,    /* sand, dirt: what the starting shot is meant to clear */
+    STR_SOFT    = 40,    /* ice, wood, rubber */
+    STR_ROCK    = 90,    /* stone */
+    STR_METAL   = 150,   /* iron, copper, frozen mercury */
+    STR_HARD    = 210,   /* graphene */
+    STR_ABSOLUTE = 255   /* wall, and the machines: nothing breaks these */
+};
+
+extern u8 g_matStrength[MAT_COUNT];
+
 /* Blend two packed 0xRRGGBB colours. t is 0..255. */
 static inline u32 lerpColor(u32 a, u32 b, int t) {
     int ar = (a >> 16) & 0xFF, ag = (a >> 8) & 0xFF, ab = a & 0xFF;
