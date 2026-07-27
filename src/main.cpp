@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 #include "world.h"
 #include "render.h"
@@ -137,7 +138,7 @@ static bool g_overwrite = true;    /* false = brush only fills empty space */
 static int  g_view      = VIEW_NORMAL;
 static bool g_lmb = false, g_rmb = false;
 static int  g_mx = 0, g_my = 0;      /* current mouse, window pixels */
-static int  g_pmx = -1, g_pmy = -1;  /* previous, for stroke interpolation */
+static int  g_pmx = -1, g_pmy = -1;  /* previous aim point, in cells */
 static int  g_brushMat = MAT_SAND;
 static int  g_brushRadius = 6;
 static bool g_paused = false;
@@ -163,6 +164,16 @@ static RECT g_menuResume, g_menuQuit, g_menuPanel;
 static double g_fps = 0.0, g_simMs = 0.0;
 static int    g_cellCount = 0;
 
+/* Where the tool acts versus where the mouse is; see currentAim() below for
+   why they can differ. Declared up here because both the hover readout and the
+   cursor drawing need it before it is defined. */
+struct Aim {
+    int  x, y;           /* where the tool acts, in cells */
+    int  ghostX, ghostY; /* where the mouse actually is, in cells */
+    bool clamped;
+};
+static Aim currentAim();
+
 /* What is under the cursor, for the panel readout. Returns false when the
    pointer is off the playfield (over the panel, or outside the window), so the
    caller can show a placeholder instead of a stale name.
@@ -172,7 +183,11 @@ static int    g_cellCount = 0;
    more useful things the readout does, since heat is invisible in Material
    view and only roughly shaded in Glow view. */
 static bool hoverCell(char* out, int cap, u32* colOut) {
-    const int cx = (g_mx - PANEL_W) / SCALE, cy = g_my / SCALE;
+    /* Reports the cell the tool would act on, not the one under the mouse.
+       Past the reach limit those differ, and naming the unreachable cell would
+       be describing something you cannot touch. */
+    const Aim a = currentAim();
+    const int cx = a.x, cy = a.y;
     if (g_mx < PANEL_W || cx < 0 || cx >= SIM_W || cy < 0 || cy >= SIM_H) return false;
     const Cell& c = g_world.at(cx, cy);
     const int t = (int)g_world.temp[cy * SIM_W + cx] - TEMP_OFFSET;
@@ -353,6 +368,16 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_RBUTTONUP:
         g_rmb = false; ReleaseCapture(); return 0;
 
+    case WM_SETCURSOR:
+        /* Hide the arrow over the playfield so the crosshair is the only
+           pointer there. Still the system cursor over the panel and the menu,
+           where you are clicking buttons rather than aiming. */
+        if (LOWORD(lp) == HTCLIENT && g_mx >= PANEL_W && !g_menuOpen) {
+            SetCursor(NULL);
+            return TRUE;
+        }
+        break;
+
     case WM_MOUSEWHEEL: {
         const int dir = (short)HIWORD(wp) > 0 ? 1 : -1;
         /* The wheel picks what you are holding, which is what it does in every
@@ -415,12 +440,54 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 /* Paint along the segment the mouse covered since last frame, so a fast drag
    lays down a continuous stroke instead of dotted blobs. Window x maps to a
    cell by subtracting the panel and dividing by the scale. */
+/* Where the tool actually acts, and where the mouse actually is.
+
+   Past the character's reach the aim point is clamped to the reach circle,
+   along the line from the body's centre to the cursor -- so it slides around
+   the boundary staying as close to the mouse as it can rather than sticking in
+   one place. That is a plain vector clamp: take the offset, and if it is longer
+   than the reach, rescale it to exactly the reach. Landing on the line between
+   the two falls out of the arithmetic rather than needing to be arranged.
+
+   `ghost` is the raw mouse position, drawn faintly so the relationship between
+   the two is legible -- without it a cursor that stops moving reads as the
+   window having lost focus. */
+static Aim currentAim() {
+    Aim a;
+    a.ghostX = (g_mx - PANEL_W) / SCALE;
+    a.ghostY = g_my / SCALE;
+    a.x = a.ghostX; a.y = a.ghostY;
+    a.clamped = false;
+
+    /* Unlimited in the sandbox: reach is a rule about a character, and with no
+       character on screen it would just be an obstacle to drawing. */
+    if (!g_survival || !g_playerOn) return a;
+
+    const float pcx = g_player.centreX(), pcy = g_player.centreY();
+    const float dx = (float)a.ghostX - pcx, dy = (float)a.ghostY - pcy;
+    const float d2 = dx * dx + dy * dy;
+    const float R  = (float)PLAYER_REACH;
+    if (d2 <= R * R) return a;
+
+    const float d = sqrtf(d2);
+    a.x = (int)(pcx + dx * (R / d));
+    a.y = (int)(pcy + dy * (R / d));
+    a.clamped = true;
+    return a;
+}
+
 static void applyBrush() {
     if (g_uiCapture || (!g_lmb && !g_rmb)) { g_pmx = -1; return; }
-    if (g_pmx < 0) { g_pmx = g_mx; g_pmy = g_my; }
 
-    int x0 = (g_pmx - PANEL_W) / SCALE, y0 = g_pmy / SCALE;
-    int x1 = (g_mx  - PANEL_W) / SCALE, y1 = g_my  / SCALE;
+    /* Stroke interpolation runs between successive CLAMPED points, not raw
+       mouse positions. Interpolating the raw ones and clamping afterwards would
+       draw a straight line through the middle of the reach circle whenever the
+       cursor swung around the outside of it. */
+    const Aim aim = currentAim();
+    if (g_pmx < 0) { g_pmx = aim.x; g_pmy = aim.y; }
+
+    int x0 = g_pmx, y0 = g_pmy;
+    int x1 = aim.x, y1 = aim.y;
     int steps = imax(abs(x1 - x0), abs(y1 - y0));
 
     const int sel = g_rmb ? (int)MAT_EMPTY : g_brushMat;
@@ -444,8 +511,8 @@ static void applyBrush() {
         }
         if (!steps) break;
     }
-    g_pmx = g_mx;
-    g_pmy = g_my;
+    g_pmx = aim.x;
+    g_pmy = aim.y;
 }
 
 /* ======================================================================
@@ -544,6 +611,46 @@ static void drawHotbar(HDC hdc) {
         DrawTextA(hdc, ITEMS[h.item].name, -1, &nr, DT_CENTER | DT_TOP | DT_SINGLELINE);
     }
     SelectObject(hdc, oldFont);
+}
+
+/* A crosshair, drawn in SCREEN pixels rather than cells. Drawing it into the
+   sim buffer would scale it with SCALE and put it on 2px steps, and a cursor
+   that lands only on even pixels feels loose in a way that is hard to place. */
+static void drawCross(HDC hdc, int sx, int sy, COLORREF c, int gap, int arm) {
+    HBRUSH b = CreateSolidBrush(c);
+    RECT r;
+    SetRect(&r, sx - gap - arm, sy,       sx - gap,       sy + 1); FillRect(hdc, &r, b);
+    SetRect(&r, sx + gap + 1,   sy,       sx + gap + arm + 1, sy + 1); FillRect(hdc, &r, b);
+    SetRect(&r, sx,             sy - gap - arm, sx + 1, sy - gap);     FillRect(hdc, &r, b);
+    SetRect(&r, sx,             sy + gap + 1,   sx + 1, sy + gap + arm + 1); FillRect(hdc, &r, b);
+    DeleteObject(b);
+}
+
+static void drawCursor(HDC hdc) {
+    if (g_mx < PANEL_W) return;                 /* over the panel: system cursor */
+
+    const Aim aim = currentAim();
+    const int ax = PANEL_W + aim.x * SCALE + SCALE / 2;
+    const int ay = aim.y * SCALE + SCALE / 2;
+
+    if (aim.clamped) {
+        /* The ghost sits where the mouse really is, and a faint line joins the
+           two. Without the line a stuck crosshair reads as the game having
+           frozen; with it, the reach limit explains itself the first time you
+           hit it and never needs a tutorial. */
+        const int gx = PANEL_W + aim.ghostX * SCALE + SCALE / 2;
+        const int gy = aim.ghostY * SCALE + SCALE / 2;
+
+        HPEN pen = CreatePen(PS_DOT, 1, RGB(70, 78, 92));
+        HGDIOBJ oldPen = SelectObject(hdc, pen);
+        MoveToEx(hdc, ax, ay, NULL);
+        LineTo(hdc, gx, gy);
+        SelectObject(hdc, oldPen);
+        DeleteObject(pen);
+
+        drawCross(hdc, gx, gy, RGB(96, 104, 120), 3, 4);
+    }
+    drawCross(hdc, ax, ay, RGB(236, 240, 248), 3, 5);
 }
 
 /* A modal overlay, deliberately plain: dim the world behind it so it is
@@ -793,6 +900,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
                       g_pixels, &g_bmi, DIB_RGB_COLORS, SRCCOPY);
         drawPanel(g_backDC);
         if (g_survival && g_playerOn) drawHotbar(g_backDC);
+        if (!g_menuOpen) drawCursor(g_backDC);
         if (g_menuOpen) drawMenu(g_backDC);
 
         HDC hdc = GetDC(hwnd);

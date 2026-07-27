@@ -53,6 +53,15 @@ static inline int playerRowInset(int rowFromTop) {
     return inset > 0 ? inset : 0;
 }
 
+/* How far from the character the tool can reach, in cells. Roughly three and a
+   half body heights, which is far enough to dig a tunnel comfortably and short
+   enough that you have to walk somewhere to work on it.
+
+   This will become a stat on the multitool rather than a constant -- reach is
+   an obvious thing for a module to extend -- so anything that reads it should
+   be happy taking it as a parameter later. */
+static const int PLAYER_REACH = 56;
+
 struct PlayerInput {
     bool left, right, jump;
 };
@@ -84,6 +93,12 @@ struct Player {
        vacated -- without that, sand resting on the player's head stays floating
        in mid-air after they walk away, because nothing woke its chunk. */
     void occupy(World& w) const;
+
+    /* Centre of the body, which is what reach is measured from -- measuring
+       from the feet or a corner makes the reachable area lopsided in a way you
+       can feel without being able to name. */
+    float centreX() const { return x + PLAYER_W * 0.5f; }
+    float centreY() const { return y + PLAYER_H * 0.5f; }
 
     /* Cell bounds of the collision box at the current position. */
     int left()   const { return (int)x; }
