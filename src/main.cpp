@@ -160,6 +160,28 @@ static const int HOTBAR_SLOT = 34;   /* screen pixels per hotbar cell */
 static RECT g_hotRect[INV_SLOTS];
 static RECT g_menuResume, g_menuQuit, g_menuPanel;
 
+/* --- the creative inventory ----------------------------------------------
+
+   Tab opens a grid of every item that exists, and clicking one puts it in the
+   pack. It is a debug tool that is honest about being one, rather than a
+   crafting screen with the costs switched off.
+
+   That is the right shape for this specifically because item ids and material
+   ids share a space and ITEMS[] is filled programmatically from MATS[]: the
+   grid is a loop over the table, so a material added tomorrow appears here with
+   no edit at all. A hand-maintained spawn list would be wrong the first time
+   somebody forgot to add a row, and quietly -- you would think the material was
+   broken when it was only missing from a menu.
+
+   Right-click removes rather than adds, because the tedious half of testing an
+   item is getting rid of it again. */
+static bool g_creativeOpen = false;
+static const int CRE_COLS = 4;
+static RECT g_creRect[ITEM_COUNT];
+static RECT g_crePanel, g_creClear;
+static int  g_creCount = 0;              /* entries actually laid out */
+static ItemId g_creItem[ITEM_COUNT];     /* which item each rect belongs to */
+
 /* stats */
 static double g_fps = 0.0, g_simMs = 0.0;
 static int    g_cellCount = 0;
@@ -173,6 +195,19 @@ struct Aim {
     bool clamped;
 };
 static Aim currentAim();
+
+/* Base reach plus whatever the pack is carrying. Reading it through a function
+   rather than a constant is what lets an item change it -- and later a tool. */
+static int currentReach() { return PLAYER_REACH + g_inv.reachBonus(); }
+
+/* The working radius of bare hands, clamped no matter what the size control
+   says. It caps building as well as digging: the cap is a statement about how
+   much world you can reach around at once, and letting you place a radius-40
+   blob but only scrape a radius-6 hole would be a strange pair of arms.
+
+   The size control is left free to go higher rather than clamped at the source,
+   so the number you set survives picking up a better tool. */
+static int handRadius() { return imin(g_brushRadius, HAND.maxRadius); }
 
 /* What is under the cursor, for the panel readout. Returns false when the
    pointer is off the playfield (over the panel, or outside the window), so the
@@ -294,6 +329,53 @@ static void layoutMenu() {
     SetRect(&g_menuQuit,   bx, cy + 26, bx + bw, cy + 58);
 }
 
+/* Laid out fresh on open, like the pause menu, and for the same reason: it is
+   centred on the viewport and nothing else depends on where it lands. The row
+   count is derived from how many items there are, so the panel grows with the
+   material table instead of clipping it. */
+static void layoutCreative() {
+    g_creCount = 0;
+    for (int i = 0; i < ITEM_COUNT; ++i) {
+        if (ITEMS[i].maxStack == 0) continue;   /* air, and anything unfinished */
+        g_creItem[g_creCount++] = (ItemId)i;
+    }
+    const int rows = (g_creCount + CRE_COLS - 1) / CRE_COLS;
+    const int cw = 168, ch = 26, gap = 4, pad = 14;
+    const int w = pad * 2 + CRE_COLS * cw + (CRE_COLS - 1) * gap;
+    const int h = pad + 26 + rows * (ch + gap) + 38;
+    const int cx = PANEL_W + VIEW_W / 2, cy = VIEW_H / 2;
+    const int x0 = cx - w / 2, y0 = cy - h / 2;
+    SetRect(&g_crePanel, x0, y0, x0 + w, y0 + h);
+
+    for (int i = 0; i < g_creCount; ++i) {
+        const int c = i % CRE_COLS, r = i / CRE_COLS;
+        const int bx = x0 + pad + c * (cw + gap);
+        const int by = y0 + pad + 26 + r * (ch + gap);
+        SetRect(&g_creRect[i], bx, by, bx + cw, by + ch);
+    }
+    SetRect(&g_creClear, x0 + pad, y0 + h - 32, x0 + pad + 120, y0 + h - 8);
+}
+
+/* Returns true if the click was consumed, which while this is open is always:
+   it is modal, and letting a click through to the world would paint under it. */
+static bool handleCreativeClick(int mx, int my, bool remove) {
+    if (inRect(g_creClear, mx, my)) { g_inv.clear(); return true; }
+    for (int i = 0; i < g_creCount; ++i) {
+        if (!inRect(g_creRect[i], mx, my)) continue;
+        const ItemId it = g_creItem[i];
+        if (remove) {
+            /* Take everything, not one: the point of the right-click is to
+               clear a slot out, and holding the button down to drain 9999 sand
+               one unit at a time is not a feature. */
+            g_inv.take(it, 100000);
+        } else {
+            g_inv.add(it, ITEMS[it].maxStack);
+        }
+        return true;
+    }
+    return true;
+}
+
 /* ======================================================================
    Input
    ====================================================================== */
@@ -353,8 +435,9 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_LBUTTONDOWN:
         g_mx = (short)LOWORD(lp);
         g_my = (short)HIWORD(lp);
-        if (handlePanelClick(g_mx, g_my)) g_uiCapture = true;
-        else                              g_lmb = true;
+        if (g_creativeOpen) { handleCreativeClick(g_mx, g_my, false); g_uiCapture = true; }
+        else if (handlePanelClick(g_mx, g_my)) g_uiCapture = true;
+        else                                   g_lmb = true;
         SetCapture(hwnd);
         return 0;
     case WM_LBUTTONUP:
@@ -362,7 +445,8 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_RBUTTONDOWN:
         g_mx = (short)LOWORD(lp);
         g_my = (short)HIWORD(lp);
-        if (g_mx >= PANEL_W) g_rmb = true;   /* right-drag erases, but only over the sim */
+        if (g_creativeOpen)       handleCreativeClick(g_mx, g_my, true);
+        else if (g_mx >= PANEL_W) g_rmb = true;   /* right-drag digs, but only over the sim */
         SetCapture(hwnd);
         return 0;
     case WM_RBUTTONUP:
@@ -372,7 +456,7 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         /* Hide the arrow over the playfield so the crosshair is the only
            pointer there. Still the system cursor over the panel and the menu,
            where you are clicking buttons rather than aiming. */
-        if (LOWORD(lp) == HTCLIENT && g_mx >= PANEL_W && !g_menuOpen) {
+        if (LOWORD(lp) == HTCLIENT && g_mx >= PANEL_W && !g_menuOpen && !g_creativeOpen) {
             SetCursor(NULL);
             return TRUE;
         }
@@ -430,7 +514,17 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case VK_OEM_PERIOD: g_stepOnce = true; break;
         case VK_OEM_4: changeSize(-1); break;  /* [ */
         case VK_OEM_6: changeSize(+1); break;  /* ] */
-        case VK_ESCAPE: g_menuOpen = !g_menuOpen; break;
+        case VK_TAB:
+            g_creativeOpen = !g_creativeOpen;
+            if (g_creativeOpen) { layoutCreative(); g_lmb = g_rmb = false; }
+            break;
+        /* Escape backs out of the creative grid before it reaches the pause
+           menu -- one key that always means "close the thing in front of me" is
+           worth more than a second binding to remember. */
+        case VK_ESCAPE:
+            if (g_creativeOpen) g_creativeOpen = false;
+            else                g_menuOpen = !g_menuOpen;
+            break;
         }
         return 0;
     }
@@ -466,7 +560,7 @@ static Aim currentAim() {
     const float pcx = g_player.centreX(), pcy = g_player.centreY();
     const float dx = (float)a.ghostX - pcx, dy = (float)a.ghostY - pcy;
     const float d2 = dx * dx + dy * dy;
-    const float R  = (float)PLAYER_REACH;
+    const float R  = (float)currentReach();
     if (d2 <= R * R) return a;
 
     const float d = sqrtf(d2);
@@ -475,6 +569,11 @@ static Aim currentAim() {
     a.clamped = true;
     return a;
 }
+
+/* Frames until the hands can take another bite. Counted down every frame
+   whether or not you are digging, so the first click after a pause acts
+   immediately rather than waiting out a stale cooldown. */
+static int g_digCool = 0;
 
 static void applyBrush() {
     if (g_uiCapture || (!g_lmb && !g_rmb)) { g_pmx = -1; return; }
@@ -485,6 +584,21 @@ static void applyBrush() {
        cursor swung around the outside of it. */
     const Aim aim = currentAim();
     if (g_pmx < 0) { g_pmx = aim.x; g_pmy = aim.y; }
+
+    /* --- digging by hand is rate-limited, and deliberately does NOT stroke ---
+       Once there is a per-frame cell budget, interpolating a drag is
+       meaningless: the budget would be spent at the first interpolated point
+       and the rest of the stroke would do nothing, so a fast drag would chew a
+       hole where the mouse WAS rather than where it is. Nibbling at the current
+       aim point is both simpler and what it looks like it should do. */
+    if (g_survival && g_playerOn && g_rmb) {
+        if (g_digCool <= 0) {
+            digInto(g_world, g_inv, aim.x, aim.y, handRadius(), HAND.cellsPerBite);
+            g_digCool = HAND.cooldown;
+        }
+        g_pmx = aim.x; g_pmy = aim.y;
+        return;
+    }
 
     int x0 = g_pmx, y0 = g_pmy;
     int x1 = aim.x, y1 = aim.y;
@@ -500,10 +614,12 @@ static void applyBrush() {
                of it. The heat and cool brushes stay available regardless --
                they are diagnostic tools, not materials, and there is nothing
                for them to consume. */
-            if (g_brushMat == TOOL_HEAT && !g_rmb)      g_world.heat(px, py, g_brushRadius,  HEAT_STEP);
-            else if (g_brushMat == TOOL_COOL && !g_rmb) g_world.heat(px, py, g_brushRadius, -HEAT_STEP);
-            else if (g_rmb)                             digInto(g_world, g_inv, px, py, g_brushRadius);
-            else                                        placeFrom(g_world, g_inv, px, py, g_brushRadius);
+            /* Digging never reaches here -- it returned above. What is left is
+               building, which is limited by what is in the pack rather than by
+               a rate, and the two diagnostic brushes. */
+            if (g_brushMat == TOOL_HEAT)      g_world.heat(px, py, g_brushRadius,  HEAT_STEP);
+            else if (g_brushMat == TOOL_COOL) g_world.heat(px, py, g_brushRadius, -HEAT_STEP);
+            else                              placeFrom(g_world, g_inv, px, py, handRadius());
         } else {
             if (sel == TOOL_HEAT)      g_world.heat(px, py, g_brushRadius,  HEAT_STEP);
             else if (sel == TOOL_COOL) g_world.heat(px, py, g_brushRadius, -HEAT_STEP);
@@ -603,12 +719,33 @@ static void drawHotbar(HDC hdc) {
     }
 
     /* Name of what is held, above the bar, so a swatch is never ambiguous. */
+    RECT nr;
+    SetRect(&nr, PANEL_W, g_hotRect[0].top - 20, WIN_W, g_hotRect[0].top - 4);
     const ItemStack& h = g_inv.held();
     if (!h.empty()) {
-        RECT nr;
-        SetRect(&nr, PANEL_W, g_hotRect[0].top - 20, WIN_W, g_hotRect[0].top - 4);
         SetTextColor(hdc, RGB(200, 206, 216));
         DrawTextA(hdc, ITEMS[h.item].name, -1, &nr, DT_CENTER | DT_TOP | DT_SINGLELINE);
+    }
+
+    /* What you are digging with, on the same line. Reach is here rather than in
+       the stats block because it is a thing a carried item changes -- a number
+       that moves when you pick something up belongs next to the pack that moved
+       it, not down among the frame timings. The bonus is called out separately
+       so it is obvious which part of it you would lose by dropping the item. */
+    {
+        char s[64];
+        const int bonus = g_inv.reachBonus();
+        if (bonus > 0) sprintf(s, "%s  r%d  reach %d (+%d)", HAND.name, handRadius(),
+                               currentReach(), bonus);
+        else           sprintf(s, "%s  r%d  reach %d", HAND.name, handRadius(), currentReach());
+        /* Its own line ABOVE the name row, not sharing it. Left-aligned text and
+           centred text on one line collide as soon as either gets long, and
+           "Focusing Lens" over a reach of 84 (+28) was already long enough --
+           the two overprinted into an unreadable smear. */
+        RECT tr = nr; tr.left = g_hotRect[0].left;
+        tr.top -= 16; tr.bottom -= 16;
+        SetTextColor(hdc, bonus > 0 ? RGB(150, 200, 226) : RGB(140, 146, 158));
+        DrawTextA(hdc, s, -1, &tr, DT_LEFT | DT_TOP | DT_SINGLELINE);
     }
     SelectObject(hdc, oldFont);
 }
@@ -653,19 +790,71 @@ static void drawCursor(HDC hdc) {
     drawCross(hdc, ax, ay, RGB(236, 240, 248), 3, 5);
 }
 
+/* Dim the viewport behind a modal. A checkerboard of dark pixels rather than a
+   real alpha blend, because GDI has no cheap per-pixel alpha here and this only
+   needs to read as "not interactive". */
+static void dimViewport(HDC hdc) {
+    for (int y = 0; y < VIEW_H; y += 2)
+        for (int x = PANEL_W; x < WIN_W; x += 2)
+            SetPixelV(hdc, x, y, RGB(8, 9, 12));
+}
+
+static void drawCreative(HDC hdc) {
+    dimViewport(hdc);
+    FillRect(hdc, &g_crePanel, g_panelBg);
+    FrameRect(hdc, &g_crePanel, g_accentBrush);
+
+    HGDIOBJ oldFont = SelectObject(hdc, g_font);
+    SetBkMode(hdc, TRANSPARENT);
+
+    RECT title = g_crePanel;
+    title.top += 10; title.left += 14;
+    SetTextColor(hdc, RGB(226, 190, 90));
+    DrawTextA(hdc, "CREATIVE  --  click to take, right-click to drop", -1, &title,
+              DT_LEFT | DT_TOP | DT_SINGLELINE);
+
+    for (int i = 0; i < g_creCount; ++i) {
+        const ItemId it = g_creItem[i];
+        const RECT& r = g_creRect[i];
+        const int have = g_inv.countOf(it);
+
+        /* Swatches are made and destroyed per frame here rather than cached,
+           unlike the palette's. This is a modal screen that is open for a
+           second at a time, and 30 brush creations once in a while is nothing
+           next to keeping a second parallel array in step with ITEMS[]. */
+        HBRUSH sw = CreateSolidBrush(RGB((ITEMS[it].colour >> 16) & 0xFF,
+                                         (ITEMS[it].colour >> 8) & 0xFF,
+                                          ITEMS[it].colour & 0xFF));
+        drawButton(hdc, r, ITEMS[it].name, sw, have > 0, inRect(r, g_mx, g_my));
+        DeleteObject(sw);
+
+        /* What you are already carrying, right-aligned, so the grid doubles as
+           a readout of the pack -- otherwise you cannot tell a click landed. */
+        if (have > 0) {
+            char n[16]; sprintf(n, "%d", have);
+            RECT cr = r; cr.right -= 7;
+            SetTextColor(hdc, RGB(150, 210, 150));
+            DrawTextA(hdc, n, -1, &cr, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+        }
+    }
+
+    drawButton(hdc, g_creClear, "Empty pack", NULL, false, inRect(g_creClear, g_mx, g_my));
+    {
+        RECT hint = g_crePanel;
+        hint.left = g_creClear.right + 12; hint.top = g_creClear.top + 4;
+        SetTextColor(hdc, RGB(120, 126, 138));
+        DrawTextA(hdc, "Tab or Esc to close", -1, &hint, DT_LEFT | DT_TOP | DT_SINGLELINE);
+    }
+    SelectObject(hdc, oldFont);
+}
+
 /* A modal overlay, deliberately plain: dim the world behind it so it is
    obviously not interactive, then the two things anyone opens a pause menu
    for. Escape closes it again. */
 static void drawMenu(HDC hdc) {
     layoutMenu();
 
-    /* Dim the viewport. A checkerboard of dark pixels rather than a real alpha
-       blend, because GDI has no cheap per-pixel alpha here and this is a pause
-       screen -- it wants to read as "stopped", not to look pretty. */
-    for (int y = 0; y < VIEW_H; y += 2)
-        for (int x = PANEL_W; x < WIN_W; x += 2)
-            SetPixelV(hdc, x, y, RGB(8, 9, 12));
-
+    dimViewport(hdc);
     FillRect(hdc, &g_menuPanel, g_panelBg);
     FrameRect(hdc, &g_menuPanel, g_accentBrush);
 
@@ -709,8 +898,15 @@ static void drawPanel(HDC hdc) {
         RECT rr = g_sizeBox;
         FillRect(hdc, &rr, g_btnBg);
         FrameRect(hdc, &rr, g_borderBrush);
-        char s[32]; sprintf(s, "Size %d", g_brushRadius);
-        SetTextColor(hdc, RGB(214, 216, 224));
+        /* Show the clamp when one is in force. Displaying "Size 20" while the
+           hands work at 6 is a straightforward lie, and the player's conclusion
+           would be that the size control is broken rather than that their arms
+           are. */
+        char s[32];
+        const bool capped = g_survival && g_playerOn && handRadius() < g_brushRadius;
+        if (capped) sprintf(s, "Size %d -> %d", g_brushRadius, handRadius());
+        else        sprintf(s, "Size %d", g_brushRadius);
+        SetTextColor(hdc, capped ? RGB(226, 190, 90) : RGB(214, 216, 224));
         DrawTextA(hdc, s, -1, &rr, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     }
 
@@ -852,7 +1048,10 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         }
         if (!g_running) break;
 
-        if (!g_menuOpen) applyBrush();
+        /* Ticked unconditionally, so a cooldown can never outlive the drag that
+           set it and the first click after a pause always acts at once. */
+        if (g_digCool > 0) --g_digCool;
+        if (!g_menuOpen && !g_creativeOpen) applyBrush();
         /* Whether the sim actually advanced this frame, so the character moves
            in lockstep with the world -- including on a single frame-advance. */
         bool steppedThisFrame = false;
@@ -900,8 +1099,9 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
                       g_pixels, &g_bmi, DIB_RGB_COLORS, SRCCOPY);
         drawPanel(g_backDC);
         if (g_survival && g_playerOn) drawHotbar(g_backDC);
-        if (!g_menuOpen) drawCursor(g_backDC);
-        if (g_menuOpen) drawMenu(g_backDC);
+        if (!g_menuOpen && !g_creativeOpen) drawCursor(g_backDC);
+        if (g_creativeOpen) drawCreative(g_backDC);
+        if (g_menuOpen)     drawMenu(g_backDC);
 
         HDC hdc = GetDC(hwnd);
         BitBlt(hdc, 0, 0, WIN_W, WIN_H, g_backDC, 0, 0, SRCCOPY);
