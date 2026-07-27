@@ -21,6 +21,7 @@ struct Projectile {
     i32   power;     /* highest material strength it can break through */
     i32   pierce;    /* cells it can still destroy before it is spent */
     i32   life;      /* frames remaining */
+    i32   blast;     /* explosion radius on impact; 0 for an ordinary shot */
     u32   colour;
     bool  alive;
 };
@@ -34,7 +35,17 @@ extern Projectile g_proj[MAX_PROJ];
 
 void projClear();
 void projSpawn(float x, float y, float vx, float vy,
-               int power, int pierce, int life, u32 colour);
+               int power, int pierce, int life, u32 colour, int blast = 0);
+
+/* Blows a hole, sets fire to the middle of it and heats the lot. Exposed
+   because an explosion is a world event rather than a projectile one -- the
+   next things that want to cause one are a ruptured boiler and a dropped
+   unstable material, neither of which is a projectile. */
+void explodeAt(World& w, int cx, int cy, int radius, int power);
+
+/* Counts up as explosions happen, so a test can assert one went off without
+   having to infer it from the shape of the hole. */
+extern int projExplosionsThisFrame;
 
 /* Steps every live projectile and applies it to the world. Returns how many
    cells were destroyed this frame. */

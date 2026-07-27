@@ -1,5 +1,6 @@
 #pragma once
 #include "world.h"
+#include "sprite.h"
 
 /* --- items and the inventory ----------------------------------------------
 
@@ -31,6 +32,7 @@ enum {
     /* Modules. What a tool DOES lives here, not on the tool -- an empty
        multitool is a stick. */
     ITEM_MOD_SHOT,
+    ITEM_MOD_BLAST,
     /* Reach extenders. They do nothing when held and everything when carried --
        see ITEMK_CARRIED below. */
     ITEM_LENS,
@@ -70,7 +72,12 @@ struct ItemDef {
     u8   addDelay;
     u8   power;       /* highest material strength the shot can break */
     u8   pierce;      /* cells it can destroy before it is spent */
+    u8   blast;       /* explosion radius on impact; 0 for an ordinary shot */
     u32  shotColour;
+
+    /* SpriteId, or SPR_NONE to fall back to a flat colour swatch. Materials
+       deliberately have none -- see sprite.h. */
+    u8   sprite;
 };
 
 extern ItemDef ITEMS[ITEM_COUNT];
@@ -163,6 +170,7 @@ struct ToolShot {
     int    delay;      /* frames between shots: tool base + module */
     int    power;
     int    pierce;
+    int    blast;
     u32    colour;
 };
 ToolShot toolResolve(const ItemStack& st);

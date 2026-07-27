@@ -485,6 +485,13 @@ u8  g_matStrength[MAT_COUNT];
 static void initStrength() {
     for (int m = 0; m < MAT_COUNT; ++m) g_matStrength[m] = STR_NOTHING;
 
+    /* Every liquid, by kind rather than by name. Doing it from MATS[] means a
+       liquid added later is covered without anyone remembering to come here --
+       and "shots do not notice water" is exactly the kind of omission that
+       would go unreported for weeks because it looks like a physics quirk. */
+    for (int m = 1; m < MAT_COUNT; ++m)
+        if (MATS[m].kind == KIND_LIQUID) g_matStrength[m] = STR_FLUID;
+
     g_matStrength[MAT_SAND]        = STR_LOOSE;
     g_matStrength[MAT_DIRT]        = STR_LOOSE;
 

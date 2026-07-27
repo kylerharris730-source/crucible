@@ -80,6 +80,7 @@ void initItems() {
     memset(ITEMS, 0, sizeof(ITEMS));
     g_itemsReady = true;
     initDiscTable();
+    initSprites();
 
     /* Materials describe themselves. Name comes straight from MATS[] and the
        swatch from the colour LUT at a mid tint, which is the same sample the
@@ -107,6 +108,7 @@ void initItems() {
     ITEMS[ITEM_MULTITOOL].colour    = 0xC8B070;
     ITEMS[ITEM_MULTITOOL].toolSlots = 3;
     ITEMS[ITEM_MULTITOOL].baseDelay = 18;
+    ITEMS[ITEM_MULTITOOL].sprite    = SPR_TOOL1;
 
     ITEMS[ITEM_MULTITOOL2].name      = "Multitool Mk II";
     ITEMS[ITEM_MULTITOOL2].kind      = ITEMK_TOOL;
@@ -114,6 +116,7 @@ void initItems() {
     ITEMS[ITEM_MULTITOOL2].colour    = 0xE0D090;
     ITEMS[ITEM_MULTITOOL2].toolSlots = 5;
     ITEMS[ITEM_MULTITOOL2].baseDelay = 11;
+    ITEMS[ITEM_MULTITOOL2].sprite    = SPR_TOOL2;
 
     /* The starting module. Power STR_LOOSE means it clears sand and dirt and is
        stopped dead by stone -- which is the entire tech gate, expressed as one
@@ -133,6 +136,33 @@ void initItems() {
     ITEMS[ITEM_MOD_SHOT].power      = STR_LOOSE;
     ITEMS[ITEM_MOD_SHOT].pierce     = 10;
     ITEMS[ITEM_MOD_SHOT].shotColour = 0x9CE0FF;
+    ITEMS[ITEM_MOD_SHOT].sprite     = SPR_MOD_SHOT;
+
+    /* The blast module. Power STR_ROCK breaks stone -- it is the answer to the
+       wall the starting shot bounces off -- but not metal, so the ladder still
+       has a rung above it.
+
+       Pierce 1 is doing real work rather than being a small number: the shot
+       must stop at the FIRST thing it touches, or it would bore inside a wall
+       and detonate in the middle of it, which both looks wrong and wastes most
+       of the blast on cells behind the surface. Explosions belong on the face
+       of what you hit. The delay is the cost, and it is a big one: 42 frames
+       against the plain shot's 18. */
+    ITEMS[ITEM_MOD_BLAST].name       = "Blast Module";
+    ITEMS[ITEM_MOD_BLAST].kind       = ITEMK_MODULE;
+    ITEMS[ITEM_MOD_BLAST].maxStack   = 1;
+    ITEMS[ITEM_MOD_BLAST].colour     = 0xFFB040;
+    ITEMS[ITEM_MOD_BLAST].addDelay   = 24;
+    /* Above STR_ROCK rather than equal to it. With falloff, a blast whose
+       power exactly matches a material's strength only breaks the handful of
+       cells at the dead centre -- see the note in explodeAt(). 120 sits between
+       stone's 90 and metal's 150, so it carves a wide crater in stone, a wider
+       one in loose ground, and cannot touch iron at all. */
+    ITEMS[ITEM_MOD_BLAST].power      = 120;
+    ITEMS[ITEM_MOD_BLAST].pierce     = 1;
+    ITEMS[ITEM_MOD_BLAST].blast      = 14;
+    ITEMS[ITEM_MOD_BLAST].shotColour = 0xFFC060;
+    ITEMS[ITEM_MOD_BLAST].sprite     = SPR_MOD_BLAST;
 
     /* Reach extenders. Two tiers so the ladder is visible; the numbers are
        relative to a base reach of 56, so the lens is "half again as far" and
@@ -257,7 +287,8 @@ int Inventory::firstToolSlot() const {
 
 ToolShot toolResolve(const ItemStack& st) {
     ToolShot s;
-    s.canFire = false; s.delay = 0; s.power = 0; s.pierce = 0; s.colour = 0xFFFFFF;
+    s.canFire = false; s.delay = 0; s.power = 0; s.pierce = 0; s.blast = 0;
+    s.colour = 0xFFFFFF;
     if (st.empty() || ITEMS[st.item].kind != ITEMK_TOOL) return s;
 
     const ItemDef& tool = ITEMS[st.item];
@@ -278,6 +309,7 @@ ToolShot toolResolve(const ItemStack& st) {
             s.canFire = true;
             s.power   = ITEMS[m].power;
             s.pierce  = ITEMS[m].pierce;
+            s.blast   = ITEMS[m].blast;
             s.colour  = ITEMS[m].shotColour;
         }
         s.delay += ITEMS[m].addDelay;

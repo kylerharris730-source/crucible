@@ -1,13 +1,13 @@
 CXX      := g++
 CXXFLAGS := -std=c++11 -O2 -Wall -Wextra
-LDFLAGS  := -mwindows -lgdi32 -luser32 -lwinmm
+LDFLAGS  := -mwindows -lgdi32 -luser32 -lwinmm -lmsimg32
 
-SRC := src/common.cpp src/materials.cpp src/world.cpp src/render.cpp src/player.cpp src/item.cpp src/projectile.cpp src/main.cpp
+SRC := src/common.cpp src/materials.cpp src/world.cpp src/render.cpp src/player.cpp src/item.cpp src/sprite.cpp src/projectile.cpp src/main.cpp
 OUT := build/powder.exe
 
 all: $(OUT)
 
-$(OUT): $(SRC) src/common.h src/materials.h src/world.h src/render.h src/player.h src/item.h src/projectile.h
+$(OUT): $(SRC) src/common.h src/materials.h src/world.h src/render.h src/player.h src/item.h src/sprite.h src/projectile.h
 	@if not exist build mkdir build
 	$(CXX) $(CXXFLAGS) $(SRC) -o $(OUT) $(LDFLAGS)
 

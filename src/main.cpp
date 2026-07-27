@@ -133,6 +133,76 @@ static RECT g_speedRect[N_SPEED];
 static HBRUSH g_panelBg, g_btnBg, g_btnBgHot, g_btnBgSel, g_borderBrush, g_accentBrush;
 static HBRUSH g_swatchBrush[N_BRUSH];
 
+/* --- item icons -----------------------------------------------------------
+   Each sprite is baked into a bitmap once and blitted, rather than drawn as
+   pixels every frame. That is not a micro-optimisation, it is the difference
+   between working and not: a 14x14 sprite is up to 196 filled rects, and the
+   hotbar plus the creative grid want forty-odd icons a frame. The last time
+   this codebase drew per-pixel with GDI it cost 511 ms a frame.
+
+   Transparency is a magenta colour key rather than a mask, because the slot
+   behind an icon has three different background colours (normal, hovered,
+   selected) and a key handles all three with one bitmap. */
+static const COLORREF ICON_KEY = RGB(255, 0, 255);
+static const int ICON_SCALE = 2;                  /* 14x14 art -> 28x28 icon */
+static const int ICON_PX    = SPR_W * ICON_SCALE;
+static HDC     g_iconDC;
+static HBITMAP g_iconBmp[SPR_COUNT];
+
+static void buildIcons() {
+    HDC screen = GetDC(NULL);
+    g_iconDC = CreateCompatibleDC(screen);
+    for (int s = 1; s < SPR_COUNT; ++s) {
+        g_iconBmp[s] = CreateCompatibleBitmap(screen, ICON_PX, ICON_PX);
+        HGDIOBJ old = SelectObject(g_iconDC, g_iconBmp[s]);
+        RECT all = { 0, 0, ICON_PX, ICON_PX };
+        HBRUSH key = CreateSolidBrush(ICON_KEY);
+        FillRect(g_iconDC, &all, key);
+        DeleteObject(key);
+        for (int y = 0; y < SPR_H; ++y)
+            for (int x = 0; x < SPR_W; ++x) {
+                const u32 c = g_sprite[s][y * SPR_W + x];
+                if (c == 0) continue;             /* transparent */
+                RECT r = { x * ICON_SCALE, y * ICON_SCALE,
+                           x * ICON_SCALE + ICON_SCALE, y * ICON_SCALE + ICON_SCALE };
+                HBRUSH b = CreateSolidBrush(RGB((c >> 16) & 0xFF, (c >> 8) & 0xFF, c & 0xFF));
+                FillRect(g_iconDC, &r, b);
+                DeleteObject(b);
+            }
+        SelectObject(g_iconDC, old);
+    }
+    ReleaseDC(NULL, screen);
+}
+
+/* Centres an item's icon in a rect, or falls back to a colour swatch for
+   everything without one -- which is every material, deliberately. */
+static void drawItemIcon(HDC hdc, const RECT& r, ItemId item) {
+    const int s = ITEMS[item].sprite;
+    if (s > SPR_NONE && s < SPR_COUNT && g_iconBmp[s]) {
+        /* Square, and centred. Stretching to fill the rect would squash every
+           icon by whatever the slot's aspect happened to be -- which turned the
+           module chips into unreadable letterboxed smears in the hotbar, where
+           the swatch area is wider than it is tall to leave room for the count.
+           A colour swatch can be any shape; a picture cannot. */
+        int side = imin(r.right - r.left - 2, r.bottom - r.top - 2);
+        if (side > ICON_PX) side = ICON_PX;
+        if (side < 1) return;
+        const int w = side, h = side;
+        const int x = r.left + (r.right - r.left - w) / 2;
+        const int y = r.top  + (r.bottom - r.top - h) / 2;
+        HGDIOBJ old = SelectObject(g_iconDC, g_iconBmp[s]);
+        TransparentBlt(hdc, x, y, w, h, g_iconDC, 0, 0, ICON_PX, ICON_PX, ICON_KEY);
+        SelectObject(g_iconDC, old);
+        return;
+    }
+    HBRUSH b = CreateSolidBrush(RGB((ITEMS[item].colour >> 16) & 0xFF,
+                                    (ITEMS[item].colour >> 8) & 0xFF,
+                                     ITEMS[item].colour & 0xFF));
+    RECT rr = r;
+    FillRect(hdc, &rr, b);
+    DeleteObject(b);
+}
+
 /* UI/input state */
 static bool g_uiCapture = false;   /* the click landed on the panel, not the sim */
 static bool g_overwrite = true;    /* false = brush only fills empty space */
@@ -157,7 +227,11 @@ static bool g_menuOpen = false;
    Off, the palette behaves as the unlimited sandbox tool it has always been,
    which is still how you build a scene to test something in. */
 static bool g_survival = true;
-static const int HOTBAR_SLOT = 34;   /* screen pixels per hotbar cell */
+/* Grown from 34 to make room for a square icon. At 34 the swatch area was 21
+   wide by 13 tall once the count row was reserved, so a 14x14 sprite had to be
+   letterboxed into a strip and the module chips were unreadable. Icons want
+   square space, and the row still spans well under half the viewport. */
+static const int HOTBAR_SLOT = 42;   /* screen pixels per hotbar cell */
 static RECT g_hotRect[INV_SLOTS];
 static RECT g_menuResume, g_menuQuit, g_menuPanel;
 
@@ -670,7 +744,7 @@ static void fireTool(const Aim& aim) {
     const float MUZZLE = PLAYER_H * 0.5f + 2.0f;
     const float SPEED  = 3.5f;
     projSpawn(pcx + dx * MUZZLE, pcy + dy * MUZZLE, dx * SPEED, dy * SPEED,
-              s.power, s.pierce, 90, s.colour);
+              s.power, s.pierce, 90, s.colour, s.blast);
 }
 
 static void applyBrush() {
@@ -801,12 +875,8 @@ static void drawHotbar(HDC hdc) {
                No icons: every material already has a colour that means
                something in this game, and a swatch reads faster than a glyph. */
             RECT sw = r;
-            sw.left += 5; sw.right -= 5; sw.top += 5; sw.bottom -= 13;
-            HBRUSH b = CreateSolidBrush(RGB((ITEMS[st.item].colour >> 16) & 0xFF,
-                                            (ITEMS[st.item].colour >> 8) & 0xFF,
-                                             ITEMS[st.item].colour & 0xFF));
-            FillRect(hdc, &sw, b);
-            DeleteObject(b);
+            sw.left += 4; sw.right -= 4; sw.top += 3; sw.bottom -= 14;
+            drawItemIcon(hdc, sw, st.item);
 
             /* Four digits do not fit a 31px slot at this font, so anything
                past 999 reads as thousands to one decimal: 1.2k, 9.9k.
@@ -867,6 +937,56 @@ static void drawHotbar(HDC hdc) {
         DrawTextA(hdc, s, -1, &tr, DT_LEFT | DT_TOP | DT_SINGLELINE);
     }
     SelectObject(hdc, oldFont);
+}
+
+/* --- the tool in the character's hand ---------------------------------------
+
+   Drawn procedurally along the aim vector rather than as a rotated sprite.
+   Rotating 14x14 pixel art to an arbitrary angle produces a different mangled
+   shape every frame -- edges break up, the tip wanders, and the whole thing
+   shimmers as you sweep the mouse. A rod built from its own geometry points
+   exactly where it is aimed at every angle, which is the only property this
+   thing actually needs.
+
+   It shares the icons' palette so the held tool and its inventory picture read
+   as the same object: gold handle, steel shaft, white tip. */
+static void drawHeldTool(u32* px, const Aim& aim) {
+    const ItemStack& h = g_inv.held();
+    if (h.empty() || ITEMS[h.item].kind != ITEMK_TOOL) return;
+
+    const float pcx = g_player.centreX(), pcy = g_player.centreY();
+    float dx = (float)aim.x - pcx, dy = (float)aim.y - pcy;
+    float d = sqrtf(dx * dx + dy * dy);
+    if (d < 0.001f) { dx = 1.0f; dy = 0.0f; d = 1.0f; }
+    dx /= d; dy /= d;
+
+    /* Mk II is longer and two cells thick; the tiers have to be told apart at a
+       glance in the world, not only in the inventory. */
+    const bool mk2 = (h.item == ITEM_MULTITOOL2);
+    const int  len = mk2 ? 13 : 10;
+    const int  grip = mk2 ? 5 : 4;
+    const u32  handle = mk2 ? 0xE8D9A0 : 0xC8B070;
+
+    /* Start at the shoulder rather than the centre, so the tool reads as held
+       rather than skewered through the middle of the body. */
+    const float ox = pcx + dx * 2.0f, oy = pcy - 1.0f + dy * 2.0f;
+    const float px2 = -dy, py2 = dx;   /* perpendicular, for thickness */
+
+    for (int t = 0; t < len; ++t) {
+        u32 c;
+        if      (t < grip)     c = handle;
+        else if (t == grip)    c = 0x6E7684;    /* collar */
+        else if (t == len - 1) c = 0xF2F5FF;    /* working tip */
+        else                   c = 0xAEB6C4;    /* steel */
+
+        const float fx = ox + dx * t, fy = oy + dy * t;
+        const int x = (int)fx, y = (int)fy;
+        if (x >= 0 && x < SIM_W && y >= 0 && y < SIM_H) px[y * SIM_W + x] = c;
+        if (mk2 || t < grip) {
+            const int x2 = (int)(fx + px2), y2 = (int)(fy + py2);
+            if (x2 >= 0 && x2 < SIM_W && y2 >= 0 && y2 < SIM_H) px[y2 * SIM_W + x2] = c;
+        }
+    }
 }
 
 /* A crosshair, drawn in SCREEN pixels rather than cells. Drawing it into the
@@ -954,11 +1074,23 @@ static void drawCreative(HDC hdc) {
            unlike the palette's. This is a modal screen that is open for a
            second at a time, and 30 brush creations once in a while is nothing
            next to keeping a second parallel array in step with ITEMS[]. */
+        /* Materials keep their colour swatch here; tools and modules get their
+           sprite drawn over the top of it, in the same place, so the row layout
+           does not change between the two kinds. */
         HBRUSH sw = CreateSolidBrush(RGB((ITEMS[it].colour >> 16) & 0xFF,
                                          (ITEMS[it].colour >> 8) & 0xFF,
                                           ITEMS[it].colour & 0xFF));
+        /* The swatch brush is passed either way so drawButton reserves the same
+           box and indents the label identically; the icon is then painted over
+           that box. Passing NULL for icon rows instead would left-align their
+           labels and the column of names would zig-zag. */
         drawButton(hdc, r, ITEMS[it].name, sw, have > 0, inRect(r, g_mx, g_my));
         DeleteObject(sw);
+        if (ITEMS[it].sprite > SPR_NONE) {
+            RECT ir = { r.left + 4, r.top + 1, r.left + 22, r.bottom - 1 };
+            FillRect(hdc, &ir, g_panelBg);
+            drawItemIcon(hdc, ir, it);
+        }
 
         /* What you are already carrying, right-aligned, so the grid doubles as
            a readout of the pack -- otherwise you cannot tell a click landed. */
@@ -999,12 +1131,8 @@ static void drawCreative(HDC hdc) {
             FrameRect(hdc, &r, m != ITEM_NONE ? g_accentBrush : g_borderBrush);
             if (m != ITEM_NONE) {
                 RECT sw = r;
-                sw.left += 6; sw.right -= 6; sw.top += 6; sw.bottom -= 6;
-                HBRUSH b = CreateSolidBrush(RGB((ITEMS[m].colour >> 16) & 0xFF,
-                                                (ITEMS[m].colour >> 8) & 0xFF,
-                                                 ITEMS[m].colour & 0xFF));
-                FillRect(hdc, &sw, b);
-                DeleteObject(b);
+                sw.left += 2; sw.right -= 2; sw.top += 2; sw.bottom -= 2;
+                drawItemIcon(hdc, sw, m);
             }
         }
     }
@@ -1176,6 +1304,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     g_btnBgSel    = CreateSolidBrush(RGB(58, 64, 82));
     g_borderBrush = CreateSolidBrush(RGB(88, 94, 108));
     g_accentBrush = CreateSolidBrush(RGB(226, 190, 90));
+    buildIcons();
 
     /* Swatch colours come from each material's own palette (a dry, mid-tint
        sample), so the picker always matches what lands in the world. Tools and
@@ -1273,7 +1402,10 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         }
 
         g_cellCount = renderWorld(g_world, g_pixels, g_view);
-        if (g_playerOn) g_player.draw(g_pixels);
+        if (g_playerOn) {
+            g_player.draw(g_pixels);
+            if (g_survival) drawHeldTool(g_pixels, currentAim());
+        }
         projDraw(g_pixels);
         /* Modals dim the world in the pixel buffer, before it becomes a blit --
            see dimPixels(). Doing it to the window instead cost 500ms a frame. */
@@ -1327,6 +1459,8 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     DeleteObject(g_borderBrush);
     DeleteObject(g_accentBrush);
     for (int i = 0; i < N_BRUSH; ++i) DeleteObject(g_swatchBrush[i]);
+    for (int s = 1; s < SPR_COUNT; ++s) if (g_iconBmp[s]) DeleteObject(g_iconBmp[s]);
+    if (g_iconDC) DeleteDC(g_iconDC);
     DeleteObject(g_font);
     return 0;
 }

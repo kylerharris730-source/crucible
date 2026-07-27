@@ -267,7 +267,15 @@ extern u8 g_matDecay[MAT_COUNT];
    Scanning a 25-column row for the strength value would make the relative
    ordering -- which is the only thing that matters here -- invisible. */
 enum MatStrength {
-    STR_NOTHING = 0,     /* air, fire, gases, liquids: a shot passes through */
+    STR_NOTHING = 0,     /* air and gases: a shot passes through untouched */
+    /* Liquids. Weaker than anything solid, but NOT free passage: a shot that
+       sailed through a lake as if it were not there was the single most
+       "phasing through the world" thing in the game. A shot now spends its
+       pierce crossing water, so depth stops it -- which is the behaviour
+       everyone expects and costs nothing to express in the same threshold model
+       as everything else. Gases stay at zero, because a shot slowing down in
+       smoke would be a nuisance with nothing to recommend it. */
+    STR_FLUID   = 5,
     STR_LOOSE   = 10,    /* sand, dirt: what the starting shot is meant to clear */
     STR_SOFT    = 40,    /* ice, wood, rubber */
     STR_ROCK    = 90,    /* stone */
