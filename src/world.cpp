@@ -83,6 +83,7 @@ static inline u8 latentDrain(int t) {
 }
 
 void World::reset() {
+    clearBlockBox();
     memset(cells, 0, sizeof(cells));
     memset(temp, AMBIENT_TEMP, sizeof(temp));
     frame  = 0;
@@ -170,6 +171,12 @@ void World::heat(int cx, int cy, int r, int delta) {
    is a fluid the source is heavy enough to sink through. Both cells are
    stamped with the current parity so neither gets a second turn this frame. */
 bool World::tryMove(int sx, int sy, int tx, int ty) {
+    /* Nothing moves into an occupied entity box -- see the note in world.h.
+       First test in the function and first comparison of the box test, so the
+       common case (no entity, or nowhere near it) costs one predictable
+       compare against a constant. */
+    if (blocksCell(tx, ty)) return false;
+
     const int si = sy * SIM_W + sx, ti = ty * SIM_W + tx;
     Cell& s = cells[si];
     Cell& t = cells[ti];

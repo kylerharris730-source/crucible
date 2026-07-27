@@ -219,6 +219,36 @@ struct World {
     u32   frame;
     int   activeChunks;           /* stat, for the HUD */
 
+    /* --- solid entity box ------------------------------------------------
+       A single axis-aligned box that no material may move into. It exists so
+       the player has physical presence -- sand piles on their head instead of
+       falling through it, water flows around them rather than over them.
+
+       This lives in World, and is set from outside each frame, so that
+       world.cpp needs to know nothing about players or entities. It is a box
+       of cells that happens to be occupied; who occupies it is not the
+       simulation's business.
+
+       Enforced in exactly one place, tryMove(), which every single material
+       movement already funnels through. That is what makes presence almost
+       free: one test in one function covers powders, liquids and gases at
+       once, with no per-material rules and no cells written into the grid.
+       Putting the entity IN the grid was the obvious alternative and is worse
+       in every respect -- it needs a density, the falling-sand rules are then
+       free to shove it around, and material it moves into has to go somewhere.
+
+       Disabled by setting x0 past the right edge, so the very first comparison
+       fails and the rest are never evaluated. */
+    i32   blockX0, blockY0, blockX1, blockY1;
+
+    void setBlockBox(int x0, int y0, int x1, int y1) {
+        blockX0 = x0; blockY0 = y0; blockX1 = x1; blockY1 = y1;
+    }
+    void clearBlockBox() { blockX0 = SIM_W; blockY0 = SIM_H; blockX1 = -1; blockY1 = -1; }
+    bool blocksCell(int x, int y) const {
+        return x >= blockX0 && x <= blockX1 && y >= blockY0 && y <= blockY1;
+    }
+
     void reset();
     void step();
     /* replace=false leaves whatever is already there alone, so you can pour

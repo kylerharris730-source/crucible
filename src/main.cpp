@@ -7,6 +7,7 @@
 
 #include "world.h"
 #include "render.h"
+#include "player.h"
 
 /* The window is a fixed-size left-hand tool panel plus the sim viewport. The
    viewport keeps a clean integer scale so pixels stay crisp and the
@@ -103,7 +104,7 @@ static const BrushDef BRUSHES[] = {
 };
 static const int N_BRUSH = (int)(sizeof(BRUSHES) / sizeof(BRUSHES[0]));
 
-enum ActionId { ACT_OVERWRITE, ACT_VIEW, ACT_PAUSE, ACT_CLEAR, N_ACT };
+enum ActionId { ACT_OVERWRITE, ACT_VIEW, ACT_PLAYER, ACT_PAUSE, ACT_CLEAR, N_ACT };
 
 /* --- simulation speed ----------------------------------------------------
    A multiplier on how many sim steps run per displayed frame, NOT a change to
@@ -141,6 +142,15 @@ static int  g_brushRadius = 6;
 static bool g_paused = false;
 static bool g_stepOnce = false;
 static int  g_speedIdx = 0;      /* index into SPEEDS */
+/* The character can be switched off, because the sandbox this grew out of is
+   still worth having on its own -- and because a figure standing in the middle
+   of a scene you are trying to draw is a nuisance. */
+static bool g_playerOn = true;
+/* The pause menu. Escape opens it rather than quitting outright -- an unprompted
+   Escape-to-quit is fine in a toy you are drawing in, and hostile in a game you
+   have built something in. Quitting now takes a deliberate second action. */
+static bool g_menuOpen = false;
+static RECT g_menuResume, g_menuQuit, g_menuPanel;
 
 /* stats */
 static double g_fps = 0.0, g_simMs = 0.0;
@@ -251,6 +261,17 @@ static void layoutPanel() {
     }
 }
 
+/* The menu is laid out fresh each time rather than in layoutPanel(), because it
+   is centred on the viewport and nothing else depends on where it lands. */
+static void layoutMenu() {
+    const int w = 220, h = 150;
+    const int cx = PANEL_W + VIEW_W / 2, cy = VIEW_H / 2;
+    SetRect(&g_menuPanel, cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2);
+    const int bw = w - 48, bx = cx - bw / 2;
+    SetRect(&g_menuResume, bx, cy - 18, bx + bw, cy + 14);
+    SetRect(&g_menuQuit,   bx, cy + 26, bx + bw, cy + 58);
+}
+
 /* ======================================================================
    Input
    ====================================================================== */
@@ -259,6 +280,13 @@ static void changeSize(int d){ g_brushRadius = imax(1, imin(64, g_brushRadius + 
 
 /* Returns true if the click was consumed by a panel control. */
 static bool handlePanelClick(int mx, int my) {
+    /* While the menu is up it takes every click, including ones over the
+       viewport -- otherwise you paint into the world through the overlay. */
+    if (g_menuOpen) {
+        if (inRect(g_menuResume, mx, my)) { g_menuOpen = false; return true; }
+        if (inRect(g_menuQuit,   mx, my)) { g_running = false; PostQuitMessage(0); return true; }
+        return true;
+    }
     for (int i = 0; i < N_BRUSH; ++i) {
         if (inRect(g_brushRect[i], mx, my)) { g_brushMat = BRUSHES[i].brush; return true; }
     }
@@ -269,6 +297,11 @@ static bool handlePanelClick(int mx, int my) {
     if (inRect(g_sizeInc, mx, my)) { changeSize(+1); return true; }
     if (inRect(g_actRect[ACT_OVERWRITE], mx, my)) { g_overwrite = !g_overwrite; return true; }
     if (inRect(g_actRect[ACT_VIEW],      mx, my)) { cycleView();                return true; }
+    if (inRect(g_actRect[ACT_PLAYER],    mx, my)) {
+        g_playerOn = !g_playerOn;
+        if (g_playerOn) g_player.reset(SIM_W * 0.5f, SIM_H * 0.25f);
+        return true;
+    }
     if (inRect(g_actRect[ACT_PAUSE],     mx, my)) { g_paused = !g_paused;       return true; }
     if (inRect(g_actRect[ACT_CLEAR],     mx, my)) { g_world.reset();            return true; }
     /* Any other spot on the panel is dead space: swallow it so it never paints. */
@@ -333,14 +366,19 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case 'H': g_brushMat = TOOL_HEAT; break;
         case 'J': g_brushMat = TOOL_COOL; break;
         case 'C': g_world.reset();        break;
+        /* Respawn at the cursor. Indispensable while tuning movement, and the
+           obvious escape hatch when you bury yourself. */
+        case 'R':
+            if (g_mx >= PANEL_W)
+                g_player.reset((float)((g_mx - PANEL_W) / SCALE), (float)(g_my / SCALE));
+            break;
         case 'O': g_overwrite = !g_overwrite; break;
         case 'V': cycleView();                break;
         case VK_SPACE:  g_paused = !g_paused; break;
-        case 'S': g_speedIdx = (g_speedIdx + 1) % N_SPEED; break;
         case VK_OEM_PERIOD: g_stepOnce = true; break;
         case VK_OEM_4: changeSize(-1); break;  /* [ */
         case VK_OEM_6: changeSize(+1); break;  /* ] */
-        case VK_ESCAPE: g_running = false; PostQuitMessage(0); break;
+        case VK_ESCAPE: g_menuOpen = !g_menuOpen; break;
         }
         return 0;
     }
@@ -403,6 +441,41 @@ static void drawButton(HDC hdc, const RECT& r, const char* label,
     DrawTextA(hdc, label, -1, &t, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 }
 
+/* A modal overlay, deliberately plain: dim the world behind it so it is
+   obviously not interactive, then the two things anyone opens a pause menu
+   for. Escape closes it again. */
+static void drawMenu(HDC hdc) {
+    layoutMenu();
+
+    /* Dim the viewport. A checkerboard of dark pixels rather than a real alpha
+       blend, because GDI has no cheap per-pixel alpha here and this is a pause
+       screen -- it wants to read as "stopped", not to look pretty. */
+    for (int y = 0; y < VIEW_H; y += 2)
+        for (int x = PANEL_W; x < WIN_W; x += 2)
+            SetPixelV(hdc, x, y, RGB(8, 9, 12));
+
+    FillRect(hdc, &g_menuPanel, g_panelBg);
+    FrameRect(hdc, &g_menuPanel, g_accentBrush);
+
+    HGDIOBJ oldFont = SelectObject(hdc, g_font);
+    SetBkMode(hdc, TRANSPARENT);
+
+    RECT title = g_menuPanel;
+    title.top += 14;
+    SetTextColor(hdc, RGB(226, 190, 90));
+    DrawTextA(hdc, "PAUSED", -1, &title, DT_CENTER | DT_TOP | DT_SINGLELINE);
+
+    drawButton(hdc, g_menuResume, "Resume", NULL, false, inRect(g_menuResume, g_mx, g_my));
+    drawButton(hdc, g_menuQuit,   "Quit",   NULL, false, inRect(g_menuQuit,   g_mx, g_my));
+
+    RECT hint = g_menuPanel;
+    hint.top = g_menuPanel.bottom - 26;
+    SetTextColor(hdc, RGB(120, 126, 138));
+    DrawTextA(hdc, "Esc to resume", -1, &hint, DT_CENTER | DT_TOP | DT_SINGLELINE);
+
+    SelectObject(hdc, oldFont);
+}
+
 static void drawPanel(HDC hdc) {
     RECT panel = { 0, 0, PANEL_W, WIN_H };
     FillRect(hdc, &panel, g_panelBg);
@@ -447,6 +520,11 @@ static void drawPanel(HDC hdc) {
     const char* vn = g_view == VIEW_NORMAL ? "View: Glow" :
                      g_view == VIEW_MATERIAL ? "View: Material" : "View: Heat";
     drawButton(hdc, g_actRect[ACT_VIEW], vn, NULL, g_view != VIEW_NORMAL, inRect(g_actRect[ACT_VIEW], g_mx, g_my));
+    {
+        const char* pl = !g_playerOn ? "Player: Off"
+                       : g_player.buried ? "Player: Stuck" : "Player: On";
+        drawButton(hdc, g_actRect[ACT_PLAYER], pl, NULL, g_playerOn, inRect(g_actRect[ACT_PLAYER], g_mx, g_my));
+    }
     drawButton(hdc, g_actRect[ACT_PAUSE], g_paused ? "Paused" : "Pause", NULL, g_paused, inRect(g_actRect[ACT_PAUSE], g_mx, g_my));
     drawButton(hdc, g_actRect[ACT_CLEAR], "Clear", NULL, false, inRect(g_actRect[ACT_CLEAR], g_mx, g_my));
 
@@ -559,7 +637,16 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         }
         if (!g_running) break;
 
-        applyBrush();
+        if (!g_menuOpen) applyBrush();
+        /* Whether the sim actually advanced this frame, so the character moves
+           in lockstep with the world -- including on a single frame-advance. */
+        bool steppedThisFrame = false;
+
+        /* Publish the body's box before stepping, so this frame's simulation
+           already respects it -- otherwise sand gets one frame of free passage
+           through the player every time they move. */
+        if (g_playerOn) g_player.occupy(g_world);
+        else            g_world.clearBlockBox();
 
         LARGE_INTEGER tA, tB;
         QueryPerformanceCounter(&tA);
@@ -568,19 +655,35 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
                whole point of it is to inspect a single frame of the sim. */
             g_world.step();
             g_stepOnce = false;
-        } else if (!g_paused) {
+            steppedThisFrame = true;
+        } else if (!g_paused && !g_menuOpen) {
             for (int s = 0; s < SPEEDS[g_speedIdx]; ++s) g_world.step();
         }
         QueryPerformanceCounter(&tB);
         g_simMs = 1000.0 * (double)(tB.QuadPart - tA.QuadPart) / (double)freq.QuadPart;
 
+        /* The character runs after the world, on the settled grid, and only
+           when the sim is actually advancing -- stepping while paused would
+           let you walk around a frozen world, which reads as a bug. Input is
+           polled rather than event-driven because held keys are the whole
+           interface here, and WM_KEYDOWN repeat rates are a user setting. */
+        if (g_playerOn && !g_menuOpen && (!g_paused || steppedThisFrame)) {
+            PlayerInput in;
+            in.left  = (GetAsyncKeyState('A') & 0x8000) || (GetAsyncKeyState(VK_LEFT)  & 0x8000);
+            in.right = (GetAsyncKeyState('D') & 0x8000) || (GetAsyncKeyState(VK_RIGHT) & 0x8000);
+            in.jump  = (GetAsyncKeyState('W') & 0x8000) || (GetAsyncKeyState(VK_UP)    & 0x8000);
+            g_player.update(g_world, in);
+        }
+
         g_cellCount = renderWorld(g_world, g_pixels, g_view);
+        if (g_playerOn) g_player.draw(g_pixels);
 
         /* Compose off-screen: sim into the viewport, then the panel, then out
            to the window in one BitBlt. */
         StretchDIBits(g_backDC, PANEL_W, 0, VIEW_W, VIEW_H, 0, 0, SIM_W, SIM_H,
                       g_pixels, &g_bmi, DIB_RGB_COLORS, SRCCOPY);
         drawPanel(g_backDC);
+        if (g_menuOpen) drawMenu(g_backDC);
 
         HDC hdc = GetDC(hwnd);
         BitBlt(hdc, 0, 0, WIN_W, WIN_H, g_backDC, 0, 0, SRCCOPY);
