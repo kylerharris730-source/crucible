@@ -8,6 +8,7 @@
 #include "world.h"
 #include "render.h"
 #include "player.h"
+#include "item.h"
 
 /* The window is a fixed-size left-hand tool panel plus the sim viewport. The
    viewport keeps a clean integer scale so pixels stay crisp and the
@@ -150,6 +151,12 @@ static bool g_playerOn = true;
    Escape-to-quit is fine in a toy you are drawing in, and hostile in a game you
    have built something in. Quitting now takes a deliberate second action. */
 static bool g_menuOpen = false;
+/* Survival mode: the brush draws from the inventory and digging fills it.
+   Off, the palette behaves as the unlimited sandbox tool it has always been,
+   which is still how you build a scene to test something in. */
+static bool g_survival = true;
+static const int HOTBAR_SLOT = 34;   /* screen pixels per hotbar cell */
+static RECT g_hotRect[INV_SLOTS];
 static RECT g_menuResume, g_menuQuit, g_menuPanel;
 
 /* stats */
@@ -287,6 +294,10 @@ static bool handlePanelClick(int mx, int my) {
         if (inRect(g_menuQuit,   mx, my)) { g_running = false; PostQuitMessage(0); return true; }
         return true;
     }
+    if (g_survival && g_playerOn) {
+        for (int i = 0; i < INV_SLOTS; ++i)
+            if (inRect(g_hotRect[i], mx, my)) { g_inv.selected = i; return true; }
+    }
     for (int i = 0; i < N_BRUSH; ++i) {
         if (inRect(g_brushRect[i], mx, my)) { g_brushMat = BRUSHES[i].brush; return true; }
     }
@@ -349,20 +360,19 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_KEYDOWN:
         /* Shortcuts still work -- they are just no longer the only way in. */
         switch (wp) {
-        case '1': g_brushMat = MAT_SAND;  break;
-        case '2': g_brushMat = MAT_WATER; break;
-        case '3': g_brushMat = MAT_DIRT;  break;
-        case '4': g_brushMat = MAT_STONE; break;
-        case '5': g_brushMat = MAT_FIRE;  break;
-        case '6': g_brushMat = MAT_STEAM; break;
-        case '7': g_brushMat = MAT_WOOD;  break;
-        case '8': g_brushMat = MAT_IRON;  break;
+        /* The number row now selects hotbar slots rather than materials. The
+           palette has had buttons for a long time and the shortcuts were
+           vestigial; a game wants 1-9 on the thing you are carrying. */
+        case '1': case '2': case '3': case '4': case '5':
+        case '6': case '7': case '8': case '9':
+            g_inv.selected = (int)(wp - '1');
+            break;
+        case '0': g_inv.selected = 9; break;
         case 'M': g_brushMat = MAT_COPPER;   break;   /* M for metal */
         case 'G': g_brushMat = MAT_GRAPHENE; break;
-        case '9': g_brushMat = MAT_LAVA;  break;
         case 'B': g_brushMat = MAT_WALL;  break;
-        case '0':
         case 'E': g_brushMat = MAT_EMPTY; break;
+        case 'I': g_survival = !g_survival; break;
         case 'H': g_brushMat = TOOL_HEAT; break;
         case 'J': g_brushMat = TOOL_COOL; break;
         case 'C': g_world.reset();        break;
@@ -390,20 +400,31 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
    cell by subtracting the panel and dividing by the scale. */
 static void applyBrush() {
     if (g_uiCapture || (!g_lmb && !g_rmb)) { g_pmx = -1; return; }
-
-    int sel = g_rmb ? (int)MAT_EMPTY : g_brushMat;
     if (g_pmx < 0) { g_pmx = g_mx; g_pmy = g_my; }
 
     int x0 = (g_pmx - PANEL_W) / SCALE, y0 = g_pmy / SCALE;
     int x1 = (g_mx  - PANEL_W) / SCALE, y1 = g_my  / SCALE;
     int steps = imax(abs(x1 - x0), abs(y1 - y0));
 
+    const int sel = g_rmb ? (int)MAT_EMPTY : g_brushMat;
     for (int s = 0; s <= steps; ++s) {
         int px = steps ? x0 + (x1 - x0) * s / steps : x1;
         int py = steps ? y0 + (y1 - y0) * s / steps : y1;
-        if (sel == TOOL_HEAT)      g_world.heat(px, py, g_brushRadius,  HEAT_STEP);
-        else if (sel == TOOL_COOL) g_world.heat(px, py, g_brushRadius, -HEAT_STEP);
-        else                       g_world.paint(px, py, g_brushRadius, (u8)sel, g_overwrite);
+
+        if (g_survival && g_playerOn) {
+            /* Survival: right-click digs into the pack, left-click builds out
+               of it. The heat and cool brushes stay available regardless --
+               they are diagnostic tools, not materials, and there is nothing
+               for them to consume. */
+            if (g_brushMat == TOOL_HEAT && !g_rmb)      g_world.heat(px, py, g_brushRadius,  HEAT_STEP);
+            else if (g_brushMat == TOOL_COOL && !g_rmb) g_world.heat(px, py, g_brushRadius, -HEAT_STEP);
+            else if (g_rmb)                             digInto(g_world, g_inv, px, py, g_brushRadius);
+            else                                        placeFrom(g_world, g_inv, px, py, g_brushRadius);
+        } else {
+            if (sel == TOOL_HEAT)      g_world.heat(px, py, g_brushRadius,  HEAT_STEP);
+            else if (sel == TOOL_COOL) g_world.heat(px, py, g_brushRadius, -HEAT_STEP);
+            else                       g_world.paint(px, py, g_brushRadius, (u8)sel, g_overwrite);
+        }
         if (!steps) break;
     }
     g_pmx = g_mx;
@@ -439,6 +460,63 @@ static void drawButton(HDC hdc, const RECT& r, const char* label,
     RECT t = rr; t.left = textX;
     SetTextColor(hdc, selected ? RGB(245, 224, 150) : RGB(214, 216, 224));
     DrawTextA(hdc, label, -1, &t, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+}
+
+/* The hotbar sits over the foot of the viewport rather than in the panel. The
+   panel is already full, and more to the point what you are carrying belongs
+   next to the world you are carrying it through -- glancing down at your hands
+   should not mean looking away to the side. */
+static void layoutHotbar() {
+    const int totalW = INV_SLOTS * HOTBAR_SLOT;
+    const int x0 = PANEL_W + (VIEW_W - totalW) / 2;
+    const int y0 = VIEW_H - HOTBAR_SLOT - 10;
+    for (int i = 0; i < INV_SLOTS; ++i)
+        SetRect(&g_hotRect[i], x0 + i * HOTBAR_SLOT, y0,
+                x0 + i * HOTBAR_SLOT + HOTBAR_SLOT - 3, y0 + HOTBAR_SLOT - 3);
+}
+
+static void drawHotbar(HDC hdc) {
+    layoutHotbar();
+    HGDIOBJ oldFont = SelectObject(hdc, g_font);
+    SetBkMode(hdc, TRANSPARENT);
+
+    for (int i = 0; i < INV_SLOTS; ++i) {
+        RECT r = g_hotRect[i];
+        const bool sel = (i == g_inv.selected);
+        const ItemStack& st = g_inv.slot[i];
+
+        FillRect(hdc, &r, sel ? g_btnBgSel : g_btnBg);
+        FrameRect(hdc, &r, sel ? g_accentBrush : g_borderBrush);
+
+        if (!st.empty()) {
+            /* A block of the item's own colour, inset, with the count under it.
+               No icons: every material already has a colour that means
+               something in this game, and a swatch reads faster than a glyph. */
+            RECT sw = r;
+            sw.left += 5; sw.right -= 5; sw.top += 5; sw.bottom -= 13;
+            HBRUSH b = CreateSolidBrush(RGB((ITEMS[st.item].colour >> 16) & 0xFF,
+                                            (ITEMS[st.item].colour >> 8) & 0xFF,
+                                             ITEMS[st.item].colour & 0xFF));
+            FillRect(hdc, &sw, b);
+            DeleteObject(b);
+
+            char n[16];
+            sprintf(n, "%d", st.count);
+            RECT cr = r; cr.top = r.bottom - 14;
+            SetTextColor(hdc, RGB(226, 230, 238));
+            DrawTextA(hdc, n, -1, &cr, DT_CENTER | DT_TOP | DT_SINGLELINE);
+        }
+    }
+
+    /* Name of what is held, above the bar, so a swatch is never ambiguous. */
+    const ItemStack& h = g_inv.held();
+    if (!h.empty()) {
+        RECT nr;
+        SetRect(&nr, PANEL_W, g_hotRect[0].top - 20, WIN_W, g_hotRect[0].top - 4);
+        SetTextColor(hdc, RGB(200, 206, 216));
+        DrawTextA(hdc, ITEMS[h.item].name, -1, &nr, DT_CENTER | DT_TOP | DT_SINGLELINE);
+    }
+    SelectObject(hdc, oldFont);
 }
 
 /* A modal overlay, deliberately plain: dim the world behind it so it is
@@ -555,7 +633,10 @@ static void drawPanel(HDC hdc) {
 int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     initMaterials();
     g_world.reset();
+    initItems();
+    g_inv.clear();
     layoutPanel();
+    layoutHotbar();
 
     WNDCLASSA wc;
     memset(&wc, 0, sizeof(wc));
@@ -683,6 +764,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         StretchDIBits(g_backDC, PANEL_W, 0, VIEW_W, VIEW_H, 0, 0, SIM_W, SIM_H,
                       g_pixels, &g_bmi, DIB_RGB_COLORS, SRCCOPY);
         drawPanel(g_backDC);
+        if (g_survival && g_playerOn) drawHotbar(g_backDC);
         if (g_menuOpen) drawMenu(g_backDC);
 
         HDC hdc = GetDC(hwnd);
