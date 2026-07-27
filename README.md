@@ -33,7 +33,7 @@ It builds and runs as a sandbox:
 build.bat
 ```
 
-Then `build\powder.exe`. Draw with the mouse, pick materials from the panel,
+Then `build\crucible.exe`. Draw with the mouse, pick materials from the panel,
 press `V` to cycle to the Heat view.
 
 ![The inherited simulation: three vessels, one boiled by fire, one chilled by

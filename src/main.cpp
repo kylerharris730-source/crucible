@@ -992,13 +992,29 @@ static void drawHeldTool(u32* px, const Aim& aim) {
 /* A crosshair, drawn in SCREEN pixels rather than cells. Drawing it into the
    sim buffer would scale it with SCALE and put it on 2px steps, and a cursor
    that lands only on even pixels feels loose in a way that is hard to place. */
+/* Outlined: each arm is drawn as a black rect inflated by one pixel, then the
+   coloured arm inside it. Without that the crosshair vanishes wherever it
+   happens to match what is behind it -- and this world contains everything from
+   near-black stone to white-hot lava to bright sand, so there is no single
+   colour that stays visible. A dark edge around a light core reads against both
+   ends of that range at once, which is why every game reticle has one. */
 static void drawCross(HDC hdc, int sx, int sy, COLORREF c, int gap, int arm) {
+    RECT bar[4];
+    SetRect(&bar[0], sx - gap - arm,     sy,              sx - gap,             sy + 1);
+    SetRect(&bar[1], sx + gap + 1,       sy,              sx + gap + arm + 1,   sy + 1);
+    SetRect(&bar[2], sx,                 sy - gap - arm,  sx + 1,               sy - gap);
+    SetRect(&bar[3], sx,                 sy + gap + 1,    sx + 1,               sy + gap + arm + 1);
+
+    HBRUSH outline = CreateSolidBrush(RGB(0, 0, 0));
+    for (int i = 0; i < 4; ++i) {
+        RECT o = bar[i];
+        o.left -= 1; o.top -= 1; o.right += 1; o.bottom += 1;
+        FillRect(hdc, &o, outline);
+    }
+    DeleteObject(outline);
+
     HBRUSH b = CreateSolidBrush(c);
-    RECT r;
-    SetRect(&r, sx - gap - arm, sy,       sx - gap,       sy + 1); FillRect(hdc, &r, b);
-    SetRect(&r, sx + gap + 1,   sy,       sx + gap + arm + 1, sy + 1); FillRect(hdc, &r, b);
-    SetRect(&r, sx,             sy - gap - arm, sx + 1, sy - gap);     FillRect(hdc, &r, b);
-    SetRect(&r, sx,             sy + gap + 1,   sx + 1, sy + gap + arm + 1); FillRect(hdc, &r, b);
+    for (int i = 0; i < 4; ++i) FillRect(hdc, &bar[i], b);
     DeleteObject(b);
 }
 
@@ -1006,17 +1022,27 @@ static void drawCursor(HDC hdc) {
     if (g_mx < PANEL_W) return;                 /* over the panel: system cursor */
 
     const Aim aim = currentAim();
+    /* Where the tool acts -- inside the reach limit. */
     const int ax = PANEL_W + aim.x * SCALE + SCALE / 2;
     const int ay = aim.y * SCALE + SCALE / 2;
+    /* Where the mouse actually is. */
+    const int gx = PANEL_W + aim.ghostX * SCALE + SCALE / 2;
+    const int gy = aim.ghostY * SCALE + SCALE / 2;
 
     if (aim.clamped) {
-        /* The ghost sits where the mouse really is, and a faint line joins the
-           two. Without the line a stuck crosshair reads as the game having
-           frozen; with it, the reach limit explains itself the first time you
-           hit it and never needs a tutorial. */
-        const int gx = PANEL_W + aim.ghostX * SCALE + SCALE / 2;
-        const int gy = aim.ghostY * SCALE + SCALE / 2;
+        /* The BRIGHT crosshair follows the mouse and the ghost is left behind
+           at the reach limit -- the reverse of how this started.
 
+           Pinning the bright one to the reach limit meant the thing your eye
+           tracks stopped moving whenever you left the circle, which reads as
+           the game having stuttered rather than as a rule about your arms. The
+           pointer should always answer "where am I pointing"; the ghost is a
+           second, quieter answer to "and where can I actually act". Leaving the
+           dim marker behind says that without ever taking the cursor away from
+           the hand moving it.
+
+           The dotted tether still joins them, and is what makes the pair read
+           as one cursor with a constraint rather than as two cursors. */
         HPEN pen = CreatePen(PS_DOT, 1, RGB(70, 78, 92));
         HGDIOBJ oldPen = SelectObject(hdc, pen);
         MoveToEx(hdc, ax, ay, NULL);
@@ -1024,9 +1050,9 @@ static void drawCursor(HDC hdc) {
         SelectObject(hdc, oldPen);
         DeleteObject(pen);
 
-        drawCross(hdc, gx, gy, RGB(96, 104, 120), 3, 4);
+        drawCross(hdc, ax, ay, RGB(150, 158, 174), 3, 4);
     }
-    drawCross(hdc, ax, ay, RGB(236, 240, 248), 3, 5);
+    drawCross(hdc, gx, gy, RGB(236, 240, 248), 3, 5);
 }
 
 /* Dim the world behind a modal, by halving every channel of the frame we are
@@ -1181,7 +1207,7 @@ static void drawPanel(HDC hdc) {
 
     HGDIOBJ oldFont = SelectObject(hdc, g_font);
     SetBkMode(hdc, TRANSPARENT);
-    drawText(hdc, 10, 9, RGB(240, 240, 246), "POWDER");
+    drawText(hdc, 10, 9, RGB(240, 240, 246), "CRUCIBLE");
 
     for (int i = 0; i < N_BRUSH; ++i) {
         bool sel = (BRUSHES[i].brush == g_brushMat);
@@ -1271,14 +1297,14 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     wc.lpfnWndProc   = wndProc;
     wc.hInstance     = hInst;
     wc.hCursor       = LoadCursor(NULL, IDC_ARROW);
-    wc.lpszClassName = "PowderWnd";
+    wc.lpszClassName = "CrucibleWnd";
     RegisterClassA(&wc);
 
     DWORD style = (WS_OVERLAPPEDWINDOW & ~WS_THICKFRAME & ~WS_MAXIMIZEBOX);
     RECT r = { 0, 0, WIN_W, WIN_H };
     AdjustWindowRect(&r, style, FALSE);
 
-    HWND hwnd = CreateWindowA("PowderWnd", "Powder", style,
+    HWND hwnd = CreateWindowA("CrucibleWnd", "Crucible", style,
                               CW_USEDEFAULT, CW_USEDEFAULT,
                               r.right - r.left, r.bottom - r.top,
                               NULL, NULL, hInst, NULL);
