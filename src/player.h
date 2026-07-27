@@ -12,7 +12,7 @@
    head would swap you downward. As an overlay none of that can arise, and the
    cost is a handful of grid reads per frame. */
 
-static const int PLAYER_W = 4;   /* cells; 8 screen pixels at SCALE 2 */
+static const int PLAYER_W = 6;   /* cells; 12 screen pixels at SCALE 2 */
 static const int PLAYER_H = 16;  /* 32 screen pixels -- roughly human proportions,
                                     since a person is about four times as tall as
                                     they are wide across the shoulders */
@@ -27,6 +27,31 @@ static const int PLAYER_H = 16;  /* 32 screen pixels -- roughly human proportion
    doubled in height this went 3 -> 4 for exactly that reason. Absolute step
    height held constant against a taller body reads as tripping over things. */
 static const int PLAYER_STEP_UP = 4;
+
+/* --- the pointed head -------------------------------------------------
+   The collision shape is not a rectangle. The top PLAYER_TAPER rows are inset
+   by one cell per side per row, giving 45-degree shoulders:
+
+       row 0    ..XX..     <- 2 wide
+       row 1    .XXXX.
+       row 2+   XXXXXX     <- full width
+
+   A flat top collects things. Sand landing on a horizontal surface has nowhere
+   to slide to, so it sits there and keeps stacking -- measured, a flat-topped
+   head accumulated 24 cells of sand directly on it. On a 45-degree slope the
+   diagonal below-and-outward is free, and powders take diagonals readily
+   (sand's slideDry is 235 of 255), so it sheds instead of piling.
+
+   One cell of inset per row is exactly the slope a falling-sand powder rule can
+   see. A shallower taper would be geometry the simulation cannot act on, since
+   a powder only ever considers the three cells directly beneath it. */
+static const int PLAYER_TAPER = 2;
+
+/* Cells to inset each side on a given row measured from the top of the box. */
+static inline int playerRowInset(int rowFromTop) {
+    const int inset = PLAYER_TAPER - rowFromTop;
+    return inset > 0 ? inset : 0;
+}
 
 struct PlayerInput {
     bool left, right, jump;

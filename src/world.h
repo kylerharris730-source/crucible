@@ -240,13 +240,26 @@ struct World {
        Disabled by setting x0 past the right edge, so the very first comparison
        fails and the rest are never evaluated. */
     i32   blockX0, blockY0, blockX1, blockY1;
+    /* Rows of 45-degree taper at the top of the box, one cell of inset per side
+       per row. An occupant with a flat top collects whatever falls on it; a
+       pointed one sheds it. See the note in player.h for why the slope has to
+       be one cell per row and not shallower. */
+    i32   blockTaper;
 
-    void setBlockBox(int x0, int y0, int x1, int y1) {
-        blockX0 = x0; blockY0 = y0; blockX1 = x1; blockY1 = y1;
+    void setBlockBox(int x0, int y0, int x1, int y1, int taper = 0) {
+        blockX0 = x0; blockY0 = y0; blockX1 = x1; blockY1 = y1; blockTaper = taper;
     }
-    void clearBlockBox() { blockX0 = SIM_W; blockY0 = SIM_H; blockX1 = -1; blockY1 = -1; }
+    void clearBlockBox() {
+        blockX0 = SIM_W; blockY0 = SIM_H; blockX1 = -1; blockY1 = -1; blockTaper = 0;
+    }
     bool blocksCell(int x, int y) const {
-        return x >= blockX0 && x <= blockX1 && y >= blockY0 && y <= blockY1;
+        /* Ordered so the overwhelmingly common case -- nowhere near the
+           occupant -- fails on the first comparison against a constant, and the
+           taper arithmetic only runs for cells actually inside the box. */
+        if (x < blockX0 || x > blockX1 || y < blockY0 || y > blockY1) return false;
+        const i32 inset = blockTaper - (y - blockY0);
+        if (inset <= 0) return true;
+        return x >= blockX0 + inset && x <= blockX1 - inset;
     }
 
     void reset();

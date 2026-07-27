@@ -23,11 +23,16 @@ bool playerSolid(const World& w, int x, int y) {
     return k == KIND_STATIC || k == KIND_POWDER;
 }
 
-/* Is the collision box blocked with its top-left at (bx, by)? */
+/* Is the collision shape blocked with its bounding box's top-left at (bx, by)?
+   Uses the same tapered outline the world is told about, so the player fits
+   through exactly the gaps their silhouette suggests -- the pointed shoulders
+   let them under an overhang that a full-width head would catch on. */
 static bool boxBlocked(const World& w, int bx, int by) {
-    for (int yy = by; yy < by + PLAYER_H; ++yy)
-        for (int xx = bx; xx < bx + PLAYER_W; ++xx)
-            if (playerSolid(w, xx, yy)) return true;
+    for (int yy = 0; yy < PLAYER_H; ++yy) {
+        const int inset = playerRowInset(yy);
+        for (int xx = inset; xx < PLAYER_W - inset; ++xx)
+            if (playerSolid(w, bx + xx, by + yy)) return true;
+    }
     return false;
 }
 
@@ -176,7 +181,7 @@ void Player::occupy(World& w) const {
     static int lastX0 = 0, lastY0 = 0, lastX1 = -1, lastY1 = -1;
 
     const int x0 = left(), y0 = top(), x1 = right(), y1 = bottom();
-    w.setBlockBox(x0, y0, x1, y1);
+    w.setBlockBox(x0, y0, x1, y1, PLAYER_TAPER);
 
     if (lastX1 >= lastX0 && (lastX0 != x0 || lastY0 != y0)) {
         w.dirtyArea(imin(lastX0, x0), imin(lastY0, y0),
@@ -196,6 +201,10 @@ void Player::draw(u32* px) const {
     const u32 LEGS = 0x3C5A80;
     const u32 EDGE = 0x10141C;
 
+    /* Drawn to the same tapered outline as the collision shape. If the sprite
+       were a plain rectangle the head would visibly overlap material that is
+       really resting on the shoulders, and sand would appear to roll off thin
+       air -- the shed has to be legible or it just looks like a glitch. */
     const int bx = left(), by = top();
     for (int yy = 0; yy < PLAYER_H; ++yy) {
         const int wy = by + yy;
@@ -203,7 +212,8 @@ void Player::draw(u32* px) const {
         const u32 band = (yy < PLAYER_H / 4)     ? HEAD
                        : (yy < PLAYER_H * 3 / 4) ? BODY
                                                  : LEGS;
-        for (int xx = 0; xx < PLAYER_W; ++xx) {
+        const int inset = playerRowInset(yy);
+        for (int xx = inset; xx < PLAYER_W - inset; ++xx) {
             const int wx = bx + xx;
             if (wx < 0 || wx >= SIM_W) continue;
             px[wy * SIM_W + wx] = band;
