@@ -310,14 +310,21 @@ static Aim currentAim();
    rather than a constant is what lets an item change it -- and later a tool. */
 static int currentReach() { return PLAYER_REACH + g_inv.reachBonus(); }
 
-/* The working radius of bare hands, clamped no matter what the size control
-   says. It caps building as well as digging: the cap is a statement about how
-   much world you can reach around at once, and letting you place a radius-40
-   blob but only scrape a radius-6 hole would be a strange pair of arms.
+/* --- what you dig with, and how big ----------------------------------------
+   Mining is clamped to whatever is in your hand; BUILDING IS NOT.
 
-   The size control is left free to go higher rather than clamped at the source,
-   so the number you set survives picking up a better tool. */
-static int handRadius() { return imin(g_brushRadius, HAND.maxRadius); }
+   That asymmetry was a deliberate change from capping both. Capping building
+   means the player wants to make something and the game says "not yet", which
+   buys pacing at the price of the thing people actually play a sandbox for.
+   Capping mining costs nothing expressive -- the hole still gets dug, just
+   slower -- and it is what gives every tier of the ladder something to sell.
+
+   The size control is left free to run past the current cap rather than being
+   clamped at the source, so the number you set survives picking up a better
+   tool and immediately means more. */
+static ToolSpec digSpec() { return miningSpec(g_inv.held()); }
+static int digRadius()    { return imin(g_brushRadius, digSpec().maxRadius); }
+static int buildRadius()  { return g_brushRadius; }
 
 /* What is under the cursor, for the panel readout. Returns false when the
    pointer is off the playfield (over the panel, or outside the window), so the
@@ -936,21 +943,23 @@ static void applyBrush() {
        foreground, so scraping a wall costs the same effort as mining one. */
     if (g_survival && g_playerOn && g_bgLayer) {
         if (g_rmb) {
+            const ToolSpec d = digSpec();
             if (g_digCool <= 0) {
-                digBg(g_world, g_inv, aim.x, aim.y, handRadius(), HAND.cellsPerBite);
-                g_digCool = HAND.cooldown;
+                digBg(g_world, g_inv, aim.x, aim.y, digRadius(), d.cellsPerBite);
+                g_digCool = d.cooldown;
             }
         } else {
-            placeBg(g_world, g_inv, aim.x, aim.y, handRadius());
+            placeBg(g_world, g_inv, aim.x, aim.y, buildRadius());
         }
         g_pmx = aim.x; g_pmy = aim.y;
         return;
     }
 
     if (g_survival && g_playerOn && g_rmb) {
+        const ToolSpec d = digSpec();
         if (g_digCool <= 0) {
-            digInto(g_world, g_inv, aim.x, aim.y, handRadius(), HAND.cellsPerBite);
-            g_digCool = HAND.cooldown;
+            digInto(g_world, g_inv, aim.x, aim.y, digRadius(), d.cellsPerBite);
+            g_digCool = d.cooldown;
         }
         g_pmx = aim.x; g_pmy = aim.y;
         return;
@@ -975,7 +984,7 @@ static void applyBrush() {
                a rate, and the two diagnostic brushes. */
             if (g_brushMat == TOOL_HEAT)      g_world.heat(px, py, g_brushRadius,  HEAT_STEP);
             else if (g_brushMat == TOOL_COOL) g_world.heat(px, py, g_brushRadius, -HEAT_STEP);
-            else                              placeFrom(g_world, g_inv, px, py, handRadius());
+            else                              placeFrom(g_world, g_inv, px, py, buildRadius());
         } else {
             if (sel == TOOL_HEAT)      g_world.heat(px, py, g_brushRadius,  HEAT_STEP);
             else if (sel == TOOL_COOL) g_world.heat(px, py, g_brushRadius, -HEAT_STEP);
@@ -1098,10 +1107,16 @@ static void drawHotbar(HDC hdc) {
             else            sprintf(s, "%s  no module installed  reach %d",
                                     ITEMS[h.item].name, currentReach());
         }
-        else if (bonus > 0) sprintf(s, "%s  r%d  reach %d (+%d)%s", HAND.name, handRadius(),
-                                    currentReach(), bonus, g_bgLayer ? "   [BACKGROUND]" : "");
-        else                sprintf(s, "%s  r%d  reach %d%s", HAND.name, handRadius(),
-                                    currentReach(), g_bgLayer ? "   [BACKGROUND]" : "");
+        else {
+            const ToolSpec d = digSpec();
+            const int perSec = (60 * d.cellsPerBite) / imax(1, d.cooldown);
+            if (bonus > 0) sprintf(s, "%s  dig r%d  %d/s  reach %d (+%d)%s", d.name,
+                                   digRadius(), perSec, currentReach(), bonus,
+                                   g_bgLayer ? "   [BACKGROUND]" : "");
+            else           sprintf(s, "%s  dig r%d  %d/s  reach %d%s", d.name,
+                                   digRadius(), perSec, currentReach(),
+                                   g_bgLayer ? "   [BACKGROUND]" : "");
+        }
         /* Its own line ABOVE the name row, not sharing it. Left-aligned text and
            centred text on one line collide as soon as either gets long, and
            "Focusing Lens" over a reach of 84 (+28) was already long enough --
@@ -1402,9 +1417,12 @@ static void drawPanel(HDC hdc) {
            hands work at 6 is a straightforward lie, and the player's conclusion
            would be that the size control is broken rather than that their arms
            are. */
-        char s[32];
-        const bool capped = g_survival && g_playerOn && handRadius() < g_brushRadius;
-        if (capped) sprintf(s, "Size %d -> %d", g_brushRadius, handRadius());
+        char s[40];
+        /* Only ever a cap on DIGGING now, so the label says so -- "Size 20 -> 6"
+           on its own reads as though building were limited too, which it is
+           not. */
+        const bool capped = g_survival && g_playerOn && digRadius() < g_brushRadius;
+        if (capped) sprintf(s, "Size %d  (dig %d)", g_brushRadius, digRadius());
         else        sprintf(s, "Size %d", g_brushRadius);
         SetTextColor(hdc, capped ? RGB(226, 190, 90) : RGB(214, 216, 224));
         DrawTextA(hdc, s, -1, &rr, DT_CENTER | DT_VCENTER | DT_SINGLELINE);

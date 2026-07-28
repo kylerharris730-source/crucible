@@ -26,6 +26,10 @@ enum SpriteId {
     SPR_TOOL2,       /* the same idea, bigger and heavier */
     SPR_MOD_SHOT,
     SPR_MOD_BLAST,
+    SPR_MINE1,       /* the mining ladder: one silhouette, four sizes */
+    SPR_MINE2,
+    SPR_MINE3,
+    SPR_MINE4,
     SPR_COUNT
 };
 

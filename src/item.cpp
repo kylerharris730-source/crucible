@@ -164,6 +164,44 @@ void initItems() {
     ITEMS[ITEM_MOD_BLAST].shotColour = 0xFFC060;
     ITEMS[ITEM_MOD_BLAST].sprite     = SPR_MOD_BLAST;
 
+    /* --- the mining ladder --------------------------------------------
+       Four tiers between bare hands and "clear whatever you want".
+
+       Both numbers move together on purpose. Radius alone would let you outline
+       an enormous hole and then wait an age for it to fill in; rate alone would
+       have you scrubbing a tiny brush back and forth. What each tier actually
+       sells is AREA PER SECOND, and the felt difference is being able to take a
+       room-sized bite in one sweep instead of forty.
+
+       Throughput against bare hands, which move 100 cells a second:
+
+         Hand Drill      r10   16 / 5f  =  192/s    2x
+         Rock Auger      r16   30 / 5f  =  360/s    3.6x
+         Thermal Lance   r24   60 / 4f  =  900/s    9x
+         Disruptor       r40  140 / 3f  = 2800/s   28x
+
+       The top of the ladder clears a full radius-40 disc -- 5025 cells -- in
+       under two seconds, which is the "basically whatever size you want" end
+       of it. Nothing here touches placement: see ITEMK_MINING in item.h. */
+    struct MineTier { ItemId id; const char* name; u8 r, bite, cool; u32 col; u8 spr; };
+    static const MineTier MINE[] = {
+        { ITEM_DRILL,     "Hand Drill",     10,  16, 5, 0xB07848, SPR_MINE1 },
+        { ITEM_AUGER,     "Rock Auger",     16,  30, 5, 0x9AA6B4, SPR_MINE2 },
+        { ITEM_LANCE,     "Thermal Lance",  24,  60, 4, 0xE0B048, SPR_MINE3 },
+        { ITEM_DISRUPTOR, "Disruptor",      40, 140, 3, 0xB070E8, SPR_MINE4 },
+    };
+    for (int i = 0; i < (int)(sizeof(MINE) / sizeof(MINE[0])); ++i) {
+        const MineTier& t = MINE[i];
+        ITEMS[t.id].name         = t.name;
+        ITEMS[t.id].kind         = ITEMK_MINING;
+        ITEMS[t.id].maxStack     = 1;
+        ITEMS[t.id].colour       = t.col;
+        ITEMS[t.id].mineRadius   = t.r;
+        ITEMS[t.id].mineBite     = t.bite;
+        ITEMS[t.id].mineCooldown = t.cool;
+        ITEMS[t.id].sprite       = t.spr;
+    }
+
     /* Reach extenders. Two tiers so the ladder is visible; the numbers are
        relative to a base reach of 56, so the lens is "half again as far" and
        the relay is "twice as far". Both take a whole inventory slot to carry,
@@ -277,6 +315,21 @@ int Inventory::reachBonus() const {
         if (b > best) best = b;
     }
     return best;
+}
+
+ToolSpec miningSpec(const ItemStack& held) {
+    if (!held.empty()) {
+        const ItemDef& d = ITEMS[held.item];
+        if (d.kind == ITEMK_MINING && d.mineRadius > 0) {
+            ToolSpec s;
+            s.name         = d.name;
+            s.maxRadius    = d.mineRadius;
+            s.cellsPerBite = d.mineBite;
+            s.cooldown     = d.mineCooldown;
+            return s;
+        }
+    }
+    return HAND;
 }
 
 int Inventory::firstToolSlot() const {

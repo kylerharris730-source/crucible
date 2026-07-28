@@ -33,6 +33,12 @@ enum {
        multitool is a stick. */
     ITEM_MOD_SHOT,
     ITEM_MOD_BLAST,
+    /* Mining tools. A ladder with only one job: how much rock you move, and
+       how fast. See ITEMK_MINING for why they gate digging and not building. */
+    ITEM_DRILL,
+    ITEM_AUGER,
+    ITEM_LANCE,
+    ITEM_DISRUPTOR,
     /* Reach extenders. They do nothing when held and everything when carried --
        see ITEMK_CARRIED below. */
     ITEM_LENS,
@@ -44,7 +50,22 @@ enum ItemKind {
     ITEMK_MATERIAL = 0,   /* stacks; one unit is one cell of world */
     ITEMK_TOOL,           /* unique, carries its own state */
     ITEMK_MODULE,         /* slots into a tool to change what it does */
-    ITEMK_CARRIED         /* passive: works from anywhere in the pack */
+    ITEMK_CARRIED,        /* passive: works from anywhere in the pack */
+    /* --- ITEMK_MINING ---------------------------------------------------
+       Held to dig better. It gates DESTRUCTION only, never construction, and
+       the asymmetry is the design rather than an oversight.
+
+       Building is expression: capping it would mean the player wants to make
+       something and the game says "not yet", which is a bad trade for any
+       amount of pacing. Mining is the cost side of the same loop, so slowing
+       it is what makes a better tool feel like anything at all. Bare hands
+       stay deliberately poor, and every tier after that is the pleasure of
+       clearing in one sweep what used to take twenty.
+
+       There is deliberately no building tier to match. A tool you must hold in
+       order to place blocks is a slot tax on the most ordinary action in the
+       game, and it would make the hotbar a chore rather than a loadout. */
+    ITEMK_MINING
 };
 
 struct ItemDef {
@@ -63,6 +84,12 @@ struct ItemDef {
     /* --- ITEMK_TOOL only --------------------------------------------- */
     u8   toolSlots;   /* how many modules it holds; this IS the tier */
     u8   baseDelay;   /* frames between shots before any module says otherwise */
+
+    /* --- ITEMK_MINING only -------------------------------------------
+       Zero means "not a mining tool", which is what every other item is. */
+    u8   mineRadius;
+    u8   mineBite;      /* cells per action */
+    u8   mineCooldown;  /* frames between actions */
 
     /* --- ITEMK_MODULE only ------------------------------------------- */
     /* Added to the tool's baseDelay. A module that hits harder should cost
@@ -175,6 +202,7 @@ struct ToolShot {
 };
 ToolShot toolResolve(const ItemStack& st);
 
+
 extern Inventory g_inv;
 
 /* --- what a digging implement can do --------------------------------------
@@ -203,6 +231,11 @@ struct ToolSpec {
    genuinely tiresome for undoing a mistake. That last part is the design: it is
    what makes a precision tool worth building rather than a luxury. */
 extern const ToolSpec HAND;
+/* What you are digging with right now: the held item's own numbers if it is a
+   mining tool, otherwise HAND. Resolved on demand rather than cached, so
+   swapping hotbar slots takes effect on the same frame. */
+ToolSpec miningSpec(const ItemStack& held);
+
 
 /* --- disc offsets, ordered nearest-first ----------------------------------
 

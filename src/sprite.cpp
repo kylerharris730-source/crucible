@@ -39,6 +39,17 @@ static u32 paletteOf(char c) {
        enough to read as a different material from the suit, light enough to
        have a silhouette of its own. */
     case 'g': return 0x5C6472;
+
+    /* The mining ladder. One silhouette at four sizes, told apart by the
+       colour of the body -- shape carries "this is a digger", colour carries
+       "which one". Trying to make four distinguishable digger SHAPES in
+       fourteen pixels would produce four things you cannot tell apart at all;
+       one shape in four colours is legible at hotbar size instantly. */
+    case '1': return 0xB07848;     /* bronze  */
+    case '2': return 0x9AA6B4;     /* steel   */
+    case '3': return 0xE0B048;     /* gold    */
+    case '4': return 0xB070E8;     /* violet  */
+    case 'k': return 0x3A3F49;     /* the bit: dark, on every tier */
     default:  return 0xFF00FF;     /* unmapped: loud on purpose */
     }
 }
@@ -118,6 +129,76 @@ static const char* ART_MOD_BLAST[SPR_H] = {
     ".RRRRRRRRRRRR.",
     "..............",
     "..............",
+};
+
+
+/* --- the mining ladder -----------------------------------------------------
+   A stubby bore pointing down-right: body at the top-left, a dark bit at the
+   business end. Each tier is the same drawing grown outward, so the ladder
+   reads as one family getting heavier rather than as four unrelated objects. */
+static const char* ART_MINE1[SPR_H] = {
+    "..............",
+    "..............",
+    "..111.........",
+    ".11111........",
+    ".111111.......",
+    "..11111k......",
+    "...111kk......",
+    "....1kk.......",
+    ".....k........",
+    "..............",
+    "..............",
+    "..............",
+    "..............",
+    "..............",
+};
+static const char* ART_MINE2[SPR_H] = {
+    "..............",
+    "..222.........",
+    ".22222........",
+    "2222222.......",
+    "22222222......",
+    ".2222222k.....",
+    "..222222kk....",
+    "...2222kkk....",
+    "....22kkk.....",
+    ".....2kk......",
+    "......k.......",
+    "..............",
+    "..............",
+    "..............",
+};
+static const char* ART_MINE3[SPR_H] = {
+    "..333.........",
+    ".33333........",
+    "3333333.......",
+    "33333333......",
+    "333333333.....",
+    ".33333333k....",
+    "..33333333k...",
+    "...3333333kk..",
+    "....333333kk..",
+    ".....3333kkk..",
+    "......333kk...",
+    ".......33k....",
+    "........k.....",
+    "..............",
+};
+static const char* ART_MINE4[SPR_H] = {
+    ".444..........",
+    "44444.........",
+    "444444........",
+    "4444444.......",
+    "44444444......",
+    "444444444k....",
+    ".444444444k...",
+    "..4444444444..",
+    "...444444kkk..",
+    "....44444kkk..",
+    ".....4444kkk..",
+    "......444kk...",
+    ".......44k....",
+    "........k.....",
 };
 
 static void expand(int id, const char* const* art) {
@@ -235,6 +316,10 @@ void initSprites() {
     expand(SPR_TOOL2,     ART_TOOL2);
     expand(SPR_MOD_SHOT,  ART_MOD_SHOT);
     expand(SPR_MOD_BLAST, ART_MOD_BLAST);
+    expand(SPR_MINE1,     ART_MINE1);
+    expand(SPR_MINE2,     ART_MINE2);
+    expand(SPR_MINE3,     ART_MINE3);
+    expand(SPR_MINE4,     ART_MINE4);
 
     memset(g_playerSpr, 0, sizeof(g_playerSpr));
     composePlayer(PF_IDLE,  LEG_STAND, false);
