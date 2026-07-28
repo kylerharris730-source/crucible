@@ -6,6 +6,15 @@
    pixels or a crash. */
 static const u32 VOID_COLOUR = 0x000000;
 
+/* An empty cell shows whatever is BEHIND it. Only empty cells pay for this --
+   material in front hides the background completely, so the lookup sits inside
+   the branch that was already testing for air. */
+static inline u32 backdrop(const World& w, int wx, int wy, int i) {
+    const u8 b = (u8)(w.bg[i] & BG_MAT_MASK);
+    if (!b) return 0x0E0E12;                    /* open sky: air's own colour */
+    return g_bgColorLut[((u32)b << 4) | bgSpeckle(wx, wy)];
+}
+
 /* One linear pass per visible row. The material colour is a single lookup into
    the precomputed palette -- no arithmetic beyond shifts. */
 int renderView(const World& w, u32* out, int view, int camX, int camY) {
@@ -51,7 +60,9 @@ int renderView(const World& w, u32* out, int view, int camX, int camY) {
             for (int vx = vx0; vx < vx1; ++vx) {
                 const int i = base + vx;
                 Cell c = cells[i];
-                row[vx] = g_colorLut[((u32)c.mat << 8) | (u32)(c.moisture & 0xF0) | (u32)(c.tint >> 4)];
+                row[vx] = (c.mat == MAT_EMPTY)
+                        ? backdrop(w, camX + vx, wy, i)
+                        : g_colorLut[((u32)c.mat << 8) | (u32)(c.moisture & 0xF0) | (u32)(c.tint >> 4)];
                 count += (c.mat != MAT_EMPTY && c.mat != MAT_WALL);
             }
             continue;
@@ -68,7 +79,9 @@ int renderView(const World& w, u32* out, int view, int camX, int camY) {
         for (int vx = vx0; vx < vx1; ++vx) {
             const int i = base + vx;
             Cell c = cells[i];
-            u32 col = g_colorLut[((u32)c.mat << 8) | (u32)(c.moisture & 0xF0) | (u32)(c.tint >> 4)];
+            u32 col = (c.mat == MAT_EMPTY)
+                    ? backdrop(w, camX + vx, wy, i)
+                    : g_colorLut[((u32)c.mat << 8) | (u32)(c.moisture & 0xF0) | (u32)(c.tint >> 4)];
             const u8 t = temp[i];
             /* g_matGlows lets a material opt out of the overlay entirely
                (plasma does; see materials.h). Deliberately a flag and not a

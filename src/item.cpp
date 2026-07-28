@@ -359,3 +359,57 @@ int placeFrom(World& w, Inventory& inv, int cx, int cy, int r, int maxCells) {
     }
     return put;
 }
+
+/* --- the background layer --------------------------------------------------
+   Same disc walk as the foreground verbs, same nearest-first ordering, same
+   inventory accounting. What differs is what they touch and what stops them. */
+
+int placeBg(World& w, Inventory& inv, int cx, int cy, int r, int maxCells) {
+    ItemStack& h = inv.held();
+    if (h.empty() || ITEMS[h.item].kind != ITEMK_MATERIAL) return 0;
+    /* Air has no back. Placing "nothing" is the job of digBg. */
+    if (h.item == MAT_EMPTY) return 0;
+
+    int put = 0;
+    const int n = g_discEnd[imax(0, imin(r, DISC_MAX_R))];
+    for (int i = 0; i < n; ++i) {
+        if (maxCells > 0 && put >= maxCells) break;
+        const int x = cx + g_disc[i].dx, y = cy + g_disc[i].dy;
+        if (x < PLAY_X0 || x > PLAY_X1 || y < PLAY_Y0 || y > PLAY_Y1) continue;
+        /* Never overwrite an existing backdrop -- same rule the foreground has,
+           and for the same reason: a brush that silently replaces what is
+           already there destroys work you cannot get back by undoing a click.
+           Scrape it off first if you want to change it. */
+        if (w.bgAt(x, y) != MAT_EMPTY) continue;
+        /* NO check against material in front. Walling in behind a floor you are
+           standing on is the normal way to build a room, and refusing it would
+           mean digging out a wall just to back it. */
+        const ItemId want = h.item;
+        if (inv.take(want, 1) != 1) return put;
+        w.setBg(x, y, (u8)want, true);
+        ++put;
+    }
+    return put;
+}
+
+int digBg(World& w, Inventory& inv, int cx, int cy, int r, int maxCells) {
+    int dug = 0;
+    const int n = g_discEnd[imax(0, imin(r, DISC_MAX_R))];
+    for (int i = 0; i < n; ++i) {
+        if (maxCells > 0 && dug >= maxCells) break;
+        const int x = cx + g_disc[i].dx, y = cy + g_disc[i].dy;
+        if (x < PLAY_X0 || x > PLAY_X1 || y < PLAY_Y0 || y > PLAY_Y1) continue;
+        const u8 b = w.bgAt(x, y);
+        if (b == MAT_EMPTY) continue;
+        /* Only what a player put there comes back as an item. Natural rock
+           behind a cave is scenery -- letting it be farmed would turn every
+           tunnel into an infinite quarry, and the wall it leaves would be a
+           hole through to the void, which is not something the world should
+           contain. So natural backdrop is left alone entirely. */
+        if (!w.bgPlaced(x, y)) continue;
+        if (inv.add((ItemId)b, 1) != 0) continue;   /* pack full: leave it */
+        w.clearBg(x, y);
+        ++dug;
+    }
+    return dug;
+}

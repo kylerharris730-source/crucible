@@ -247,3 +247,16 @@ int digInto(World& w, Inventory& inv, int cx, int cy, int r, int maxCells = 0);
    the stack runs out. Returns how many cells were filled. Never overwrites
    existing material and never places inside an occupied entity box. */
 int placeFrom(World& w, Inventory& inv, int cx, int cy, int r, int maxCells = 0);
+
+/* --- the same two verbs, on the background layer ---------------------------
+   Deliberately separate functions rather than a flag on the ones above. The
+   rules genuinely differ: background can be placed THROUGH material (you wall
+   behind a floor you are standing on), it never collides so there is no entity
+   box to dodge, and scraping it off is not the same action as mining the block
+   in front of it. Folding all of that into one function behind a boolean would
+   make both halves harder to read than either is apart.
+
+   Anything placed here is marked BG_PLACED, which is what will later separate a
+   built room from a natural cave. */
+int placeBg(World& w, Inventory& inv, int cx, int cy, int r, int maxCells = 0);
+int digBg(World& w, Inventory& inv, int cx, int cy, int r, int maxCells = 0);

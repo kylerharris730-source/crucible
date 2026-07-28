@@ -109,7 +109,7 @@ static const BrushDef BRUSHES[] = {
 };
 static const int N_BRUSH = (int)(sizeof(BRUSHES) / sizeof(BRUSHES[0]));
 
-enum ActionId { ACT_OVERWRITE, ACT_VIEW, ACT_PLAYER, ACT_PAUSE, ACT_CLEAR, N_ACT };
+enum ActionId { ACT_OVERWRITE, ACT_LAYER, ACT_VIEW, ACT_PLAYER, ACT_PAUSE, ACT_CLEAR, N_ACT };
 
 /* --- simulation speed ----------------------------------------------------
    A multiplier on how many sim steps run per displayed frame, NOT a change to
@@ -229,6 +229,15 @@ static bool g_menuOpen = false;
    Off, the palette behaves as the unlimited sandbox tool it has always been,
    which is still how you build a scene to test something in. */
 static bool g_survival = true;
+/* --- which layer the brush acts on ---------------------------------------
+   A modal toggle rather than a modifier key, because building a room means
+   laying a lot of background in a row and holding a key through all of it is
+   miserable. It is stateful and clearly labelled for the same reason a paint
+   program has a layer selector rather than a shift-to-draw-behind.
+
+   Both verbs move together: in background mode left-click backs a wall and
+   right-click scrapes it off, exactly mirroring the foreground. */
+static bool g_bgLayer = false;
 /* Grown from 34 to make room for a square icon. At 34 the swatch area was 21
    wide by 13 tall once the count row was reserved, so a 14x14 sprite had to be
    letterboxed into a strip and the module chips were unreadable. Icons want
@@ -328,7 +337,15 @@ static bool hoverCell(char* out, int cap, u32* colOut) {
     const Cell& c = g_world.at(cx, cy);
     const int t = (int)g_world.temp[cy * SIM_W + cx] - TEMP_OFFSET;
     const char* name = (c.mat == MAT_EMPTY) ? "Air" : MATS[c.mat].name;
-    _snprintf(out, cap, "%s  %+d C", name, t);
+    /* Names what is BEHIND as well as in front, because in background mode the
+       thing you are about to act on is the one you cannot otherwise identify --
+       a backdrop is deliberately too dark to tell apart by colour alone. */
+    const u8 b = g_world.bgAt(cx, cy);
+    if (b != MAT_EMPTY)
+        _snprintf(out, cap, "%s  %+d C  / %s%s", name, t, MATS[b].name,
+                  g_world.bgPlaced(cx, cy) ? " (built)" : "");
+    else
+        _snprintf(out, cap, "%s  %+d C", name, t);
     out[cap - 1] = 0;
     if (colOut) {
         /* the material's own dry colour, so the label is tinted like the thing
@@ -618,9 +635,20 @@ static const int GROUND_Y = 260;   /* cells from the top of the world */
 static void makeStartingGround() {
     const int stoneTop = GROUND_Y + 40;
     for (int y = GROUND_Y; y < stoneTop; ++y)
-        for (int x = PLAY_X0; x <= PLAY_X1; ++x) g_world.setCell(x, y, MAT_DIRT);
+        for (int x = PLAY_X0; x <= PLAY_X1; ++x) {
+            g_world.setCell(x, y, MAT_DIRT);
+            /* Natural backdrop behind natural ground. This is what makes a dug
+               tunnel look like a tunnel: without it, mining into the earth
+               opens a hole onto the void, and the ground reads as a thin crust
+               floating over nothing. Marked NOT placed, so it is scenery rather
+               than something a room can be built out of. */
+            g_world.setBg(x, y, MAT_DIRT, false);
+        }
     for (int y = stoneTop; y < stoneTop + 120; ++y)
-        for (int x = PLAY_X0; x <= PLAY_X1; ++x) g_world.setCell(x, y, MAT_STONE);
+        for (int x = PLAY_X0; x <= PLAY_X1; ++x) {
+            g_world.setCell(x, y, MAT_STONE);
+            g_world.setBg(x, y, MAT_STONE, false);
+        }
 }
 
 /* Returns true if the click was consumed by a panel control. */
@@ -645,6 +673,7 @@ static bool handlePanelClick(int mx, int my) {
     if (inRect(g_sizeDec, mx, my)) { changeSize(-1); return true; }
     if (inRect(g_sizeInc, mx, my)) { changeSize(+1); return true; }
     if (inRect(g_actRect[ACT_OVERWRITE], mx, my)) { g_overwrite = !g_overwrite; return true; }
+    if (inRect(g_actRect[ACT_LAYER],     mx, my)) { g_bgLayer   = !g_bgLayer;   return true; }
     if (inRect(g_actRect[ACT_VIEW],      mx, my)) { cycleView();                return true; }
     if (inRect(g_actRect[ACT_PLAYER],    mx, my)) {
         g_playerOn = !g_playerOn;
@@ -753,6 +782,7 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                                (float)(g_my / SCALE + g_camY));
             break;
         case 'O': g_overwrite = !g_overwrite; break;
+        case 'L': g_bgLayer   = !g_bgLayer;   break;   /* L for layer */
         case 'V': cycleView();                break;
         /* Space jumps. Pause moved to P -- in a sandbox you are drawing in,
            space-to-pause is the obvious binding; the moment there is a
@@ -880,6 +910,21 @@ static void applyBrush() {
     if (g_survival && g_playerOn && g_lmb && !g_rmb
         && !g_inv.held().empty() && ITEMS[g_inv.held().item].kind == ITEMK_TOOL) {
         fireTool(aim);
+        g_pmx = aim.x; g_pmy = aim.y;
+        return;
+    }
+
+    /* Background mode. Rate-limited on the dig side exactly like the
+       foreground, so scraping a wall costs the same effort as mining one. */
+    if (g_survival && g_playerOn && g_bgLayer) {
+        if (g_rmb) {
+            if (g_digCool <= 0) {
+                digBg(g_world, g_inv, aim.x, aim.y, handRadius(), HAND.cellsPerBite);
+                g_digCool = HAND.cooldown;
+            }
+        } else {
+            placeBg(g_world, g_inv, aim.x, aim.y, handRadius());
+        }
         g_pmx = aim.x; g_pmy = aim.y;
         return;
     }
@@ -1035,9 +1080,10 @@ static void drawHotbar(HDC hdc) {
             else            sprintf(s, "%s  no module installed  reach %d",
                                     ITEMS[h.item].name, currentReach());
         }
-        else if (bonus > 0) sprintf(s, "%s  r%d  reach %d (+%d)", HAND.name, handRadius(),
-                                    currentReach(), bonus);
-        else                sprintf(s, "%s  r%d  reach %d", HAND.name, handRadius(), currentReach());
+        else if (bonus > 0) sprintf(s, "%s  r%d  reach %d (+%d)%s", HAND.name, handRadius(),
+                                    currentReach(), bonus, g_bgLayer ? "   [BACKGROUND]" : "");
+        else                sprintf(s, "%s  r%d  reach %d%s", HAND.name, handRadius(),
+                                    currentReach(), g_bgLayer ? "   [BACKGROUND]" : "");
         /* Its own line ABOVE the name row, not sharing it. Left-aligned text and
            centred text on one line collide as soon as either gets long, and
            "Focusing Lens" over a reach of 84 (+28) was already long enough --
@@ -1361,6 +1407,8 @@ static void drawPanel(HDC hdc) {
     char lbl[32];
     sprintf(lbl, "Overwrite: %s", g_overwrite ? "On" : "Off");
     drawButton(hdc, g_actRect[ACT_OVERWRITE], lbl, NULL, !g_overwrite, inRect(g_actRect[ACT_OVERWRITE], g_mx, g_my));
+    drawButton(hdc, g_actRect[ACT_LAYER], g_bgLayer ? "Layer: Background" : "Layer: Foreground",
+               NULL, g_bgLayer, inRect(g_actRect[ACT_LAYER], g_mx, g_my));
     const char* vn = g_view == VIEW_NORMAL ? "View: Glow" :
                      g_view == VIEW_MATERIAL ? "View: Material" : "View: Heat";
     drawButton(hdc, g_actRect[ACT_VIEW], vn, NULL, g_view != VIEW_NORMAL, inRect(g_actRect[ACT_VIEW], g_mx, g_my));

@@ -286,6 +286,26 @@ enum MatStrength {
 
 extern u8 g_matStrength[MAT_COUNT];
 
+/* --- background colours ----------------------------------------------------
+   What a material looks like when it is BEHIND you rather than in front: the
+   far wall of a tunnel, the back of a room. Darkened well down and shifted
+   cool, because the only job this colour has is to read as "not reachable" at
+   a glance -- a background you can mistake for material is worse than none.
+
+   Indexed (mat << 4) | speckle, 16 shades per material. The speckle comes from
+   a hash of the cell's position rather than from its tint byte, because an
+   empty cell's tint is whatever the last material there happened to leave
+   behind -- so it would change when you dug, and a wall that shimmers as you
+   mine in front of it looks broken. A position hash is fixed forever. */
+extern u32 g_bgColorLut[MAT_COUNT * 16];
+
+/* Static per-cell speckle. Cheap, and stable for a given cell for all time. */
+static inline u32 bgSpeckle(int x, int y) {
+    u32 h = (u32)(x * 73856093) ^ (u32)(y * 19349663);
+    h ^= h >> 13;
+    return h & 15;
+}
+
 /* Blend two packed 0xRRGGBB colours. t is 0..255. */
 static inline u32 lerpColor(u32 a, u32 b, int t) {
     int ar = (a >> 16) & 0xFF, ag = (a >> 8) & 0xFF, ab = a & 0xFF;

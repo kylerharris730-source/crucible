@@ -34,6 +34,10 @@ static const int CHUNK_COUNT = CHUNKS_X * CHUNKS_Y;
    and because no rule ever runs on a wall cell, every neighbour lookup from a
    simulated cell is guaranteed in-bounds -- so the movement rules need no
    bounds checks at all. */
+/* Background layer packing -- see World::bg below. */
+static const u8 BG_MAT_MASK = 0x7F;
+static const u8 BG_PLACED   = 0x80;
+
 static const int PLAY_X0 = 1;
 static const int PLAY_Y0 = 1;
 static const int PLAY_X1 = SIM_W - 2;
@@ -229,6 +233,23 @@ struct World {
        Cell at a tidy 4 bytes (16 to a cache line) and means the movement rules
        never pay for heat they do not read. */
     u8    temp[SIM_W * SIM_H];
+
+    /* --- the background layer --------------------------------------------
+       What is BEHIND the cell: the wall of a tunnel, the back of a room. It
+       is scenery, not material. Nothing falls, flows, burns or conducts here,
+       and the simulation never reads this array at all -- which is exactly why
+       it is a separate array rather than a field in Cell. Cell stays 4 bytes
+       and the movement rules keep paying nothing for it.
+
+       One byte holds two things:
+         bits 0-6  the MatId it looks like (0 = nothing, open sky or void)
+         bit 7     BG_PLACED -- a player put it there
+
+       That flag is the whole reason this layer exists rather than being a
+       cosmetic tint. A room is going to be defined as an enclosed space backed
+       by NON-NATURAL background, so "who put this here" has to survive in the
+       world, and seven bits is ample for a table of 28 materials. */
+    u8    bg[SIM_W * SIM_H];
     Chunk cur[CHUNK_COUNT];       /* work list being processed this frame */
     Chunk next[CHUNK_COUNT];      /* being accumulated for the next frame */
     u32   frame;
@@ -318,6 +339,16 @@ struct World {
     void dirtyPoint(int x, int y) { dirtyArea(x, y, x, y); }
 
     const Cell& at(int x, int y) const { return cells[y * SIM_W + x]; }
+
+    /* --- background accessors -------------------------------------------
+       No dirtying, no chunk marking: the background is never simulated, so
+       nothing needs waking when it changes. Only the renderer reads it. */
+    u8   bgAt(int x, int y)       const { return (u8)(bg[y * SIM_W + x] & BG_MAT_MASK); }
+    bool bgPlaced(int x, int y)   const { return (bg[y * SIM_W + x] & BG_PLACED) != 0; }
+    void setBg(int x, int y, u8 mat, bool placed) {
+        bg[y * SIM_W + x] = (u8)((mat & BG_MAT_MASK) | (placed ? BG_PLACED : 0));
+    }
+    void clearBg(int x, int y) { bg[y * SIM_W + x] = 0; }
 
     u8 stamp() const { return (u8)(frame & STAMP_MASK); }
 

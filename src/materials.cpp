@@ -469,6 +469,7 @@ u8  g_heatAlpha[256];
 u8  g_matGlows[MAT_COUNT];
 u8  g_matDecay[MAT_COUNT];
 u8  g_matStrength[MAT_COUNT];
+u32 g_bgColorLut[MAT_COUNT * 16];
 
 /* The durability ladder, in one place, ordered so the ranking is readable at a
    glance -- which is the whole reason this is not a MATS[] column.
@@ -585,6 +586,23 @@ static int rampAlpha(int t) {
     return RAMP_A[i - 1] + ((RAMP_A[i] - RAMP_A[i - 1]) * f) / 255;
 }
 
+static void initBgColours() {
+    for (int m = 0; m < MAT_COUNT; ++m) {
+        const MatInfo& mi = MATS[m];
+        for (int k = 0; k < 16; ++k) {
+            const u32 face = lerpColor(mi.dryA, mi.dryB, k * 17);
+            /* 34% of the way from a cold near-black toward the material's own
+               colour. Low enough that background never competes with material
+               for attention, high enough that stone and dirt are still
+               tellable apart behind you -- which they have to be, since the
+               background is how you read what layer you have dug into. */
+            g_bgColorLut[(m << 4) | k] = lerpColor(0x090B11, face, 88);
+        }
+    }
+    /* Nothing behind you at all is the void, not a dark grey. */
+    for (int k = 0; k < 16; ++k) g_bgColorLut[(MAT_EMPTY << 4) | k] = 0x000000;
+}
+
 void initMaterials() {
     initStrength();
     for (int m = 0; m < MAT_COUNT; ++m) {
@@ -629,6 +647,7 @@ void initMaterials() {
         g_heatAlpha[t] = (u8)rampAlpha(t);
     }
 
+    initBgColours();
     checkCloneColorInvariant();
 }
 
