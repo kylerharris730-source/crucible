@@ -38,6 +38,24 @@ static const int CHUNK_COUNT = CHUNKS_X * CHUNKS_Y;
 static const u8 BG_MAT_MASK = 0x7F;
 static const u8 BG_PLACED   = 0x80;
 
+/* --- zones -----------------------------------------------------------------
+   What you see when there is NOTHING behind a cell -- no wall, natural or
+   built. Open sky, or the dark of being underground.
+
+   Labelled PER CHUNK, not derived from depth, and that is the whole point.
+   A height threshold ties the backdrop to the terrain's shape, so the moment
+   the surface stops being flat the sky either cuts into a hillside or stops
+   short of a valley floor. Generation knows which chunks it made into sky and
+   which into rock; asking it to encode that as a number the renderer can
+   rediscover from y is throwing away the answer and guessing it back.
+
+   One byte per chunk is 6 KB for the whole world. */
+enum ZoneId {
+    ZONE_SKY = 0,      /* outdoors: the backdrop is the sky */
+    ZONE_UNDER,        /* underground: the backdrop is cave dark */
+    ZONE_COUNT
+};
+
 static const int PLAY_X0 = 1;
 static const int PLAY_Y0 = 1;
 static const int PLAY_X1 = SIM_W - 2;
@@ -275,6 +293,20 @@ struct World {
        the default has to be "simulate everything" or half the suite would
        quietly stop simulating and still pass. */
     i32 liveX0, liveY0, liveX1, liveY1;
+
+    /* One ZoneId per chunk. See ZoneId above for why this is a label rather
+       than a depth test. */
+    u8 zone[CHUNK_COUNT];
+
+    u8   zoneAt(int x, int y) const {
+        return zone[(y >> CHUNK_SHIFT) * CHUNKS_X + (x >> CHUNK_SHIFT)];
+    }
+    void setZoneRect(int x0, int y0, int x1, int y1, u8 z) {
+        const int cx0 = imax(0, x0 >> CHUNK_SHIFT), cx1 = imin(CHUNKS_X - 1, x1 >> CHUNK_SHIFT);
+        const int cy0 = imax(0, y0 >> CHUNK_SHIFT), cy1 = imin(CHUNKS_Y - 1, y1 >> CHUNK_SHIFT);
+        for (int cy = cy0; cy <= cy1; ++cy)
+            for (int cx = cx0; cx <= cx1; ++cx) zone[cy * CHUNKS_X + cx] = z;
+    }
 
     void setLiveWindow(int x0, int y0, int x1, int y1) {
         liveX0 = x0; liveY0 = y0; liveX1 = x1; liveY1 = y1;

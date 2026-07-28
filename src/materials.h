@@ -299,6 +299,24 @@ extern u8 g_matStrength[MAT_COUNT];
    mine in front of it looks broken. A position hash is fixed forever. */
 extern u32 g_bgColorLut[MAT_COUNT * 16];
 
+/* --- zone backdrops --------------------------------------------------------
+   What shows when there is no wall behind a cell at all. Which of these two
+   applies is a per-chunk label, never a depth test -- see ZoneId in world.h.
+
+   The sky is a gradient by depth, which is not a contradiction: the LABEL
+   decides that you are looking at sky, and the gradient only decides what
+   shade of it. Clamped, so a sky chunk deep underground simply sits at the
+   bottom of the ramp.
+
+   The last entry of the sky ramp is EXACTLY the cave colour, and that is load
+   bearing. A sky chunk and an underground chunk meet on a hard 32-cell chunk
+   boundary, and anywhere that boundary crosses open air -- a shaft, a cave
+   mouth -- a colour step would draw a visible ruled line across the world.
+   Meeting at the same value makes the join invisible without any blending. */
+static const int SKY_BAND = 768;   /* cells over which the sky fades to its floor */
+extern u32 g_skyLut[SKY_BAND];
+extern u32 g_caveLut[16];
+
 /* Static per-cell speckle. Cheap, and stable for a given cell for all time. */
 static inline u32 bgSpeckle(int x, int y) {
     u32 h = (u32)(x * 73856093) ^ (u32)(y * 19349663);

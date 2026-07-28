@@ -11,8 +11,36 @@ static const u32 VOID_COLOUR = 0x000000;
    the branch that was already testing for air. */
 static inline u32 backdrop(const World& w, int wx, int wy, int i) {
     const u8 b = (u8)(w.bg[i] & BG_MAT_MASK);
-    if (!b) return 0x0E0E12;                    /* open sky: air's own colour */
-    return g_bgColorLut[((u32)b << 4) | bgSpeckle(wx, wy)];
+    if (b) return g_bgColorLut[((u32)b << 4) | bgSpeckle(wx, wy)];
+
+    /* Nothing behind this cell at all. What you see then is the chunk's ZONE,
+       looked up as a label -- not worked out from wy. The ramp below is indexed
+       by depth, but only AFTER the label has decided you are looking at sky, so
+       terrain of any shape gets the backdrop generation gave it rather than one
+       inferred from how high it happens to be. */
+    const int cx = wx >> CHUNK_SHIFT, cy = wy >> CHUNK_SHIFT;
+    if (w.zone[cy * CHUNKS_X + cx] != ZONE_SKY)
+        return g_caveLut[bgSpeckle(wx, wy)];
+
+    u32 c = g_skyLut[wy < SKY_BAND ? (wy < 0 ? 0 : wy) : SKY_BAND - 1];
+
+    /* --- the join ---------------------------------------------------------
+       Sky and underground meet on a hard 32-cell chunk edge, and anywhere that
+       edge crosses open air -- a shaft, a cutting, a cave mouth -- a colour
+       step draws a ruled line across the world. Rendered, it was unmistakable:
+       bright blue directly above pitch black, in a straight line, at a height
+       that had nothing to do with the terrain.
+
+       Shaping the sky ramp to land on the cave colour cannot fix it, because
+       the depth of the boundary is different in every column -- which is the
+       entire reason zones are labels and not a depth test. So the blend goes
+       where the problem is: the LAST sky chunk before underground fades across
+       its own 32 rows into the cave colour. One extra array read, and only for
+       sky cells. */
+    const int below = cy + 1;
+    if (below >= CHUNKS_Y || w.zone[below * CHUNKS_X + cx] != ZONE_SKY)
+        c = lerpColor(c, g_caveLut[bgSpeckle(wx, wy)], (wy & (CHUNK - 1)) * 8);
+    return c;
 }
 
 /* One linear pass per visible row. The material colour is a single lookup into

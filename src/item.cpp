@@ -401,13 +401,18 @@ int digBg(World& w, Inventory& inv, int cx, int cy, int r, int maxCells) {
         if (x < PLAY_X0 || x > PLAY_X1 || y < PLAY_Y0 || y > PLAY_Y1) continue;
         const u8 b = w.bgAt(x, y);
         if (b == MAT_EMPTY) continue;
-        /* Only what a player put there comes back as an item. Natural rock
-           behind a cave is scenery -- letting it be farmed would turn every
-           tunnel into an infinite quarry, and the wall it leaves would be a
-           hole through to the void, which is not something the world should
-           contain. So natural backdrop is left alone entirely. */
-        if (!w.bgPlaced(x, y)) continue;
-        if (inv.add((ItemId)b, 1) != 0) continue;   /* pack full: leave it */
+
+        /* Everything can be broken. Only what a PLAYER put there drops.
+
+           Those are two separate questions and it is worth keeping them
+           separate: being unable to clear natural rock off the back wall would
+           make half the world unfinishable to build in, while letting it drop
+           items would turn every tunnel into an infinite quarry. Breaking it
+           reveals the chunk's zone behind -- cave dark, or sky -- which is a
+           real thing to look at rather than a hole in the world. */
+        if (w.bgPlaced(x, y)) {
+            if (inv.add((ItemId)b, 1) != 0) continue;   /* pack full: leave it */
+        }
         w.clearBg(x, y);
         ++dug;
     }

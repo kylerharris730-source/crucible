@@ -634,6 +634,24 @@ static const int GROUND_Y = 260;   /* cells from the top of the world */
 
 static void makeStartingGround() {
     const int stoneTop = GROUND_Y + 40;
+
+    /* Label the zones first. Generation is what knows which chunks it made into
+       open air and which into rock -- see ZoneId in world.h for why that is
+       recorded rather than recomputed from depth.
+
+       Rounded to WHOLE CHUNK ROWS, downward. Zones only exist at chunk
+       granularity, so asking for a boundary partway through a chunk silently
+       moves it to that chunk's top edge -- which, measured, put the join five
+       cells ABOVE the surface and made every open cutting show sky turning to
+       cave just before the ground did. Taking the whole chunk the surface sits
+       in for sky puts the join up to 32 cells DOWN, inside the dirt, where it
+       is buried. */
+    const int surfaceChunk = GROUND_Y >> CHUNK_SHIFT;
+    g_world.setZoneRect(0, 0, SIM_W - 1,
+                        ((surfaceChunk + 1) << CHUNK_SHIFT) - 1, ZONE_SKY);
+    g_world.setZoneRect(0, (surfaceChunk + 1) << CHUNK_SHIFT,
+                        SIM_W - 1, SIM_H - 1, ZONE_UNDER);
+
     for (int y = GROUND_Y; y < stoneTop; ++y)
         for (int x = PLAY_X0; x <= PLAY_X1; ++x) {
             g_world.setCell(x, y, MAT_DIRT);

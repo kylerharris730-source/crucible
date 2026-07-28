@@ -470,6 +470,8 @@ u8  g_matGlows[MAT_COUNT];
 u8  g_matDecay[MAT_COUNT];
 u8  g_matStrength[MAT_COUNT];
 u32 g_bgColorLut[MAT_COUNT * 16];
+u32 g_skyLut[SKY_BAND];
+u32 g_caveLut[16];
 
 /* The durability ladder, in one place, ordered so the ranking is readable at a
    glance -- which is the whole reason this is not a MATS[] column.
@@ -586,6 +588,33 @@ static int rampAlpha(int t) {
     return RAMP_A[i - 1] + ((RAMP_A[i] - RAMP_A[i - 1]) * f) / 255;
 }
 
+/* Cave dark, and the sky ramp above it. */
+static void initZoneColours() {
+    /* Underground. Warm-shifted rather than neutral grey so it reads as rock
+       rather than as an unlit hole, and barely speckled -- enough to have some
+       grain at all, not enough to compete with anything in front of it. */
+    const u32 CAVE_A = 0x14110F, CAVE_B = 0x1C1916;
+    for (int k = 0; k < 16; ++k) g_caveLut[k] = lerpColor(CAVE_A, CAVE_B, k * 17);
+
+    /* The sky: cold high air, through daylight blue, into a dusty haze near the
+       ground. Three stops rather than two because a straight two-colour ramp
+       reads as a flat wash, and the bend toward haze is what makes it look like
+       distance rather than paint.
+
+       A plain linear ramp, not weighted toward either end. The join with the
+       underground is handled where it actually happens -- at the chunk
+       boundary, by backdrop() -- rather than by trying to shape this curve to
+       land on the cave colour at a depth that is different in every column. */
+    const u32 STOPS[4] = { 0x24406E, 0x3D6698, 0x6E8CA8, 0x8FA0AC };
+    const int nSeg = 3;
+    const int span = SKY_BAND / nSeg;
+    for (int y = 0; y < SKY_BAND; ++y) {
+        const int seg = imin(nSeg - 1, y / span);
+        const int t   = imin(255, ((y - seg * span) * 256) / span);
+        g_skyLut[y] = lerpColor(STOPS[seg], STOPS[seg + 1], t);
+    }
+}
+
 static void initBgColours() {
     for (int m = 0; m < MAT_COUNT; ++m) {
         const MatInfo& mi = MATS[m];
@@ -648,6 +677,7 @@ void initMaterials() {
     }
 
     initBgColours();
+    initZoneColours();
     checkCloneColorInvariant();
 }
 

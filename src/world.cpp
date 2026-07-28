@@ -88,6 +88,9 @@ void World::reset() {
     memset(cells, 0, sizeof(cells));
     memset(temp, AMBIENT_TEMP, sizeof(temp));
     memset(bg, 0, sizeof(bg));
+    /* A blank world is open air all the way down. Generation labels the
+       rock it makes; nothing here should assume a surface exists yet. */
+    memset(zone, ZONE_SKY, sizeof(zone));
     frame  = 0;
     activeChunks = 0;
     clearDirty(cur);
