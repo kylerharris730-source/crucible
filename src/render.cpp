@@ -10,7 +10,18 @@ static const u32 VOID_COLOUR = 0x000000;
 /* An empty cell shows whatever is BEHIND it. Only empty cells pay for this --
    material in front hides the background completely, so the lookup sits inside
    the branch that was already testing for air. */
-static inline u32 backdrop(const World& w, int wx, int wy, int i) {
+/* `openSky` comes back true only for the one case that must NOT be shaded: a
+   cell with nothing behind it at all, in a chunk labelled sky. The sky is
+   effectively infinitely far away, so nothing in the world can cast a shadow
+   on it -- and once skylight came from several directions, something did. A
+   slab floating over open ground drew a soft grey cone onto the sky beneath
+   itself, which reads as fog rather than as shadow.
+
+   Everything else still shades: placed and natural background, and the cave
+   backdrop underground. Looking up out of a shaft you see real sky and it is
+   bright; looking at the back wall of the shaft you see stone and it is dark.
+   That is the distinction that matters and it is the one this makes. */
+static inline u32 backdrop(const World& w, int wx, int wy, int i, bool* openSky) {
     const u8 b = (u8)(w.bg[i] & BG_MAT_MASK);
     if (b) return g_bgColorLut[((u32)b << 4) | bgSpeckle(wx, wy)];
 
@@ -22,7 +33,7 @@ static inline u32 backdrop(const World& w, int wx, int wy, int i) {
     const int cx = wx >> CHUNK_SHIFT, cy = wy >> CHUNK_SHIFT;
     const u32 sky = g_skyLut[wy < SKY_BAND ? (wy < 0 ? 0 : wy) : SKY_BAND - 1];
 
-    if (w.zone[cy * CHUNKS_X + cx] == ZONE_SKY) return sky;
+    if (w.zone[cy * CHUNKS_X + cx] == ZONE_SKY) { *openSky = true; return sky; }
 
     /* --- the join ---------------------------------------------------------
        Sky and underground meet on a hard 32-cell chunk edge, and anywhere that
@@ -90,10 +101,11 @@ int renderView(const World& w, u32* out, int view, int camX, int camY, bool lit)
             for (int vx = vx0; vx < vx1; ++vx) {
                 const int i = base + vx;
                 Cell c = cells[i];
+                bool openSky = false;
                 u32 col = (c.mat == MAT_EMPTY)
-                        ? backdrop(w, camX + vx, wy, i)
+                        ? backdrop(w, camX + vx, wy, i, &openSky)
                         : g_colorLut[((u32)c.mat << 8) | (u32)(c.moisture & 0xF0) | (u32)(c.tint >> 4)];
-                row[vx] = lrow ? shadeColor(col, g_lightShade[lrow[vx]]) : col;
+                row[vx] = (lrow && !openSky) ? shadeColor(col, g_lightShade[lrow[vx]]) : col;
                 count += (c.mat != MAT_EMPTY && c.mat != MAT_WALL);
             }
             continue;
@@ -110,8 +122,9 @@ int renderView(const World& w, u32* out, int view, int camX, int camY, bool lit)
         for (int vx = vx0; vx < vx1; ++vx) {
             const int i = base + vx;
             Cell c = cells[i];
+            bool openSky = false;
             u32 col = (c.mat == MAT_EMPTY)
-                    ? backdrop(w, camX + vx, wy, i)
+                    ? backdrop(w, camX + vx, wy, i, &openSky)
                     : g_colorLut[((u32)c.mat << 8) | (u32)(c.moisture & 0xF0) | (u32)(c.tint >> 4)];
             const u8 t = temp[i];
             /* g_matGlows lets a material opt out of the overlay entirely
@@ -127,7 +140,7 @@ int renderView(const World& w, u32* out, int view, int camX, int camY, bool lit)
                dimmed like everything else rather than punching through the
                shadow at full brightness. It does not go dark: anything hot
                enough to glow is in g_matLight and lights its own cell. */
-            row[vx] = lrow ? shadeColor(col, g_lightShade[lrow[vx]]) : col;
+            row[vx] = (lrow && !openSky) ? shadeColor(col, g_lightShade[lrow[vx]]) : col;
             count += (c.mat != MAT_EMPTY && c.mat != MAT_WALL);
         }
     }

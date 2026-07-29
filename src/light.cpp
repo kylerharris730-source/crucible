@@ -11,13 +11,11 @@ bool g_lightOn = true;
    4-byte struct in a 4096-wide grid. */
 static u8 g_att[LIGHT_W * LIGHT_H];
 
-/* Whether each column of the rectangle was open to the sky at its top edge.
-   Worked out once (see openToSky) and then read by two separate passes, which
-   is why it is kept rather than consumed: g_sun is the working value the gather
-   pass spends walking down the column, and the soak pass below needs the
-   original answer again afterwards. */
-static u8 g_skyCol[LIGHT_W];
-static u8 g_sun[LIGHT_W];
+/* Skylight only, per cell, as the rays delivered it -- no lamps, nothing the
+   propagation sweeps added. Kept because sunSoak needs to be about the sun
+   specifically (see the note there), and by the time it runs g_light has
+   everything else mixed into it. */
+static u8 g_sky[LIGHT_W * LIGHT_H];
 
 /* Anything that is not solid or liquid lets daylight straight through. Gases
    attenuate light (see g_matOpacity) but they do not cast a shadow, which is
@@ -26,40 +24,117 @@ static inline bool lightOpen(u8 m) {
     return m == MAT_EMPTY || MATS[m].kind == KIND_GAS;
 }
 
-/* --- where daylight comes from ---------------------------------------------
-   Sunlight is not a source in the buffer; it is a column property. Every cell
-   with an unobstructed run of open cells above it is at full brightness, and
-   the first solid thing in the column ends it.
+/* --- skylight, from more than one direction --------------------------------
 
-   The awkward part is that the run continues off the top of the light
-   rectangle, and the honest answer -- walk up to the surface -- is a scan
-   thousands of cells long when you are deep underground, every column, every
-   frame. So the question is answered in two cheap halves instead:
+   The sky is not a lamp directly overhead, and treating it as one produced both
+   of the artefacts this replaced. A single vertical ray per column means a cell
+   is either in full daylight or in none, so:
 
-     the ZONE says whether this chunk is outdoors at all, which is exactly what
-     generation already decided and stored (see ZoneId in world.h), and
+     a floating slab cast a HARD-EDGED column of dark straight down. Measured in
+     the ground under a 17-wide slab: 81 58 32 16 16 16 percent going down,
+     against 95 85 75 65 54 43 beside it. Air was fine -- the propagation
+     sweeps fill a shadow in open space from the sides, 99% under a one-cell
+     slab -- but ground gets its light from the soak pass, which was gated on a
+     yes/no "is this column open to the sky", so in a shadow it got nothing at
+     all. An inky rectangle under anything floating.
 
-     a short probe upward rules out standing under a roof that begins just off
-     the top of the screen.
+     and there was no such thing as partial sky, so nothing could fade.
 
-   SUN_PROBE is what that costs, and it bounds the error too: a chamber whose
-   ceiling is more than SUN_PROBE cells above the top of the light rectangle
-   AND which sits in a sky chunk would take daylight it should not. That needs
-   a room over 100 cells tall built above ground; a room-sized room is covered,
-   and being generous with sunlight outdoors is the harmless direction to be
-   wrong in. Underground -- where a false sunbeam would actually matter -- the
-   zone label refuses before the probe even runs. */
+   Now several rays arrive at each cell from different angles and a cell's
+   skylight is the SUM of the ones that got through. That is what the sky
+   physically is -- a hemisphere, not a point -- and the useful consequence is
+   that "how much sky can this cell see" becomes a number instead of a bit:
+
+     under a one-cell slab, four of five rays still arrive
+     under a wide slab the penumbra grades in from the edges
+     down a narrow shaft only the vertical ray fits, so a shaft is dim
+     down a wide pit the slanted rays reach too, so a pit is bright
+
+   The last two are worth noticing: a well being darker than an open pit falls
+   out of the geometry rather than being a rule anybody wrote.
+
+   Weights sum to LIGHT_MAX so open sky is still exactly full daylight, and are
+   biased toward the vertical the way a real sky's contribution is: straight up
+   is a third of it. */
+static const int SUN_RAYS = 5;
+/* Lateral movement per row, in halves: 0, -1/2, +1/2, -1, +1. */
+static const int RAY_HALF[SUN_RAYS] = { 0, -1, 1, -2, 2 };
+static const int RAY_WEIGHT[SUN_RAYS] = { 85, 51, 51, 34, 34 };   /* = 255 */
+
+/* Each ray is stored indexed by the column it ENTERED the rectangle at, not by
+   where it currently is, so a row advance is a change of index rather than a
+   memmove of the whole array -- 1.9 M byte moves a frame otherwise. A ray that
+   entered at source column c is at rect column c + off(row), so reading rect
+   column lx means reading source column lx - off.
+
+   Hence the padding: after LIGHT_H rows a slope-1 ray has moved LIGHT_H columns,
+   so source indices run from -LIGHT_H to LIGHT_W + LIGHT_H. */
+static const int RAY_BIAS = LIGHT_H + 2;
+static const int RAY_SPAN = LIGHT_W + 2 * RAY_BIAS;
+static u8 g_ray[SUN_RAYS][RAY_SPAN];
+
+/* --- how far down daylight gets ---------------------------------------------
+   Skylight fades with depth below the sky/underground zone boundary, and
+   reaching zero there is what replaced a hard cutoff.
+
+   What was there before was a gate: openToSky() refused any column whose chunk
+   was labelled underground. Walking down a shaft, that meant full daylight --
+   255, no falloff at all -- until the top of the light rectangle crossed the
+   boundary, and then nothing. Measured at 100% at 275 cells down and 15% at
+   300. Both halves of that are wrong: a shaft 275 cells deep should not be as
+   bright as open ground, and nothing should ever change that abruptly.
+
+   The fade is measured from the ZONE BOUNDARY, which is a fixed feature of the
+   world, and not from the top of the light rectangle, which moves with the
+   camera. That is the whole reason it can be done at all: a fade measured from
+   anything camera-relative would make a cell's brightness depend on where you
+   were standing when you looked at it.
+
+   Because the fade is a subtraction rather than a scaling, dim light dies
+   sooner than bright light -- so a shaft only the vertical ray fits down goes
+   dark sooner than a pit the slanted rays reach the bottom of. Measured at 70
+   cells down, a nine-wide shaft is at 56 and a hundred-wide pit at 180, and a
+   nine-wide shaft runs out at 142. That ordering is right and nobody had to
+   write it down; it is the geometry.
+
+   It also makes SUN_PROBE's bound invisible rather than merely large: a column
+   deeper than SUN_REACH below the boundary has no skylight whatever the probe
+   would have said, so it is rejected before probing. */
+static const int SUN_REACH  = 400;
+static const int SUN_FADE_Q8 = (LIGHT_MAX * 256) / SUN_REACH;
+
+/* How far up to look for a roof. Only columns that are open at the top of the
+   rectangle AND within SUN_REACH of the boundary ever pay for this, and a shaft
+   is open along its whole length, so exhausting the probe inside one correctly
+   reports "open" -- which is why there is no cutoff at any depth. */
 static const int SUN_PROBE = 112;
 
-static bool openToSky(const World& w, int x, int yTop) {
-    const int zy = yTop < 0 ? 0 : (yTop >= SIM_H ? SIM_H - 1 : yTop);
-    if (w.zoneAt(x, zy) != ZONE_SKY) return false;
+static bool openAbove(const World& w, int x, int yTop) {
     for (int y = yTop; y > yTop - SUN_PROBE; --y) {
         if (y < 0) return true;              /* out the top of the world */
         if (y >= SIM_H) continue;
         if (!lightOpen(w.cells[y * SIM_W + x].mat)) return false;
     }
     return true;
+}
+
+/* World y at which this column stops being sky. Per chunk column, because that
+   is the granularity zones have. */
+static i32 g_boundY[LIGHT_W];
+
+static void findBoundaries(const World& w, int wx0, int lx0, int lx1) {
+    int lastCx = -1;
+    i32 lastY = 0;
+    for (int lx = lx0; lx < lx1; ++lx) {
+        const int cx = (wx0 + lx) >> CHUNK_SHIFT;
+        if (cx != lastCx) {
+            lastCx = cx;
+            lastY = SIM_H;
+            for (int cy = 0; cy < CHUNKS_Y; ++cy)
+                if (w.zone[cy * CHUNKS_X + cx] == ZONE_UNDER) { lastY = cy << CHUNK_SHIFT; break; }
+        }
+        g_boundY[lx] = lastY;
+    }
 }
 
 /* --- propagation -----------------------------------------------------------
@@ -153,7 +228,7 @@ static void sweepBackward() {
    wall pass 62% of a lamp next door, which is worse than the problem.
 
    Separating them works because THE SUN IS NOT A SOURCE IN THE FIELD. It is
-   already a column property (see openToSky), so it can have its own
+   already a column property (see the ray model above), so it can have its own
    attenuation, and this pass runs AFTER the sweeps -- so the light it adds
    lights the rock it is in and does not propagate anywhere from there. That
    last part is what keeps it honest: soaking daylight 15 cells into a roof
@@ -170,15 +245,27 @@ static void sweepBackward() {
 static const int SUN_SOAK     = 15;    /* cells of ground daylight reaches */
 static const int SUN_SOAK_ATT = LIGHT_MAX / SUN_SOAK;
 
+/* No state machine any more, and losing it fixed a bug that had nothing to do
+   with the one it was written for.
+
+   It used to be "above ground" -> "in the ground" -> "finished", where finished
+   was terminal, so that daylight could not come through a floor into the cave
+   under it. But the FIRST solid thing a column meets going down is not always
+   the ground: with a slab floating overhead it is the slab. The pass soaked
+   three cells of slab, came out into the air below it, latched "finished", and
+   the actual ground in that column never got soaked at all. That is what the
+   inky rectangle under a floating object really was -- not the missing
+   penumbra, which was only half of it.
+
+   Written as "while in open air, remember the skylight here; while in solid,
+   decay and write", the terminal case disappears and so does the bug: coming
+   out into air simply re-reads the skylight there, which below a slab is the
+   slab's own shadow and below a roofed room is nothing. Daylight still cannot
+   reach through a floor, because the air under the floor has no skylight to
+   re-seed from -- the property survives without a rule enforcing it. */
 static void sunSoak(const World& w, int wx0, int wy0, int lx0, int lx1) {
     static u8 soak[LIGHT_W];
-    /* 0 = still in the open above ground, 1 = in the ground, 2 = finished */
-    static u8 state[LIGHT_W];
-
-    for (int lx = lx0; lx < lx1; ++lx) {
-        soak[lx]  = g_skyCol[lx] ? (u8)LIGHT_MAX : 0;
-        state[lx] = 0;
-    }
+    for (int lx = lx0; lx < lx1; ++lx) soak[lx] = 0;
 
     for (int ly = 0; ly < LIGHT_H; ++ly) {
         const int wy = wy0 + ly;
@@ -186,19 +273,22 @@ static void sunSoak(const World& w, int wx0, int wy0, int lx0, int lx1) {
         if (wy >= SIM_H) break;
 
         const Cell* row = w.cells + wy * SIM_W + wx0;
-        u8* L = g_light + ly * LIGHT_W;
+        u8*       L   = g_light + ly * LIGHT_W;
+        const u8* SKY = g_sky   + ly * LIGHT_W;
 
         for (int lx = lx0; lx < lx1; ++lx) {
-            if (state[lx] == 2 || !soak[lx]) continue;
-            const u8 m = row[lx].mat;
-            if (lightOpen(m)) {
-                /* Out the far side: this is soak, not transmission. */
-                if (state[lx] == 1) { state[lx] = 2; soak[lx] = 0; }
-                continue;                       /* open sky needs nothing added */
+            if (lightOpen(row[lx].mat)) {
+                /* Seeded from SKYLIGHT ONLY, not from the light in the buffer.
+                   Total light would let a lamp soak fifteen cells of rock,
+                   which contradicts the five that walls are tuned to pass and
+                   would read as a lamp leaking through them. g_sky is the ray
+                   sum the gather pass already worked out, kept precisely so
+                   this pass can be about the sun and nothing else. */
+                soak[lx] = SKY[lx];
+            } else if (soak[lx]) {
+                soak[lx] = (u8)(soak[lx] > SUN_SOAK_ATT ? soak[lx] - SUN_SOAK_ATT : 0);
+                if (L[lx] < soak[lx]) L[lx] = soak[lx];
             }
-            state[lx] = 1;
-            soak[lx] = (u8)(soak[lx] > SUN_SOAK_ATT ? soak[lx] - SUN_SOAK_ATT : 0);
-            if (L[lx] < soak[lx]) L[lx] = soak[lx];
         }
     }
 }
@@ -215,39 +305,107 @@ void lightCompute(const World& w, int camX, int camY) {
     if (lx0 > LIGHT_W) lx0 = LIGHT_W;
     if (lx1 < lx0)     lx1 = lx0;
 
-    for (int lx = 0; lx < LIGHT_W; ++lx) {
-        g_skyCol[lx] = (u8)(lx >= lx0 && lx < lx1 && openToSky(w, wx0 + lx, wy0));
-        g_sun[lx]    = g_skyCol[lx] ? (u8)LIGHT_MAX : 0;
-    }
+    findBoundaries(w, wx0, lx0, lx1);
 
-    /* One pass gathers emission and attenuation and carries the sun down the
-       columns at the same time. The sun genuinely wants a column walk, but
-       doing it as one is a strided read of the world 480 cells long per
-       column; carrying it row by row in g_sun[] gets the identical answer out
-       of memory the gather is already touching. */
+    /* Seed every ray at the top row. A ray that entered through the SIDE of the
+       rectangle has no top-row cell of its own, so those source slots take the
+       nearest edge column's answer -- the rectangle's own edge is 85 cells
+       outside the view, and replicating one column's sky state is a far smaller
+       error than starting those rays dark, which would draw dim vertical bands
+       down both sides of the screen. */
+    for (int r = 0; r < SUN_RAYS; ++r) memset(g_ray[r], 0, sizeof(g_ray[r]));
+    bool anySky = false;
+    for (int lx = lx0; lx < lx1; ++lx) {
+        /* Rejected before probing when the fade alone would zero it -- this is
+           what replaced the zone gate, and unlike the gate it cannot introduce
+           a step, because it only ever refuses columns that would have come out
+           at zero anyway. */
+        const int depth = wy0 - g_boundY[lx];
+        if (depth > 0 && ((depth * SUN_FADE_Q8) >> 8) >= LIGHT_MAX) continue;
+        if (!openAbove(w, wx0 + lx, wy0)) continue;
+        for (int r = 0; r < SUN_RAYS; ++r) g_ray[r][lx + RAY_BIAS] = (u8)RAY_WEIGHT[r];
+        anySky = true;
+    }
+    if (anySky)
+        for (int r = 0; r < SUN_RAYS; ++r) {
+            for (int c = 0; c < lx0 + RAY_BIAS; ++c)        g_ray[r][c] = g_ray[r][lx0 + RAY_BIAS];
+            for (int c = lx1 + RAY_BIAS; c < RAY_SPAN; ++c) g_ray[r][c] = g_ray[r][lx1 - 1 + RAY_BIAS];
+        }
+
+    /* One pass gathers emission and attenuation and carries the rays down at
+       the same time. The rays genuinely want a column walk, but doing it that
+       way is a strided read of the world 554 cells long per column; carrying
+       them row by row gets the identical answer out of memory the gather is
+       already touching. */
     for (int ly = 0; ly < LIGHT_H; ++ly) {
         const int wy = wy0 + ly;
         u8* L = g_light + ly * LIGHT_W;
         u8* A = g_att   + ly * LIGHT_W;
+        u8* S = g_sky   + ly * LIGHT_W;
 
         if (wy < 0 || wy >= SIM_H) {
             memset(L, 0, LIGHT_W);
+            memset(S, 0, LIGHT_W);
             memset(A, 255, LIGHT_W);        /* the void swallows light */
             continue;
         }
-        if (lx0 > 0)       { memset(L, 0, lx0); memset(A, 255, lx0); }
-        if (lx1 < LIGHT_W) { memset(L + lx1, 0, LIGHT_W - lx1);
+        if (lx0 > 0)       { memset(L, 0, lx0); memset(S, 0, lx0); memset(A, 255, lx0); }
+        if (lx1 < LIGHT_W) { memset(L + lx1, 0, LIGHT_W - lx1); memset(S + lx1, 0, LIGHT_W - lx1);
                              memset(A + lx1, 255, LIGHT_W - lx1); }
 
         const Cell* row = w.cells + wy * SIM_W + wx0;
+
+        /* No column of this rectangle can see the sky at all -- deep
+           underground, which is most of the game. Skipping the rays here is
+           what keeps depth CHEAPER than the surface rather than dearer: with
+           nothing seeded, every solid cell was still writing five zeros over
+           five already-zero slots, 1.9 M scattered writes a frame to achieve
+           nothing. Measured 4.80 ms against the surface's 3.69 before this. */
+        if (!anySky) {
+            for (int lx = lx0; lx < lx1; ++lx) {
+                const u8 m = row[lx].mat;
+                L[lx] = g_matLight[m];
+                A[lx] = g_matOpacity[m];
+                S[lx] = 0;
+            }
+            continue;
+        }
+
+        /* Where each ray has got to by this row. Halves, so a slope-1/2 ray
+           moves on alternate rows without needing an accumulator. */
+        int off[SUN_RAYS];
+        for (int r = 0; r < SUN_RAYS; ++r) off[r] = (RAY_HALF[r] * ly) / 2;
+
         for (int lx = lx0; lx < lx1; ++lx) {
             const u8 m = row[lx].mat;
             u8 lit = g_matLight[m];
             A[lx] = g_matOpacity[m];
-            if (g_sun[lx]) {
-                if (lightOpen(m)) { if (lit < g_sun[lx]) lit = g_sun[lx]; }
-                else                g_sun[lx] = 0;
+            u8 sky = 0;
+
+            if (!lightOpen(m)) {
+                /* Solid: every ray passing through this cell ends here, and
+                   stays ended, because a ray is a straight line from the sky.
+
+                   Tested before writing, not written unconditionally. A source
+                   slot can only be killed once, so all but SUN_RAYS*LIGHT_W of
+                   these writes are storing a zero over a zero -- and a write
+                   dirties a cache line where a read does not, which for cells
+                   the rays reach diagonally is most of the cost. */
+                for (int r = 0; r < SUN_RAYS; ++r) {
+                    u8& v = g_ray[r][lx - off[r] + RAY_BIAS];
+                    if (v) v = 0;
+                }
+            } else {
+                int sum = 0;
+                for (int r = 0; r < SUN_RAYS; ++r) sum += g_ray[r][lx - off[r] + RAY_BIAS];
+                if (sum) {
+                    const int depth = wy - g_boundY[lx];
+                    if (depth > 0) sum -= (depth * SUN_FADE_Q8) >> 8;
+                    if (sum > 0) sky = (u8)(sum > LIGHT_MAX ? LIGHT_MAX : sum);
+                    if (sky > lit) lit = sky;
+                }
             }
+            S[lx] = sky;
             L[lx] = lit;
         }
     }
@@ -258,5 +416,5 @@ void lightCompute(const World& w, int camX, int camY) {
     }
 
     /* Last, and that ordering is the whole mechanism -- see sunSoak(). */
-    sunSoak(w, wx0, wy0, lx0, lx1);
+    if (anySky) sunSoak(w, wx0, wy0, lx0, lx1);
 }
