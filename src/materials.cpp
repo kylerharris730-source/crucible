@@ -79,6 +79,11 @@ MatInfo MATS[MAT_COUNT] = {
   { "Stone", KIND_STATIC, 255,   0,    0,   0,   0,   0,  0,   85,  0,   0,   0,    0,  MAT_EMPTY, degC(185), MAT_LAVA, 0, MAT_EMPTY,   0,  0x6E747C, 0x50555C, 0x6E747C, 0x50555C, 0 },
   { "Sand",  KIND_POWDER, 150, 235,   60,   0,   0, 128,  1,   90,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0xE2CC86, 0xC7A85E, 0x8F7038, 0x6E5528, 0 },
   { "Dirt",  KIND_POWDER, 140, 150,   12,   0,   0, 192,  2,   80,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0x8C6B45, 0x6B4F33, 0x4A3524, 0x33241A, 0 },
+  /* Grass is dirt that something is growing on, so every physical column here
+     is dirt's. It falls, piles and wets identically; only the colour and the
+     spreading rule differ. Making it behave differently would mean a block of
+     turf dug up and dropped acted unlike the dirt it plainly is. */
+  { "Grass", KIND_POWDER, 140, 150,   12,   0,   0, 192,  2,   80,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0x5E9A3C, 0x3F7028, 0x375E22, 0x264A18, 0 },
   { "Water", KIND_LIQUID, 100,   0,    0,   5,   0,   0,  0,  180,  0,   0,   0, degC(0), MAT_ICE, degC(100), MAT_STEAM, 0, MAT_EMPTY,   0,  0x3D7FD1, 0x2C5FA6, 0x3D7FD1, 0x2C5FA6, 0 },
   /* Ice is static, so it never flows and never gets displaced -- tryMove
      refuses to swap with any non-liquid, non-gas, which is what stops water
@@ -497,6 +502,7 @@ static void initStrength() {
 
     g_matStrength[MAT_SAND]        = STR_LOOSE;
     g_matStrength[MAT_DIRT]        = STR_LOOSE;
+    g_matStrength[MAT_GRASS]       = STR_LOOSE;
 
     g_matStrength[MAT_ICE]         = STR_SOFT;
     g_matStrength[MAT_WOOD]        = STR_SOFT;

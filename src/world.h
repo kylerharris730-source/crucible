@@ -2,7 +2,7 @@
 #include "common.h"
 #include "materials.h"
 
-/* The WORLD. Much larger than the view, which shows 512x384 of it -- four
+/* The WORLD. Much larger than the view, which shows 512x384 of it -- eight
    screens across and eight down.
 
    Making this bigger is nearly free, and the benchmark is the reason to
@@ -17,7 +17,7 @@
    every cell is churning at once costs 120 ms, which is why step() honours a
    live window (see setLiveWindow below). Both of those are hard rules now: any
    new per-frame pass over SIM_W*SIM_H undoes the whole thing. */
-static const int SIM_W = 2048;
+static const int SIM_W = 4096;
 static const int SIM_H = 3072;
 
 /* Chunked dirty rectangles. Each chunk remembers the smallest box that had
@@ -369,6 +369,11 @@ struct World {
        must use it, or cells along the swept path never get woken. */
     void dirtyArea(int x0, int y0, int x1, int y1);
     void dirtyPoint(int x, int y) { dirtyArea(x, y, x, y); }
+
+    /* Grass: spreads across exposed dirt, dies back to dirt when buried.
+       Called from updateCell for grass cells only. */
+    void updateGrass(int x, int y);
+    bool airAdjacent(int x, int y) const;
 
     const Cell& at(int x, int y) const { return cells[y * SIM_W + x]; }
 

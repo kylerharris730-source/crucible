@@ -761,6 +761,52 @@ void World::updateEvaporation(int x, int y) {
    Dispatch and the frame step
    ====================================================================== */
 
+/* --- grass -----------------------------------------------------------------
+   Two rules, both about air. Grass needs a face open to it, and dirt next to
+   grass with a face open to it becomes grass.
+
+   The interesting part is how this cooperates with the chunk system rather
+   than fighting it. A spreading edge dirties itself every frame, so it stays
+   awake and keeps working; a lawn with nothing left to grow onto dirties
+   nothing and its chunks go to sleep, costing zero forever after. And because
+   setCell already dirties a one-cell ring around whatever it touches, burying
+   a grass cell or exposing new dirt beside one wakes it again on its own --
+   there is no need for grass to poll, and no need for a separate list of it. */
+/* Chance out of 255, per eligible neighbour, per frame. Measured, this is what
+   sets how fast a lawn creeps: at 3 a single seeded cell reached 118 cells in
+   4000 frames -- about nine-tenths of a cell per second in each direction,
+   which is slow enough that sowing a patch and watching it looks like nothing
+   is happening. 8 gives roughly two and a half cells a second, so a patch
+   visibly takes over the ground around it within a few seconds and a whole
+   hillside still takes a couple of minutes. */
+static const int GRASS_SPREAD = 8;
+
+bool World::airAdjacent(int x, int y) const {
+    for (int k = 0; k < 4; ++k)
+        if (cells[(y + NB_DY[k]) * SIM_W + (x + NB_DX[k])].mat == MAT_EMPTY) return true;
+    return false;
+}
+
+void World::updateGrass(int x, int y) {
+    /* Buried: nothing living survives with no face to the air. */
+    if (!airAdjacent(x, y)) { convert(x, y, MAT_DIRT); return; }
+
+    /* Spread along the 8-neighbourhood, not the 4. Ground in this world is
+       rarely flat, and orthogonal-only spread stops dead at every one-cell
+       step -- grass would climb a staircase and refuse a slope. */
+    bool moreToDo = false;
+    for (int k = 0; k < 8; ++k) {
+        const int nx = x + NB8_DX[k], ny = y + NB8_DY[k];
+        if (nx < PLAY_X0 || nx > PLAY_X1 || ny < PLAY_Y0 || ny > PLAY_Y1) continue;
+        if (cells[ny * SIM_W + nx].mat != MAT_DIRT) continue;
+        if (!airAdjacent(nx, ny)) continue;      /* buried dirt stays dirt */
+        moreToDo = true;
+        if (rngChance(GRASS_SPREAD)) convert(nx, ny, MAT_GRASS);
+    }
+    /* Only stay awake while there is still somewhere to go. */
+    if (moreToDo) dirtyPoint(x, y);
+}
+
 void World::updateCell(int x, int y) {
     const int i = y * SIM_W + x;
 
@@ -913,6 +959,11 @@ void World::updateCell(int x, int y) {
         if (c.mat != was) return;           /* it turned to vapour; `m` is now
                                                the wrong material to act on */
     }
+
+    /* Grass first, and it may turn this cell into dirt -- after which the
+       powder rule below still runs on it, which is right: a buried clod of turf
+       should keep falling in the same frame it stops being turf. */
+    if (c.mat == MAT_GRASS) updateGrass(x, y);
 
     if      (m.kind == KIND_POWDER) updatePowder(x, y);
     else if (m.kind == KIND_LIQUID) updateLiquid(x, y);

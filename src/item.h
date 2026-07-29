@@ -43,6 +43,8 @@ enum {
        see ITEMK_CARRIED below. */
     ITEM_LENS,
     ITEM_RELAY,
+    /* Sown onto exposed dirt to start a lawn. See ITEMK_SEED. */
+    ITEM_GRASS_SEED,
     ITEM_COUNT
 };
 
@@ -65,7 +67,17 @@ enum ItemKind {
        There is deliberately no building tier to match. A tool you must hold in
        order to place blocks is a slot tax on the most ordinary action in the
        game, and it would make the hotbar a chore rather than a loadout. */
-    ITEMK_MINING
+    ITEMK_MINING,
+    /* --- ITEMK_SEED ------------------------------------------------------
+       Not placed as a cell -- CONVERTS one. Sowing turns exposed dirt into
+       grass, which then spreads on its own.
+
+       A separate kind rather than a material whose "placement" happens to have
+       a side effect, because everything about it differs: it goes onto a cell
+       that is already occupied, it is refused by cells that are buried, and it
+       leaves nothing of itself behind. Calling that "placing a block" would
+       make placeFrom answer two unrelated questions. */
+    ITEMK_SEED
 };
 
 struct ItemDef {
@@ -293,3 +305,9 @@ int placeFrom(World& w, Inventory& inv, int cx, int cy, int r, int maxCells = 0)
    built room from a natural cave. */
 int placeBg(World& w, Inventory& inv, int cx, int cy, int r, int maxCells = 0);
 int digBg(World& w, Inventory& inv, int cx, int cy, int r, int maxCells = 0);
+
+/* Sows the held seed onto exposed dirt, one seed per cell converted. Returns
+   how many took. Dirt with no face to the air is skipped rather than consuming
+   a seed -- sowing into the middle of a hill should cost nothing, because it
+   achieves nothing. */
+int sowSeeds(World& w, Inventory& inv, int cx, int cy, int r, int maxCells = 0);

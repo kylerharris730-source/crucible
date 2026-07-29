@@ -11,6 +11,7 @@
 #include "player.h"
 #include "item.h"
 #include "projectile.h"
+#include "worldgen.h"
 
 /* The window is a fixed-size left-hand tool panel plus the sim viewport. The
    viewport keeps a clean integer scale so pixels stay crisp and the
@@ -65,6 +66,7 @@ static const BrushDef BRUSHES[] = {
     { MAT_WATER, "Water" },
     { MAT_ICE,   "Ice"   },
     { MAT_DIRT,  "Dirt"  },
+    { MAT_GRASS, "Grass" },
     { MAT_STONE, "Stone" },
     { MAT_WOOD,  "Wood"  },
     /* Rubber only -- molten rubber, molten iron and molten copper are all
@@ -624,56 +626,10 @@ static void panCamera(float dx, float dy) {
 static void cycleView()      { g_view = (g_view + 1) % VIEW_COUNT; }
 static void changeSize(int d){ g_brushRadius = imax(1, imin(64, g_brushRadius + d)); }
 
-/* --- placeholder ground ----------------------------------------------------
-   A flat floor with stone under dirt, laid across the top of the world so
-   there is something to stand on.
-
-   This is scaffolding, not terrain, and deliberately says nothing about
-   material layering -- that belongs with the progression design rather than
-   being quietly invented here. It exists because an empty world 3072 cells
-   deep drops the character three thousand cells on the first frame, which
-   makes the game impossible to look at.
-
-   World::reset() itself stays genuinely empty: every headless test depends on
-   getting a clean grid, and a test that has to dig its own floor out of
-   surprise dirt is a test that will eventually be wrong about something. */
-static const int GROUND_Y = 260;   /* cells from the top of the world */
-
-static void makeStartingGround() {
-    const int stoneTop = GROUND_Y + 40;
-
-    /* Label the zones first. Generation is what knows which chunks it made into
-       open air and which into rock -- see ZoneId in world.h for why that is
-       recorded rather than recomputed from depth.
-
-       Rounded to WHOLE CHUNK ROWS, downward. Zones only exist at chunk
-       granularity, so asking for a boundary partway through a chunk silently
-       moves it to that chunk's top edge -- which, measured, put the join five
-       cells ABOVE the surface and made every open cutting show sky turning to
-       cave just before the ground did. Taking the whole chunk the surface sits
-       in for sky puts the join up to 32 cells DOWN, inside the dirt, where it
-       is buried. */
-    const int surfaceChunk = GROUND_Y >> CHUNK_SHIFT;
-    g_world.setZoneRect(0, 0, SIM_W - 1,
-                        ((surfaceChunk + 1) << CHUNK_SHIFT) - 1, ZONE_SKY);
-    g_world.setZoneRect(0, (surfaceChunk + 1) << CHUNK_SHIFT,
-                        SIM_W - 1, SIM_H - 1, ZONE_UNDER);
-
-    for (int y = GROUND_Y; y < stoneTop; ++y)
-        for (int x = PLAY_X0; x <= PLAY_X1; ++x) {
-            g_world.setCell(x, y, MAT_DIRT);
-            /* Natural backdrop behind natural ground. This is what makes a dug
-               tunnel look like a tunnel: without it, mining into the earth
-               opens a hole onto the void, and the ground reads as a thin crust
-               floating over nothing. Marked NOT placed, so it is scenery rather
-               than something a room can be built out of. */
-            g_world.setBg(x, y, MAT_DIRT, false);
-        }
-    for (int y = stoneTop; y < stoneTop + 120; ++y)
-        for (int x = PLAY_X0; x <= PLAY_X1; ++x) {
-            g_world.setCell(x, y, MAT_STONE);
-            g_world.setBg(x, y, MAT_STONE, false);
-        }
+/* Builds the world. See worldgen.cpp -- plains to the left, a mountain to the
+   right, and the flats beyond it. */
+static void makeWorld() {
+    generateWorld(g_world);
 }
 
 /* Returns true if the click was consumed by a panel control. */
@@ -712,7 +668,7 @@ static bool handlePanelClick(int mx, int my) {
         return true;
     }
     if (inRect(g_actRect[ACT_PAUSE],     mx, my)) { g_paused = !g_paused;       return true; }
-    if (inRect(g_actRect[ACT_CLEAR],     mx, my)) { g_world.reset(); makeStartingGround(); return true; }
+    if (inRect(g_actRect[ACT_CLEAR],     mx, my)) { g_world.reset(); makeWorld(); return true; }
     /* Any other spot on the panel is dead space: swallow it so it never paints. */
     return mx < PANEL_W;
 }
@@ -798,7 +754,7 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case 'I': g_survival = !g_survival; break;
         case 'H': g_brushMat = TOOL_HEAT; break;
         case 'J': g_brushMat = TOOL_COOL; break;
-        case 'C': g_world.reset(); makeStartingGround(); break;
+        case 'C': g_world.reset(); makeWorld(); break;
         /* Respawn at the cursor. Indispensable while tuning movement, and the
            obvious escape hatch when you bury yourself. */
         case 'R':
@@ -935,6 +891,16 @@ static void applyBrush() {
     if (g_survival && g_playerOn && g_lmb && !g_rmb
         && !g_inv.held().empty() && ITEMS[g_inv.held().item].kind == ITEMK_TOOL) {
         fireTool(aim);
+        g_pmx = aim.x; g_pmy = aim.y;
+        return;
+    }
+
+    /* Seeds convert rather than place, so they get their own branch before
+       the build/dig split -- see ITEMK_SEED. Sowing is not rate-limited: it is
+       not destruction, and the seeds themselves are the cost. */
+    if (g_survival && g_playerOn && g_lmb && !g_rmb && !g_bgLayer
+        && !g_inv.held().empty() && ITEMS[g_inv.held().item].kind == ITEMK_SEED) {
+        sowSeeds(g_world, g_inv, aim.x, aim.y, buildRadius());
         g_pmx = aim.x; g_pmy = aim.y;
         return;
     }
@@ -1491,8 +1457,12 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     /* Start near the top middle. The world is four screens wide and eight deep,
        so the old "middle of the world" would drop the character four screens
        underground with no way to tell which way was up. */
-    makeStartingGround();
-    g_player.reset(SIM_W * 0.5f, (float)(GROUND_Y - PLAYER_H));
+    makeWorld();
+    {
+        float sx, sy;
+        worldSpawnPoint(&sx, &sy);
+        g_player.reset(sx, sy);
+    }
     updateCamera(true);
 
     WNDCLASSA wc;

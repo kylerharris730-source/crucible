@@ -39,6 +39,8 @@ enum MatId {
     MAT_STONE,       /* melts into lava when hot enough */
     MAT_SAND,
     MAT_DIRT,
+    MAT_GRASS,       /* dirt with something living on it: spreads across exposed
+                        dirt, and dies back to dirt when buried */
     MAT_WATER,
     MAT_ICE,         /* frozen water; melts back above freezing */
     MAT_STEAM,
@@ -313,7 +315,12 @@ extern u32 g_bgColorLut[MAT_COUNT * 16];
    boundary, and anywhere that boundary crosses open air -- a shaft, a cave
    mouth -- a colour step would draw a visible ruled line across the world.
    Meeting at the same value makes the join invisible without any blending. */
-static const int SKY_BAND = 768;   /* cells over which the sky fades to its floor */
+/* Cells over which the sky ramp runs. It has to reach at least as low as the
+   ground does, or every column below it clamps to the last entry and the whole
+   visible sky is one flat colour -- which is exactly what 768 did once the
+   plains sat at y=1200: the ramp was spent 400 cells above the horizon and the
+   sky rendered as a grey wash. Comfortably past SURFACE_Y. */
+static const int SKY_BAND = 1400;
 extern u32 g_skyLut[SKY_BAND];
 extern u32 g_caveLut[16];
 

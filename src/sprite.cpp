@@ -50,6 +50,8 @@ static u32 paletteOf(char c) {
     case '3': return 0xE0B048;     /* gold    */
     case '4': return 0xB070E8;     /* violet  */
     case 'k': return 0x3A3F49;     /* the bit: dark, on every tier */
+    case 'p': return 0x8FC85A;     /* the shoot */
+    case 'q': return 0x6A4A2A;     /* the husk */
     default:  return 0xFF00FF;     /* unmapped: loud on purpose */
     }
 }
@@ -201,6 +203,25 @@ static const char* ART_MINE4[SPR_H] = {
     "........k.....",
 };
 
+/* Grass seed: a husk with a shoot coming out of it. Green on brown reads as
+   "growing" faster than any shape would at this size. */
+static const char* ART_SEED[SPR_H] = {
+    "..............",
+    "..............",
+    "........pp....",
+    ".......pp.....",
+    "......pp......",
+    "....ppp.......",
+    "...pp.........",
+    "..qqqq........",
+    ".qqqqqq.......",
+    ".qqqqqq.......",
+    "..qqqq........",
+    "..............",
+    "..............",
+    "..............",
+};
+
 static void expand(int id, const char* const* art) {
     for (int y = 0; y < SPR_H; ++y) {
         /* A short row would silently read past the end of the string literal
@@ -320,6 +341,7 @@ void initSprites() {
     expand(SPR_MINE2,     ART_MINE2);
     expand(SPR_MINE3,     ART_MINE3);
     expand(SPR_MINE4,     ART_MINE4);
+    expand(SPR_SEED,      ART_SEED);
 
     memset(g_playerSpr, 0, sizeof(g_playerSpr));
     composePlayer(PF_IDLE,  LEG_STAND, false);

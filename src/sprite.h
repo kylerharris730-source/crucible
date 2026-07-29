@@ -30,6 +30,7 @@ enum SpriteId {
     SPR_MINE2,
     SPR_MINE3,
     SPR_MINE4,
+    SPR_SEED,
     SPR_COUNT
 };
 

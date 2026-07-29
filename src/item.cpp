@@ -202,6 +202,14 @@ void initItems() {
         ITEMS[t.id].sprite       = t.spr;
     }
 
+    /* Grass seed. Stacks like a material because you use it by the handful,
+       but it is ITEMK_SEED: it converts a cell rather than becoming one. */
+    ITEMS[ITEM_GRASS_SEED].name     = "Grass Seed";
+    ITEMS[ITEM_GRASS_SEED].kind     = ITEMK_SEED;
+    ITEMS[ITEM_GRASS_SEED].maxStack = 9999;
+    ITEMS[ITEM_GRASS_SEED].colour   = 0x8FC85A;
+    ITEMS[ITEM_GRASS_SEED].sprite   = SPR_SEED;
+
     /* Reach extenders. Two tiers so the ladder is visible; the numbers are
        relative to a base reach of 56, so the lens is "half again as far" and
        the relay is "twice as far". Both take a whole inventory slot to carry,
@@ -470,4 +478,31 @@ int digBg(World& w, Inventory& inv, int cx, int cy, int r, int maxCells) {
         ++dug;
     }
     return dug;
+}
+
+int sowSeeds(World& w, Inventory& inv, int cx, int cy, int r, int maxCells) {
+    ItemStack& h = inv.held();
+    if (h.empty() || ITEMS[h.item].kind != ITEMK_SEED) return 0;
+
+    int sown = 0;
+    const int n = g_discEnd[imax(0, imin(r, DISC_MAX_R))];
+    for (int i = 0; i < n; ++i) {
+        if (maxCells > 0 && sown >= maxCells) break;
+        const int x = cx + g_disc[i].dx, y = cy + g_disc[i].dy;
+        if (x < PLAY_X0 || x > PLAY_X1 || y < PLAY_Y0 || y > PLAY_Y1) continue;
+        if (w.at(x, y).mat != MAT_DIRT) continue;
+        /* Only dirt with a face to the air takes. Buried dirt would turn to
+           grass and die back on the very next frame, so charging a seed for it
+           would be taking payment for nothing. */
+        if (!w.airAdjacent(x, y)) continue;
+        const ItemId want = h.item;
+        if (inv.take(want, 1) != 1) return sown;
+        /* setCell rather than convert: convert() is world.cpp's private
+           phase-change helper, which deliberately preserves temperature and
+           the frame stamp. A seed is an outside edit, and outside edits go
+           through the same door the brush uses. */
+        w.setCell(x, y, MAT_GRASS);
+        ++sown;
+    }
+    return sown;
 }
