@@ -58,6 +58,16 @@ static inline const u8* lightRow(int vy) {
     return g_light + (vy + LIGHT_MARGIN) * LIGHT_W + LIGHT_MARGIN;
 }
 
+/* Brightness at one view cell, for things drawn ON TOP of the world after
+   renderView has run -- the character, the tool in their hand. Without this
+   they are the only objects in the game that ignore the light, which reads as
+   them being self-illuminated: a figure standing in an unlit cave was the
+   brightest thing on screen. Bounds are the caller's problem, since every one
+   of them is already clipping to the view to write a pixel at all. */
+static inline u32 viewShade(int vx, int vy) {
+    return g_lightShade[lightRow(vy)[vx]];
+}
+
 /* Multiply a packed 0xRRGGBB colour by a 0..255 brightness. Two multiplies for
    three channels: the red and blue lanes are far enough apart in a 32-bit word
    that they can be scaled together without bleeding into each other. */

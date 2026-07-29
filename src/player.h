@@ -118,7 +118,12 @@ struct Player {
     void animate();          /* called by update(); picks facing and frame */
     /* Draws into the VIEW buffer, so it takes the camera's top-left cell.
        Everything that draws into that buffer now needs it -- see render.h. */
-    void draw(u32* px, int camX, int camY) const;
+    /* `lit` shades the figure by the light field, which the caller must have
+       computed for this camera position -- same contract as renderView(), and
+       for the same reason: the light buffer is one global with a fixed geometry,
+       so there is nothing to choose between and nothing to get out of step.
+       Off by default so headless harnesses keep drawing a visible character. */
+    void draw(u32* px, int camX, int camY, bool lit = false) const;
 
     /* Publish the collision box to the world so material cannot move into it.
        Called once a frame from the host; the world knows nothing about players,

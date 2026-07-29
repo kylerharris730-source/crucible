@@ -141,10 +141,25 @@ void generateWorld(World& w) {
             w.setBg(x, y, m, false);
         }
 
-        /* The very top of soil is turf. Only where there IS soil: the mountain
-           is stone to the surface and gets none, which is what makes the
-           treeline read without anything having to draw one. */
-        if (soil > 0) w.setCell(x, surf, MAT_GRASS);
+        /* The top of the soil is turf, a BAND of it rather than the single row
+           this used to lay down. One row is a green line drawn on the dirt --
+           at two screen pixels a cell you cannot tell turf from an outline --
+           and the depth is what makes it read as ground with something growing
+           in it. Varied by its own noise so the underside of the band is not a
+           ruled line parallel to the surface.
+
+           Capped at GRASS_DEPTH because that is how far from air grass can
+           live (see world.h): anything laid deeper than that would die back to
+           dirt on its first simulated frame, which would look like generation
+           getting it wrong and be invisible to read in the code. Capped at the
+           soil depth too, so thin mountain soil gets a thin skin and none at
+           all where there is no soil -- which is what draws the treeline
+           without anything having to know where the treeline is. */
+        if (soil > 0) {
+            const int band = imin(imin(soil, GRASS_DEPTH),
+                                  3 + (int)(fbm((float)x / 34.0f, 6421u, 2) * 2.4f));
+            for (int y = surf; y < surf + imax(1, band); ++y) w.setCell(x, y, MAT_GRASS);
+        }
     }
     g_surfaceY[0] = g_surfaceY[PLAY_X0];
     g_surfaceY[SIM_W - 1] = g_surfaceY[PLAY_X1];

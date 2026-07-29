@@ -783,15 +783,39 @@ void World::updateEvaporation(int x, int y) {
    hillside still takes a couple of minutes. */
 static const int GRASS_SPREAD = 8;
 
-bool World::airAdjacent(int x, int y) const {
-    for (int k = 0; k < 4; ++k)
-        if (cells[(y + NB_DY[k]) * SIM_W + (x + NB_DX[k])].mat == MAT_EMPTY) return true;
+bool World::airWithin(int x, int y, int r) const {
+    if (r <= 1) {
+        for (int k = 0; k < 4; ++k)
+            if (cells[(y + NB_DY[k]) * SIM_W + (x + NB_DX[k])].mat == MAT_EMPTY) return true;
+        return false;
+    }
+    /* Nearest rows first, so the common answer -- air just above -- is found
+       before the scan has walked the far side of the disc. */
+    const int x0 = imax(PLAY_X0, x - r), x1 = imin(PLAY_X1, x + r);
+    const int y0 = imax(PLAY_Y0, y - r), y1 = imin(PLAY_Y1, y + r);
+    const int rr = r * r;
+    for (int d = 1; d <= r; ++d) {
+        for (int sy = -1; sy <= 1; sy += 2) {
+            const int ny = y + d * sy;
+            if (ny < y0 || ny > y1) continue;
+            const Cell* row = cells + ny * SIM_W;
+            for (int nx = x0; nx <= x1; ++nx) {
+                const int dx = nx - x, dy = ny - y;
+                if (dx * dx + dy * dy > rr) continue;
+                if (row[nx].mat == MAT_EMPTY) return true;
+            }
+        }
+        /* The cell's own row, out to d, checked alongside so a horizontal face
+           is found as early as a vertical one. */
+        if (x - d >= x0 && cells[y * SIM_W + x - d].mat == MAT_EMPTY) return true;
+        if (x + d <= x1 && cells[y * SIM_W + x + d].mat == MAT_EMPTY) return true;
+    }
     return false;
 }
 
 void World::updateGrass(int x, int y) {
-    /* Buried: nothing living survives with no face to the air. */
-    if (!airAdjacent(x, y)) { convert(x, y, MAT_DIRT); return; }
+    /* Buried: nothing living survives out of reach of the air. */
+    if (!airWithin(x, y, GRASS_DEPTH)) { convert(x, y, MAT_DIRT); return; }
 
     /* Spread along the 8-neighbourhood, not the 4. Ground in this world is
        rarely flat, and orthogonal-only spread stops dead at every one-cell
@@ -801,7 +825,12 @@ void World::updateGrass(int x, int y) {
         const int nx = x + NB8_DX[k], ny = y + NB8_DY[k];
         if (nx < PLAY_X0 || nx > PLAY_X1 || ny < PLAY_Y0 || ny > PLAY_Y1) continue;
         if (cells[ny * SIM_W + nx].mat != MAT_DIRT) continue;
-        if (!airAdjacent(nx, ny)) continue;      /* buried dirt stays dirt */
+        /* Buried dirt stays dirt. Using the same reach the survival test above
+           uses is what lets turf THICKEN on its own: the surface row greens
+           first, and each row under it is within reach of the same air, so the
+           band grows downward to GRASS_DEPTH and then stops because the rule
+           runs out rather than because anything counts layers. */
+        if (!airWithin(nx, ny, GRASS_DEPTH)) continue;
         moreToDo = true;
         if (rngChance(GRASS_SPREAD)) convert(nx, ny, MAT_GRASS);
     }

@@ -1124,7 +1124,7 @@ static void drawHotbar(HDC hdc) {
 
    It shares the icons' palette so the held tool and its inventory picture read
    as the same object: gold handle, steel shaft, white tip. */
-static void drawHeldTool(u32* px, const Aim& aim) {
+static void drawHeldTool(u32* px, const Aim& aim, bool lit) {
     const ItemStack& h = g_inv.held();
     if (h.empty() || ITEMS[h.item].kind != ITEMK_TOOL) return;
 
@@ -1155,11 +1155,14 @@ static void drawHeldTool(u32* px, const Aim& aim) {
 
         const float fx = ox + dx * t, fy = oy + dy * t;
         const int x = (int)fx, y = (int)fy;
-        if (x >= 0 && x < VIEW_CELLS_W && y >= 0 && y < VIEW_CELLS_H) px[y * VIEW_CELLS_W + x] = c;
+        /* Lit with the character holding it, or a tool would glow in the dark
+           while the hand around it did not. */
+        if (x >= 0 && x < VIEW_CELLS_W && y >= 0 && y < VIEW_CELLS_H)
+            px[y * VIEW_CELLS_W + x] = lit ? shadeColor(c, viewShade(x, y)) : c;
         if (mk2 || t < grip) {
             const int x2 = (int)(fx + px2), y2 = (int)(fy + py2);
             if (x2 >= 0 && x2 < VIEW_CELLS_W && y2 >= 0 && y2 < VIEW_CELLS_H)
-                px[y2 * VIEW_CELLS_W + x2] = c;
+                px[y2 * VIEW_CELLS_W + x2] = lit ? shadeColor(c, viewShade(x2, y2)) : c;
         }
     }
 }
@@ -1655,8 +1658,8 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         if (g_lightOn) lightCompute(g_world, g_camX, g_camY);
         g_cellCount = renderView(g_world, g_pixels, g_view, g_camX, g_camY, g_lightOn);
         if (g_playerOn) {
-            g_player.draw(g_pixels, g_camX, g_camY);
-            if (g_survival) drawHeldTool(g_pixels, currentAim());
+            g_player.draw(g_pixels, g_camX, g_camY, g_lightOn);
+            if (g_survival) drawHeldTool(g_pixels, currentAim(), g_lightOn);
         }
         projDraw(g_pixels, g_camX, g_camY);
         /* Modals dim the world in the pixel buffer, before it becomes a blit --

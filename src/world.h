@@ -61,6 +61,36 @@ static const int PLAY_Y0 = 1;
 static const int PLAY_X1 = SIM_W - 2;
 static const int PLAY_Y1 = SIM_H - 2;
 
+/* --- how thick turf is -----------------------------------------------------
+   How far from open air grass can still live. At 1 -- a face on the air -- turf
+   is exactly one cell deep everywhere, which at two screen pixels a cell is a
+   green line drawn on top of the dirt rather than a layer of anything. Grass
+   reaches this far in instead, so a hillside has a band of it.
+
+   It is a radius and not a depth on purpose: measuring it as "cells below the
+   surface" would need a surface to measure from, and there is not one -- grass
+   grows on the roof of an overhang and down the face of a cut as readily as on
+   level ground, and all this rule knows is where the air is.
+
+   Raising it costs a disc scan per ACTIVE grass cell per frame, which is
+   affordable for exactly the reason the spreading rule is: a finished lawn
+   dirties nothing and is never visited again. Only the growing edge pays, and
+   the scan returns on its first hit, which for grass anywhere near a surface is
+   immediate.
+
+   One simplification worth knowing about, because it is visible if you go
+   looking: the scan asks whether air is NEARBY, not whether it is REACHABLE.
+   Air on the far side of a wall thinner than this counts, so dirt packed behind
+   a two-cell stone wall with open space beyond it will green. Making it
+   line-of-sight or a flood fill would cost per grass cell what the whole
+   lighting system costs per frame, to correct something you can only see by
+   digging up the wall to look. It did cost half an hour once, though: a test
+   arena with one-cell walls had grass crawling 80 cells down the edges of the
+   world, because five cells past that wall is the genuinely empty space outside
+   the arena. Anything standing in for the edge of the world has to be thicker
+   than this. */
+static const int GRASS_DEPTH = 5;
+
 /* ---- moisture model -----------------------------------------------------
    Moisture is measured so that one absorbed water cell is worth
    MOISTURE_UNIT. Absorption and dripping both move exactly that amount, so
@@ -394,7 +424,13 @@ struct World {
     /* Grass: spreads across exposed dirt, dies back to dirt when buried.
        Called from updateCell for grass cells only. */
     void updateGrass(int x, int y);
-    bool airAdjacent(int x, int y) const;
+    /* Is there open air within `r` cells? r = 1 is the four touching
+       neighbours; anything larger is a disc. This is what "exposed" means for
+       grass, and it is a RADIUS rather than a yes/no because a turf line one
+       cell thick reads as a green pencil stroke on top of the dirt rather than
+       as ground with something growing on it. See GRASS_DEPTH. */
+    bool airWithin(int x, int y, int r) const;
+    bool airAdjacent(int x, int y) const { return airWithin(x, y, 1); }
 
     const Cell& at(int x, int y) const { return cells[y * SIM_W + x]; }
 

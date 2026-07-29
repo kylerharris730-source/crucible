@@ -11,7 +11,12 @@ bool g_lightOn = true;
    4-byte struct in a 4096-wide grid. */
 static u8 g_att[LIGHT_W * LIGHT_H];
 
-/* Carried down the rows by the sun pass -- see lightCompute. */
+/* Whether each column of the rectangle was open to the sky at its top edge.
+   Worked out once (see openToSky) and then read by two separate passes, which
+   is why it is kept rather than consumed: g_sun is the working value the gather
+   pass spends walking down the column, and the soak pass below needs the
+   original answer again afterwards. */
+static u8 g_skyCol[LIGHT_W];
 static u8 g_sun[LIGHT_W];
 
 /* Anything that is not solid or liquid lets daylight straight through. Gases
@@ -130,6 +135,74 @@ static void sweepBackward() {
     }
 }
 
+/* --- how far daylight soaks into the ground --------------------------------
+
+   Ground under open sky is lit SUN_SOAK cells down, and this is a pass of its
+   own rather than a change to how opaque solids are. The reason is the one
+   thing the last round of tuning ran into: g_matOpacity's solid figure governs
+   two unrelated questions at once, and they want opposite answers.
+
+       how deep does daylight soak into a hillside   -- want deep, it is what
+                                                        gives ground any depth
+       how much lamp light crosses a wall            -- want almost none, or
+                                                        adjacent rooms bleed
+
+   At 38 the second is right and the first is 6 cells, which on the grassy
+   overworld means you see almost no soil before it goes flat -- the ground is a
+   green line on a dark mass. Lowering it to reach 15 cells makes a six-cell
+   wall pass 62% of a lamp next door, which is worse than the problem.
+
+   Separating them works because THE SUN IS NOT A SOURCE IN THE FIELD. It is
+   already a column property (see openToSky), so it can have its own
+   attenuation, and this pass runs AFTER the sweeps -- so the light it adds
+   lights the rock it is in and does not propagate anywhere from there. That
+   last part is what keeps it honest: soaking daylight 15 cells into a roof
+   cannot brighten the room under it, because nothing reads these values again.
+
+   It also stops at the first open cell below ground, which is what makes it
+   ground soak rather than transmission: daylight does not come through a floor
+   into the cave below it.
+
+   The one visible consequence of not propagating: a sealed air pocket within
+   SUN_SOAK of the surface has dim rock around it and a dark interior. It is a
+   rare shape, the values involved are low, and the alternative is letting the
+   soak into the sweeps, which is exactly the leak this pass exists to avoid. */
+static const int SUN_SOAK     = 15;    /* cells of ground daylight reaches */
+static const int SUN_SOAK_ATT = LIGHT_MAX / SUN_SOAK;
+
+static void sunSoak(const World& w, int wx0, int wy0, int lx0, int lx1) {
+    static u8 soak[LIGHT_W];
+    /* 0 = still in the open above ground, 1 = in the ground, 2 = finished */
+    static u8 state[LIGHT_W];
+
+    for (int lx = lx0; lx < lx1; ++lx) {
+        soak[lx]  = g_skyCol[lx] ? (u8)LIGHT_MAX : 0;
+        state[lx] = 0;
+    }
+
+    for (int ly = 0; ly < LIGHT_H; ++ly) {
+        const int wy = wy0 + ly;
+        if (wy < 0) continue;
+        if (wy >= SIM_H) break;
+
+        const Cell* row = w.cells + wy * SIM_W + wx0;
+        u8* L = g_light + ly * LIGHT_W;
+
+        for (int lx = lx0; lx < lx1; ++lx) {
+            if (state[lx] == 2 || !soak[lx]) continue;
+            const u8 m = row[lx].mat;
+            if (lightOpen(m)) {
+                /* Out the far side: this is soak, not transmission. */
+                if (state[lx] == 1) { state[lx] = 2; soak[lx] = 0; }
+                continue;                       /* open sky needs nothing added */
+            }
+            state[lx] = 1;
+            soak[lx] = (u8)(soak[lx] > SUN_SOAK_ATT ? soak[lx] - SUN_SOAK_ATT : 0);
+            if (L[lx] < soak[lx]) L[lx] = soak[lx];
+        }
+    }
+}
+
 void lightCompute(const World& w, int camX, int camY) {
     const int wx0 = camX - LIGHT_MARGIN;
     const int wy0 = camY - LIGHT_MARGIN;
@@ -142,9 +215,10 @@ void lightCompute(const World& w, int camX, int camY) {
     if (lx0 > LIGHT_W) lx0 = LIGHT_W;
     if (lx1 < lx0)     lx1 = lx0;
 
-    for (int lx = 0; lx < LIGHT_W; ++lx)
-        g_sun[lx] = (lx >= lx0 && lx < lx1 && openToSky(w, wx0 + lx, wy0))
-                  ? (u8)LIGHT_MAX : 0;
+    for (int lx = 0; lx < LIGHT_W; ++lx) {
+        g_skyCol[lx] = (u8)(lx >= lx0 && lx < lx1 && openToSky(w, wx0 + lx, wy0));
+        g_sun[lx]    = g_skyCol[lx] ? (u8)LIGHT_MAX : 0;
+    }
 
     /* One pass gathers emission and attenuation and carries the sun down the
        columns at the same time. The sun genuinely wants a column walk, but
@@ -182,4 +256,7 @@ void lightCompute(const World& w, int camX, int camY) {
         sweepForward();
         sweepBackward();
     }
+
+    /* Last, and that ordering is the whole mechanism -- see sunSoak(). */
+    sunSoak(w, wx0, wy0, lx0, lx1);
 }

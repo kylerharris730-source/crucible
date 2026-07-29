@@ -1,5 +1,5 @@
 #include "player.h"
-#include "render.h"   /* VIEW_CELLS_W/H: draw() writes into the view buffer */
+#include "light.h"    /* VIEW_CELLS_W/H, and shading the figure by the field */
 
 Player g_player;
 
@@ -233,7 +233,7 @@ void Player::occupy(World& w) const {
     lastX0 = x0; lastY0 = y0; lastX1 = x1; lastY1 = y1;
 }
 
-void Player::draw(u32* px, int camX, int camY) const {
+void Player::draw(u32* px, int camX, int camY, bool lit) const {
     if (!alive) return;
 
     const u32* spr = g_playerSpr[(frame >= 0 && frame < PF_COUNT) ? frame : PF_IDLE];
@@ -251,7 +251,12 @@ void Player::draw(u32* px, int camX, int camY) const {
             if (c == 0) continue;
             const int wx = bx + xx;
             if (wx < 0 || wx >= VIEW_CELLS_W) continue;
-            px[wy * VIEW_CELLS_W + wx] = c;
+            /* Shaded per pixel rather than by one sample at the figure's
+               centre. It costs the same lookup either way, and it is the
+               difference between walking out of a cave mouth lighting you from
+               the feet up and the whole sprite stepping through a brightness
+               threshold at once. */
+            px[wy * VIEW_CELLS_W + wx] = lit ? shadeColor(c, viewShade(wx, wy)) : c;
         }
     }
 
@@ -266,6 +271,6 @@ void Player::draw(u32* px, int camX, int camY) const {
         /* Solidity is a question about the WORLD, so it is asked in world
            coordinates even though the pixel is written in view coordinates. */
         if (playerSolid(g_world, wx + camX, wy + camY))
-            px[wy * VIEW_CELLS_W + wx] = EDGE;
+            px[wy * VIEW_CELLS_W + wx] = lit ? shadeColor(EDGE, viewShade(wx, wy)) : EDGE;
     }
 }

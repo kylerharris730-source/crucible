@@ -494,7 +494,7 @@ int sowSeeds(World& w, Inventory& inv, int cx, int cy, int r, int maxCells) {
         /* Only dirt with a face to the air takes. Buried dirt would turn to
            grass and die back on the very next frame, so charging a seed for it
            would be taking payment for nothing. */
-        if (!w.airAdjacent(x, y)) continue;
+        if (!w.airWithin(x, y, GRASS_DEPTH)) continue;
         const ItemId want = h.item;
         if (inv.take(want, 1) != 1) return sown;
         /* setCell rather than convert: convert() is world.cpp's private
