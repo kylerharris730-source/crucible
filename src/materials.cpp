@@ -1,6 +1,7 @@
 #include "materials.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <math.h>
 
 /* One row per material, in enum order. The zero-heavy columns read cleanly if
    you think of them as "off unless set": most materials have no phase changes.
@@ -466,6 +467,18 @@ MatInfo MATS[MAT_COUNT] = {
      Material view is where you see the device itself. */
   { "Heater",KIND_STATIC, 255,   0,    0,   0,   0,   0,  0,  200,  0,   0, degC(215), 0, MAT_EMPTY,  0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0xC4392B, 0xC4392B, 0xC4392B, 0xC4392B, 0 },
   { "Cooler",KIND_STATIC, 255,   0,    0,   0,   0,   0,  0,  200,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0x58C4DC, 0x58C4DC, 0x58C4DC, 0x58C4DC, 0 },
+  /* The lamp. Deliberately a COLD light: heatCond is air's, spawnTemp is
+     ambient, and it has no boil or ignite row at all, so hanging one in a
+     wooden room lights the room and does not eventually burn it down.
+
+     That is worth stating because the alternative was free: fire and lava
+     already glow, and a torch could have been "a fire that does not go out".
+     But every light source in the game would then also be a heat source, and
+     the moment you want a lit room you would be committing to a thermal
+     problem you never asked for. Heat and light are separate systems here
+     (g_matLight is not derived from temperature), and the lamp is the material
+     that makes that separation visible. */
+  { "Lamp",  KIND_STATIC, 255,   0,    0,   0,   0,   0,  0,    6,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0xFFF2C4, 0xFFD87A, 0xFFF2C4, 0xFFD87A, 0 },
 };
 
 u32 g_colorLut[MAT_COUNT * 256];
@@ -474,6 +487,9 @@ u8  g_heatAlpha[256];
 u8  g_matGlows[MAT_COUNT];
 u8  g_matDecay[MAT_COUNT];
 u8  g_matStrength[MAT_COUNT];
+u8  g_matLight[MAT_COUNT];
+u8  g_matOpacity[MAT_COUNT];
+u8  g_lightShade[256];
 u32 g_bgColorLut[MAT_COUNT * 16];
 u32 g_skyLut[SKY_BAND];
 u32 g_caveLut[16];
@@ -505,6 +521,7 @@ static void initStrength() {
     g_matStrength[MAT_GRASS]       = STR_LOOSE;
 
     g_matStrength[MAT_ICE]         = STR_SOFT;
+    g_matStrength[MAT_LAMP]        = STR_SOFT;
     g_matStrength[MAT_WOOD]        = STR_SOFT;
     g_matStrength[MAT_RUBBER]      = STR_SOFT;
 
@@ -527,6 +544,83 @@ static void initStrength() {
     g_matStrength[MAT_VOID]        = STR_ABSOLUTE;
     g_matStrength[MAT_HEATER]      = STR_ABSOLUTE;
     g_matStrength[MAT_COOLER]      = STR_ABSOLUTE;
+}
+
+/* Who glows, and what stops light. See g_matLight in materials.h for why this
+   is a table of its own and not read off the temperature field.
+
+   The attenuation numbers are chosen as REACHES, which is the only way they
+   can be reasoned about: light of strength s crosses s/opacity cells, so at
+   LIGHT_MAX these are
+
+       air        3  ->  85 cells    daylight into a cave, a lamp's radius
+       gas        5  ->  51          smoke and steam dim a room a little
+       liquid    12  ->  21          you can see underwater, not far
+       solid     44  ->   5          five cells of rock and it is properly dark
+
+   Air started at 6, for 42 cells. Both revisions of that number came from
+   looking at the screen rather than from theory, and both went the same way,
+   which is worth recording because the instinct is to go the other way:
+
+     at 6 (42 cells) a lamp lit a circle a tenth of the screen across, and in a
+     room with a corridor off it the light died before it reached the doorway,
+     so there was nothing to judge how light turns corners by.
+
+     at 4 (63 cells) a lamp on the ceiling of an ordinary 46-cell-tall room put
+     the floor at a third of full brightness -- and a third of a BACKDROP
+     colour, which is already darkened to read as unreachable, is nearly black.
+     The room was lit and still looked unlit.
+
+   Cells here are two screen pixels, so a reach in cells is roughly half of it
+   in pixels, and every figure that sounds generous is half as generous as it
+   sounds. 85 cells is a third of the view across: a lamp you light a room
+   with, and daylight that reaches properly into a cave mouth.
+
+   LIGHT_MARGIN tracks this number -- see the note there before changing it.
+
+   Five cells of rock is the other one that matters. It has to be less than a
+   wall you would actually build is thick, or a lamp lights the room next door
+   through the stone, and more than one or two, or the rock around a lamp goes
+   black at arm's reach and the lamp looks like it is floating in a hole. */
+static void initLight() {
+    for (int m = 0; m < MAT_COUNT; ++m) {
+        g_matLight[m]   = 0;
+        switch (MATS[m].kind) {
+        case KIND_EMPTY:  g_matOpacity[m] = 3;  break;
+        case KIND_GAS:    g_matOpacity[m] = 5;  break;
+        case KIND_LIQUID: g_matOpacity[m] = 12; break;
+        default:          g_matOpacity[m] = 44; break;
+        }
+    }
+
+    /* The lamp is the only thing you build for light, so it is the brightest
+       and everything else is measured against it. */
+    g_matLight[MAT_LAMP]     = LIGHT_MAX;
+    g_matLight[MAT_PLASMA]   = 240;
+    g_matLight[MAT_FIRE]     = 200;
+    g_matLight[MAT_LAVA]     = 190;
+    g_matLight[MAT_IRON_MELT]   = 170;
+    g_matLight[MAT_COPPER_MELT] = 170;
+    /* Cold fire is light too. It burns nothing, but a blue flame you cannot
+       see by would be a strange thing to hold. */
+    g_matLight[MAT_COLDFIRE] = 120;
+    g_matLight[MAT_HEATER]   = 110;
+
+    /* A source is transparent to its own light and to everyone else's --
+       otherwise a wall of lamps lights only its front row, and a lava lake
+       lights only its surface. */
+    for (int m = 0; m < MAT_COUNT; ++m)
+        if (g_matLight[m]) g_matOpacity[m] = 3;
+
+    /* See g_lightShade in materials.h for why this curve exists at all. */
+    const double span = (double)(LIGHT_MAX - LIGHT_FLOOR);
+    for (int l = 0; l < 256; ++l) {
+        double t = ((double)l - (double)LIGHT_FLOOR) / span;
+        if (t < 0.0) t = 0.0;
+        const double s = (double)LIGHT_MIN_SHADE
+                       + (255.0 - (double)LIGHT_MIN_SHADE) * pow(t, 0.62);
+        g_lightShade[l] = (u8)(s + 0.5);
+    }
 }
 
 /* --- the temperature ramp ------------------------------------------------
@@ -640,6 +734,7 @@ static void initBgColours() {
 
 void initMaterials() {
     initStrength();
+    initLight();
     for (int m = 0; m < MAT_COUNT; ++m) {
         MatInfo& mi = MATS[m];
         /* Liquids keep their fall speed in the spare `moisture` byte, so a

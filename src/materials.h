@@ -67,6 +67,8 @@ enum MatId {
     MAT_VOID,        /* destroys whatever it touches */
     MAT_HEATER,      /* holds itself at max temperature, forever */
     MAT_COOLER,      /* holds itself at min temperature, forever */
+    MAT_LAMP,        /* the only light source you can build: bright, cold, and
+                        it stays where you put it */
     MAT_COUNT
 };
 
@@ -287,6 +289,60 @@ enum MatStrength {
 };
 
 extern u8 g_matStrength[MAT_COUNT];
+
+/* --- light -----------------------------------------------------------------
+   Two tables, and they are the entire material-side contract with light.cpp:
+   how much light a cell MAKES, and how much light it EATS per cell crossed.
+
+   Emission is not derived from temperature, and that is a deliberate split
+   rather than a missed simplification. Tying the two together reads well for
+   lava and falls apart everywhere else: a red-hot iron bar would floodlight a
+   room while a lamp -- the one thing whose job is light -- would have to be hot
+   to work, and lighting a wooden room would mean setting fire to it. Fire and
+   lava are bright BECAUSE they are listed as bright, and a cold lamp is the
+   brightest thing in the table.
+
+   Opacity is per cell crossed, out of LIGHT_MAX. It sets the reach of every
+   source at once: at attenuation a, light of strength s carries s/a cells. The
+   air figure is therefore the single most consequential number in the lighting
+   system -- it decides how far daylight reaches into a cave mouth and how big a
+   room one lamp lights -- and the solid figure decides how thick a wall has to
+   be before it is properly dark behind it. */
+extern u8 g_matLight[MAT_COUNT];
+extern u8 g_matOpacity[MAT_COUNT];
+
+/* Full brightness. A byte, so it is also the sun. */
+static const int LIGHT_MAX = 255;
+/* Never quite pitch black: sealed rock renders at this. Zero is the honest
+   value and it is unusable -- with it, walking into unlit ground gives you a
+   black rectangle with no way to tell rock from a shaft you are about to fall
+   down, and no way to aim a first lamp. This is low enough that a lit room
+   reads as a different place and high enough that shapes survive. */
+static const int LIGHT_FLOOR = 26;
+
+/* --- light to brightness ---------------------------------------------------
+   How much of a cell's colour survives at a given light level, 0..255.
+
+   This is a separate table from the light field itself, and keeping the two
+   apart is the point. The field is physical: light strength, falling off
+   linearly with distance, which is what makes it something you can reason
+   about and test in units of cells. Brightness is perceptual, and the mapping
+   between them is not the identity -- multiplying a colour by light/255 gives
+   a picture where everything except the immediate vicinity of a lamp reads as
+   black, because half the light is nothing like half as bright to look at.
+
+   That is not a theoretical worry; it is what the first version did. A lamp on
+   the ceiling of an ordinary room put the floor at light 75, which is a
+   perfectly reasonable a third of full daylight, and rendered it at 29% of the
+   material colour -- so a lit room looked like a dark room with two white dots
+   in it, and the screenshot was the only way to find out.
+
+   The curve is a gamma of 0.62 applied over the range ABOVE the floor, so
+   LIGHT_FLOOR still maps to genuinely dark rather than being lifted along with
+   everything else. Unlit and dimly-lit have to stay distinguishable, or there
+   is no reason to carry a lamp. */
+extern u8 g_lightShade[256];
+static const int LIGHT_MIN_SHADE = 26;
 
 /* --- background colours ----------------------------------------------------
    What a material looks like when it is BEHIND you rather than in front: the

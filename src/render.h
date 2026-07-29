@@ -24,5 +24,14 @@ static const int VIEW_CELLS_H = 384;
    non-wall, non-empty cells IN VIEW.
 
    The camera is clamped by the caller; anything outside the world renders as
-   the void colour rather than reading out of bounds. */
-int renderView(const World& w, u32* out, int view, int camX, int camY);
+   the void colour rather than reading out of bounds.
+
+   `lit` shades every pixel by the light field, which the caller must have
+   computed for this same camera position first -- see lightCompute(). It is a
+   flag rather than a pointer parameter because the light buffer is a single
+   global with a fixed geometry tied to the view: there is never a second one to
+   choose between, and passing it in would only create the possibility of
+   passing one that does not line up. Defaults off, so every headless harness
+   that renders the world keeps seeing material colours rather than a dark
+   rectangle. */
+int renderView(const World& w, u32* out, int view, int camX, int camY, bool lit = false);

@@ -91,6 +91,8 @@ void World::reset() {
     /* A blank world is open air all the way down. Generation labels the
        rock it makes; nothing here should assume a surface exists yet. */
     memset(zone, ZONE_SKY, sizeof(zone));
+    memset(keepAlive, 0, sizeof(keepAlive));
+    keptChunks = 0;
     frame  = 0;
     activeChunks = 0;
     clearDirty(cur);
@@ -996,7 +998,8 @@ void World::step() {
             const Chunk& ch = cur[idx];
             if (ch.minX > ch.maxX) continue;   /* settled: skipped entirely */
 
-            if (cx < liveCX0 || cx > liveCX1 || cy < liveCY0 || cy > liveCY1) {
+            if ((cx < liveCX0 || cx > liveCX1 || cy < liveCY0 || cy > liveCY1)
+                && !keepAlive[idx]) {
                 /* Outside the window: FROZEN, not forgotten.
 
                    The pending work has to be carried into next[], because cur

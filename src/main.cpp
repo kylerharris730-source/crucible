@@ -12,6 +12,8 @@
 #include "item.h"
 #include "projectile.h"
 #include "worldgen.h"
+#include "light.h"
+#include "room.h"
 
 /* The window is a fixed-size left-hand tool panel plus the sim viewport. The
    viewport keeps a clean integer scale so pixels stay crisp and the
@@ -103,6 +105,7 @@ static const BrushDef BRUSHES[] = {
        Heat/Cool rows below them are brushes that nudge temperature while you
        drag. Similar names, but one is scenery and the other is a tool, so they
        sit next to each other where the difference is easy to see. */
+    { MAT_LAMP,  "Lamp"  },
     { MAT_HEATER,"Heater"},
     { MAT_COOLER,"Cooler"},
     { TOOL_HEAT, "Heat"  },
@@ -111,7 +114,7 @@ static const BrushDef BRUSHES[] = {
 };
 static const int N_BRUSH = (int)(sizeof(BRUSHES) / sizeof(BRUSHES[0]));
 
-enum ActionId { ACT_OVERWRITE, ACT_LAYER, ACT_VIEW, ACT_PLAYER, ACT_PAUSE, ACT_CLEAR, N_ACT };
+enum ActionId { ACT_OVERWRITE, ACT_LAYER, ACT_VIEW, ACT_LIGHT, ACT_PLAYER, ACT_PAUSE, ACT_CLEAR, N_ACT };
 
 /* --- simulation speed ----------------------------------------------------
    A multiplier on how many sim steps run per displayed frame, NOT a change to
@@ -630,6 +633,10 @@ static void changeSize(int d){ g_brushRadius = imax(1, imin(64, g_brushRadius + 
    right, and the flats beyond it. */
 static void makeWorld() {
     generateWorld(g_world);
+    /* Generation rebuilds every cell, so any room that existed described a
+       building that no longer does. Nothing else clears them: a room outlives
+       everything short of a new world. */
+    roomsClear(g_world);
 }
 
 /* Returns true if the click was consumed by a panel control. */
@@ -656,6 +663,7 @@ static bool handlePanelClick(int mx, int my) {
     if (inRect(g_actRect[ACT_OVERWRITE], mx, my)) { g_overwrite = !g_overwrite; return true; }
     if (inRect(g_actRect[ACT_LAYER],     mx, my)) { g_bgLayer   = !g_bgLayer;   return true; }
     if (inRect(g_actRect[ACT_VIEW],      mx, my)) { cycleView();                return true; }
+    if (inRect(g_actRect[ACT_LIGHT],     mx, my)) { g_lightOn  = !g_lightOn;    return true; }
     if (inRect(g_actRect[ACT_PLAYER],    mx, my)) {
         g_playerOn = !g_playerOn;
         /* Into the middle of the VIEW, not the middle of the world -- switching
@@ -765,6 +773,7 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case 'O': g_overwrite = !g_overwrite; break;
         case 'L': g_bgLayer   = !g_bgLayer;   break;   /* L for layer */
         case 'V': cycleView();                break;
+        case 'K': g_lightOn = !g_lightOn;     break;   /* K for keep the lights on */
         /* Space jumps. Pause moved to P -- in a sandbox you are drawing in,
            space-to-pause is the obvious binding; the moment there is a
            character to control it is the obvious binding for something else,
@@ -917,6 +926,7 @@ static void applyBrush() {
         } else {
             placeBg(g_world, g_inv, aim.x, aim.y, buildRadius());
         }
+        roomsNotifyEdit(g_world, aim.x, aim.y);
         g_pmx = aim.x; g_pmy = aim.y;
         return;
     }
@@ -927,6 +937,7 @@ static void applyBrush() {
             digInto(g_world, g_inv, aim.x, aim.y, digRadius(), d.cellsPerBite);
             g_digCool = d.cooldown;
         }
+        roomsNotifyEdit(g_world, aim.x, aim.y);
         g_pmx = aim.x; g_pmy = aim.y;
         return;
     }
@@ -958,6 +969,13 @@ static void applyBrush() {
         }
         if (!steps) break;
     }
+    /* Once per stroke rather than once per interpolated step. A stroke can
+       cover hundreds of cells and only its two ends can be the block that
+       sealed or breached anything reachable from where the cursor now is --
+       and roomScan rejects a seed that is not open air behind placed
+       background on its first two reads, which is what the overwhelming
+       majority of these calls are. */
+    roomsNotifyEdit(g_world, aim.x, aim.y);
     g_pmx = aim.x;
     g_pmy = aim.y;
 }
@@ -1414,6 +1432,8 @@ static void drawPanel(HDC hdc) {
     const char* vn = g_view == VIEW_NORMAL ? "View: Glow" :
                      g_view == VIEW_MATERIAL ? "View: Material" : "View: Heat";
     drawButton(hdc, g_actRect[ACT_VIEW], vn, NULL, g_view != VIEW_NORMAL, inRect(g_actRect[ACT_VIEW], g_mx, g_my));
+    drawButton(hdc, g_actRect[ACT_LIGHT], g_lightOn ? "Light: on" : "Light: off",
+               NULL, g_lightOn, inRect(g_actRect[ACT_LIGHT], g_mx, g_my));
     {
         const char* pl = !g_playerOn ? "Player: Off"
                        : g_player.buried ? "Player: Stuck" : "Player: On";
@@ -1440,7 +1460,8 @@ static void drawPanel(HDC hdc) {
     sprintf(s, "%.0f fps", g_fps);                         drawText(hdc, 10, sy + 20, RGB(150, 200, 150), s);
     sprintf(s, "sim %.2f ms", g_simMs);                    drawText(hdc, 10, sy + 36, RGB(170, 178, 190), s);
     sprintf(s, "cells %d", g_cellCount);                   drawText(hdc, 10, sy + 52, RGB(170, 178, 190), s);
-    sprintf(s, "chunks %d/%d", g_world.activeChunks, CHUNK_COUNT);
+    sprintf(s, "chunks %d/%d   rooms %d (+%d)", g_world.activeChunks, CHUNK_COUNT,
+            roomCount(), g_world.keptChunks);
     drawText(hdc, 10, sy + 68, RGB(170, 178, 190), s);
 
     SelectObject(hdc, oldFont);
@@ -1621,7 +1642,18 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         }
         updateCamera(false);
 
-        g_cellCount = renderView(g_world, g_pixels, g_view, g_camX, g_camY);
+        /* One room revalidated per ROOM_RECHECK frames -- see roomsTick(). The
+           edit path handles anything you did on purpose; this catches rooms
+           the SIMULATION undid, which is the case nothing else would notice:
+           a wall melted through, a floor washed out, a fire that ate the
+           ceiling. */
+        roomsTick(g_world);
+
+        /* Light is computed for this camera position and consumed immediately
+           by renderView. The two must agree about where the camera is, which
+           is why this sits here and not up beside the sim step. */
+        if (g_lightOn) lightCompute(g_world, g_camX, g_camY);
+        g_cellCount = renderView(g_world, g_pixels, g_view, g_camX, g_camY, g_lightOn);
         if (g_playerOn) {
             g_player.draw(g_pixels, g_camX, g_camY);
             if (g_survival) drawHeldTool(g_pixels, currentAim());

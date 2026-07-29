@@ -1,4 +1,5 @@
 #include "render.h"
+#include "light.h"
 
 /* Anything outside the world. Should never be visible once the camera is
    clamped, but rendering it as a flat colour rather than reading out of bounds
@@ -45,7 +46,7 @@ static inline u32 backdrop(const World& w, int wx, int wy, int i) {
 
 /* One linear pass per visible row. The material colour is a single lookup into
    the precomputed palette -- no arithmetic beyond shifts. */
-int renderView(const World& w, u32* out, int view, int camX, int camY) {
+int renderView(const World& w, u32* out, int view, int camX, int camY, bool lit) {
     const Cell* cells = w.cells;
     const u8*   temp  = w.temp;
     int count = 0;
@@ -53,6 +54,7 @@ int renderView(const World& w, u32* out, int view, int camX, int camY) {
     for (int vy = 0; vy < VIEW_CELLS_H; ++vy) {
         const int wy = camY + vy;
         u32* row = out + vy * VIEW_CELLS_W;
+        const u8* lrow = lit ? lightRow(vy) : 0;
 
         if (wy < 0 || wy >= SIM_H) {
             for (int vx = 0; vx < VIEW_CELLS_W; ++vx) row[vx] = VOID_COLOUR;
@@ -88,9 +90,10 @@ int renderView(const World& w, u32* out, int view, int camX, int camY) {
             for (int vx = vx0; vx < vx1; ++vx) {
                 const int i = base + vx;
                 Cell c = cells[i];
-                row[vx] = (c.mat == MAT_EMPTY)
+                u32 col = (c.mat == MAT_EMPTY)
                         ? backdrop(w, camX + vx, wy, i)
                         : g_colorLut[((u32)c.mat << 8) | (u32)(c.moisture & 0xF0) | (u32)(c.tint >> 4)];
+                row[vx] = lrow ? shadeColor(col, g_lightShade[lrow[vx]]) : col;
                 count += (c.mat != MAT_EMPTY && c.mat != MAT_WALL);
             }
             continue;
@@ -120,7 +123,11 @@ int renderView(const World& w, u32* out, int view, int camX, int camY) {
                false for the overwhelming majority of cells. */
             if (t != AMBIENT_TEMP && g_matGlows[c.mat])
                 col = lerpColor(col, g_heatLut[t], g_heatAlpha[t]);
-            row[vx] = col;
+            /* Shading comes AFTER the heat glow, so a hot cell in the dark is
+               dimmed like everything else rather than punching through the
+               shadow at full brightness. It does not go dark: anything hot
+               enough to glow is in g_matLight and lights its own cell. */
+            row[vx] = lrow ? shadeColor(col, g_lightShade[lrow[vx]]) : col;
             count += (c.mat != MAT_EMPTY && c.mat != MAT_WALL);
         }
     }

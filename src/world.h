@@ -298,6 +298,27 @@ struct World {
        than a depth test. */
     u8 zone[CHUNK_COUNT];
 
+    /* --- chunks that tick wherever the camera is -------------------------
+       An exception to the live window, and the only one. A chunk flagged here
+       is simulated even when it is on the far side of the world.
+
+       This exists for built rooms (see room.h): a sealed, backed-in space you
+       made is somewhere you left things running, and having your furnace go
+       out because you walked away would make every contraption in the game a
+       thing you have to babysit. The live window is right for the wilderness
+       and wrong for your own workshop, so the answer is not to widen it -- it
+       is to let a small, player-authored set of chunks opt out.
+
+       Set by room.cpp and nowhere else. World knows only that some chunks are
+       exempt; what earns the exemption is not its business, which is the same
+       line drawn around blockX0/blockTaper for the player's body.
+
+       Cost is bounded by construction rather than by hope: rooms are capped in
+       size and in number (see room.h), and a settled room costs what any
+       settled chunk costs, which is nothing. */
+    u8 keepAlive[CHUNK_COUNT];
+    int keptChunks;               /* stat, for the HUD */
+
     u8   zoneAt(int x, int y) const {
         return zone[(y >> CHUNK_SHIFT) * CHUNKS_X + (x >> CHUNK_SHIFT)];
     }
