@@ -556,7 +556,7 @@ static void initStrength() {
        air        3  ->  85 cells    daylight into a cave, a lamp's radius
        gas        5  ->  51          smoke and steam dim a room a little
        liquid    12  ->  21          you can see underwater, not far
-       solid     44  ->   5          five cells of rock and it is properly dark
+       solid     38  ->   6          six cells of rock and it is properly dark
 
    Air started at 6, for 42 cells. Both revisions of that number came from
    looking at the screen rather than from theory, and both went the same way,
@@ -578,10 +578,23 @@ static void initStrength() {
 
    LIGHT_MARGIN tracks this number -- see the note there before changing it.
 
-   Five cells of rock is the other one that matters. It has to be less than a
-   wall you would actually build is thick, or a lamp lights the room next door
-   through the stone, and more than one or two, or the rock around a lamp goes
-   black at arm's reach and the lamp looks like it is floating in a hole. */
+   The solid figure is the one that decides how a hillside looks, and it is
+   pulled hard in both directions. Longer, and light penetrating the ground
+   gives it depth instead of a silhouette -- but a room with a thin roof fills
+   with daylight, since the same number governs both. Measured, with the shade
+   floor at 16%:
+
+       att   ground fades over   room under a 6-cell roof
+        44        5 cells                 16%   dark
+        38        7 cells                 28%   dim
+        26        8 cells                 50%   lit
+        20       11 cells                 62%   lit
+
+   26 and below is where a roof you would actually build stops working, so the
+   useful range is narrow and 38 sits at the far end of it. Note that a 2-cell
+   roof leaks badly at EVERY value in this table -- 68% even at 44 -- so thin
+   roofs were never dark and this change did not make them worse. A wall that
+   is meant to keep the daylight out has to be a real wall. */
 static void initLight() {
     for (int m = 0; m < MAT_COUNT; ++m) {
         g_matLight[m]   = 0;
@@ -589,7 +602,7 @@ static void initLight() {
         case KIND_EMPTY:  g_matOpacity[m] = 3;  break;
         case KIND_GAS:    g_matOpacity[m] = 5;  break;
         case KIND_LIQUID: g_matOpacity[m] = 12; break;
-        default:          g_matOpacity[m] = 44; break;
+        default:          g_matOpacity[m] = 38; break;
         }
     }
 
@@ -612,13 +625,12 @@ static void initLight() {
     for (int m = 0; m < MAT_COUNT; ++m)
         if (g_matLight[m]) g_matOpacity[m] = 3;
 
-    /* See g_lightShade in materials.h for why this curve exists at all. */
-    const double span = (double)(LIGHT_MAX - LIGHT_FLOOR);
+    /* See g_lightShade in materials.h -- both for why the mapping is not the
+       identity, and for why it must have no knee in it. */
     for (int l = 0; l < 256; ++l) {
-        double t = ((double)l - (double)LIGHT_FLOOR) / span;
-        if (t < 0.0) t = 0.0;
+        const double t = (double)l / (double)LIGHT_MAX;
         const double s = (double)LIGHT_MIN_SHADE
-                       + (255.0 - (double)LIGHT_MIN_SHADE) * pow(t, 0.62);
+                       + (255.0 - (double)LIGHT_MIN_SHADE) * pow(t, LIGHT_GAMMA);
         g_lightShade[l] = (u8)(s + 0.5);
     }
 }

@@ -83,15 +83,15 @@ static bool openToSky(const World& w, int x, int yTop) {
    Measured on a five-leg switchback corridor with a lamp at the mouth, the
    brightness reaching each leg:
 
-       1 pair     255  183   26   26   26      legs 3 and 4 are black
-       2 pairs    255  183  119   55   26      both are lit
-       3 pairs    255  183  119   55   26      identical
+       1 pair     255  183   32    0    0      leg 3 is a rounding error
+       2 pairs    255  183  119   55    0      legs 3 and 4 are properly lit
+       3 pairs    255  183  119   55    0      identical
 
-   26 is LIGHT_FLOOR, which is to say no light at all. The second pair is the
-   difference between a corridor that doubles back being lit and being black;
-   the third changes literally nothing, because by then the light has run out
-   on its own rather than on the algorithm. That is what makes 2 a measurement
-   instead of a guess. It costs 0.8 ms of the 2.6 ms total. */
+   The second pair is the difference between a corridor that doubles back being
+   lit and being black; the third changes literally nothing, because by then
+   the light has run out on its own rather than on the algorithm. That is what
+   makes 2 a measurement instead of a guess. It costs 0.8 ms of the 2.6 ms
+   total. */
 static const int LIGHT_PASSES = 2;
 
 static void sweepForward() {
@@ -112,11 +112,7 @@ static void sweepForward() {
     }
 }
 
-/* `floorTo` is folded in here rather than run as its own pass over the buffer,
-   because it is one clamp on data this loop already has in a register and a
-   quarter of a million pointless writes otherwise. 0 leaves the buffer as the
-   raw light field, which is what the tests want to look at. */
-static void sweepBackward(int floorTo) {
+static void sweepBackward() {
     for (int ly = LIGHT_H - 2; ly >= 0; --ly) {
         u8*       L = g_light + ly * LIGHT_W;
         const u8* D = L + LIGHT_W;
@@ -129,19 +125,7 @@ static void sweepBackward(int floorTo) {
             t = (int)D[lx]     - a; if (t > v) v = t;
             t = (int)D[lx + 1] - d; if (t > v) v = t;
             t = (int)D[lx - 1] - d; if (t > v) v = t;
-            L[lx] = (u8)(v < floorTo ? floorTo : v);
-        }
-    }
-    /* The two edge rows the sweep cannot reach still have to obey the floor,
-       or the border of the light rectangle renders black. They are off screen
-       -- the margin is bigger than one row -- but the buffer should not have a
-       ring in it that means nothing. */
-    if (floorTo > 0) {
-        for (int lx = 0; lx < LIGHT_W; ++lx) {
-            u8& a = g_light[lx];
-            u8& b = g_light[(LIGHT_H - 1) * LIGHT_W + lx];
-            if (a < floorTo) a = (u8)floorTo;
-            if (b < floorTo) b = (u8)floorTo;
+            L[lx] = (u8)v;
         }
     }
 }
@@ -196,6 +180,6 @@ void lightCompute(const World& w, int camX, int camY) {
 
     for (int p = 0; p < LIGHT_PASSES; ++p) {
         sweepForward();
-        sweepBackward(p == LIGHT_PASSES - 1 ? LIGHT_FLOOR : 0);
+        sweepBackward();
     }
 }

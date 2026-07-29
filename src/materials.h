@@ -313,12 +313,10 @@ extern u8 g_matOpacity[MAT_COUNT];
 
 /* Full brightness. A byte, so it is also the sun. */
 static const int LIGHT_MAX = 255;
-/* Never quite pitch black: sealed rock renders at this. Zero is the honest
-   value and it is unusable -- with it, walking into unlit ground gives you a
-   black rectangle with no way to tell rock from a shaft you are about to fall
-   down, and no way to aim a first lamp. This is low enough that a lit room
-   reads as a different place and high enough that shapes survive. */
-static const int LIGHT_FLOOR = 26;
+/* Unlit is genuinely zero in the light field. "Never quite dark" is a display
+   decision, not a physical one, and it lives in LIGHT_MIN_SHADE below -- see
+   the note there for why keeping it out of the field mattered. */
+static const int LIGHT_NONE = 0;
 
 /* --- light to brightness ---------------------------------------------------
    How much of a cell's colour survives at a given light level, 0..255.
@@ -337,12 +335,47 @@ static const int LIGHT_FLOOR = 26;
    material colour -- so a lit room looked like a dark room with two white dots
    in it, and the screenshot was the only way to find out.
 
-   The curve is a gamma of 0.62 applied over the range ABOVE the floor, so
-   LIGHT_FLOOR still maps to genuinely dark rather than being lifted along with
-   everything else. Unlit and dimly-lit have to stay distinguishable, or there
-   is no reason to carry a lamp. */
+   The curve is a plain gamma over the WHOLE range, 0..255, and getting that
+   wrong is what made ground look like a cliff edge rather than a fade.
+
+   It used to be a gamma applied above a floor of 26, with everything below the
+   floor clamped flat. That sounds harmless and is not, because a gamma under 1
+   has an infinite slope at zero: the first light level above the floor already
+   jumped most of the way up the curve. Going down into soil rendered
+
+       89  76  62  46  22  10  10  10  10 ...
+
+   -- steps of 13, 14, 16, 24, and then a wall. The 22-to-10 step was twice any
+   other and everything past it was identical, so the eye read a hard edge with
+   flat black behind it, which is exactly what it was. Nothing about the light
+   field caused that; the field was a clean linear ramp the whole way down.
+
+   With no knee and a gentler gamma the same field renders
+
+       89  78  67  55  43  28  16  16 ...
+
+   -- even steps all the way to the floor. The lesson worth keeping is that the
+   discontinuity was in the DISPLAY MAPPING, and every instinct said to go
+   looking at the propagation.
+
+   0.85 rather than 0.62 for the same reason: with a knee, a steep curve was
+   compensating for light that ran out too fast. Without one, a gentle lift is
+   all that is wanted -- enough that half the light does not read as a tenth of
+   the brightness, and not so much that everything flattens toward white. */
 extern u8 g_lightShade[256];
-static const int LIGHT_MIN_SHADE = 26;
+static const double LIGHT_GAMMA = 0.85;
+
+/* What unlit renders at. This, not the light field, is where "never quite
+   pitch black" belongs: zero light means zero light, and how dark you choose
+   to draw it is a separate question with a separate answer.
+
+   16% rather than the 10% it started at, because "under the soil is dark" was
+   a fair complaint about a picture with no information in it. At this level
+   unlit rock still reads as rock -- you can tell stone from a shaft you are
+   about to fall down, and aim your first lamp -- while a lit room is
+   unmistakably a different place. Any higher and there is no reason to carry a
+   lamp at all. */
+static const int LIGHT_MIN_SHADE = 40;
 
 /* --- background colours ----------------------------------------------------
    What a material looks like when it is BEHIND you rather than in front: the
