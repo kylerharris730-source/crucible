@@ -1055,8 +1055,15 @@ static void drawHotbar(HDC hdc) {
                do that, and it renders a full stack as the 9.9k the cap was
                picked to show. */
             char n[16];
-            if (st.count >= 1000) sprintf(n, "%d.%dk", st.count / 1000, (st.count % 1000) / 100);
-            else                  sprintf(n, "%d", st.count);
+            /* Three characters of digits at most, whatever the number. A
+               hotbar slot is 34 px wide and stacks now reach 100000, which
+               spelled out as "100.0k" is six characters and overruns into its
+               neighbour -- so the decimal is dropped once it stops earning its
+               place. */
+            const unsigned c = st.count;
+            if      (c >= 10000) sprintf(n, "%uk", c / 1000);
+            else if (c >= 1000)  sprintf(n, "%u.%uk", c / 1000, (c % 1000) / 100);
+            else                 sprintf(n, "%u", c);
             RECT cr = r; cr.top = r.bottom - 14;
             SetTextColor(hdc, RGB(226, 230, 238));
             DrawTextA(hdc, n, -1, &cr, DT_CENTER | DT_TOP | DT_SINGLELINE);

@@ -89,7 +89,7 @@ void initItems() {
     for (int m = 0; m < MAT_COUNT; ++m) {
         ITEMS[m].name     = MATS[m].name;
         ITEMS[m].kind     = ITEMK_MATERIAL;
-        ITEMS[m].maxStack = 9999;
+        ITEMS[m].maxStack = MATERIAL_STACK;
         ITEMS[m].colour   = g_colorLut[(m << 8) | 0x08];
     }
     /* Air is not a thing you can carry. Leaving it named and stackable would
@@ -206,7 +206,7 @@ void initItems() {
        but it is ITEMK_SEED: it converts a cell rather than becoming one. */
     ITEMS[ITEM_GRASS_SEED].name     = "Grass Seed";
     ITEMS[ITEM_GRASS_SEED].kind     = ITEMK_SEED;
-    ITEMS[ITEM_GRASS_SEED].maxStack = 9999;
+    ITEMS[ITEM_GRASS_SEED].maxStack = MATERIAL_STACK;
     ITEMS[ITEM_GRASS_SEED].colour   = 0x8FC85A;
     ITEMS[ITEM_GRASS_SEED].sprite   = SPR_SEED;
 
@@ -248,24 +248,24 @@ int Inventory::add(ItemId item, int count) {
         abort();
     }
     if (item == ITEM_NONE || count <= 0) return count > 0 ? count : 0;
-    const int cap = ITEMS[item].maxStack;
+    const int cap = (int)ITEMS[item].maxStack;
     if (cap <= 0) return count;
 
     /* Top up existing stacks first. Opening a new slot for an item you are
        already carrying is how an inventory ends up with three half-stacks of
        sand and no room for anything else. */
     for (int i = 0; i < INV_SLOTS && count > 0; ++i) {
-        if (slot[i].item != item || slot[i].count >= cap) continue;
-        const int room = cap - slot[i].count;
+        if (slot[i].item != item || (int)slot[i].count >= cap) continue;
+        const int room = cap - (int)slot[i].count;
         const int put  = (count < room) ? count : room;
-        slot[i].count = (u16)(slot[i].count + put);
+        slot[i].count = (u32)(slot[i].count + put);
         count -= put;
     }
     for (int i = 0; i < INV_SLOTS && count > 0; ++i) {
         if (!slot[i].empty()) continue;
         const int put = (count < cap) ? count : cap;
         slot[i].item  = item;
-        slot[i].count = (u16)put;
+        slot[i].count = (u32)put;
         /* A tool becomes a distinct object the moment it exists. Doing this
            here rather than at every call site means there is no way to end up
            holding a multitool that cannot remember its own modules. */
@@ -284,16 +284,18 @@ int Inventory::take(ItemId item, int count) {
        -- otherwise the count under the cursor sits still while a different
        number ticks down, which reads as a bug. */
     if (slot[selected].item == item && slot[selected].count > 0) {
-        const int got = (count < slot[selected].count) ? count : slot[selected].count;
-        slot[selected].count = (u16)(slot[selected].count - got);
+        const int have = (int)slot[selected].count;
+        const int got = (count < have) ? count : have;
+        slot[selected].count = (u32)(slot[selected].count - got);
         if (slot[selected].count == 0) { releaseStack(slot[selected]); slot[selected].item = ITEM_NONE; }
         taken += got;
         count -= got;
     }
     for (int i = 0; i < INV_SLOTS && count > 0; ++i) {
         if (slot[i].item != item || slot[i].count == 0) continue;
-        const int got = (count < slot[i].count) ? count : slot[i].count;
-        slot[i].count = (u16)(slot[i].count - got);
+        const int have = (int)slot[i].count;
+        const int got = (count < have) ? count : have;
+        slot[i].count = (u32)(slot[i].count - got);
         if (slot[i].count == 0) { releaseStack(slot[i]); slot[i].item = ITEM_NONE; }
         taken += got;
         count -= got;

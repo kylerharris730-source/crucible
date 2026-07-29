@@ -83,7 +83,12 @@ enum ItemKind {
 struct ItemDef {
     const char* name;
     u8   kind;
-    u16  maxStack;
+    /* u32, not u16, and that is forced rather than generous: a material stack
+       is 100000 and a u16 stops at 65535, so the cap would silently wrap to
+       34464 and a full stack would start refusing items less than half way up.
+       ItemStack::count has to widen with it, for the same reason and to the
+       same width -- the two are compared against each other constantly. */
+    u32  maxStack;
     u32  colour;          /* for the hotbar swatch */
 
     /* Cells of extra reach while this is anywhere in the pack. Bonuses do NOT
@@ -129,7 +134,15 @@ void initItems();
 /* One cell of world is one unit of item. Deliberately not a bigger number:
    digging a tunnel should visibly fill your pockets, and the arithmetic between
    "cells removed" and "items gained" being 1:1 means there is never a rounding
-   question about what a partial stack represents. */
+   question about what a partial stack represents.
+
+   That 1:1 is what sets the stack size. A late-game mining tool clears a
+   radius-60 disc, which is over eleven thousand cells in one bite, so a stack
+   of 9999 was less than a single sweep -- you would fill a slot, then another,
+   then start leaving material in the world with a full pack and nine slots of
+   dirt. 100000 is about nine such sweeps, which is a pack you empty because you
+   want to rather than because the game keeps stopping you. */
+static const int MATERIAL_STACK = 100000;
 static const int INV_SLOTS = 10;
 
 /* --- tools carry state, materials do not -----------------------------------
@@ -165,7 +178,7 @@ void toolInstFree(u16 inst);
 
 struct ItemStack {
     ItemId item;
-    u16    count;
+    u32    count;   /* see ItemDef::maxStack for why this is not a u16 */
     u16    inst;    /* tool instance handle, 0 for everything else */
     bool empty() const { return item == ITEM_NONE || count == 0; }
 };
