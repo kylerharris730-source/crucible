@@ -936,7 +936,22 @@ void World::updateCell(int x, int y) {
     /* --- table-driven phase changes ----------------------------------- */
     const int t = temp[i];
     if (m.boilTemp && t >= (int)m.boilTemp) {
-        convert(x, y, m.boilsTo);
+        /* Ore is the one material whose phase change has TWO products: it
+           smelts into a mixture of molten metal and molten slag, and which one
+           this particular cell yields is a coin weighted by g_matSmeltYield.
+           Everything else about it -- the threshold, the latent heat below, the
+           freezing of both products afterwards -- is the ordinary table-driven
+           path, which is why this is three lines rather than a rule of its own.
+
+           Per CELL, not per pile, and that is the design: one ore cell tells you
+           nothing, two hundred give a dependable ratio, so yield becomes a
+           property of how much rock you shifted. The separation that follows is
+           not implemented anywhere -- molten slag is lighter than either molten
+           metal, so the existing density rule sinks the metal through it. */
+        u8 into = m.boilsTo;
+        if (g_matSmeltYield[c.mat] && !rngChance(g_matSmeltYield[c.mat]))
+            into = MAT_SLAG_MELT;
+        convert(x, y, into);
         /* Boiling absorbs latent heat. Without this a single hot cell flashes
            an entire pool to steam in one frame instead of simmering. */
         temp[i] = latentDrain(t);

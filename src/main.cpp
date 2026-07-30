@@ -78,6 +78,12 @@ static const BrushDef BRUSHES[] = {
     { MAT_RUBBER,"Rubber"},
     { MAT_IRON,  "Iron"  },
     { MAT_COPPER,"Copper"},
+    /* The ores are placeable because placing them is a STEP: you shovel a heap
+       into a furnace and heat it. Their products are not -- molten metal, molten
+       slag and slag are states you put material into, the same line already drawn
+       around molten rubber and mercury vapour above. */
+    { MAT_COPPER_ORE,"Cu Ore"},
+    { MAT_IRON_ORE,  "Fe Ore"},
     { MAT_GRAPHENE,"Graphene"},
     { MAT_LAVA,  "Lava"  },
     { MAT_FIRE,  "Fire"  },

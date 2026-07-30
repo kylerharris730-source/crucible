@@ -497,6 +497,50 @@ MatInfo MATS[MAT_COUNT] = {
      STR_LOOSE, softer than the lamp's STR_SOFT, so the starting tool clears one.
      A light you can walk through is a light you will put in the wrong place. */
   { "Torch", KIND_STATIC, 255,   0,    0,   0,   0,   0,  0,    6,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0xFFC46A, 0xF08A2A, 0xFFC46A, 0xF08A2A, 0 },
+  /* --- the ores ------------------------------------------------------------
+     Powders, so a vein you break comes away as rubble you can shovel into a
+     furnace, and so a heap of ore behaves like a heap of anything else. They
+     slide poorly (90 against sand's 235): broken rock stacks in steep piles
+     rather than pouring flat, which also means an ore heap stays where you
+     shovelled it instead of spreading across the furnace floor.
+
+     heatMassShift 1 is the number that makes a furnace a furnace. Ore holds
+     twice the heat of ordinary material, so it comes up to temperature slowly
+     and a single heater touching one corner will not smelt a pile -- you have to
+     commit real heat to it and wait. Dropping this to 0 turns smelting into
+     something that happens the instant you place a heater, which is the whole
+     process the ore exists to create.
+
+     boilTemp is the smelting point and boilsTo the molten metal; the slag half
+     comes from g_matSmeltYield. See the note in materials.h.
+
+     Both read as rock with something IN it rather than as a new kind of stone:
+     grey base, and a second colour the eye reads as the metal. Against stone's
+     cool 0x6E747C they are warmer and more mottled, which is what makes a vein
+     legible in an unlit cave wall at two pixels a cell. */
+  { "CuOre", KIND_POWDER, 168,  90,   40,   0,   0,   0,  0,  100,  1,   0,   0,    0,  MAT_EMPTY, degC(165), MAT_COPPER_MELT, 0, MAT_EMPTY, 0, 0x5E6A62, 0x3FA07A, 0x5E6A62, 0x3FA07A, 0 },
+  { "FeOre", KIND_POWDER, 170,  90,   40,   0,   0,   0,  0,  100,  1,   0,   0,    0,  MAT_EMPTY, degC(190), MAT_IRON_MELT,   0, MAT_EMPTY, 0, 0x6A625C, 0x9E6A42, 0x6A625C, 0x9E6A42, 0 },
+  /* Molten slag. Density 190 is the load-bearing number in the whole smelting
+     system: it must be below molten iron's 215 and molten copper's 218, because
+     that inequality IS the separation. Nothing sorts the melt -- the denser metal
+     sinks through the lighter slag using the same rule that lets steam bubble up
+     through water, and if this number ever creeps above either metal the furnace
+     silently starts delivering slag at the bottom and metal on top.
+
+     Thick: viscosity 120 means it refuses to flow sideways about half the time,
+     so it pools and crusts where it formed instead of running away across the
+     floor and taking the metal with it. dispersion 3 for the same reason.
+
+     heatMassShift 2 so a fresh pour stays liquid long enough to actually
+     separate. A slag that froze on contact would trap the metal inside it. */
+  { "MoltSlag",KIND_LIQUID,190,  0,    0,   3, 120,   0,  0,  110,  2,   0, degC(190), degC(120), MAT_SLAG, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, 0x8A5030, 0x5A3020, 0x8A5030, 0x5A3020, 0 },
+  /* Frozen slag: the waste. Static rather than a powder, so it forms a CRUST
+     over the metal that has to be broken rather than a heap that slumps off it
+     -- "break what is left over" is the step, and a powder would do it for you.
+     Dark and glassy so a finished furnace reads at a glance: black crust on top,
+     metal underneath. STR_LOOSE in materials.cpp, because a byproduct you cannot
+     remove with the starting tool would dead-end the whole progression. */
+  { "Slag",  KIND_STATIC, 255,   0,    0,   0,   0,   0,  0,   60,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0x3A322E, 0x2A2422, 0x3A322E, 0x2A2422, 0 },
 };
 
 u32 g_colorLut[MAT_COUNT * 256];
@@ -506,6 +550,7 @@ u8  g_matGlows[MAT_COUNT];
 u8  g_matDecay[MAT_COUNT];
 u8  g_matStrength[MAT_COUNT];
 u8  g_matPassable[MAT_COUNT];
+u8  g_matSmeltYield[MAT_COUNT];
 u8  g_matLight[MAT_COUNT];
 u8  g_matOpacity[MAT_COUNT];
 u8  g_lightShade[256];
@@ -540,6 +585,10 @@ static void initStrength() {
     g_matStrength[MAT_GRASS]       = STR_LOOSE;
 
     g_matStrength[MAT_TORCH]       = STR_LOOSE;
+    /* Slag is deliberately the softest solid in the table. It is waste, and a
+       byproduct the starting tool could not clear would dead-end the whole
+       progression the moment the player smelted anything. */
+    g_matStrength[MAT_SLAG]        = STR_LOOSE;
 
     g_matStrength[MAT_ICE]         = STR_SOFT;
     g_matStrength[MAT_LAMP]        = STR_SOFT;
@@ -547,6 +596,11 @@ static void initStrength() {
     g_matStrength[MAT_RUBBER]      = STR_SOFT;
 
     g_matStrength[MAT_STONE]       = STR_ROCK;
+    /* Ore is as hard as the rock it sits in, so whatever gets you through stone
+       gets you the ore -- finding a vein should never also mean needing a
+       different tool for it. */
+    g_matStrength[MAT_COPPER_ORE]  = STR_ROCK;
+    g_matStrength[MAT_IRON_ORE]    = STR_ROCK;
 
     g_matStrength[MAT_IRON]        = STR_METAL;
     g_matStrength[MAT_COPPER]      = STR_METAL;
@@ -650,6 +704,9 @@ static void initLight() {
        the torch what it should be: a light that works. */
     g_matLight[MAT_TORCH]    = 205;
     g_matLight[MAT_PLASMA]   = 240;
+    /* Molten slag is incandescent, so a working furnace lights its own room --
+       which is worth having, since a furnace is somewhere you stand and wait. */
+    g_matLight[MAT_SLAG_MELT] = 100;
     g_matLight[MAT_FIRE]     = 200;
     g_matLight[MAT_LAVA]     = 190;
     g_matLight[MAT_IRON_MELT]   = 170;
@@ -788,6 +845,16 @@ static void initBgColours() {
    some other column, because there is no honest rule to derive it from: nothing
    about being a light, or being cheap, or being static makes a thing walkable.
    It is a per-material decision and the list should stay short enough to read. */
+/* See g_matSmeltYield in materials.h. Copper is the early metal: cooler to
+   smelt and more generous, 55% metal against iron's 40%. Iron makes you shift
+   half again as much rock for the same bar, which is what puts the two on a
+   ladder rather than making one a recolour of the other. */
+static void initSmelting() {
+    for (int m = 0; m < MAT_COUNT; ++m) g_matSmeltYield[m] = 0;
+    g_matSmeltYield[MAT_COPPER_ORE] = 140;   /* 55% */
+    g_matSmeltYield[MAT_IRON_ORE]   = 102;   /* 40% */
+}
+
 static void initPassable() {
     for (int m = 0; m < MAT_COUNT; ++m) g_matPassable[m] = 0;
     g_matPassable[MAT_TORCH] = 1;
@@ -796,6 +863,7 @@ static void initPassable() {
 void initMaterials() {
     initStrength();
     initPassable();
+    initSmelting();
     initLight();
     for (int m = 0; m < MAT_COUNT; ++m) {
         MatInfo& mi = MATS[m];

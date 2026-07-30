@@ -71,6 +71,16 @@ enum MatId {
                         it stays where you put it */
     MAT_TORCH,       /* the cheap light: dimmer than a lamp, and the only solid
                         in the table you can WALK THROUGH */
+    /* --- ores and what comes out of them ---------------------------------
+       Ore does not become metal. It becomes a MIXTURE of molten metal and
+       molten slag, and getting the metal out is the player's problem. See
+       g_matSmeltYield below. */
+    MAT_COPPER_ORE,  /* the early ore: smelts cooler and yields more */
+    MAT_IRON_ORE,    /* the later one: hotter, meaner, more slag */
+    MAT_SLAG_MELT,   /* molten slag. LIGHTER than either molten metal, which is
+                        the entire separation mechanism -- it floats */
+    MAT_SLAG,        /* frozen slag: the crust you have to break to get at what
+                        settled underneath it */
     MAT_COUNT
 };
 
@@ -335,6 +345,36 @@ extern u8 g_matOpacity[MAT_COUNT];
    give: as a field it would be the one entry missing from every MATS[] row, which
    trips -Wmissing-field-initializers on all of them under -Wextra. */
 extern u8 g_matPassable[MAT_COUNT];
+
+/* --- smelting --------------------------------------------------------------
+   Chance out of 255 that a smelting ore cell yields its METAL rather than slag.
+   0 means "not an ore" and is the sentinel, so every non-ore row costs nothing.
+
+   Ore is otherwise an ordinary table-driven phase change: boilTemp is the
+   smelting point and boilsTo is the molten metal, so ore gets the existing
+   latent-heat behaviour for free -- which matters, because latent heat is what
+   stops one heater flashing a whole pile at once and makes a furnace something
+   you wait on. The only new behaviour is that the product is chosen, per cell,
+   between the metal and MAT_SLAG_MELT.
+
+   Doing it per cell rather than per pile is what makes this work. A single ore
+   cell is a coin flip and tells you nothing; a pile of two hundred is a
+   dependable ratio, and the yield becomes a property of ORE VOLUME. That is the
+   whole reason to bother mining a lot of it.
+
+   The separation is then not implemented at all -- it falls out of physics
+   already present. Molten slag is lighter than either molten metal, and tryMove
+   already lets a denser fluid sink through a lighter one, so the metal collects
+   underneath and the slag floats. Each then freezes by its own coolTemp/coolsTo
+   row: metal into metal, slag into the brittle crust you have to break. Nothing
+   in world.cpp knows that a furnace is a thing.
+
+   Smelting points sit BELOW the pure metal's own melting point on purpose
+   (copper ore 165 C against copper's 175, iron ore 190 against iron's 200).
+   That is roughly true of real smelting, and it means processing ore is easier
+   than remelting finished metal -- so the ore route is the attractive one rather
+   than a chore you do because the game insists. */
+extern u8 g_matSmeltYield[MAT_COUNT];
 
 /* Full brightness. A byte, so it is also the sun. */
 static const int LIGHT_MAX = 255;

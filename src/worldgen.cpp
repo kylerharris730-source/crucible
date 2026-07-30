@@ -384,6 +384,86 @@ static void generateCaves(World& w) {
     }
 }
 
+/* ==========================================================================
+   Ore veins
+   ==========================================================================
+
+   Short fat worms, the same machinery as caves but writing rock instead of air,
+   and with one rule that matters more than any of the tuning: a vein only
+   replaces STONE.
+
+   That single condition does all the work. It keeps ore out of the soil, where a
+   powder vein would collapse the moment the world ticked, for the same reason
+   caves had to be clamped into rock (see g_stoneY). It keeps ore out of caves, so
+   a vein crossing a tunnel does not fill it in with rubble. And -- the good part
+   -- it means a vein that happens to cross a cave leaves ore EXPOSED IN THE CAVE
+   WALL, which is exactly how a player should find one. None of that needed
+   arranging; it is what "stone only" produces.
+
+   Depth bands put copper above iron, so walking down is progression rather than a
+   lottery. They overlap deliberately: a hard floor under iron would read as a
+   line ruled across the world, and finding your first iron just above where you
+   expected copper is a better moment than finding it exactly on schedule. */
+static const int VEIN_MIN_R = 3;
+
+static void carveVein(World& w, u32 seed, float x, float y, float baseAng,
+                      int steps, float rBase, u8 mat) {
+    for (int s = 0; s < steps; ++s) {
+        const float t = (float)s;
+        const float ang = baseAng + fbm(t / 22.0f, seed, 3) * 2.2f;
+        float r = rBase * (1.0f + fbm(t / 14.0f, seed + 733u, 2) * 0.7f);
+        if (r < (float)VEIN_MIN_R) r = (float)VEIN_MIN_R;
+        x += cosf(ang);
+        y += sinf(ang);
+        if (x < (float)(PLAY_X0 + 4) || x > (float)(PLAY_X1 - 4)) break;
+        if (y < (float)PLAY_Y0 || y > (float)(PLAY_Y1 - 4)) break;
+
+        const int cx = (int)x, cy = (int)y, ir = (int)r, r2 = ir * ir;
+        const int x0 = imax(PLAY_X0, cx - ir), x1 = imin(PLAY_X1, cx + ir);
+        const int y0 = imax(PLAY_Y0, cy - ir), y1 = imin(PLAY_Y1, cy + ir);
+        for (int yy = y0; yy <= y1; ++yy) {
+            const int dy = yy - cy;
+            for (int xx = x0; xx <= x1; ++xx) {
+                const int dx = xx - cx;
+                if (dx * dx + dy * dy > r2) continue;
+                /* Stone only. See the note above -- this one test is what keeps
+                   ore out of soil and out of caves, and what leaves veins showing
+                   in the walls of the caves they cross. */
+                if (w.at(xx, yy).mat != MAT_STONE) continue;
+                w.setCell(xx, yy, mat);
+            }
+        }
+    }
+}
+
+static void generateOre(World& w) {
+    /* Counts and bands. Copper is shallower and more common; iron is deeper and
+       scarcer, matching the yields in initSmelting(). */
+    struct OreBand { u8 mat; int veins; int fromStone; int toStone; float r; u32 salt; };
+    static const OreBand BANDS[] = {
+        { MAT_COPPER_ORE, 90,   40, 1000, 5.0f, 0x1234u },
+        { MAT_IRON_ORE,   70,  420, 1900, 4.6f, 0x9ABCu },
+    };
+    for (int b = 0; b < (int)(sizeof(BANDS) / sizeof(BANDS[0])); ++b) {
+        const OreBand& ob = BANDS[b];
+        for (int i = 0; i < ob.veins; ++i) {
+            const u32 seed = ob.salt + (u32)i * 4547u;
+            /* Spread by index across the world, jittered, like the cave worms --
+               even coverage without rejection sampling. */
+            const float fx = ((float)i + 0.5f) / (float)ob.veins * (float)SIM_W
+                           + (float)(int)(hash1(i, ob.salt + 11u) % 260u) - 130.0f;
+            const int ix = imin(PLAY_X1 - 8, imax(PLAY_X0 + 8, (int)fx));
+            const int top  = g_stoneY[ix] + ob.fromStone;
+            const int span = imax(1, ob.toStone - ob.fromStone);
+            int iy = top + (int)(hash1(i, ob.salt + 29u) % (u32)span);
+            if (iy > PLAY_Y1 - 20) iy = PLAY_Y1 - 20;
+            const float ang = (float)(hash1(i, ob.salt + 41u) % 628u) / 100.0f;
+            carveVein(w, seed, (float)ix, (float)iy, ang,
+                      40 + (int)(hash1(i, ob.salt + 53u) % 90u), ob.r, ob.mat);
+        }
+    }
+}
+
 void generateWorld(World& w) {
     w.reset();
 
@@ -432,6 +512,12 @@ void generateWorld(World& w) {
        much roof to leave, so this cannot run earlier. Before the zone pass only
        by convention: zones depend on the heightmap, which caves do not change. */
     generateCaves(w);
+    /* Ore AFTER caves, and the order is the whole reason veins work: carveVein
+       only replaces stone, so by running second a vein that crosses a tunnel
+       leaves the tunnel open and the ore showing in its wall. Reversed, caves
+       would carve the ore back out again and nothing would ever be visible from
+       inside one. */
+    generateOre(w);
 
     /* --- zones ------------------------------------------------------------
        A chunk is underground only if it is ENTIRELY below the ground, using
