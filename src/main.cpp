@@ -14,6 +14,7 @@
 #include "worldgen.h"
 #include "light.h"
 #include "room.h"
+#include "device.h"
 
 /* The window is a fixed-size left-hand tool panel plus the sim viewport. The
    viewport keeps a clean integer scale so pixels stay crisp and the
@@ -225,6 +226,16 @@ static bool g_uiCapture = false;   /* the click landed on the panel, not the sim
 static bool g_overwrite = true;    /* false = brush only fills empty space */
 static int  g_view      = VIEW_NORMAL;
 static bool g_lmb = false, g_rmb = false;
+/* One device per press, not per frame. Cleared on button-up -- see the placement
+   branch in applyBrush for why holding must not repeat. */
+static bool g_devPlaced = false;
+/* Which device's panel is open, or -1. An index rather than a pointer so that a
+   device being dug out from under an open panel cannot leave a dangling one --
+   devTick can remove a device at any time, and the panel revalidates by index
+   every frame it draws. */
+static int  g_devPanel = -1;
+static bool handleDevPanelClick(int mx, int my);
+static void drawDevPanel(HDC hdc);
 static int  g_mx = 0, g_my = 0;      /* current mouse, window pixels */
 static int  g_pmx = -1, g_pmy = -1;  /* previous aim point, in cells */
 static int  g_brushMat = MAT_SAND;
@@ -674,6 +685,10 @@ static void changeSize(int d){ g_brushRadius = imax(1, imin(64, g_brushRadius + 
 /* Builds the world. See worldgen.cpp -- plains to the left, a mountain to the
    right, and the flats beyond it. */
 static void makeWorld() {
+    /* Machines are entities beside the grid, so clearing the world does not clear
+       them -- they have to be dropped explicitly or a fresh world arrives haunted
+       by the last one's contraptions. Same reason roomsClear() exists. */
+    devClear();
     generateWorld(g_world);
     /* Generation rebuilds every cell, so any room that existed described a
        building that no longer does. Nothing else clears them: a room outlives
@@ -743,17 +758,39 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         g_mx = (short)LOWORD(lp);
         g_my = (short)HIWORD(lp);
         if (g_creativeOpen) { handleCreativeClick(g_mx, g_my, false); g_uiCapture = true; }
+        /* The device panel floats over the world, so it has to swallow the click
+           before the world does -- otherwise nudging a setpoint also digs a hole
+           in whatever is behind the button. */
+        else if (handleDevPanelClick(g_mx, g_my)) g_uiCapture = true;
         else if (handlePanelClick(g_mx, g_my)) g_uiCapture = true;
         else                                   g_lmb = true;
         SetCapture(hwnd);
         return 0;
     case WM_LBUTTONUP:
-        g_lmb = false; g_uiCapture = false; ReleaseCapture(); return 0;
+        g_lmb = false; g_devPlaced = false; g_uiCapture = false; ReleaseCapture(); return 0;
     case WM_RBUTTONDOWN:
         g_mx = (short)LOWORD(lp);
         g_my = (short)HIWORD(lp);
         if (g_creativeOpen)       handleCreativeClick(g_mx, g_my, true);
-        else if (g_mx >= PANEL_W) g_rmb = true;   /* right-drag digs, but only over the sim */
+        else if (g_mx >= PANEL_W) {
+            /* Right-click INTERACTS with a machine and DIGS everywhere else.
+               Ordered this way round rather than needing a modifier because the
+               two are never ambiguous -- a device is a solid object you can see,
+               and "poke the thing under the cursor" is what a right-click means
+               in every game with machines in it. The cost is that you cannot
+               right-click-dig a device out; the tool does that, and losing a
+               contraption to a stray drag would be far worse. */
+            const Aim a = currentAim();
+            Device* d = devAt(a.x, a.y);
+            if (d) {
+                /* Toggle: clicking the same machine again closes it. */
+                const int idx = (int)(d - g_devices);
+                g_devPanel = (g_devPanel == idx) ? -1 : idx;
+            } else {
+                g_devPanel = -1;
+                g_rmb = true;   /* right-drag digs, but only over the sim */
+            }
+        }
         SetCapture(hwnd);
         return 0;
     case WM_RBUTTONUP:
@@ -946,6 +983,24 @@ static void applyBrush() {
         return;
     }
 
+    /* Machines place a RECTANGLE, snapped to a lattice, so they get their own
+       branch for the same reason seeds do: nothing about it is a brush stroke.
+       Deliberately one per click rather than per frame held -- a device is a
+       discrete object and a held button should not carpet the world with them,
+       which is what stroking would do at 60 a second. */
+    if (g_survival && g_playerOn && g_lmb && !g_rmb && !g_bgLayer
+        && !g_inv.held().empty() && ITEMS[g_inv.held().item].kind == ITEMK_DEVICE) {
+        if (!g_devPlaced) {
+            const u8 dt = ITEMS[g_inv.held().item].deviceType;
+            /* Charged only if it actually went down -- inv.take() is the same
+               door seeds use, so a refused placement costs nothing. */
+            if (devPlace(g_world, dt, aim.x, aim.y)) g_inv.take(g_inv.held().item, 1);
+            g_devPlaced = true;
+        }
+        g_pmx = aim.x; g_pmy = aim.y;
+        return;
+    }
+
     /* Seeds convert rather than place, so they get their own branch before
        the build/dig split -- see ITEMK_SEED. Sowing is not rate-limited: it is
        not destruction, and the seeds themselves are the cost. */
@@ -1051,6 +1106,104 @@ static void drawButton(HDC hdc, const RECT& r, const char* label,
     RECT t = rr; t.left = textX;
     SetTextColor(hdc, selected ? RGB(245, 224, 150) : RGB(214, 216, 224));
     DrawTextA(hdc, label, -1, &t, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+}
+
+
+/* --- the device panel ------------------------------------------------------
+   What right-clicking a machine gets you: its name, what it is sensing, and the
+   one number you can change.
+
+   Drawn over the VIEWPORT rather than in the side panel, and anchored near the
+   machine rather than at a fixed spot on screen. Both for the same reason the
+   hotbar sits over the world: this is a thing you are doing to an object you are
+   looking at, and making your eye travel to a fixed corner to adjust the device
+   under the cursor breaks the connection between the two. Clamped so it never
+   hangs off an edge.
+
+   ONE adjustable number, deliberately. See the note on DeviceInfo::valueLabel --
+   a machine with six settings is a machine nobody can understand by looking at
+   it, and the whole interaction should be "read it, nudge it, get on with it". */
+static const int DEVP_W = 210, DEVP_H = 96;
+static RECT g_devpBox, g_devpDec, g_devpInc, g_devpClose;
+
+static void layoutDevPanel(const Device& d) {
+    /* Sit it just above and right of the machine, in screen pixels. */
+    int px = PANEL_W + (d.x + DEV_W - g_camX) * SCALE + 8;
+    int py = (d.y - g_camY) * SCALE - DEVP_H - 6;
+    if (px + DEVP_W > WIN_W - 6) px = PANEL_W + (d.x - g_camX) * SCALE - DEVP_W - 8;
+    if (px < PANEL_W + 6)        px = PANEL_W + 6;
+    if (py < 6)                  py = (d.y + DEV_H - g_camY) * SCALE + 6;
+    if (py + DEVP_H > WIN_H - 6) py = WIN_H - 6 - DEVP_H;
+
+    SetRect(&g_devpBox, px, py, px + DEVP_W, py + DEVP_H);
+    const int by = py + DEVP_H - 30;
+    SetRect(&g_devpDec,   px + 10,  by, px + 40,  by + 22);
+    SetRect(&g_devpInc,   px + 44,  by, px + 74,  by + 22);
+    SetRect(&g_devpClose, px + DEVP_W - 40, by, px + DEVP_W - 10, by + 22);
+}
+
+/* True if the click was consumed. Returning that matters: a click on the panel
+   must not also dig the world behind it. */
+static bool handleDevPanelClick(int mx, int my) {
+    if (g_devPanel < 0) return false;
+    Device& d = g_devices[g_devPanel];
+    if (!d.used) { g_devPanel = -1; return false; }
+    layoutDevPanel(d);
+
+    POINT pt = { mx, my };
+    if (!PtInRect(&g_devpBox, pt)) return false;
+
+    const DeviceInfo& di = DEVS[d.type];
+    if (PtInRect(&g_devpDec, pt))        d.value -= di.vStep;
+    else if (PtInRect(&g_devpInc, pt))   d.value += di.vStep;
+    else if (PtInRect(&g_devpClose, pt)) { g_devPanel = -1; return true; }
+    if (d.value < di.vMin) d.value = di.vMin;
+    if (d.value > di.vMax) d.value = di.vMax;
+    /* Changing the setpoint has to clear the latch, or a thermocouple you have
+       just raised the mark on stays tripped from the old one and never fires
+       again until it cools all the way past the NEW mark. Measured as a real
+       confusion the first time the panel existed. */
+    d.latched = false;
+    return true;
+}
+
+static void drawDevPanel(HDC hdc) {
+    if (g_devPanel < 0) return;
+    /* Revalidated every frame by index, because devTick can delete a device out
+       from under an open panel at any moment -- somebody digs its corner out and
+       the machine is gone. This is why g_devPanel is an index and not a pointer. */
+    if (g_devPanel >= MAX_DEVICES || !g_devices[g_devPanel].used) { g_devPanel = -1; return; }
+    Device& d = g_devices[g_devPanel];
+    layoutDevPanel(d);
+
+    HGDIOBJ oldFont = SelectObject(hdc, g_font);
+    SetBkMode(hdc, TRANSPARENT);
+    FillRect(hdc, &g_devpBox, g_panelBg);
+    FrameRect(hdc, &g_devpBox, g_accentBrush);
+
+    const DeviceInfo& di = DEVS[d.type];
+    const int tx = g_devpBox.left + 10;
+    char buf[128];
+    drawText(hdc, tx, g_devpBox.top + 6, RGB(245, 224, 150), di.name);
+
+    sprintf(buf, "reading  %d %s", d.reading, di.valueUnit);
+    drawText(hdc, tx, g_devpBox.top + 26, RGB(200, 206, 218), buf);
+
+    sprintf(buf, "%s  %d %s", di.valueLabel, (int)d.value, di.valueUnit);
+    drawText(hdc, tx, g_devpBox.top + 42, RGB(214, 216, 224), buf);
+
+    /* The state line. "armed" rather than "off" because a thermocouple below its
+       mark is not idle, it is waiting -- and that distinction is the whole
+       difference between a device you can sequence with and a thermostat. */
+    const char* st = d.firing ? "FIRING" : (d.latched ? "tripped" : "armed");
+    drawText(hdc, tx + 120, g_devpBox.top + 26,
+             d.firing ? RGB(255, 240, 170) : RGB(160, 168, 182), st);
+
+    POINT pt = { g_mx, g_my };
+    drawButton(hdc, g_devpDec, "-", 0, false, PtInRect(&g_devpDec, pt) != 0);
+    drawButton(hdc, g_devpInc, "+", 0, false, PtInRect(&g_devpInc, pt) != 0);
+    drawButton(hdc, g_devpClose, "x", 0, false, PtInRect(&g_devpClose, pt) != 0);
+    SelectObject(hdc, oldFont);
 }
 
 /* The hotbar sits over the foot of the viewport rather than in the panel. The
@@ -1771,12 +1924,18 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
            a wall melted through, a floor washed out, a fire that ate the
            ceiling. */
         roomsTick(g_world);
+        devTick(g_world);
 
         /* Light is computed for this camera position and consumed immediately
            by renderView. The two must agree about where the camera is, which
            is why this sits here and not up beside the sim step. */
         if (g_lightOn) lightCompute(g_world, g_camX, g_camY);
         g_cellCount = renderView(g_world, g_pixels, g_view, g_camX, g_camY, g_lightOn);
+        /* Machines draw whether or not the character is enabled -- they are part
+           of the world, not part of the player, and the sandbox half of this
+           program is exactly where you want to inspect a contraption. Before the
+           character, so walking in front of one puts you in front of it. */
+        devDraw(g_world, g_pixels, g_camX, g_camY, g_lightOn);
         if (g_playerOn) {
             g_player.draw(g_pixels, g_camX, g_camY, g_lightOn);
             if (g_survival) drawHeldTool(g_pixels, currentAim(), g_lightOn);
@@ -1792,6 +1951,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
                       g_pixels, &g_bmi, DIB_RGB_COLORS, SRCCOPY);
         drawPanel(g_backDC);
         if (g_survival && g_playerOn) drawHotbar(g_backDC);
+        drawDevPanel(g_backDC);
         if (!g_menuOpen && !g_creativeOpen) drawCursor(g_backDC);
         if (g_creativeOpen) drawCreative(g_backDC);
         if (g_menuOpen)     drawMenu(g_backDC);

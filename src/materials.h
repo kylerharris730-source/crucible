@@ -81,6 +81,14 @@ enum MatId {
                         the entire separation mechanism -- it floats */
     MAT_SLAG,        /* frozen slag: the crust you have to break to get at what
                         settled underneath it */
+    /* --- machinery -------------------------------------------------------
+       The cells a multi-cell DEVICE occupies. One material for every device
+       type, because the grid only needs to know "something solid and man-made is
+       here"; which device it is, and all of its state, live in the device list
+       (see device.h). Putting a material per type in here would mean the sim
+       learning about machines it has no business knowing about, and there is
+       nowhere in a 4-byte Cell to keep a setpoint anyway. */
+    MAT_DEVICE,
     MAT_COUNT
 };
 

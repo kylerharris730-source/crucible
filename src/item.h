@@ -2,6 +2,7 @@
 #include "world.h"
 #include "sprite.h"
 #include "player.h"   /* FlightSpec: what worn flight gear resolves to */
+#include "device.h"   /* DeviceType: which machine an ITEMK_DEVICE places */
 
 /* --- items and the inventory ----------------------------------------------
 
@@ -54,6 +55,8 @@ enum {
     ITEM_JETPACK1,
     ITEM_JETPACK2,
     ITEM_JETPACK3,
+    /* Machines. See ITEMK_DEVICE. */
+    ITEM_THERMOCOUPLE,
     ITEM_COUNT
 };
 
@@ -98,7 +101,15 @@ enum ItemKind {
        that is already occupied, it is refused by cells that are buried, and it
        leaves nothing of itself behind. Calling that "placing a block" would
        make placeFrom answer two unrelated questions. */
-    ITEMK_SEED
+    ITEMK_SEED,
+    /* --- ITEMK_DEVICE ----------------------------------------------------
+       Places a MULTI-CELL MACHINE rather than a cell. Its own kind for the same
+       reason ITEMK_SEED is: nothing about placement is shared. It covers a
+       rectangle instead of a point, it snaps to a lattice rather than landing
+       where you clicked, it can fail because the slot is taken rather than
+       because the cell is full, and it creates an entity with state that
+       outlives the click. `deviceType` says which machine. See device.h. */
+    ITEMK_DEVICE
 };
 
 struct ItemDef {
@@ -155,6 +166,14 @@ struct ItemDef {
     u8   pierce;      /* cells it can destroy before it is spent */
     u8   blast;       /* explosion radius on impact; 0 for an ordinary shot */
     u32  shotColour;
+
+    /* --- ITEMK_DEVICE only -------------------------------------------
+       Which DeviceType this places. 0 is a valid device type, so this field
+       cannot carry its own "not a device" sentinel -- `kind` is the only thing
+       that decides that, and nothing should read this without checking it. The
+       same trap as equipSlot, where 0 was a real slot and the memset made every
+       stack of stone wearable. */
+    u8   deviceType;
 
     /* SpriteId, or SPR_NONE to fall back to a flat colour swatch. Materials
        deliberately have none -- see sprite.h. */

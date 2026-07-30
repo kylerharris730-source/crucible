@@ -541,6 +541,17 @@ MatInfo MATS[MAT_COUNT] = {
      metal underneath. STR_LOOSE in materials.cpp, because a byproduct you cannot
      remove with the starting tool would dead-end the whole progression. */
   { "Slag",  KIND_STATIC, 255,   0,    0,   0,   0,   0,  0,   60,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0x3A322E, 0x2A2422, 0x3A322E, 0x2A2422, 0 },
+  /* The cells of a device. Conducts heat like a machine (200, near iron) for one
+     specific reason: a thermocouple has to be able to FEEL the furnace it is
+     bolted to, and it senses by reading temp[] at its own cells. An insulating
+     casing would leave it reporting room temperature next to molten iron.
+
+     No phase changes at all -- a machine that melted while doing its job would
+     be a machine you could not use anywhere interesting. Flat dark colour,
+     because what you actually see is the device's own sprite drawn over the top;
+     this is only what shows if that ever fails, and a flat colour makes such a
+     failure obvious rather than plausible. */
+  { "Device",KIND_STATIC, 255,   0,    0,   0,   0,   0,  0,  200,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0x2A2F3A, 0x2A2F3A, 0x2A2F3A, 0x2A2F3A, 0 },
 };
 
 u32 g_colorLut[MAT_COUNT * 256];
@@ -601,6 +612,11 @@ static void initStrength() {
        different tool for it. */
     g_matStrength[MAT_COPPER_ORE]  = STR_ROCK;
     g_matStrength[MAT_IRON_ORE]    = STR_ROCK;
+
+    /* Devices are metal: a real tool takes one apart, the starting one does not.
+       They are deliberately NOT indestructible like the heater and cooler --
+       a machine you place should be a machine you can dismantle. */
+    g_matStrength[MAT_DEVICE]      = STR_METAL;
 
     g_matStrength[MAT_IRON]        = STR_METAL;
     g_matStrength[MAT_COPPER]      = STR_METAL;

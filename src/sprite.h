@@ -35,6 +35,10 @@ enum SpriteId {
     SPR_PACK1,       /* the jetpack ladder: one silhouette, three sizes */
     SPR_PACK2,
     SPR_PACK3,
+    /* Devices. These are the one place a sprite is BOTH the inventory icon and
+       the object in the world -- see DEV_W in device.h -- so the art is read at
+       two very different scales and has to survive both. */
+    SPR_THERMO,
     SPR_COUNT
 };
 

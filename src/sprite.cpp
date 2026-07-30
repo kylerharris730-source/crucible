@@ -61,6 +61,17 @@ static u32 paletteOf(char c) {
     case 'f': return 0xFFC24A;     /* flame core */
     case 'e': return 0xE05A20;     /* flame edge */
     case 'c': return 0x6ED0FF;     /* coolant / tank window */
+    /* Devices. A shared casing palette so every machine reads as part of one
+       family of equipment, with only the FACE -- the dial, the gauge, whatever the
+       thing actually does -- differing between them. That is the same reasoning as
+       the jetpack tiers: the silhouette says "machine", the detail says which. */
+    case 'D': return 0x4A5262;     /* casing */
+    case 'd': return 0x333A48;     /* casing shade */
+    case 'E': return 0x6E7888;     /* casing highlight / bezel */
+    case 'F': return 0x1A1E26;     /* recessed face */
+    case 'i': return 0xE8503A;     /* the needle: red, and the only warm thing */
+    case 'l': return 0x9CE0FF;     /* terminal, where a spark goes in or out */
+
     default:  return 0xFF00FF;     /* unmapped: loud on purpose */
     }
 }
@@ -414,6 +425,33 @@ static void composePlayer(int frame, const char* const* legs, bool mirrorLegs) {
     }
 }
 
+/* The thermocouple: a boxed gauge with a dial face and a needle, and a terminal
+   post on each side. The terminals are load-bearing art rather than decoration --
+   they are where wiring is meant to meet it, so the picture has to say which
+   edges are the electrical ones.
+
+   Columns are strictly: 0 and 13 are the terminal posts (blank except on the
+   two rows wiring meets), 1 and 12 casing, 2 and 11 bezel, 3..10 the face. Laid
+   out that way rather than drawn freehand because expand() aborts on a
+   miscounted row, and because a gauge whose bezel wanders by a pixel looks
+   dented rather than machined. */
+static const char* ART_THERMO[SPR_H] = {
+    "..DDDDDDDDDD..",
+    ".DEEEEEEEEEED.",
+    ".DEFFFFFFFFED.",
+    "lDEFFFFFFFFEDl",
+    "lDEFFFiiFFFEDl",
+    ".DEFFFiiFFFED.",
+    ".DEFFFiiFFFED.",
+    ".DEFFiiiiFFED.",
+    ".DEFFFFFFFFED.",
+    ".DEEEEEEEEEED.",
+    ".DddddddddddD.",
+    ".DdEEEEEEEEdD.",
+    ".DddddddddddD.",
+    "..DDDDDDDDDD..",
+};
+
 void initSprites() {
     memset(g_sprite, 0, sizeof(g_sprite));
     expand(SPR_TOOL1,     ART_TOOL1);
@@ -429,6 +467,7 @@ void initSprites() {
     expand(SPR_PACK1,     ART_PACK1);
     expand(SPR_PACK2,     ART_PACK2);
     expand(SPR_PACK3,     ART_PACK3);
+    expand(SPR_THERMO,    ART_THERMO);
 
     memset(g_playerSpr, 0, sizeof(g_playerSpr));
     composePlayer(PF_IDLE,  LEG_STAND, false);

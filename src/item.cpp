@@ -293,6 +293,21 @@ void initItems() {
         ITEMS[t.id].fly.fuel    = t.fuel;
         ITEMS[t.id].fly.refuel  = t.refuel;
     }
+
+    /* --- machines -----------------------------------------------------------
+       maxStack is a real stack rather than 1: these are parts, and a contraption
+       wants a dozen of them, so carrying them one to a slot would make building
+       anything an inventory-management exercise. Modest rather than the 100000 a
+       material gets, because a machine is a machine and not a grain of sand.
+
+       The sprite is shared with the object in the world, which is the point of
+       sizing devices to the sprite canvas -- see DEV_W in device.h. */
+    ITEMS[ITEM_THERMOCOUPLE].name       = "Thermocouple";
+    ITEMS[ITEM_THERMOCOUPLE].kind       = ITEMK_DEVICE;
+    ITEMS[ITEM_THERMOCOUPLE].deviceType = DEV_THERMOCOUPLE;
+    ITEMS[ITEM_THERMOCOUPLE].maxStack   = 64;
+    ITEMS[ITEM_THERMOCOUPLE].colour     = 0x6E7888;
+    ITEMS[ITEM_THERMOCOUPLE].sprite     = SPR_THERMO;
 }
 
 const char* const EQ_NAMES[EQ_COUNT] = { "Feet", "Back", "Trinket", "Trinket" };
