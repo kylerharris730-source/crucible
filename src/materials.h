@@ -364,6 +364,33 @@ extern u8 g_matOpacity[MAT_COUNT];
    trips -Wmissing-field-initializers on all of them under -Wextra. */
 extern u8 g_matPassable[MAT_COUNT];
 
+/* --- what the renderer does not draw ----------------------------------------
+   True for a cell whose material is NOT painted: the backdrop is drawn in its
+   place, exactly as if the cell were empty.
+
+   This exists for devices whose cells carry a mechanism rather than a picture.
+   A device is a 14x14 block of cells plus a sprite drawn over them, and for the
+   boxed machines that works because the sprite is a box -- it covers what it
+   stands on. The torch is deliberately not a box (see ART_TORCH in sprite.cpp),
+   so every cell its silhouette does not cover was showing bare MAT_TORCH: a
+   14x14 yellow square with a torch drawn in the middle of it.
+
+   Painting the material in a colour that reads as "nothing" would not fix it.
+   The cell has to be genuinely see-through, because what belongs behind a torch
+   is whatever the torch is bolted to -- rock, a built wall, open sky -- and only
+   the backdrop knows which.
+
+   Rendering is the ONLY thing this turns off. The cells are still there for
+   collision, light, heat and mining; MAT_TORCH is passable as well, but that is
+   g_matPassable's business and the two are independent. Anything unseen must be
+   drawn by something else or it becomes invisible, which is why this is a table
+   with two entries and not a property materials can casually opt into.
+
+   MAT_EMPTY is set too, so the renderer's inner loop tests one array instead of
+   a comparison plus an array -- the empty case is by far the most common, and it
+   wants to stay the cheap one. */
+extern u8 g_matUnseen[MAT_COUNT];
+
 /* --- smelting --------------------------------------------------------------
    Chance out of 255 that a smelting ore cell yields its METAL rather than slag.
    0 means "not an ore" and is the sentinel, so every non-ore row costs nothing.

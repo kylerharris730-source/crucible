@@ -633,6 +633,7 @@ u8  g_matGlows[MAT_COUNT];
 u8  g_matDecay[MAT_COUNT];
 u8  g_matStrength[MAT_COUNT];
 u8  g_matPassable[MAT_COUNT];
+u8  g_matUnseen[MAT_COUNT];
 u8  g_matSmeltYield[MAT_COUNT];
 u8  g_matConducts[MAT_COUNT];
 u8  g_matWetInto[MAT_COUNT];
@@ -1063,9 +1064,21 @@ static void initPassable() {
     g_matPassable[MAT_TORCH] = 1;
 }
 
+static void initUnseen() {
+    for (int m = 0; m < MAT_COUNT; ++m) g_matUnseen[m] = 0;
+    g_matUnseen[MAT_EMPTY] = 1;
+    /* The torch's cells are the mechanism; ART_TORCH is the picture. See
+       g_matUnseen in materials.h. Note that MAT_DEVICE is deliberately NOT
+       here -- the machines' art is a full box, so their cells never show, and
+       leaving the material drawn means a machine whose sprite is somehow
+       missing looks like a fault rather than like nothing at all. */
+    g_matUnseen[MAT_TORCH] = 1;
+}
+
 void initMaterials() {
     initStrength();
     initPassable();
+    initUnseen();
     initSmelting();
     initConducts();
     initSlaking();
@@ -1114,6 +1127,12 @@ void initMaterials() {
             }
         }
     }
+
+    /* AFTER the loop, for the reason the g_matDecay note above gives. Nothing
+       that is never drawn can glow: the colour under a torch cell is the
+       backdrop, and tinting the backdrop red because the wall behind the torch
+       got warm would be a heat overlay on the wrong surface. */
+    for (int m = 0; m < MAT_COUNT; ++m) if (g_matUnseen[m]) g_matGlows[m] = 0;
 
     for (int t = 0; t < 256; ++t) {
         g_heatLut[t]   = rampColor(t);

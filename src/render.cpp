@@ -109,7 +109,7 @@ int renderView(const World& w, u32* out, int view, int camX, int camY, bool lit)
                 const int i = base + vx;
                 Cell c = cells[i];
                 bool openSky = false;
-                u32 col = (c.mat == MAT_EMPTY)
+                u32 col = g_matUnseen[c.mat]
                         ? backdrop(w, camX + vx, wy, i, &openSky)
                         : g_colorLut[((u32)c.mat << 8) | (u32)(c.moisture & 0xF0) | (u32)(c.tint >> 4)];
                 row[vx] = (lrow && !openSky) ? shadeColor(col, g_lightShade[lrow[vx]]) : col;
@@ -130,7 +130,10 @@ int renderView(const World& w, u32* out, int view, int camX, int camY, bool lit)
             const int i = base + vx;
             Cell c = cells[i];
             bool openSky = false;
-            u32 col = (c.mat == MAT_EMPTY)
+            /* g_matUnseen rather than a test against MAT_EMPTY: a torch's cells
+               are drawn by its sprite, not by the material, so they take the
+               backdrop like empty air. See g_matUnseen in materials.h. */
+            u32 col = g_matUnseen[c.mat]
                     ? backdrop(w, camX + vx, wy, i, &openSky)
                     : g_colorLut[((u32)c.mat << 8) | (u32)(c.moisture & 0xF0) | (u32)(c.tint >> 4)];
             const u8 t = temp[i];
