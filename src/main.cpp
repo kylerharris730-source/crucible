@@ -85,6 +85,14 @@ static const BrushDef BRUSHES[] = {
        around molten rubber and mercury vapour above. */
     { MAT_COPPER_ORE,"Cu Ore"},
     { MAT_IRON_ORE,  "Fe Ore"},
+    /* The heat ladder. Clay and ceramic sit together because one becomes the
+       other; coal and fuel likewise. The burning forms (ember, fuelfire) are NOT
+       placeable, on the same line already drawn around molten metal and slag --
+       they are states you put a material into, not things you build with. */
+    { MAT_CLAY,    "Clay"   },
+    { MAT_CERAMIC, "Ceramic"},
+    { MAT_COAL,    "Coal"   },
+    { MAT_FUEL,    "Fuel"   },
     { MAT_GRAPHENE,"Graphene"},
     { MAT_LAVA,  "Lava"  },
     { MAT_FIRE,  "Fire"  },
@@ -113,10 +121,6 @@ static const BrushDef BRUSHES[] = {
        drag. Similar names, but one is scenery and the other is a tool, so they
        sit next to each other where the difference is easy to see. */
     { MAT_LAMP,  "Lamp"  },
-    /* Next to the lamp because the choice between them is the only thing worth
-       thinking about when you want light: brighter and solid, or dimmer and
-       something you can stand in. */
-    { MAT_TORCH, "Torch" },
     { MAT_HEATER,"Heater"},
     { MAT_COOLER,"Cooler"},
     { TOOL_HEAT, "Heat"  },
@@ -1125,7 +1129,7 @@ static void drawButton(HDC hdc, const RECT& r, const char* label,
    a machine with six settings is a machine nobody can understand by looking at
    it, and the whole interaction should be "read it, nudge it, get on with it". */
 static const int DEVP_W = 260, DEVP_H = 96;
-static RECT g_devpBox, g_devpDec, g_devpInc, g_devpTake, g_devpClose;
+static RECT g_devpBox, g_devpDec, g_devpInc, g_devpTake, g_devpTurn, g_devpClose;
 
 static void layoutDevPanel(const Device& d) {
     /* Sit it just above and right of the machine, in screen pixels. */
@@ -1141,6 +1145,7 @@ static void layoutDevPanel(const Device& d) {
     SetRect(&g_devpDec,   px + 10,  by, px + 40,  by + 22);
     SetRect(&g_devpInc,   px + 44,  by, px + 74,  by + 22);
     SetRect(&g_devpTake,  px + 82,  by, px + 142, by + 22);
+    SetRect(&g_devpTurn,  px + 146, by, px + 200, by + 22);
     SetRect(&g_devpClose, px + DEVP_W - 40, by, px + DEVP_W - 10, by + 22);
 }
 
@@ -1159,6 +1164,10 @@ static bool handleDevPanelClick(int mx, int my) {
     if (PtInRect(&g_devpDec, pt))        d.value -= di.vStep;
     else if (PtInRect(&g_devpInc, pt))   d.value += di.vStep;
     else if (PtInRect(&g_devpClose, pt)) { g_devPanel = -1; return true; }
+    else if (PtInRect(&g_devpTurn, pt) && di.aimable) {
+        d.face = (u8)((d.face + 1) & 3);
+        return true;
+    }
     else if (PtInRect(&g_devpTake, pt) && d.count > 0) {
         /* Empty the machine's buffer into the pack. The counterpart to loading a
            placer by pouring onto it -- a miner fills up with what it has broken
@@ -1201,8 +1210,10 @@ static void drawDevPanel(HDC hdc) {
     sprintf(buf, "reading  %d %s", d.reading, di.valueUnit);
     drawText(hdc, tx, g_devpBox.top + 26, RGB(200, 206, 218), buf);
 
-    sprintf(buf, "%s  %d %s", di.valueLabel, (int)d.value, di.valueUnit);
-    drawText(hdc, tx, g_devpBox.top + 42, RGB(214, 216, 224), buf);
+    if (di.vMin != di.vMax) {
+        sprintf(buf, "%s  %d %s", di.valueLabel, (int)d.value, di.valueUnit);
+        drawText(hdc, tx, g_devpBox.top + 42, RGB(214, 216, 224), buf);
+    }
 
     /* Sparks received. The first thing you want to know about a machine that is
        not doing what you expected is whether the signal is reaching it at all. */
@@ -1226,8 +1237,16 @@ static void drawDevPanel(HDC hdc) {
              d.firing ? RGB(255, 240, 170) : RGB(160, 168, 182), st);
 
     POINT pt = { g_mx, g_my };
-    drawButton(hdc, g_devpDec, "-", 0, false, PtInRect(&g_devpDec, pt) != 0);
-    drawButton(hdc, g_devpInc, "+", 0, false, PtInRect(&g_devpInc, pt) != 0);
+    /* A device with nothing to adjust shows no -/+ rather than two dead buttons. */
+    if (di.vMin != di.vMax) {
+        drawButton(hdc, g_devpDec, "-", 0, false, PtInRect(&g_devpDec, pt) != 0);
+        drawButton(hdc, g_devpInc, "+", 0, false, PtInRect(&g_devpInc, pt) != 0);
+    }
+    if (di.aimable) {
+        static const char* FACE[4] = { "aim down", "aim up", "aim left", "aim right" };
+        drawButton(hdc, g_devpTurn, FACE[d.face & 3], 0, false,
+                   PtInRect(&g_devpTurn, pt) != 0);
+    }
     if (d.type == DEV_PLACER || d.type == DEV_MINER)
         drawButton(hdc, g_devpTake, "take", 0, false, PtInRect(&g_devpTake, pt) != 0);
     drawButton(hdc, g_devpClose, "x", 0, false, PtInRect(&g_devpClose, pt) != 0);

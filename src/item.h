@@ -60,6 +60,7 @@ enum {
     ITEM_CLOCK,
     ITEM_PLACER,
     ITEM_MINER,
+    ITEM_TORCH_DEV,
     ITEM_COUNT
 };
 

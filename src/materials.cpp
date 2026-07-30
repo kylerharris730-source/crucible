@@ -551,6 +551,70 @@ MatInfo MATS[MAT_COUNT] = {
      because what you actually see is the device's own sprite drawn over the top;
      this is only what shows if that ever fails, and a flat colour makes such a
      failure obvious rather than plausible. */
+  /* --- the heat ladder -----------------------------------------------------
+     Fire spawns at 205 C and cannot smelt anything. That is not a bug and it is
+     the reason this whole group exists: measured into a lidded, shallow charge of
+     ore, a continually fed fire delivers a peak of 144 C, lava 175, plasma 201.
+     A gas has almost no heat CAPACITY, so it arrives hot and has nothing to give.
+     What melts metal is not a hot flame, it is a hot thing with mass.
+
+     So the burning forms below are STATIC solids with enormous heatMassShift,
+     not gases. They sit in the firebox where you put them and spend their heat
+     slowly into whatever is above.
+
+     Clay is IMPERMEABLE -- moisture capacity 0 -- and that is not flavour, it is
+     what makes the lake a lake. At capacity 200 the bed drank its own pond:
+     measured, 23673 cells of water fell to 12239 within 3000 frames, absorbed
+     rather than spilled (the surface shrank inward instead of spreading). A clay
+     bed holding water is the reason ponds exist. */
+  { "Clay",  KIND_POWDER, 145,  60,   20,   0,   0,   0,  0,   70,  0,   0,   0,    0,  MAT_EMPTY, degC(120), MAT_CERAMIC, 0, MAT_EMPTY, 0, 0x8A7A6A, 0x6A5A4E, 0x5E5248, 0x453C34, 0 },
+  /* Ceramic. heatCond 18 is the whole point of the material: it is the second-best
+     insulator in the table after rubber, and unlike rubber it has no melting point
+     at all, so it is the first thing you can build a furnace OUT of. Everything
+     else that survives furnace temperatures (graphene) also conducts superbly,
+     which makes it a radiator rather than a lining. */
+  { "Ceramic",KIND_STATIC,255,   0,    0,   0,   0,   0,  0,   18,  2,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0xB89A80, 0x9A7C64, 0xB89A80, 0x9A7C64, 0 },
+  /* Coal. Ignites at 90 C, which is chosen against what can actually reach it
+     rather than picked for flavour: measured, a wood fire burning ON a pile warms
+     it to about 57 C, while burning WOOD reaches about 98 C. So a bare flame will
+     not light coal and a proper wood fire will -- which is both how coal is really
+     lit and a small piece of progression, since it means the first firebox needs
+     kindling. At 120 C nothing available early could light it at all.
+
+     On its own it is a copper-grade heat source and cannot touch iron, which is
+     the gap fuel exists to close. */
+  { "Coal",  KIND_POWDER, 130, 120,   90,   0,   0,   0,  0,   40,  1,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY, degC(90), MAT_EMBER, 0, 0x2A2A2E, 0x18181C, 0x2A2A2E, 0x18181C, 0 },
+  /* Burning coal. Static so it stays in the firebox, mass 3 so it holds eight
+     times the heat of ordinary material, and it ENDS by cooling rather than by a
+     decay roll: it is spent when it has given its heat away, which is what
+     "burns slowly" actually means and what makes a bigger firebox burn longer.
+
+     It burns at 175 C, not 215, and THAT is what keeps coal off iron rather than
+     any amount of tuning its drive. g_matDrive clamps at the source's own
+     temperature, so it sets how FAST heat arrives and not how hot things get --
+     given enough frames even a drive of 2 saturates a charge, and coal at 215 C
+     smelted iron 99% of the time. Copper ore needs 165 C and iron 190, so a fuel
+     that simply does not burn past 185 can do the one and never the other -- at
+     175 it was marginal, delivering exactly 165 and smelting only 37% of a copper
+     charge; 185 clears copper comfortably and still leaves iron well out of
+     reach. Coal
+     not being hot enough for iron is the entire reason fuel exists.
+
+     heatMassShift is the lever that decides how much a fuel can DELIVER, and it is
+     worth understanding why rather than tuning it blind. Conduction moves
+     (adiff * cond) >> 9 into the neighbour, but the source only drops that amount
+     shifted down by its mass -- so at shift 4 an ember gives away sixteen units of
+     heat for every one it loses. That is what lets a finite firebox hold a charge
+     near temperature instead of levelling with it and stopping. */
+  { "Ember", KIND_STATIC, 255,   0,    0,   0,   0,   0,  0,  220,  4,   0, degC(185), degC(70), MAT_EMPTY, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, 0x8A2A10, 0x5A1808, 0x8A2A10, 0x5A1808, 0 },
+  /* Coal slaked in water. Ignites at wood's own 80 C -- a prepared fuel should be
+     the easy thing to light, not another hurdle -- and burns far hotter. See
+     g_matWetInto for how you make it. */
+  { "Fuel",  KIND_POWDER, 140, 100,   80,   0,   0,   0,  0,   45,  1,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY, degC(80), MAT_FUELFIRE, 0, 0x2E3A34, 0x1C2622, 0x2E3A34, 0x1C2622, 0 },
+  /* Burning fuel. Maximum conductivity and mass 4 -- sixteen times the heat
+     capacity -- so it can hold a charge above iron's smelting point for long
+     enough to get through it, which ember cannot. */
+  { "FuelFire",KIND_STATIC,255,  0,    0,   0,   0,   0,  0,  255,  5,   0, degC(215), degC(95), MAT_EMPTY, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, 0xFFD8A0, 0xFF8830, 0xFFD8A0, 0xFF8830, 0 },
   { "Device",KIND_STATIC, 255,   0,    0,   0,   0,   0,  0,  200,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0x2A2F3A, 0x2A2F3A, 0x2A2F3A, 0x2A2F3A, 0 },
 };
 
@@ -563,6 +627,9 @@ u8  g_matStrength[MAT_COUNT];
 u8  g_matPassable[MAT_COUNT];
 u8  g_matSmeltYield[MAT_COUNT];
 u8  g_matConducts[MAT_COUNT];
+u8  g_matWetInto[MAT_COUNT];
+u8  g_bgRetain[MAT_COUNT];
+u8  g_matDrive[MAT_COUNT];
 u8  g_matLight[MAT_COUNT];
 u8  g_matOpacity[MAT_COUNT];
 u8  g_lightShade[256];
@@ -608,6 +675,13 @@ static void initStrength() {
     g_matStrength[MAT_RUBBER]      = STR_SOFT;
 
     g_matStrength[MAT_STONE]       = STR_ROCK;
+    /* Ceramic is as hard as the rock it replaces -- a furnace you could scratch
+       apart with the starting tool would not be worth firing the clay for. Clay
+       and coal are loose ground you dig with anything. */
+    g_matStrength[MAT_CERAMIC]     = STR_ROCK;
+    g_matStrength[MAT_CLAY]        = STR_LOOSE;
+    g_matStrength[MAT_COAL]        = STR_LOOSE;
+    g_matStrength[MAT_FUEL]        = STR_LOOSE;
     /* Ore is as hard as the rock it sits in, so whatever gets you through stone
        gets you the ore -- finding a vein should never also mean needing a
        different tool for it. */
@@ -724,6 +798,10 @@ static void initLight() {
     /* Molten slag is incandescent, so a working furnace lights its own room --
        which is worth having, since a furnace is somewhere you stand and wait. */
     g_matLight[MAT_SLAG_MELT] = 100;
+    /* Burning things light the room they are burning in. Fuel brighter than coal,
+       matching how much hotter it is. */
+    g_matLight[MAT_FUELFIRE]  = 210;
+    g_matLight[MAT_EMBER]     = 150;
     g_matLight[MAT_FIRE]     = 200;
     g_matLight[MAT_LAVA]     = 190;
     g_matLight[MAT_IRON_MELT]   = 170;
@@ -882,6 +960,36 @@ static void initConducts() {
     g_matConducts[MAT_GRAPHENE] = 1;
 }
 
+/* See g_matWetInto in materials.h. One entry, and it is the whole fuel step. */
+static void initSlaking() {
+    for (int m = 0; m < MAT_COUNT; ++m) g_matWetInto[m] = 0;
+    g_matWetInto[MAT_COAL] = MAT_FUEL;
+}
+
+/* See g_bgRetain in materials.h. Ceramic is the reason this table exists: a
+   chamber lined with it holds heat, which is what makes a furnace a building
+   rather than a bonfire. Stone helps a little -- rock is not a bad insulator and
+   a natural cave really does hold warmth better than open air -- and everything
+   else is left at zero so the overwhelming majority of the world behaves exactly
+   as it did before. */
+static void initBgRetain() {
+    for (int m = 0; m < MAT_COUNT; ++m) g_bgRetain[m] = 0;
+    g_bgRetain[MAT_CERAMIC] = 220;
+    g_bgRetain[MAT_RUBBER]  = 200;
+    g_bgRetain[MAT_STONE]   = 60;
+    g_bgRetain[MAT_WALL]    = 60;
+}
+
+/* See g_matDrive in materials.h. The two numbers here ARE the ladder: they decide
+   what each fuel can smelt, and they were set against measured targets rather than
+   picked -- copper ore needs 165 C and iron 190, and the baseline to beat is
+   lava's 175 and plasma's 201. */
+static void initDrive() {
+    for (int m = 0; m < MAT_COUNT; ++m) g_matDrive[m] = 0;
+    g_matDrive[MAT_EMBER]    = 10;
+    g_matDrive[MAT_FUELFIRE] = 40;
+}
+
 static void initPassable() {
     for (int m = 0; m < MAT_COUNT; ++m) g_matPassable[m] = 0;
     g_matPassable[MAT_TORCH] = 1;
@@ -892,6 +1000,9 @@ void initMaterials() {
     initPassable();
     initSmelting();
     initConducts();
+    initSlaking();
+    initBgRetain();
+    initDrive();
     initLight();
     for (int m = 0; m < MAT_COUNT; ++m) {
         MatInfo& mi = MATS[m];

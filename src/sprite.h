@@ -42,6 +42,7 @@ enum SpriteId {
     SPR_CLOCK,
     SPR_PLACER,
     SPR_MINER,
+    SPR_TORCH,
     SPR_COUNT
 };
 

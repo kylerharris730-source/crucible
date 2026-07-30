@@ -575,7 +575,27 @@ void World::updateHeat(int x, int y) {
         int rate = (cells[i].mat == MAT_EMPTY) ? AIR_COOL
                  : (kind == KIND_GAS)          ? GAS_COOL
                  :                               SOLID_COOL;
-        if (rngChance(rate)) temp[i] = (u8)(t > AMBIENT_TEMP ? t - 1 : t + 1);
+        if (rngChance(rate)) {
+            /* The BACKGROUND gets a say, and this is the only place in the whole
+               simulation that reads the bg array -- see the note on World::bg,
+               which until now said nothing ever did. A ceramic-lined chamber holds
+               its heat; bare rock holds a little; open sky holds none.
+
+               Read INSIDE the roll rather than before it, which is what makes it
+               affordable. The drift fires on a few percent of cell-frames, so on
+               the overwhelming majority of them the bg array is never touched and
+               the extra cache line is never pulled in. Putting the lookup outside
+               would make every hot cell in the world pay it every frame.
+
+               A second roll rather than an adjusted rate: `rate` is compared
+               against the rng by rngChance and scaling it would need a divide in
+               the hot path, where a second chance test is another compare against
+               a byte already in a register. */
+            const u8 back = (u8)(bg[i] & BG_MAT_MASK);
+            const u8 hold = g_bgRetain[back];
+            if (!hold || !rngChance(hold))
+                temp[i] = (u8)(t > AMBIENT_TEMP ? t - 1 : t + 1);
+        }
     }
 
     dirtyPoint(x, y);
@@ -1002,6 +1022,25 @@ void World::updateCell(int x, int y) {
         convert(x, y, MAT_EMPTY);
         return;
     }
+    /* Slaking: coal touching water becomes fuel, and the water is spent. Sits
+       beside quenchedBy because the shape is identical -- look at four neighbours
+       for a particular material -- but the two are deliberately separate columns.
+       A quench DESTROYS the cell and dumps its heat into whatever put it out; this
+       TRANSFORMS it and is a cold process on cold coal. See g_matWetInto. */
+    if (g_matWetInto[c.mat]) {
+        for (int k = 0; k < 4; ++k) {
+            const int nx = x + NB_DX[k], ny = y + NB_DY[k];
+            const int j = ny * SIM_W + nx;
+            if (cells[j].mat != MAT_WATER) continue;
+            convert(x, y, g_matWetInto[c.mat]);
+            /* The water is consumed. That is what stops fuel being free: it costs
+               a trip to water, which is why there is a lake. */
+            spawnCell(nx, ny, MAT_EMPTY);
+            dirtyPoint(nx, ny);
+            return;
+        }
+    }
+
     if (m.quenchedBy) {
         for (int k = 0; k < 4; ++k) {
             const int nx = x + NB_DX[k], ny = y + NB_DY[k];
@@ -1067,6 +1106,26 @@ void World::updateCell(int x, int y) {
     }
     if (c.mat == MAT_CLONE) { updateClone(x, y); return; }
     if (c.mat == MAT_VOID)  { updateVoid(x, y);  return; }
+
+    /* Burning fuel forces heat into its neighbours, the same way a heater does and
+       for the same reason -- see g_matDrive in materials.h. Placed here, after the
+       phase changes above, so a cell that has just burnt out does not get one last
+       free push on its way to being nothing. */
+    if (g_matDrive[c.mat]) {
+        const int drive = g_matDrive[c.mat];
+        const int set = temp[i];
+        for (int k = 0; k < 4; ++k) {
+            const int nx = x + NB_DX[k], ny = y + NB_DY[k];
+            const int j = ny * SIM_W + nx;
+            const int tj = temp[j];
+            /* Only ever pushes UP toward the fire's own temperature. A flame
+               should not actively chill something hotter than itself, which an
+               unsigned "drive toward" would do to molten metal sitting on it. */
+            if (tj >= set) continue;
+            temp[j] = (u8)imin(set, tj + drive);
+            dirtyPoint(nx, ny);
+        }
+    }
 
     if (m.capacity) updateMoisture(x, y);   /* before moving, so the moisture
                                                travels with the cell */

@@ -18,7 +18,7 @@ const DeviceInfo DEVS[DEV_COUNT] = {
        running flat out, so neither is a useful thing to be able to dial in.
        Default 150 C sits above boiling water and below every melting point in the
        table, which makes it a sensible "the furnace is working" mark. */
-    { "Thermocouple", "trips at", "C", -20, 210, 5, 150, SPR_THERMO },
+    { "Thermocouple", "trips at", "C", -20, 210, 5, 150, SPR_THERMO, MAT_DEVICE, false },
     /* The clock. Its number is a PERIOD IN FRAMES, shown as frames rather than
        converted to seconds because everything else in this program is measured in
        frames at a fixed 60 Hz step -- a player timing a contraption is counting
@@ -30,14 +30,18 @@ const DeviceInfo DEVS[DEV_COUNT] = {
        run at once. That is allowed and occasionally useful, but below about 6 it
        becomes a solid stream and the array cap starts doing the tuning instead of
        the player. */
-    { "Clock", "every", "frames", 6, 600, 6, 60, SPR_CLOCK },
+    { "Clock", "every", "frames", 6, 600, 6, 60, SPR_CLOCK, MAT_DEVICE, false },
     /* Placer and miner. Their one number is CELLS PER PULSE, which is the right
        axis for both: it is the difference between a machine that trickles and one
        that empties itself in a few ticks, and it is the number you tune when a
        contraption is running at the wrong rate. 14 is the width of the footprint,
        so a pulse of 14 lays or lifts exactly one full row underneath. */
-    { "Placer", "places", "cells", 1, 14, 1, 4, SPR_PLACER },
-    { "Miner",  "mines",  "cells", 1, 14, 1, 4, SPR_MINER  },
+    { "Placer", "places", "cells", 1, 14, 1, 4, SPR_PLACER, MAT_DEVICE, true },
+    { "Miner",  "mines",  "cells", 1, 14, 1, 4, SPR_MINER,  MAT_DEVICE, true },
+    /* The torch. vMin == vMax, so it has nothing to adjust and the panel says so
+       rather than offering two dead buttons. Its cells are MAT_TORCH, which is what
+       makes it the one device you can walk through. */
+    { "Torch", "", "", 0, 0, 0, 0, SPR_TORCH, MAT_TORCH, false },
 };
 
 int sparkCount() {
@@ -268,10 +272,11 @@ bool devPlace(World& w, u8 type, int cx, int cy) {
     d.received = 0;
     d.mat     = MAT_EMPTY;
     d.count   = 0;
+    d.face    = 0;                  /* down */
     d.used    = true;
 
     for (int y = y0; y < y0 + DEV_H; ++y)
-        for (int x = x0; x < x0 + DEV_W; ++x) w.setCell(x, y, MAT_DEVICE);
+        for (int x = x0; x < x0 + DEV_W; ++x) w.setCell(x, y, DEVS[type].cellMat);
     return true;
 }
 
@@ -279,7 +284,7 @@ void devRemove(World& w, Device* d) {
     if (!d || !d->used) return;
     for (int y = d->y; y < d->y + DEV_H; ++y)
         for (int x = d->x; x < d->x + DEV_W; ++x)
-            if (w.at(x, y).mat == MAT_DEVICE) w.setCell(x, y, MAT_EMPTY);
+            if (w.at(x, y).mat == DEVS[d->type].cellMat) w.setCell(x, y, MAT_EMPTY);
     d->used = false;
 }
 
@@ -306,10 +311,19 @@ static bool devIntact(const World& w, const Device& d) {
     const int xs[5] = { d.x, d.x + DEV_W - 1, d.x, d.x + DEV_W - 1, d.x + DEV_W / 2 };
     const int ys[5] = { d.y, d.y, d.y + DEV_H - 1, d.y + DEV_H - 1, d.y + DEV_H / 2 };
     for (int k = 0; k < 5; ++k)
-        if (w.at(xs[k], ys[k]).mat != MAT_DEVICE) return false;
+        if (w.at(xs[k], ys[k]).mat != DEVS[d.type].cellMat) return false;
     return true;
 }
 
+
+void devFaceCell(const Device& d, int i, int* ox, int* oy) {
+    switch (d.face) {
+    case 1:  *ox = d.x + i;        *oy = d.y - 1;        break;   /* up */
+    case 2:  *ox = d.x - 1;        *oy = d.y + i;        break;   /* left */
+    case 3:  *ox = d.x + DEV_W;    *oy = d.y + i;        break;   /* right */
+    default: *ox = d.x + i;        *oy = d.y + DEV_H;    break;   /* down */
+    }
+}
 
 /* --- the buffer ------------------------------------------------------------
    A placer draws loose material touching its footprint into store; a miner puts
@@ -355,11 +369,11 @@ static void devIntake(World& w, Device& d) {
    a placer over a partly-filled furnace should top it up, not jam because its
    leftmost outlet happens to be blocked. */
 static void devPlaceRow(World& w, Device& d) {
-    const int y = d.y + DEV_H;
-    if (y > PLAY_Y1) return;
     int done = 0;
-    for (int x = d.x; x < d.x + DEV_W && done < d.value && d.count > 0; ++x) {
-        if (x < PLAY_X0 || x > PLAY_X1) continue;
+    for (int i = 0; i < DEV_W && done < d.value && d.count > 0; ++i) {
+        int x, y;
+        devFaceCell(d, i, &x, &y);
+        if (x < PLAY_X0 || x > PLAY_X1 || y < PLAY_Y0 || y > PLAY_Y1) continue;
         if (w.at(x, y).mat != MAT_EMPTY) continue;
         w.setCell(x, y, d.mat);
         --d.count;
@@ -372,13 +386,16 @@ static void devPlaceRow(World& w, Device& d) {
    bolted under a device should not quietly dismantle it. Wall is exempt too, since
    it is the indestructible border. */
 static void devMineRow(World& w, Device& d) {
-    const int y = d.y + DEV_H;
-    if (y > PLAY_Y1) return;
     int done = 0;
-    for (int x = d.x; x < d.x + DEV_W && done < d.value; ++x) {
-        if (x < PLAY_X0 || x > PLAY_X1) continue;
+    for (int i = 0; i < DEV_W && done < d.value; ++i) {
+        int x, y;
+        devFaceCell(d, i, &x, &y);
+        if (x < PLAY_X0 || x > PLAY_X1 || y < PLAY_Y0 || y > PLAY_Y1) continue;
         const u8 m = w.at(x, y).mat;
         if (m == MAT_EMPTY || m == MAT_WALL || m == MAT_DEVICE) continue;
+        /* Never eat another machine, whatever it is made of -- including a torch,
+           whose cells are MAT_TORCH rather than MAT_DEVICE. */
+        if (devAt(x, y)) continue;
         if (!devTakeInto(d, m)) break;      /* full, or holding something else */
         w.setCell(x, y, MAT_EMPTY);
         ++done;

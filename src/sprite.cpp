@@ -516,6 +516,26 @@ static const char* ART_MINER[SPR_H] = {
     "..DDDDDDDDDD..",
 };
 
+/* A wall torch: a bracket, a shaft, and a flame. Deliberately NOT the boxed casing
+   the machines share -- it is not machinery, and the whole point of a shared device
+   palette is that it should mean something. */
+static const char* ART_TORCH[SPR_H] = {
+    "......ff......",
+    ".....feef.....",
+    "....feffef....",
+    "....fefffe....",
+    ".....feef.....",
+    "......ff......",
+    ".....EmmE.....",
+    ".....DmmD.....",
+    ".....DmmD.....",
+    "....EDmmDE....",
+    "....dDmmDd....",
+    "....dDDDDd....",
+    ".....dddd.....",
+    "..............",
+};
+
 void initSprites() {
     memset(g_sprite, 0, sizeof(g_sprite));
     expand(SPR_TOOL1,     ART_TOOL1);
@@ -535,6 +555,7 @@ void initSprites() {
     expand(SPR_CLOCK,     ART_CLOCK);
     expand(SPR_PLACER,    ART_PLACER);
     expand(SPR_MINER,     ART_MINER);
+    expand(SPR_TORCH,     ART_TORCH);
 
     memset(g_playerSpr, 0, sizeof(g_playerSpr));
     composePlayer(PF_IDLE,  LEG_STAND, false);

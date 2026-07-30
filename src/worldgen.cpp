@@ -68,6 +68,23 @@ static const float R_FOOT_END     = 0.46f;
 static const float R_MOUNT_PEAK   = 0.59f;
 static const float R_MOUNT_END    = 0.72f;
 
+/* --- the lake ---------------------------------------------------------------
+   A basin in the western plains, left of where the character starts, because the
+   two things it supplies -- water and the clay in its bed -- are both first-hour
+   materials and should be found before the mountain rather than after it.
+
+   Dug as a bowl in the heightmap rather than as a hole punched afterwards, so the
+   shore slopes into it and the shape blends with the surrounding country the same
+   way the mountain does. The water level is worked out from the RIM once the
+   columns exist -- see fillLake -- because a level chosen in advance either floods
+   the plains or leaves a dry pit, depending on where the terrain noise happened to
+   put the ground that day. */
+static const float R_LAKE_C    = 0.105f;   /* centre, as a fraction of the world */
+static const float R_LAKE_HALF = 0.048f;   /* half-width */
+static const int   LAKE_DEPTH  = 120;      /* cells the bowl drops at its middle */
+static const int   LAKE_FREEBOARD = 8;     /* cells of dry rim above the water */
+static const int   CLAY_DEPTH  = 26;       /* clay under the lake bed */
+
 static const int MOUNTAIN_HEIGHT = 780;   /* cells above the plains */
 static const int SOIL_PLAINS     = 46;    /* dirt depth before stone */
 static const int SOIL_FLATS      = 16;
@@ -104,7 +121,15 @@ static void columnAt(int x, int* surfaceOut, int* soilOut) {
     const float flats = ramp(u, R_MOUNT_END, R_MOUNT_END + 0.12f);
     const float flatH = fbm(fx / 400.0f, 7717u, 2) * 16.0f;
 
+    /* The lake basin. Two ramps like the mountain's hump, so both shores slope in
+       smoothly and there is no edge anywhere. Multiplied by (1 - hump) so it
+       cannot fight the mountain if the two ever move near each other. */
+    const float lakeUp   = ramp(u, R_LAKE_C - R_LAKE_HALF, R_LAKE_C - R_LAKE_HALF * 0.35f);
+    const float lakeDown = 1.0f - ramp(u, R_LAKE_C + R_LAKE_HALF * 0.35f, R_LAKE_C + R_LAKE_HALF);
+    const float bowl = lakeUp * lakeDown;
+
     float y = (float)SURFACE_Y
+            + bowl * (float)LAKE_DEPTH
             + plains * (1.0f - hump)
             - hump * (float)MOUNTAIN_HEIGHT
             - rough
@@ -123,6 +148,58 @@ static void columnAt(int x, int* surfaceOut, int* soilOut) {
     soil += fbm(fx / 90.0f, 31337u, 2) * 6.0f;
     if (soil < 0.0f) soil = 0.0f;
     *soilOut = (int)soil;
+}
+
+
+/* Fill the basin, lay clay in its bed, and put a shoreline of sand round it.
+
+   The water level is derived from the RIM rather than chosen: scan the columns
+   just outside the bowl, take the LOWEST of them -- the largest surfaceY, since y
+   grows downward -- and sit the water LAKE_FREEBOARD below it. That guarantees the
+   lake cannot spill over its lowest lip whatever the terrain noise did, which a
+   fixed level cannot: the plains wander nearly a hundred cells and any constant
+   would flood them on some seeds and leave a dry pit on others.
+
+   Called after the column pass and before caves, so a cave worm's roof clamp sees
+   the real ground, and so nothing carves into a body of water from underneath. */
+static void fillLake(World& w) {
+    const int x0 = (int)((R_LAKE_C - R_LAKE_HALF) * (float)SIM_W);
+    const int x1 = (int)((R_LAKE_C + R_LAKE_HALF) * (float)SIM_W);
+    if (x0 < PLAY_X0 + 4 || x1 > PLAY_X1 - 4) return;
+
+    /* The lowest point of the rim, taken from a band just outside the bowl on
+       each side. */
+    int rim = 0;
+    for (int x = x0 - 30; x < x0; ++x)      if (g_surfaceY[x] > rim) rim = g_surfaceY[x];
+    for (int x = x1 + 1; x <= x1 + 30; ++x) if (g_surfaceY[x] > rim) rim = g_surfaceY[x];
+    const int waterY = rim + LAKE_FREEBOARD;
+
+    for (int x = x0; x <= x1; ++x) {
+        const int bed = g_surfaceY[x];
+        if (bed <= waterY) continue;              /* above the waterline: dry shore */
+
+        /* Clay under the bed. Replaces whatever soil is there, and only soil --
+           clay is a powder, so laying it deeper than the soil would leave a
+           powder seam inside solid rock waiting to collapse when the world is
+           first simulated, which is the same trap caves fell into. */
+        const int clayTo = imin(bed + CLAY_DEPTH, g_stoneY[x]);
+        for (int y = bed; y < clayTo; ++y) {
+            w.setCell(x, y, MAT_CLAY);
+            w.setBg(x, y, MAT_CLAY, false);
+        }
+        /* And the water itself. */
+        for (int y = waterY; y < bed; ++y) w.setCell(x, y, MAT_WATER);
+    }
+
+    /* A band of clay along the shore just above the waterline too, so you can
+       find it without swimming for it. */
+    for (int x = x0 - 24; x <= x1 + 24; ++x) {
+        if (x < PLAY_X0 || x > PLAY_X1) continue;
+        const int bed = g_surfaceY[x];
+        if (bed > waterY + 40 || bed < waterY - 40) continue;
+        const int clayTo = imin(bed + 10, g_stoneY[x]);
+        for (int y = bed; y < clayTo; ++y) w.setCell(x, y, MAT_CLAY);
+    }
 }
 
 /* ==========================================================================
@@ -156,10 +233,18 @@ static void columnAt(int x, int* surfaceOut, int* soilOut) {
    Generation must not depend on how many random numbers were drawn before it, or
    the world would change shape according to what the player did last session. */
 
-/* Radius floor, in cells. 13 gives a 26-cell bore against a 22-cell body: enough
-   to walk down without the head clipping the roof on every bump, and enough that
-   a jump inside a tunnel is not immediately punished. */
-static const int   CAVE_MIN_R    = 13;
+/* Radius floor, in cells. With CAVE_TALL below this gives a 30x42 bore against a
+   22-cell body: enough headroom to jump inside a tunnel rather than merely fit in
+   one, which is the difference between a cave you traverse and a cave you occupy. */
+static const int   CAVE_MIN_R    = 15;
+/* Caves are ELLIPSES, taller than they are wide, by this factor. "Taller" is the
+   thing you actually want more of underground -- headroom to jump, room to drop
+   down a chamber without it feeling like a corridor -- and simply raising the
+   radius buys height at the cost of hollowing the map out sideways, since area
+   goes as the square. Stretching only the vertical axis gives a 30x42 bore
+   against a body 8 wide and 22 tall: two body-heights of headroom, and no wider
+   than the round version was. */
+static const float CAVE_TALL     = 1.4f;
 /* How much the radius noise is allowed to swell a tunnel. Chambers are the same
    worm running fat for a while, not a separate feature -- which is why the
    variation is noise along arc length rather than an event. */
@@ -186,11 +271,14 @@ static const float CAVE_SWING    = 1.15f;
    -- and setting it to placed stone would make the whole underground read as
    somebody's masonry, and would count as a room. */
 static void carveDisc(World& w, int cx, int cy, int r) {
+    const int ry = (int)((float)r * CAVE_TALL);
     const int r2 = r * r;
-    const int x0 = imax(PLAY_X0, cx - r), x1 = imin(PLAY_X1, cx + r);
-    const int y0 = imax(PLAY_Y0, cy - r), y1 = imin(PLAY_Y1, cy + r);
+    const int x0 = imax(PLAY_X0, cx - r),  x1 = imin(PLAY_X1, cx + r);
+    const int y0 = imax(PLAY_Y0, cy - ry), y1 = imin(PLAY_Y1, cy + ry);
     for (int y = y0; y <= y1; ++y) {
-        const int dy = y - cy;
+        /* Scaled back onto a circle rather than evaluating an ellipse, so the
+           test stays the same integer compare it always was. */
+        const int dy = (int)((float)(y - cy) / CAVE_TALL);
         for (int x = x0; x <= x1; ++x) {
             const int dx = x - cx;
             if (dx * dx + dy * dy > r2) continue;
@@ -288,8 +376,12 @@ static void carveWorm(World& w, u32 seed, float x, float y, float baseAng,
                worldgen.h for the measured damage. On the plains the rock rule binds
                (52 cells of soil plus CAVE_ROCK), on the bare mountain the surface
                rule does (no soil at all, so the two coincide and CAVE_ROOF wins). */
+            /* Against the disc's HALF-HEIGHT, not its radius: caves are ellipses
+               now (see CAVE_TALL) and using r would leave the top of a tall one
+               poking CAVE_TALL-1 radii above where the clamp thinks it is. */
+            const float halfH = r * CAVE_TALL;
             const float floorY = fmaxf((float)(lowSurf + CAVE_ROOF),
-                                       (float)(lowRock + CAVE_ROCK)) + r;
+                                       (float)(lowRock + CAVE_ROCK)) + halfH;
             if (y < floorY) { y = floorY; if (++pinned > PIN_LIMIT) break; }
             else pinned = 0;
         }
@@ -365,7 +457,11 @@ static void generateCaves(World& w) {
     /* And caves everywhere else, so the underground is worth exploring away
        from the one entrance too. Spread by index rather than placed at random so
        coverage is even without any rejection sampling. */
-    const int WORMS = 26;
+    /* Sparser. 26 worms left the underground reading as more tunnel than rock;
+       15 taller ones cover less of it while each being a more substantial thing to
+       walk into, which is the trade worth making -- what you want underground is
+       fewer, better caves rather than a sponge. */
+    const int WORMS = 15;
     for (int i = 0; i < WORMS; ++i) {
         const u32 seed = 31u + (u32)i * 6151u;
         const float fx = ((float)i + 0.5f) / (float)WORMS * (float)SIM_W
@@ -443,6 +539,11 @@ static void generateOre(World& w) {
     static const OreBand BANDS[] = {
         { MAT_COPPER_ORE, 90,   40, 1000, 5.0f, 0x1234u },
         { MAT_IRON_ORE,   70,  420, 1900, 4.6f, 0x9ABCu },
+        /* Coal. Shallower and more common than either metal, because it is the
+           thing you need FIRST and in bulk -- a fuel you have to go as deep for as
+           the iron it is meant to smelt would defeat the point of the ladder.
+           Fatter veins too: coal comes in seams. */
+        { MAT_COAL,      110,   60, 1200, 6.0f, 0x5E7Du },
     };
     for (int b = 0; b < (int)(sizeof(BANDS) / sizeof(BANDS[0])); ++b) {
         const OreBand& ob = BANDS[b];
@@ -507,6 +608,10 @@ void generateWorld(World& w) {
     g_surfaceY[SIM_W - 1] = g_surfaceY[PLAY_X1];
     g_stoneY[0] = g_stoneY[PLAY_X0];
     g_stoneY[SIM_W - 1] = g_stoneY[PLAY_X1];
+
+    /* The lake before the caves, so a worm's roof clamp is reading real ground and
+       nothing tunnels up into a body of water from beneath. */
+    fillLake(w);
 
     /* Caves, after the columns exist -- every worm reads g_surfaceY to know how
        much roof to leave, so this cannot run earlier. Before the zone pass only

@@ -329,6 +329,16 @@ void initItems() {
     ITEMS[ITEM_MINER].maxStack   = 64;
     ITEMS[ITEM_MINER].colour     = 0x9AA6B4;
     ITEMS[ITEM_MINER].sprite     = SPR_MINER;
+
+    /* The torch is a DEVICE now, not a material you paint. Its item id is separate
+       from MAT_TORCH, which still exists as the material its cells are made of --
+       see DeviceInfo::cellMat. */
+    ITEMS[ITEM_TORCH_DEV].name       = "Torch";
+    ITEMS[ITEM_TORCH_DEV].kind       = ITEMK_DEVICE;
+    ITEMS[ITEM_TORCH_DEV].deviceType = DEV_TORCH;
+    ITEMS[ITEM_TORCH_DEV].maxStack   = 64;
+    ITEMS[ITEM_TORCH_DEV].colour     = 0xFFC46A;
+    ITEMS[ITEM_TORCH_DEV].sprite     = SPR_TORCH;
 }
 
 const char* const EQ_NAMES[EQ_COUNT] = { "Feet", "Back", "Trinket", "Trinket" };

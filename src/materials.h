@@ -81,6 +81,16 @@ enum MatId {
                         the entire separation mechanism -- it floats */
     MAT_SLAG,        /* frozen slag: the crust you have to break to get at what
                         settled underneath it */
+    /* --- the heat ladder --------------------------------------------------
+       What you burn, and what you build the thing you burn it in out of. See the
+       note on g_matWetInto below for how coal becomes fuel, and the ember/fuelfire
+       rows in materials.cpp for why a hot flame is not the same as a hot fire. */
+    MAT_CLAY,        /* fires into ceramic at a temperature a wood fire can reach */
+    MAT_CERAMIC,     /* the early-game furnace lining: insulates, and never melts */
+    MAT_COAL,        /* burns long and hot -- but not hot enough for iron */
+    MAT_EMBER,       /* burning coal: static, enormous heat capacity, slow to spend */
+    MAT_FUEL,        /* coal slaked in water. The step that unlocks metal */
+    MAT_FUELFIRE,    /* burning fuel: hot enough to melt what coal cannot */
     /* --- machinery -------------------------------------------------------
        The cells a multi-cell DEVICE occupies. One material for every device
        type, because the grid only needs to know "something solid and man-made is
@@ -404,6 +414,68 @@ extern u8 g_matSmeltYield[MAT_COUNT];
    and tying them together would mean a future insulator that conducts
    electricity, or a heat sink that shorts a circuit, could not be expressed. */
 extern u8 g_matConducts[MAT_COUNT];
+
+/* --- slaking ---------------------------------------------------------------
+   What a material becomes when it touches water. 0 means "nothing happens",
+   which is every material but one.
+
+   This is the coal-into-fuel step, and it is a table rather than a rule in
+   world.cpp because it is the same shape as everything else there: a condition on
+   a neighbour and a conversion. The water is CONSUMED, which is what makes fuel
+   cost something you have to go and get -- there is a lake for exactly this.
+
+   Deliberately not folded into `quenchedBy`, which is next to it in world.cpp and
+   looks similar. That destroys the cell; this transforms it, and the two want
+   opposite things from the heat: a quench dumps its heat into the water that put
+   it out, while slaking is a cold process on cold coal. One column doing both
+   would need a flag to say which. */
+extern u8 g_matWetInto[MAT_COUNT];
+
+/* --- what the BACKGROUND does to heat --------------------------------------
+   How strongly the scenery behind a cell stops it drifting back to ambient,
+   0..255, where 0 is "no effect" and 255 would be perfect insulation.
+
+   The background has been purely cosmetic until now -- world.cpp's note on the bg
+   array says outright that the simulation never reads it -- so this is a real
+   change to that contract and it earns its place: it is the difference between a
+   furnace being a pile of hot material and a furnace being a ROOM you built. Line
+   a chamber with ceramic and it holds temperature; leave it open to bare rock and
+   it does not.
+
+   It suppresses the drift toward ambient only. It does not touch conduction
+   between cells, which is where heat actually travels: making a backdrop conduct
+   would mean heat flowing through the wall BEHIND things, which is both a
+   surprising physical claim and a second heat network to debug.
+
+   Cost is why it is a retention factor and not something richer. The drift is a
+   single rngChance roll per cell (see updateHeat), and this is read only when that
+   roll has already come up -- so on the ~92% of frames where nothing was going to
+   happen anyway, the bg array is never touched at all. */
+extern u8 g_bgRetain[MAT_COUNT];
+
+/* --- forcing heat into a neighbour ------------------------------------------
+   Degrees per frame this material drives its four orthogonal neighbours toward
+   its own temperature, on top of ordinary conduction. 0 for everything that is
+   not actively burning.
+
+   This exists because conduction alone cannot smelt, and the heater's note in
+   world.h already explains why: conduction runs at min(condA, condB), so the rate
+   is set by the POORER conductor -- the ore -- and the charge settles into a
+   gradient that levels off well below the source. Measured, a firebox of burning
+   fuel sitting at 215 C could only hold a charge at 156 C, and feeding it
+   continuously made no difference (154 -> 156) because it was never running out
+   of fuel, it was in equilibrium. The heater beats that only because
+   MACHINE_DRIVE lets it push past the neighbour's own conductivity.
+
+   Burning fuel is a heat SOURCE in the same sense a heater is, so it gets the
+   same mechanism at a smaller number -- which is also what puts the ladder in
+   order: ember drives less than fuelfire, so coal reaches copper and stops, and
+   only fuel gets you iron.
+
+   Stable for the same reason MACHINE_DRIVE is: the step is clamped at the
+   source's own temperature and can only close the gap, so a neighbour converges
+   and stops rather than climbing. It cannot be written as a plain "+= N". */
+extern u8 g_matDrive[MAT_COUNT];
 
 /* Full brightness. A byte, so it is also the sun. */
 static const int LIGHT_MAX = 255;

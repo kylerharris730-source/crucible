@@ -82,6 +82,11 @@ enum DeviceType {
        else has. */
     DEV_PLACER,
     DEV_MINER,
+    /* A light, and the one device whose cells you can WALK THROUGH. It is a device
+       rather than a material now for the reason a thermocouple is: at one cell a
+       torch was a 2x2 dot on screen -- it lit well and did not look like an object.
+       See DeviceInfo::cellMat for how a device gets to be passable. */
+    DEV_TORCH,
     DEV_COUNT
 };
 
@@ -178,8 +183,25 @@ struct DeviceInfo {
        interaction to "read it, nudge it". */
     const char* valueLabel;
     const char* valueUnit;
+    /* vMin == vMax means "nothing to adjust", and the panel hides its -/+ for such
+       a device rather than showing two buttons that do nothing. */
     i32 vMin, vMax, vStep, vDefault;
     u8  sprite;             /* a SpriteId; see the note on DEV_W */
+
+    /* What the device's cells are made of in the grid. MAT_DEVICE for machinery,
+       but the torch uses MAT_TORCH -- which is already passable, already emits
+       light, and already exists -- so "a device you can walk through" needs no new
+       concept at all, just the freedom to say which material the footprint is
+       written in. The alternative was a passability flag on Device plus a matching
+       exception in playerSolid, which is two places to keep in agreement about one
+       fact the material table already knows. */
+    u8  cellMat;
+
+    /* Whether this device can be aimed. Only the placer and miner care: they ACT on
+       the cells just outside one edge, and which edge should be the player's
+       choice. A thermocouple senses its own cells and a clock counts, so a facing
+       on either would be a control that does nothing. */
+    bool aimable;
 };
 
 extern const DeviceInfo DEVS[DEV_COUNT];
@@ -220,6 +242,11 @@ struct Device {
        accept whatever it is first fed. */
     u8   mat;
     i32  count;
+
+    /* Which way an aimable device acts: 0 down, 1 up, 2 left, 3 right. Down by
+       default because that is what a hopper and a drill both want, and because
+       gravity gives "down" a meaning no other direction has. */
+    u8   face;
     i32  phase;      /* the clock's counter; unused by other types */
     i32  reading;    /* last sensed value, for the panel to show */
 
@@ -248,6 +275,10 @@ bool devPlace(World& w, u8 type, int cx, int cy);
 
 /* Take one away, clearing its cells back to empty. */
 void devRemove(World& w, Device* d);
+
+/* The cell just outside the footprint, `i` cells along the working edge, in the
+   direction the device faces. DEV_W == DEV_H so one index covers every side. */
+void devFaceCell(const Device& d, int i, int* ox, int* oy);
 
 /* One frame for every device: sense, decide, and drop any whose cells have been
    dug out from under it. */
