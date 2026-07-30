@@ -607,10 +607,18 @@ MatInfo MATS[MAT_COUNT] = {
      heat for every one it loses. That is what lets a finite firebox hold a charge
      near temperature instead of levelling with it and stopping. */
   { "Ember", KIND_STATIC, 255,   0,    0,   0,   0,   0,  0,  220,  4,   0, degC(185), degC(70), MAT_EMPTY, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, 0x8A2A10, 0x5A1808, 0x8A2A10, 0x5A1808, 0 },
-  /* Coal slaked in water. Ignites at wood's own 80 C -- a prepared fuel should be
-     the easy thing to light, not another hurdle -- and burns far hotter. See
-     g_matWetInto for how you make it. */
-  { "Fuel",  KIND_POWDER, 140, 100,   80,   0,   0,   0,  0,   45,  1,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY, degC(80), MAT_FUELFIRE, 0, 0x2E3A34, 0x1C2622, 0x2E3A34, 0x1C2622, 0 },
+  /* Coal slaked in STEAM. A heavy LIQUID -- density 160 against water's 100 -- so
+     it pools under water rather than floating on it, which is what makes storing
+     it a question: a fuel that floated would simply run off the top of any pool it
+     met. Thick (viscosity 90) so it stays roughly where you pour it and a firebox
+     can hold it, and so it does not sheet across a floor the instant you tap a
+     tank.
+
+     Being a liquid is what turns supplying a furnace into plumbing rather than
+     shovelling, which is the point of it. Ignites at wood's own 80 C: a prepared
+     fuel should be the easy thing to light, not another hurdle. See g_matWetInto
+     and g_matWetBy for how you make it. */
+  { "Fuel",  KIND_LIQUID, 160,   0,    0,   3,  90,   0,  0,   45,  1,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY, degC(135), MAT_FUELFIRE, 0, 0x2E3A34, 0x1C2622, 0x2E3A34, 0x1C2622, 0 },
   /* Burning fuel. Maximum conductivity and mass 4 -- sixteen times the heat
      capacity -- so it can hold a charge above iron's smelting point for long
      enough to get through it, which ember cannot. */
@@ -628,6 +636,8 @@ u8  g_matPassable[MAT_COUNT];
 u8  g_matSmeltYield[MAT_COUNT];
 u8  g_matConducts[MAT_COUNT];
 u8  g_matWetInto[MAT_COUNT];
+u8  g_matWetBy[MAT_COUNT];
+u8  g_bgHeat[MAT_COUNT];
 u8  g_bgRetain[MAT_COUNT];
 u8  g_matDrive[MAT_COUNT];
 u8  g_matLight[MAT_COUNT];
@@ -681,7 +691,10 @@ static void initStrength() {
     g_matStrength[MAT_CERAMIC]     = STR_ROCK;
     g_matStrength[MAT_CLAY]        = STR_LOOSE;
     g_matStrength[MAT_COAL]        = STR_LOOSE;
-    g_matStrength[MAT_FUEL]        = STR_LOOSE;
+    /* Fuel is deliberately NOT listed. It is a liquid now, and the by-kind loop
+       above already gives every liquid STR_FLUID -- which is the whole point of
+       that loop existing. Leaving an explicit STR_LOOSE here made fuel the one
+       liquid a shot could not spend itself crossing, and tool.cpp caught it. */
     /* Ore is as hard as the rock it sits in, so whatever gets you through stone
        gets you the ore -- finding a vein should never also mean needing a
        different tool for it. */
@@ -962,8 +975,9 @@ static void initConducts() {
 
 /* See g_matWetInto in materials.h. One entry, and it is the whole fuel step. */
 static void initSlaking() {
-    for (int m = 0; m < MAT_COUNT; ++m) g_matWetInto[m] = 0;
+    for (int m = 0; m < MAT_COUNT; ++m) { g_matWetInto[m] = 0; g_matWetBy[m] = 0; }
     g_matWetInto[MAT_COAL] = MAT_FUEL;
+    g_matWetBy[MAT_COAL]   = MAT_STEAM;
 }
 
 /* See g_bgRetain in materials.h. Ceramic is the reason this table exists: a
@@ -973,7 +987,26 @@ static void initSlaking() {
    else is left at zero so the overwhelming majority of the world behaves exactly
    as it did before. */
 static void initBgRetain() {
-    for (int m = 0; m < MAT_COUNT; ++m) g_bgRetain[m] = 0;
+    for (int m = 0; m < MAT_COUNT; ++m) { g_bgRetain[m] = 0; g_bgHeat[m] = 0; }
+    /* A molten backdrop is a hotspot: it holds its cells above stone's melting
+       point (185 C), so rock inside one turns to lava by itself and stays that way.
+       See g_bgHeat in materials.h.
+
+       194 is the balance number, and it was swept rather than picked. A hotspot
+       delivers into a charge about 12 C below whatever it is pinned at:
+
+         pinned 188 -> delivers 176, iron 0%
+         pinned 194 -> delivers 182, iron 0%
+         pinned 200 -> delivers 188, iron 33%
+
+       Copper ore needs 165 and iron 190, so 194 puts a hotspot firmly on COPPER's
+       rung -- a free, permanent, supply-free furnace that is genuinely worth
+       building a settlement around, and still a dead end for iron. That keeps fuel
+       the only route to the top of the ladder, which is the whole reason fuel
+       exists. It also has to stay above stone's 185 or the pocket never melts
+       itself in the first place, so the usable window is narrow: 186..199. */
+    g_bgHeat[MAT_LAVA]   = degC(194);
+    g_bgRetain[MAT_LAVA] = 200;
     g_bgRetain[MAT_CERAMIC] = 220;
     g_bgRetain[MAT_RUBBER]  = 200;
     g_bgRetain[MAT_STONE]   = 60;
@@ -984,6 +1017,26 @@ static void initBgRetain() {
    what each fuel can smelt, and they were set against measured targets rather than
    picked -- copper ore needs 165 C and iron 190, and the baseline to beat is
    lava's 175 and plasma's 201. */
+/* Burning fuel also expires on a TIMER, not only by cooling down.
+
+   That is the difference between a fire and a hot rock, and getting it wrong made
+   a firebox immortal. Burn-out was purely a function of heat loss, so a packed
+   mass of burning fuel reached equilibrium with its own lining -- no gradient,
+   nothing exchanged, nothing spent -- and sat at exactly its spawn temperature for
+   40000 frames. The single-cell case was fine the whole time, which is what made
+   it confusing: the bug only existed in bulk.
+
+   Fuel is consumed BY BURNING, not by cooling, and a sealed fire still goes out.
+   So lifetime is its own axis, the same one cold fire uses and for a related
+   reason -- see g_matDecay. 1 in 255 per frame is a mean cell life of about four
+   seconds and a firebox that dies down over roughly twenty, which is long enough
+   to smelt a charge and short enough that keeping a furnace going is a supply
+   problem rather than a one-off. */
+static void initBurnLife() {
+    g_matDecay[MAT_EMBER]    = 1;
+    g_matDecay[MAT_FUELFIRE] = 1;
+}
+
 static void initDrive() {
     for (int m = 0; m < MAT_COUNT; ++m) g_matDrive[m] = 0;
     g_matDrive[MAT_EMBER]    = 10;
@@ -1016,7 +1069,13 @@ void initMaterials() {
            materials.h for why it is the one exception. */
         g_matGlows[m] = (u8)(m != MAT_PLASMA);
 
-        /* Only cold fire expires on a timer -- see g_matDecay in materials.h
+        /* Cold fire and the burning fuels expire on a timer -- see g_matDecay in
+           materials.h. NOTE this assignment covers every material, so anything
+           setting g_matDecay must run AFTER this loop and not before: doing it
+           before is silently undone, which is exactly what happened when the burn
+           lifetimes were first added and the firebox stayed immortal.
+
+           Only cold fire's value lives here -- see g_matDecay in materials.h
            for why it cannot expire by cooling the way fire does. */
         g_matDecay[m] = (m == MAT_COLDFIRE) ? 6 : 0;
 
@@ -1048,6 +1107,11 @@ void initMaterials() {
 
     initBgColours();
     initZoneColours();
+
+    /* AFTER the loop above, which assigns g_matDecay for every material and would
+       otherwise wipe these. */
+    initBurnLife();
+
     checkCloneColorInvariant();
 }
 

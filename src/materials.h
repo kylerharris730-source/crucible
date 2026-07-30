@@ -431,6 +431,34 @@ extern u8 g_matConducts[MAT_COUNT];
    would need a flag to say which. */
 extern u8 g_matWetInto[MAT_COUNT];
 
+/* What it has to TOUCH for that to happen. Coal wants STEAM, not water: standing
+   in a puddle is not a process, and requiring steam means a boiler -- water, a
+   heat source, and somewhere for the vapour to meet the coal. That is the smallest
+   apparatus that is actually an apparatus, and it puts a real step between "found
+   coal" and "can melt iron". */
+extern u8 g_matWetBy[MAT_COUNT];
+
+/* --- natural heat -----------------------------------------------------------
+   A temperature the BACKGROUND holds its cell at, as a floor. 0 for almost
+   everything.
+
+   This is what makes a lava hotspot a place rather than a decoration. Deep chunks
+   generated with a molten backdrop pin their cells hot, so the stone in them melts
+   on its own and stays melted -- and if you tap one, what drains out cools and
+   freezes like any other lava, while the pocket itself stays hot and refills the
+   space you opened. It is a permanent geological feature you build around, not a
+   puddle that evaporates the moment you find it.
+
+   A floor rather than a setpoint, so it can only ever ADD heat. Something hotter
+   sitting in a hotspot is left alone, which matters because a furnace built inside
+   one should still work normally.
+
+   Costs nothing extra: it is read from the same bg byte g_bgRetain already
+   fetches, in the same branch. And a cell already at or above the floor is not
+   written, so a settled pocket stops dirtying its chunk and goes to sleep like
+   anything else. */
+extern u8 g_bgHeat[MAT_COUNT];
+
 /* --- what the BACKGROUND does to heat --------------------------------------
    How strongly the scenery behind a cell stops it drifting back to ambient,
    0..255, where 0 is "no effect" and 255 would be perfect insulation.

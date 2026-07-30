@@ -565,6 +565,72 @@ static void generateOre(World& w) {
     }
 }
 
+
+/* ==========================================================================
+   Lava hotspots
+   ==========================================================================
+
+   Blobs of deep rock generated with a MOLTEN BACKDROP, which pins them above
+   stone's melting point so they turn to lava on their own and stay that way. See
+   g_bgHeat in materials.h for the mechanism; this only chooses where.
+
+   They are the natural high-temperature source, and the balance question they
+   raise -- why bother making fuel if you can dig out a lava pocket and use it as a
+   furnace -- answers itself from a measurement rather than from a rule. Lava
+   delivers about 175 C into a charge, which smelts copper and cannot touch iron's
+   190. It sits on exactly the same rung as coal. So a hotspot is a fine free
+   copper furnace and a dead end for iron, and fuel remains the only route to the
+   top of the ladder. Nothing had to be nerfed to make that true.
+
+   Deliberately DEEP and SPARSE. Deep because a hotspot near the surface would be
+   the first thing anyone found and would skip the coal step entirely; sparse
+   because the interesting version of a free heat source is one you build a
+   settlement around, not one you trip over. */
+static const int HOT_COUNT   = 14;     /* blobs in the whole world */
+static const int HOT_MIN_DEP = 900;    /* cells below the stone line, at least */
+static const int HOT_R       = 46;     /* radius, in cells */
+
+static void generateHotspots(World& w) {
+    for (int i = 0; i < HOT_COUNT; ++i) {
+        const float fx = ((float)i + 0.5f) / (float)HOT_COUNT * (float)SIM_W
+                       + (float)(int)(hash1(i, 0xB00Bu) % 300u) - 150.0f;
+        const int cx = imin(PLAY_X1 - HOT_R - 4, imax(PLAY_X0 + HOT_R + 4, (int)fx));
+        const int top = g_stoneY[cx] + HOT_MIN_DEP;
+        const int span = imax(1, (PLAY_Y1 - 80) - top);
+        int cy = top + (int)(hash1(i, 0xF17Eu) % (u32)span);
+        if (cy > PLAY_Y1 - HOT_R - 20) cy = PLAY_Y1 - HOT_R - 20;
+        if (cy < top) continue;
+
+        /* An irregular blob rather than a disc -- a perfectly round pocket of lava
+           reads as something that was placed. Radius wobbles with angle. */
+        const int r2max = (HOT_R * 3 / 2) * (HOT_R * 3 / 2);
+        for (int y = cy - HOT_R * 3 / 2; y <= cy + HOT_R * 3 / 2; ++y) {
+            if (y < PLAY_Y0 || y > PLAY_Y1) continue;
+            for (int x = cx - HOT_R * 3 / 2; x <= cx + HOT_R * 3 / 2; ++x) {
+                if (x < PLAY_X0 || x > PLAY_X1) continue;
+                const int dx = x - cx, dy = y - cy;
+                const int d2 = dx * dx + dy * dy;
+                if (d2 > r2max) continue;
+                const float wob = 1.0f + fbm((float)(dx + dy) / 18.0f, 0xC0DEu + (u32)i, 3) * 0.35f;
+                const float rr = (float)HOT_R * wob;
+                if ((float)d2 > rr * rr) continue;
+                /* Only where there is rock. A hotspot that reached into a cave
+                   would fill it with lava from nowhere; one that reached the soil
+                   would cook the surface. */
+                if (w.at(x, y).mat != MAT_STONE) continue;
+                w.setBg(x, y, MAT_LAVA, false);
+                /* Lit here, not left to the backdrop to light. updateHeat is only
+                   entered for a cell that is already off ambient, so a hotspot that
+                   started cold would never be visited to be warmed -- the floor in
+                   g_bgHeat MAINTAINS the heat, it cannot start it. Generation
+                   provides the initial state and the backdrop stops it fading. */
+                w.temp[y * SIM_W + x] = g_bgHeat[MAT_LAVA];
+                w.dirtyPoint(x, y);
+            }
+        }
+    }
+}
+
 void generateWorld(World& w) {
     w.reset();
 
@@ -623,6 +689,9 @@ void generateWorld(World& w) {
        would carve the ore back out again and nothing would ever be visible from
        inside one. */
     generateOre(w);
+    /* Hotspots last, so they can test for stone and skip anything caves or veins
+       already claimed. */
+    generateHotspots(w);
 
     /* --- zones ------------------------------------------------------------
        A chunk is underground only if it is ENTIRELY below the ground, using

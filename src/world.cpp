@@ -598,6 +598,25 @@ void World::updateHeat(int x, int y) {
         }
     }
 
+    /* --- natural heat ---------------------------------------------------
+       A molten backdrop holds its cells at a floor temperature, which is what
+       makes a lava hotspot a permanent feature rather than a pocket that cools
+       out the first time you look at it. See g_bgHeat in materials.h.
+
+       Outside the cooling roll above, because this has to hold whether or not
+       the cell was drifting -- but still only a single table lookup on a byte
+       already fetched for retention, and it writes NOTHING when the cell is
+       already at or above the floor, so a settled pocket dirties no chunk and
+       sleeps like anything else. */
+    {
+        const u8 floorMat = (u8)(bg[i] & BG_MAT_MASK);
+        const u8 floorT = g_bgHeat[floorMat];
+        if (floorT && temp[i] < floorT) {
+            temp[i] = floorT;
+            dirtyPoint(x, y);
+        }
+    }
+
     dirtyPoint(x, y);
 }
 
@@ -977,6 +996,32 @@ void World::updateCell(int x, int y) {
         temp[i] = latentDrain(t);
         return;
     }
+    /* Slaking: coal touching STEAM becomes fuel, and the steam is spent.
+
+       BEFORE the ignition check below, and that ordering is the whole reason the
+       steam route works at all. Steam spawns at 115 C and coal ignites at 90, so a
+       coal pile held in steam is by definition above its own ignition point --
+       tested the other way round it simply caught fire and made no fuel ever.
+       Slaking winning is also the right physical story: wet coal does not light. Sits
+       beside quenchedBy because the shape is identical -- look at four neighbours
+       for a particular material -- but the two are deliberately separate columns.
+       A quench DESTROYS the cell and dumps its heat into whatever put it out; this
+       TRANSFORMS it and is a cold process on cold coal. See g_matWetInto. */
+    if (g_matWetInto[c.mat]) {
+        for (int k = 0; k < 4; ++k) {
+            const int nx = x + NB_DX[k], ny = y + NB_DY[k];
+            const int j = ny * SIM_W + nx;
+            if (cells[j].mat != g_matWetBy[c.mat]) continue;
+            convert(x, y, g_matWetInto[c.mat]);
+            /* The steam is consumed. That is what stops fuel being free -- it costs
+               a boiler, which costs water and a heat source, which is why there is
+               a lake and why coal is the thing you find first. */
+            spawnCell(nx, ny, MAT_EMPTY);
+            dirtyPoint(nx, ny);
+            return;
+        }
+    }
+
     if (m.igniteTemp) {
         /* A flammable cell catches two ways: heated past its ignition point by
            anything (lava, the heat tool, a nearby blaze), or simply by
@@ -1022,25 +1067,6 @@ void World::updateCell(int x, int y) {
         convert(x, y, MAT_EMPTY);
         return;
     }
-    /* Slaking: coal touching water becomes fuel, and the water is spent. Sits
-       beside quenchedBy because the shape is identical -- look at four neighbours
-       for a particular material -- but the two are deliberately separate columns.
-       A quench DESTROYS the cell and dumps its heat into whatever put it out; this
-       TRANSFORMS it and is a cold process on cold coal. See g_matWetInto. */
-    if (g_matWetInto[c.mat]) {
-        for (int k = 0; k < 4; ++k) {
-            const int nx = x + NB_DX[k], ny = y + NB_DY[k];
-            const int j = ny * SIM_W + nx;
-            if (cells[j].mat != MAT_WATER) continue;
-            convert(x, y, g_matWetInto[c.mat]);
-            /* The water is consumed. That is what stops fuel being free: it costs
-               a trip to water, which is why there is a lake. */
-            spawnCell(nx, ny, MAT_EMPTY);
-            dirtyPoint(nx, ny);
-            return;
-        }
-    }
-
     if (m.quenchedBy) {
         for (int k = 0; k < 4; ++k) {
             const int nx = x + NB_DX[k], ny = y + NB_DY[k];
@@ -1114,6 +1140,7 @@ void World::updateCell(int x, int y) {
     if (g_matDrive[c.mat]) {
         const int drive = g_matDrive[c.mat];
         const int set = temp[i];
+        int spent = 0;
         for (int k = 0; k < 4; ++k) {
             const int nx = x + NB_DX[k], ny = y + NB_DY[k];
             const int j = ny * SIM_W + nx;
@@ -1122,8 +1149,41 @@ void World::updateCell(int x, int y) {
                should not actively chill something hotter than itself, which an
                unsigned "drive toward" would do to molten metal sitting on it. */
             if (tj >= set) continue;
-            temp[j] = (u8)imin(set, tj + drive);
+            const int give = imin(drive, set - tj);
+            temp[j] = (u8)(tj + give);
+            spent += give;
             dirtyPoint(nx, ny);
+        }
+        /* And it COSTS the fire what it gave, shifted by its own thermal mass --
+           the same accounting conduction uses. Without this the drive creates heat
+           from nothing, and the consequence is not a slow drift, it is a fire that
+           can never go out: a burning cell held its neighbours at its own
+           temperature, which drove the conduction gradient to zero so ordinary
+           conduction could not carry heat out of it either, and two adjacent
+           burning cells propped each other up for ever. Measured, a firebox of
+           either fuel was still 403 cells alight at exactly its spawn temperature
+           after 40000 frames, where ordinary fire goes out in 576.
+
+           A packed firebox therefore burns from the OUTSIDE IN, which is both
+           correct and the reason a big one lasts: an interior cell whose
+           neighbours are all equally hot gives nothing away and spends nothing. */
+        if (spent) {
+            /* The fractional part is paid as a PROBABILITY, not truncated away.
+               That is not a nicety -- it was the whole reason the first fix did
+               nothing. The loss is `spent` shifted down by the fuel's thermal
+               mass, and at shift 5 anything under 32 shifts to zero; in steady
+               state the gaps a fire is closing are only a degree or two, so the
+               integer loss was always exactly 0 and the fire still never went out.
+               Sub-unit rates are handled the same way everywhere else here -- see
+               AIR_COOL and the slide chance -- for the same reason. */
+            const int shift = MATS[c.mat].heatMassShift;
+            int loss = spent >> shift;
+            const int rem = spent - (loss << shift);
+            if (rem && rngChance((u32)((rem << 8) >> shift))) ++loss;
+            if (loss) {
+                const int now = temp[i];
+                temp[i] = (u8)(now > loss ? now - loss : 0);
+            }
         }
     }
 
