@@ -584,6 +584,22 @@ static const int LIGHT_MIN_SHADE = 40;
    mine in front of it looks broken. A position hash is fixed forever. */
 extern u32 g_bgColorLut[MAT_COUNT * 16];
 
+/* The same thing for background a PLAYER PUT THERE, and it is a good deal
+   lighter. Two LUTs rather than one because the BG_PLACED bit already tells the
+   two apart and nothing was using it for colour.
+
+   The dark version above is right for what it was written for -- the natural rock
+   face behind a tunnel you dug, which should read as "not reachable" and stay out
+   of the way. It is wrong for masonry. At 34% toward the material's own colour, a
+   wall you built in daylight rendered as a near-black rectangle against the sky:
+   not dim, but reading as a HOLE, or as a shadow cast by something that was not
+   there. That is the opposite of what building a wall should look like.
+
+   Placed background is finished work and should look like it. Still clearly
+   behind the foreground -- it must never compete with material you can touch --
+   but plainly a surface rather than an absence. */
+extern u32 g_bgPlacedLut[MAT_COUNT * 16];
+
 /* --- zone backdrops --------------------------------------------------------
    What shows when there is no wall behind a cell at all. Which of these two
    applies is a per-chunk label, never a depth test -- see ZoneId in world.h.

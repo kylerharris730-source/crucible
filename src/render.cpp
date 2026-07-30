@@ -22,8 +22,15 @@ static const u32 VOID_COLOUR = 0x000000;
    bright; looking at the back wall of the shaft you see stone and it is dark.
    That is the distinction that matters and it is the one this makes. */
 static inline u32 backdrop(const World& w, int wx, int wy, int i, bool* openSky) {
-    const u8 b = (u8)(w.bg[i] & BG_MAT_MASK);
-    if (b) return g_bgColorLut[((u32)b << 4) | bgSpeckle(wx, wy)];
+    const u8 raw = w.bg[i];
+    const u8 b = (u8)(raw & BG_MAT_MASK);
+    if (b) {
+        /* Built or natural. The bit is already in hand, so telling the two apart
+           costs one test -- see g_bgPlacedLut for why they should not look the
+           same. */
+        const u32 idx = ((u32)b << 4) | bgSpeckle(wx, wy);
+        return (raw & BG_PLACED) ? g_bgPlacedLut[idx] : g_bgColorLut[idx];
+    }
 
     /* Nothing behind this cell at all. What you see then is the chunk's ZONE,
        looked up as a label -- not worked out from wy. The ramp below is indexed

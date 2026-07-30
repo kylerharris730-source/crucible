@@ -644,6 +644,7 @@ u8  g_matLight[MAT_COUNT];
 u8  g_matOpacity[MAT_COUNT];
 u8  g_lightShade[256];
 u32 g_bgColorLut[MAT_COUNT * 16];
+u32 g_bgPlacedLut[MAT_COUNT * 16];
 u32 g_skyLut[SKY_BAND];
 u32 g_caveLut[16];
 
@@ -943,10 +944,24 @@ static void initBgColours() {
                tellable apart behind you -- which they have to be, since the
                background is how you read what layer you have dug into. */
             g_bgColorLut[(m << 4) | k] = lerpColor(0x090B11, face, 88);
+            /* Placed: 45% of the way rather than 34%, and lifted off a base three
+               times lighter than the natural one. Both parts matter -- it was the
+               near-black FLOOR that made a built wall read as a hole, more than the
+               blend did. See g_bgPlacedLut in materials.h.
+
+               Not lighter still: at 60% it measured 82% of the luminance of the
+               material in front of it, and background that close genuinely does
+               compete with the foreground for attention, which is the thing the
+               original darkness was protecting. 115 lands at 70% -- plainly a
+               surface, plainly still behind. */
+            g_bgPlacedLut[(m << 4) | k] = lerpColor(0x1A1D24, face, 115);
         }
     }
     /* Nothing behind you at all is the void, not a dark grey. */
-    for (int k = 0; k < 16; ++k) g_bgColorLut[(MAT_EMPTY << 4) | k] = 0x000000;
+    for (int k = 0; k < 16; ++k) {
+        g_bgColorLut[(MAT_EMPTY << 4) | k]  = 0x000000;
+        g_bgPlacedLut[(MAT_EMPTY << 4) | k] = 0x000000;
+    }
 }
 
 /* See g_matPassable in materials.h. A whitelist rather than a rule derived from
