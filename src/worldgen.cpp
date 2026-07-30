@@ -1,8 +1,10 @@
 #include "worldgen.h"
 #include "player.h"
 #include <string.h>
+#include <math.h>
 
 int g_surfaceY[SIM_W];
+int g_stoneY[SIM_W];
 
 /* --- 1D value noise --------------------------------------------------------
    Hash the integer lattice, smoothstep between neighbours. Deterministic from
@@ -123,6 +125,265 @@ static void columnAt(int x, int* surfaceOut, int* soilOut) {
     *soilOut = (int)soil;
 }
 
+/* ==========================================================================
+   Caves
+   ==========================================================================
+
+   Carved by WORMS -- a few dozen wandering agents, each cutting a disc as it
+   goes -- rather than by thresholding 3D noise.
+
+   Noise is the usual answer and it is the wrong one here for two reasons. It
+   produces disconnected pockets ("cheese"), and a cave you cannot reach is
+   indistinguishable from solid rock, so connectivity would then need solving
+   separately. And it gives you no handle on the thing that was actually asked
+   for: a cave going into the base of the mountain is one particular tunnel with
+   a mouth in a particular place, which is a worm with a start point and a
+   heading, and is not expressible as a noise threshold at all. Worms also cost
+   only the cells they carve, where a threshold costs a test per underground
+   cell -- 7.6M of them.
+
+   --- the number that decides everything ---
+   CAVE_MIN_R. The character is PLAYER_H = 22 cells tall, so a tunnel narrower
+   than that in its tight dimension is not a cave, it is a wall you are allowed
+   to look at. This is the trap in porting cave-generation intuition from games
+   whose player is two tiles tall: radius 5 sounds like a generous tunnel and is
+   less than half the height of the person meant to walk down it. Every radius
+   here is therefore quoted against the body, not against the world.
+
+   --- determinism ---
+   Same discipline as columnAt: everything is derived from hash1/fbm on the
+   worm's index and its own arc length, and the global rng is never touched.
+   Generation must not depend on how many random numbers were drawn before it, or
+   the world would change shape according to what the player did last session. */
+
+/* Radius floor, in cells. 13 gives a 26-cell bore against a 22-cell body: enough
+   to walk down without the head clipping the roof on every bump, and enough that
+   a jump inside a tunnel is not immediately punished. */
+static const int   CAVE_MIN_R    = 13;
+/* How much the radius noise is allowed to swell a tunnel. Chambers are the same
+   worm running fat for a while, not a separate feature -- which is why the
+   variation is noise along arc length rather than an event. */
+static const float CAVE_FAT      = 0.60f;
+/* Cells of rock always left between a cave roof and the open air above it, so
+   caves do not open the surface into sinkholes. The entrance adit is the one
+   exception and asks for it explicitly. */
+static const int   CAVE_ROOF     = 40;
+/* Cells of STONE always left above a cave roof. Smaller than CAVE_ROOF because
+   rock does not need much to hold itself up -- it needs to be rock at all. The
+   job of this number is only to keep the ceiling clear of the soil boundary, so
+   that a grain of dirt is never the thing above a void. */
+static const int   CAVE_ROCK     = 12;
+/* Deepest a cave may reach, clear of the world's border wall. */
+static const int   CAVE_FLOOR_Y  = SIM_H - 60;
+/* How far a worm turns off its base heading, in radians. Held well under a
+   quarter turn so tunnels meander rather than doubling back -- a worm that can
+   reverse spends its length re-carving what it already cut. */
+static const float CAVE_SWING    = 1.15f;
+
+/* Carve one disc. Cells only: the BACKGROUND is deliberately left alone, so a
+   cave shows the natural rock behind it exactly as a dug tunnel does. Setting
+   bg to 0 here would open every cave onto the void -- see the note on World::bg
+   -- and setting it to placed stone would make the whole underground read as
+   somebody's masonry, and would count as a room. */
+static void carveDisc(World& w, int cx, int cy, int r) {
+    const int r2 = r * r;
+    const int x0 = imax(PLAY_X0, cx - r), x1 = imin(PLAY_X1, cx + r);
+    const int y0 = imax(PLAY_Y0, cy - r), y1 = imin(PLAY_Y1, cy + r);
+    for (int y = y0; y <= y1; ++y) {
+        const int dy = y - cy;
+        for (int x = x0; x <= x1; ++x) {
+            const int dx = x - cx;
+            if (dx * dx + dy * dy > r2) continue;
+            w.setCell(x, y, MAT_EMPTY);
+        }
+    }
+}
+
+/* Walk a worm, carving as it goes. Returns the number of cells visited, and
+   optionally samples its path so branches can be started ON it -- which is how
+   the entrance is guaranteed to lead somewhere rather than hoping two
+   independent worms happen to cross.
+
+   `breachFor` is how many steps at the start may cut through to open sky. Zero
+   for every ordinary cave; the entrance adit is the exception. */
+struct CavePoint { int x, y; };
+
+static void carveWorm(World& w, u32 seed, float x, float y, float baseAng,
+                      int steps, float rBase, int breachFor,
+                      CavePoint* path = 0, int* pathLen = 0, int pathMax = 0) {
+    const int sampleEvery = steps / (pathMax > 0 ? pathMax : 1) + 1;
+    int pinned = 0;
+    for (int s = 0; s < steps; ++s) {
+        const float t = (float)s;
+        /* Heading is the base direction PLUS a noise offset, not an integrated
+           random walk. Integrating turns produces spirals: the angle drifts
+           without a restoring force and the worm eats its own tail. Offsetting
+           from a fixed base keeps a tunnel going somewhere while still
+           wandering. */
+        const float ang = baseAng + fbm(t / 90.0f, seed, 3) * CAVE_SWING;
+        float r = rBase * (1.0f + fbm(t / 55.0f, seed + 4441u, 2) * CAVE_FAT);
+        if (r < (float)CAVE_MIN_R) r = (float)CAVE_MIN_R;
+
+        x += cosf(ang);
+        y += sinf(ang);
+
+        /* Stay inside the world with room for the disc. */
+        if (x < (float)(PLAY_X0 + 4)  || x > (float)(PLAY_X1 - 4)) break;
+        if (y > (float)CAVE_FLOOR_Y) y = (float)CAVE_FLOOR_Y;
+
+        /* Keep the roof on. Clamping rather than stopping, because a worm that
+           halted the instant it grazed the ceiling would leave caves ending
+           abruptly just under the surface, where the player is most likely to be
+           looking.
+
+           But clamping alone is wrong too, and the overview showed why: a worm
+           heading upward gets held at the ceiling and then runs ALONG it,
+           carving a tunnel that follows the mountainside for hundreds of cells at
+           a constant depth. Nothing in nature draws a line parallel to a
+           hillside, and it was the most artificial thing in the picture.
+
+           So a worm may graze the roof but not live there: once it has been
+           pinned for PIN_LIMIT consecutive steps it has genuinely run out of
+           room upward and stops. Consecutive is the operative word -- the
+           counter resets whenever the worm gets clear, so a tunnel that dips
+           under a rise and comes back is unaffected. */
+        static const int PIN_LIMIT = 25;
+        const int ix = (int)x;
+        if (s >= breachFor) {
+            /* Measured across the whole width of the disc, not just the column
+               under its centre. The centre-only version is the obvious one and it
+               leaks: the disc is up to 24 cells wide either side, and on the
+               mountain the surface climbs about 1.5 cells per cell, so the ground
+               at the disc's uphill edge sits ~36 cells above the ground at its
+               centre -- comparable to the entire 40-cell roof. Caves duly poked
+               out of the hillside, and the topsoil check measured 158 open cells
+               in the first 20 below the surface where it should have found only
+               the adit mouth.
+
+               The column that binds is the one with the LARGEST surfaceY, which
+               is worth pausing on because the intuition runs the other way: y
+               grows downward, so high ground has a SMALL surfaceY and the
+               constraint it imposes is weak. Taking the minimum -- "the highest
+               ground the disc spans" -- reads correctly in English and is the
+               loosest bound of the lot; it made this worse rather than better,
+               158 open cells becoming 266. It is the LOWEST ground in the span
+               that the disc has to stay beneath.
+
+               Conservative rather than exact: the true bound at horizontal offset
+               dx is surfaceY + CAVE_ROOF + sqrt(r^2 - dx^2), since a disc is only
+               one cell tall at its edge. Using the full r everywhere buys a
+               slightly deeper cave for far less arithmetic, and erring deep is
+               the safe direction. */
+            int lowSurf = g_surfaceY[ix], lowRock = g_stoneY[ix];
+            const int sx0 = imax(PLAY_X0, ix - (int)r), sx1 = imin(PLAY_X1, ix + (int)r);
+            for (int sx = sx0; sx <= sx1; ++sx) {
+                if (g_surfaceY[sx] > lowSurf) lowSurf = g_surfaceY[sx];
+                if (g_stoneY[sx]   > lowRock) lowRock = g_stoneY[sx];
+            }
+            /* BOTH rules, whichever is stricter. They guard different things and
+               neither implies the other. The surface rule keeps caves from showing
+               through a hillside; the ROCK rule keeps the ceiling standing up,
+               because dirt is a powder and a cave roofed in soil collapses to the
+               surface the first time the world is simulated -- see g_stoneY in
+               worldgen.h for the measured damage. On the plains the rock rule binds
+               (52 cells of soil plus CAVE_ROCK), on the bare mountain the surface
+               rule does (no soil at all, so the two coincide and CAVE_ROOF wins). */
+            const float floorY = fmaxf((float)(lowSurf + CAVE_ROOF),
+                                       (float)(lowRock + CAVE_ROCK)) + r;
+            if (y < floorY) { y = floorY; if (++pinned > PIN_LIMIT) break; }
+            else pinned = 0;
+        }
+        if (y > (float)CAVE_FLOOR_Y) break;
+
+        carveDisc(w, ix, (int)y, (int)r);
+
+        if (path && pathLen && *pathLen < pathMax && (s % sampleEvery) == 0) {
+            path[*pathLen].x = ix; path[*pathLen].y = (int)y; ++*pathLen;
+        }
+    }
+}
+
+/* The way in. A single adit starting on open ground at the mountain's NEAR foot
+   -- the side the player walks in from, since they spawn at a fifth of the way
+   across and the mountain begins at 0.46 -- heading into the rock and down.
+
+   It is placed rather than generated, and that is the point of having worms at
+   all: "there is a cave you can find at the bottom of the mountain" is a
+   statement about one specific place, and no amount of tuning a global cave
+   density expresses it. Everything else about it is noise-driven like any other
+   worm, so it does not read as a corridor somebody installed. */
+static void carveEntrance(World& w, CavePoint* path, int* pathLen, int pathMax) {
+    const int mouthX = (int)(R_FOOT_END * (float)SIM_W) + 40;
+    /* Start a little UNDER the surface, not on it. Starting exactly at ground
+       level puts the disc's top half in the sky and leaves a crater around the
+       mouth rather than an opening in a hillside. */
+    const float y0 = (float)(g_surfaceY[mouthX] + CAVE_MIN_R);
+    /* Rightward and gently down: into the mountain, which rises to the right. */
+    carveWorm(w, 20260729u, (float)mouthX, y0, 0.42f, 900, 15.0f,
+              /* breachFor */ 60, path, pathLen, pathMax);
+}
+
+static void generateCaves(World& w) {
+    /* The entrance first, so branches can hang off it. */
+    static CavePoint trunk[24];
+    int trunkLen = 0;
+    carveEntrance(w, trunk, &trunkLen, 24);
+
+    /* Branches off the trunk, so the entrance leads into a system rather than to
+       a dead end. Started at sampled points ON the adit, which is the whole
+       reason carveWorm reports its path -- relying on independent worms to
+       intersect is relying on luck, and the one cave the player is certain to
+       find is the one that must not be a cul-de-sac.
+
+       SPARSELY, and at continuous angles, and both of those are corrections to a
+       version that produced two obvious starbursts. It branched every 3rd sample
+       -- about every 110 cells -- and drew the heading from four discrete
+       diagonals, so a short stretch of trunk sprayed tunnels up-left, up-right,
+       down-left and down-right at once and the eye read a hub with spokes. The
+       origins were not crowded (checked: 2 and 0 worm origins within 120 cells of
+       each hub) and the trunk was not doubling back (96% efficient) -- it was the
+       BRANCHING RATE against the discreteness of the angles.
+
+       Every 7th sample is roughly one junction per 270 cells, which at 26-cell
+       bores is far enough apart to read as separate junctions.
+
+       Headings are biased DOWNWARD, into the rock. An adit's branches wanting to
+       climb is what fed the roof-clamp problem above, and it is also just wrong:
+       a cave leading in from a hillside should take you deeper, and the way down
+       is the thing the player is looking for. */
+    for (int i = 2; i < trunkLen; i += 7) {
+        const u32 seed = 5150u + (u32)i * 9173u;
+        /* 0.35 .. 2.79 rad: every direction with a downward component, excluding
+           straight up and the two near-horizontals that would run alongside the
+           trunk. Continuous, so no two branches share a heading. */
+        const float f = (float)(hash1(i, 771u) % 1000u) / 1000.0f;
+        const float ang = 0.35f + f * 2.44f;
+        carveWorm(w, seed, (float)trunk[i].x, (float)trunk[i].y, ang,
+                  500 + (int)(hash1(i, 313u) % 600u), 14.0f, 0);
+    }
+
+    /* And caves everywhere else, so the underground is worth exploring away
+       from the one entrance too. Spread by index rather than placed at random so
+       coverage is even without any rejection sampling. */
+    const int WORMS = 26;
+    for (int i = 0; i < WORMS; ++i) {
+        const u32 seed = 31u + (u32)i * 6151u;
+        const float fx = ((float)i + 0.5f) / (float)WORMS * (float)SIM_W
+                       + (float)(int)(hash1(i, 4523u) % 200u) - 100.0f;
+        const int ix = imin(PLAY_X1 - 8, imax(PLAY_X0 + 8, (int)fx));
+        /* Depth spread through the rock under this column, never in the soil. */
+        const int top  = g_surfaceY[ix] + CAVE_ROOF + 2 * CAVE_MIN_R;
+        const int span = imax(1, CAVE_FLOOR_Y - top - 100);
+        const float fy = (float)(top + (int)(hash1(i, 8677u) % (u32)span));
+        /* Mostly horizontal headings: a vertical tunnel is a shaft you fall
+           down, and a cave you can walk along is worth more of them. */
+        const float ang = ((hash1(i, 2287u) & 1) ? 3.14159f : 0.0f)
+                        + ((float)(int)(hash1(i, 7717u) % 100u) / 100.0f - 0.5f) * 0.7f;
+        carveWorm(w, seed, (float)ix, fy, ang,
+                  600 + (int)(hash1(i, 1543u) % 900u), 14.0f, 0);
+    }
+}
+
 void generateWorld(World& w) {
     w.reset();
 
@@ -133,6 +394,7 @@ void generateWorld(World& w) {
         g_surfaceY[x] = surf;
 
         const int stoneTop = surf + soil;
+        g_stoneY[x] = stoneTop;
         for (int y = surf; y <= PLAY_Y1; ++y) {
             const u8 m = (y < stoneTop) ? MAT_DIRT : MAT_STONE;
             w.setCell(x, y, m);
@@ -163,6 +425,13 @@ void generateWorld(World& w) {
     }
     g_surfaceY[0] = g_surfaceY[PLAY_X0];
     g_surfaceY[SIM_W - 1] = g_surfaceY[PLAY_X1];
+    g_stoneY[0] = g_stoneY[PLAY_X0];
+    g_stoneY[SIM_W - 1] = g_stoneY[PLAY_X1];
+
+    /* Caves, after the columns exist -- every worm reads g_surfaceY to know how
+       much roof to leave, so this cannot run earlier. Before the zone pass only
+       by convention: zones depend on the heightmap, which caves do not change. */
+    generateCaves(w);
 
     /* --- zones ------------------------------------------------------------
        A chunk is underground only if it is ENTIRELY below the ground, using
