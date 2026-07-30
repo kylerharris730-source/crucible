@@ -53,6 +53,13 @@ void Player::reset(float cx, float cy) {
     facing    = 1;
     walkPhase = 0.0f;
     frame     = PF_IDLE;
+    /* Equipment is the host's to publish; a fresh player has none, which is
+       what every headless harness wants and what respawning should do to a
+       half-empty tank. */
+    fly.thrust = fly.riseCap = fly.refuel = 0.0f;
+    fly.fuel   = 0;
+    fuel       = 0.0f;
+    thrusting  = false;
 }
 
 /* Picks the frame from what the body is actually doing, rather than from what
@@ -128,6 +135,41 @@ void Player::update(const World& w, const PlayerInput& in) {
     /* --- vertical ------------------------------------------------------ */
     if (in.jump && onGround) { vy = -JUMP_VEL; onGround = false; }
     vy += GRAVITY;
+
+    /* --- thrust --------------------------------------------------------
+       Applied AFTER gravity, so `riseCap` is a true rate of climb rather than
+       a rate that gravity then eats into -- otherwise the number you tune is
+       not the number you get, and it drifts with GRAVITY.
+
+       The key is the jump key, held. That means a jump runs straight into
+       thrust with no second press, which is the whole feel of rocket boots:
+       you leave the ground and keep going. It also means thrust only ever
+       happens off the ground, since jumping consumed the ground contact
+       above.
+
+       The guard is what keeps it from braking. Rising out of a jump at 2.6
+       cells/frame is far faster than any riseCap here, and clamping to the cap
+       would stop the jump dead the instant you kept the key down -- a jetpack
+       that makes you jump LOWER. So the cap only applies to a rise it would
+       speed up.
+
+       Fuel is spent only when the thrust ACTUALLY DID SOMETHING, which is
+       inside the guard rather than outside it. Charging for every frame the key
+       is held sounds equivalent and is not: a jump rises faster than any
+       riseCap for its first fourteen frames, so more than half of a boot's tank
+       was going on frames where the guard had already declined to apply any
+       thrust. Measured, that cost the boots almost all their point -- 25 cells
+       of height against a plain jump's 17, where spending the same fuel where
+       it works gives 31. You should not pay for a boost you did not get. */
+    thrusting = false;
+    if (in.jump && !onGround && fly.any() && fuel > 0.0f && vy > -fly.riseCap) {
+        vy -= fly.thrust;
+        if (vy < -fly.riseCap) vy = -fly.riseCap;
+        fuel -= 1.0f;
+        if (fuel < 0.0f) fuel = 0.0f;
+        thrusting = true;
+    }
+
     if (vy > MAX_FALL) vy = MAX_FALL;
 
     /* --- move ----------------------------------------------------------
@@ -211,6 +253,15 @@ void Player::update(const World& w, const PlayerInput& in) {
        at speed. Zeroing it keeps standing still genuinely still. */
     if (onGround && vy > 0.0f) vy = 0.0f;
 
+    /* Refuel on the ground only, and clamp to whatever is equipped NOW -- swap
+       a Mk III for boots and the tank has to shrink with it, or the boots
+       inherit a jetpack's range. */
+    if (onGround) {
+        fuel += fly.refuel;
+        if (fuel > (float)fly.fuel) fuel = (float)fly.fuel;
+    }
+    if (fuel > (float)fly.fuel) fuel = (float)fly.fuel;
+
     animate();
 }
 
@@ -257,6 +308,41 @@ void Player::draw(u32* px, int camX, int camY, bool lit) const {
                the feet up and the whole sprite stepping through a brightness
                threshold at once. */
             px[wy * VIEW_CELLS_W + wx] = lit ? shadeColor(c, viewShade(wx, wy)) : c;
+        }
+    }
+
+    /* --- the exhaust ---------------------------------------------------
+       Drawn rather than made part of the sprite, because it has to flicker and
+       because it hangs BELOW the collision box -- a plume inside the box would
+       have to be part of the hitbox, and then you could stand on your own
+       flame.
+
+       The flicker comes from the fuel counter, not from the rng. Rendering must
+       not draw from the global stream: the simulation shares it, so a plume
+       that consumed random numbers would make the whole world evolve
+       differently depending on whether a jetpack happened to be firing. That is
+       exactly the class of bug that made a plasma test report a regression in a
+       material nobody had touched. */
+    if (thrusting) {
+        const u32 CORE = 0xFFC24A, EDGE = 0xE05A20;
+        const int phase = (int)(fuel * 3.0f) & 3;
+        /* Two jets, under the heels, where the nozzles are on every sprite. */
+        const int jetX[2] = { 1, PLAYER_W - 3 };
+        for (int j = 0; j < 2; ++j) {
+            const int len = 3 + ((phase + j) & 1) + (fly.riseCap > 1.0f ? 2 : 0);
+            for (int t = 0; t < len; ++t) {
+                const int wy = by + PLAYER_H + t;
+                if (wy < 0 || wy >= VIEW_CELLS_H) continue;
+                /* Tapers to one cell: a plume of constant width reads as a
+                   rectangle hanging off the boots. */
+                const int wide = (t < len / 2) ? 2 : 1;
+                for (int k = 0; k < wide; ++k) {
+                    const int wx = bx + jetX[j] + k;
+                    if (wx < 0 || wx >= VIEW_CELLS_W) continue;
+                    const u32 c = (t < len / 2) ? CORE : EDGE;
+                    px[wy * VIEW_CELLS_W + wx] = c;   /* a flame lights itself */
+                }
+            }
         }
     }
 

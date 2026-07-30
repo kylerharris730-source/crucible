@@ -31,6 +31,10 @@ enum SpriteId {
     SPR_MINE3,
     SPR_MINE4,
     SPR_SEED,
+    SPR_BOOTS,       /* worn on the feet */
+    SPR_PACK1,       /* the jetpack ladder: one silhouette, three sizes */
+    SPR_PACK2,
+    SPR_PACK3,
     SPR_COUNT
 };
 

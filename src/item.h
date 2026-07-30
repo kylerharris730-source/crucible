@@ -1,6 +1,7 @@
 #pragma once
 #include "world.h"
 #include "sprite.h"
+#include "player.h"   /* FlightSpec: what worn flight gear resolves to */
 
 /* --- items and the inventory ----------------------------------------------
 
@@ -45,6 +46,14 @@ enum {
     ITEM_RELAY,
     /* Sown onto exposed dirt to start a lawn. See ITEMK_SEED. */
     ITEM_GRASS_SEED,
+    /* Flight. Boots go on the feet and packs on the back, so a jetpack does not
+       cost you your boots -- which is what leaves room for the speed boots to
+       compete for the FEET slot later, and makes combining the two a thing
+       crafting can reward rather than something the slots decide for you. */
+    ITEM_ROCKET_BOOTS,
+    ITEM_JETPACK1,
+    ITEM_JETPACK2,
+    ITEM_JETPACK3,
     ITEM_COUNT
 };
 
@@ -52,7 +61,19 @@ enum ItemKind {
     ITEMK_MATERIAL = 0,   /* stacks; one unit is one cell of world */
     ITEMK_TOOL,           /* unique, carries its own state */
     ITEMK_MODULE,         /* slots into a tool to change what it does */
-    ITEMK_CARRIED,        /* passive: works from anywhere in the pack */
+    /* --- ITEMK_WORN ------------------------------------------------------
+       Goes in an equipment slot and does its job from there. It used to be
+       ITEMK_CARRIED and work from anywhere in the pack, which was honestly
+       labelled a stopgap at the time -- the reach items needed somewhere to
+       live before there was anywhere to put them.
+
+       Equipping is the better rule for one reason: it makes the bonus a CHOICE.
+       Working from the pack meant the only cost of a reach extender was a slot,
+       and a slot is nearly free once you have ten of them; two named slots and
+       two trinket slots mean putting one on is deciding not to wear something
+       else. It also means the character's abilities are somewhere you can look
+       at them, rather than being an emergent property of your luggage. */
+    ITEMK_WORN,
     /* --- ITEMK_MINING ---------------------------------------------------
        Held to dig better. It gates DESTRUCTION only, never construction, and
        the asymmetry is the design rather than an oversight.
@@ -91,12 +112,28 @@ struct ItemDef {
     u32  maxStack;
     u32  colour;          /* for the hotbar swatch */
 
-    /* Cells of extra reach while this is anywhere in the pack. Bonuses do NOT
-       add up: the pack's bonus is the single largest one carried. Summing would
-       make ten cheap lenses better than one good relay, which turns an upgrade
-       ladder into an inventory-stuffing puzzle -- and the slot pressure that is
-       supposed to make carrying one a real choice would evaporate. */
+    /* --- ITEMK_WORN only ---------------------------------------------
+       Which slot it occupies. EQ_COUNT for everything that is not worn, so
+       "is this equipment" and "where does it go" are one field rather than two
+       that can disagree.
+
+       For trinkets this names the FIRST of the interchangeable trinket slots
+       rather than one particular slot -- see equipFits(). Naming one exactly
+       would make the second trinket slot unreachable, which is what it did at
+       first: both reach items said EQ_TRINKET_A, so putting the relay on took
+       the lens off and half the equipment row could never be filled. */
+    u8   equipSlot;
+
+    /* Cells of extra reach while this is worn. Bonuses do NOT add up: the
+       bonus is the single largest one equipped. Summing would make two cheap
+       lenses better than one good relay, which turns an upgrade ladder into a
+       slot-stuffing puzzle. */
     i16  reachBonus;
+
+    /* Thrust, for boots and jetpacks. Zero on everything else, and resolved
+       through flightSpec() rather than read directly -- see the note there for
+       why two pieces of flight gear do not add up either. */
+    FlightSpec fly;
 
     /* --- ITEMK_TOOL only --------------------------------------------- */
     u8   toolSlots;   /* how many modules it holds; this IS the tier */
@@ -183,11 +220,55 @@ struct ItemStack {
     bool empty() const { return item == ITEM_NONE || count == 0; }
 };
 
+/* --- equipment slots -------------------------------------------------------
+   Named by where they go on the body, not numbered, because the whole value of
+   a typed slot is that it says what belongs in it. Two named slots and two
+   general ones: the named pair are for things there is obviously only one of,
+   and the trinkets are for everything that is simply "worn and passive" and
+   would otherwise need a slot invented per item.
+
+   FEET and BACK being separate is a design decision and not a taxonomy. Rocket
+   boots and a jetpack can be worn together, which is what leaves the FEET slot
+   contested once there are speed boots to put in it. */
+enum EquipSlot {
+    EQ_FEET = 0,
+    EQ_BACK,
+    EQ_TRINKET_A,
+    EQ_TRINKET_B,
+    EQ_COUNT
+};
+
+extern const char* const EQ_NAMES[EQ_COUNT];
+
+/* Whether an item may be worn in a given slot. Not simply `equipSlot ==
+   eqSlot`, because the two trinket slots are interchangeable: they exist so
+   that "worn and passive" needs no slot invented per item, and a trinket that
+   could only go in the first of them would leave the second permanently
+   empty. */
+bool equipFits(ItemId item, int eqSlot);
+
 struct Inventory {
     ItemStack slot[INV_SLOTS];
+    /* Worn, and therefore active. Kept as ItemStack rather than a bare ItemId
+       so that an equippable tool would keep its instance handle when worn --
+       nothing needs that today, and the alternative is a second kind of
+       container with its own rules for the first item that does. */
+    ItemStack equip[EQ_COUNT];
     int       selected;
 
     void clear();
+
+    /* Move one of `item` from the pack into the slot its definition names,
+       swapping out whatever was there. Returns false if it is not worn gear, or
+       if the pack has none, or if what came off could not be put away -- and in
+       that last case nothing changes at all, because a full pack must never be
+       a way to delete a jetpack. */
+    bool equipFromPack(ItemId item);
+    /* Take a slot's contents back into the pack. False if the pack is full, in
+       which case the item stays on. */
+    bool unequip(int eqSlot);
+    /* First pack slot holding something that would go in `eqSlot`, or -1. */
+    int  packWorn(int eqSlot) const;
 
     /* Adds up to `count`, filling existing stacks of the same item before
        opening new slots. Returns how many did NOT fit, so the caller can decide
@@ -204,7 +285,7 @@ struct Inventory {
     ItemStack& held() { return slot[selected]; }
     const ItemStack& held() const { return slot[selected]; }
 
-    /* Largest reachBonus among everything carried; 0 with nothing. */
+    /* Largest reachBonus among everything WORN; 0 with nothing. */
     int  reachBonus() const;
 
     /* The first tool in the pack, or -1. The inventory screen shows one tool's
@@ -260,6 +341,18 @@ extern const ToolSpec HAND;
    mining tool, otherwise HAND. Resolved on demand rather than cached, so
    swapping hotbar slots takes effect on the same frame. */
 ToolSpec miningSpec(const ItemStack& held);
+
+/* --- what you can fly with ------------------------------------------------
+   The best single piece of equipped flight gear, never the sum of two. Same
+   rule as reachBonus and for the same reason: adding a jetpack's thrust to a
+   pair of boots' would make wearing both strictly better than any single
+   upgrade, so the ladder would stop being a ladder and every tier would just be
+   another thing to hoard a slot for.
+
+   "Best" is by rate of climb, which is the number you can feel while holding
+   the key. Ranking by fuel instead would let a long-burning weak pack shadow a
+   strong short one, and the strong one is what you bought. */
+FlightSpec flightSpec(const Inventory& inv);
 
 
 /* --- disc offsets, ordered nearest-first ----------------------------------

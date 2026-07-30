@@ -78,6 +78,12 @@ static bool g_itemsReady = false;
 
 void initItems() {
     memset(ITEMS, 0, sizeof(ITEMS));
+    /* equipSlot's "not equipment" value is EQ_COUNT, not zero, so it cannot be
+       left to the memset -- zero is EQ_FEET, and every material in the game
+       would have claimed the boots slot. The alternative is a separate
+       "isEquipment" flag, which is two fields that can disagree about the same
+       thing; one field with an out-of-range sentinel cannot. */
+    for (int i = 0; i < ITEM_COUNT; ++i) ITEMS[i].equipSlot = EQ_COUNT;
     g_itemsReady = true;
     initDiscTable();
     initSprites();
@@ -216,17 +222,80 @@ void initItems() {
        which is the entire cost and is meant to bite once the pack is full of
        ore. */
     ITEMS[ITEM_LENS].name       = "Focusing Lens";
-    ITEMS[ITEM_LENS].kind       = ITEMK_CARRIED;
+    ITEMS[ITEM_LENS].kind       = ITEMK_WORN;
+    ITEMS[ITEM_LENS].equipSlot  = EQ_TRINKET_A;
     ITEMS[ITEM_LENS].maxStack   = 1;
     ITEMS[ITEM_LENS].colour     = 0x8FD8E8;
     ITEMS[ITEM_LENS].reachBonus = 28;
 
     ITEMS[ITEM_RELAY].name       = "Field Relay";
-    ITEMS[ITEM_RELAY].kind       = ITEMK_CARRIED;
+    ITEMS[ITEM_RELAY].kind       = ITEMK_WORN;
+    ITEMS[ITEM_RELAY].equipSlot  = EQ_TRINKET_A;
     ITEMS[ITEM_RELAY].maxStack   = 1;
     ITEMS[ITEM_RELAY].colour     = 0xB088E0;
     ITEMS[ITEM_RELAY].reachBonus = 56;
+
+    /* --- flight ------------------------------------------------------------
+       The ladder, and the numbers are chosen against the jump they extend
+       rather than against each other. A standing jump is JUMP_VEL 2.6 against
+       GRAVITY 0.18, which is about 18 cells of clearance and a quarter-second
+       apex (see player.cpp).
+
+         Rocket Boots  0.55 cells/frame for 26 frames is roughly 14 cells --
+                       so it about doubles a jump and no more. "A slight boost"
+                       has to stay a boost: at riseCap 1.1 it stopped reading as
+                       better boots and started reading as a bad jetpack, which
+                       is the wrong shape for the first rung.
+
+         Jetpack Mk I  1.1 for 90 frames is 99 cells, which is the rung where
+                       the verb changes from jumping to flying: it is more than
+                       the 18-cell jump by enough that you start routing around
+                       terrain instead of over it.
+
+         Mk II, Mk III faster and longer. Mk III's 320 frames is five seconds of
+                       climb, well over a screen height, which is where flight
+                       stops being a traversal tool and becomes the way you get
+                       anywhere.
+
+       Refuel is on the ground only and is deliberately NOT proportional to
+       capacity: boots recharge in 7 frames and a Mk III takes 80, so the boots
+       are something you use every jump and the big packs are something you
+       spend and then have to land. Making the big tiers refill as fast would
+       delete the only cost flight has. */
+    ITEMS[ITEM_ROCKET_BOOTS].name       = "Rocket Boots";
+    ITEMS[ITEM_ROCKET_BOOTS].kind       = ITEMK_WORN;
+    ITEMS[ITEM_ROCKET_BOOTS].equipSlot  = EQ_FEET;
+    ITEMS[ITEM_ROCKET_BOOTS].maxStack   = 1;
+    ITEMS[ITEM_ROCKET_BOOTS].colour     = 0xE0A050;
+    ITEMS[ITEM_ROCKET_BOOTS].sprite     = SPR_BOOTS;
+    ITEMS[ITEM_ROCKET_BOOTS].fly.thrust  = 0.30f;
+    ITEMS[ITEM_ROCKET_BOOTS].fly.riseCap = 0.55f;
+    ITEMS[ITEM_ROCKET_BOOTS].fly.fuel    = 26;
+    ITEMS[ITEM_ROCKET_BOOTS].fly.refuel  = 4.0f;
+
+    struct PackTier { ItemId id; const char* name; u32 colour; u8 sprite;
+                      float thrust, riseCap; int fuel; float refuel; };
+    static const PackTier PACKS[] = {
+        { ITEM_JETPACK1, "Jetpack Mk I",   0x9AA6B4, SPR_PACK1, 0.40f, 1.10f,  90, 3.0f },
+        { ITEM_JETPACK2, "Jetpack Mk II",  0xC8D0DC, SPR_PACK2, 0.50f, 1.50f, 180, 3.0f },
+        { ITEM_JETPACK3, "Jetpack Mk III", 0xE0B048, SPR_PACK3, 0.62f, 2.00f, 320, 4.0f },
+    };
+    for (unsigned i = 0; i < sizeof(PACKS) / sizeof(PACKS[0]); ++i) {
+        const PackTier& t = PACKS[i];
+        ITEMS[t.id].name       = t.name;
+        ITEMS[t.id].kind       = ITEMK_WORN;
+        ITEMS[t.id].equipSlot  = EQ_BACK;
+        ITEMS[t.id].maxStack   = 1;
+        ITEMS[t.id].colour     = t.colour;
+        ITEMS[t.id].sprite     = t.sprite;
+        ITEMS[t.id].fly.thrust  = t.thrust;
+        ITEMS[t.id].fly.riseCap = t.riseCap;
+        ITEMS[t.id].fly.fuel    = t.fuel;
+        ITEMS[t.id].fly.refuel  = t.refuel;
+    }
 }
+
+const char* const EQ_NAMES[EQ_COUNT] = { "Feet", "Back", "Trinket", "Trinket" };
 
 /* Returning a tool's instance to the pool when the tool leaves the pack. Miss
    this and the pool leaks: pick up and drop a multitool 32 times and the next
@@ -238,6 +307,8 @@ static void releaseStack(ItemStack& s) {
 void Inventory::clear() {
     for (int i = 0; i < INV_SLOTS; ++i) releaseStack(slot[i]);
     memset(slot, 0, sizeof(slot));
+    for (int i = 0; i < EQ_COUNT; ++i) releaseStack(equip[i]);
+    memset(equip, 0, sizeof(equip));
     selected = 0;
 }
 
@@ -319,10 +390,79 @@ int Inventory::freeSlots() const {
 
 int Inventory::reachBonus() const {
     int best = 0;
+    for (int i = 0; i < EQ_COUNT; ++i) {
+        if (equip[i].empty()) continue;
+        const int b = ITEMS[equip[i].item].reachBonus;
+        if (b > best) best = b;
+    }
+    return best;
+}
+
+bool equipFits(ItemId item, int eqSlot) {
+    if (item == ITEM_NONE || eqSlot < 0 || eqSlot >= EQ_COUNT) return false;
+    const ItemDef& d = ITEMS[item];
+    if (d.kind != ITEMK_WORN || d.equipSlot >= EQ_COUNT) return false;
+    if (d.equipSlot == (u8)eqSlot) return true;
+    return d.equipSlot == EQ_TRINKET_A && eqSlot == EQ_TRINKET_B;
+}
+
+int Inventory::packWorn(int eqSlot) const {
     for (int i = 0; i < INV_SLOTS; ++i) {
         if (slot[i].empty()) continue;
-        const int b = ITEMS[slot[i].item].reachBonus;
-        if (b > best) best = b;
+        if (equipFits(slot[i].item, eqSlot)) return i;
+    }
+    return -1;
+}
+
+bool Inventory::equipFromPack(ItemId item) {
+    if (item == ITEM_NONE) return false;
+    const ItemDef& d = ITEMS[item];
+    if (d.kind != ITEMK_WORN || d.equipSlot >= EQ_COUNT) return false;
+    if (countOf(item) <= 0) return false;
+
+    /* Prefer an empty slot it fits, and only swap when every one it fits is
+       taken. Without that, putting on a second trinket always replaced the
+       first while the slot next to it sat empty. */
+    int target = -1;
+    for (int i = 0; i < EQ_COUNT; ++i)
+        if (equipFits(item, i) && equip[i].empty()) { target = i; break; }
+    if (target < 0)
+        for (int i = 0; i < EQ_COUNT; ++i)
+            if (equipFits(item, i)) { target = i; break; }
+    if (target < 0) return false;
+
+    ItemStack& eq = equip[target];
+
+    /* Put the old one away FIRST, and give up if it will not go. Doing it the
+       other way round -- overwrite, then try to stow -- loses the old item
+       whenever the pack is full, and the pack is fullest exactly when you are
+       swapping gear because you just picked something up. */
+    if (!eq.empty()) {
+        if (add(eq.item, (int)eq.count) != 0) return false;
+        eq.item = ITEM_NONE; eq.count = 0; eq.inst = 0;
+    }
+    if (take(item, 1) != 1) return false;
+    eq.item = item; eq.count = 1; eq.inst = 0;
+    return true;
+}
+
+bool Inventory::unequip(int eqSlot) {
+    if (eqSlot < 0 || eqSlot >= EQ_COUNT) return false;
+    ItemStack& eq = equip[eqSlot];
+    if (eq.empty()) return false;
+    if (add(eq.item, (int)eq.count) != 0) return false;   /* no room: keep it on */
+    eq.item = ITEM_NONE; eq.count = 0; eq.inst = 0;
+    return true;
+}
+
+FlightSpec flightSpec(const Inventory& inv) {
+    FlightSpec best;
+    best.thrust = best.riseCap = best.refuel = 0.0f;
+    best.fuel = 0;
+    for (int i = 0; i < EQ_COUNT; ++i) {
+        if (inv.equip[i].empty()) continue;
+        const FlightSpec& f = ITEMS[inv.equip[i].item].fly;
+        if (f.any() && f.riseCap > best.riseCap) best = f;
     }
     return best;
 }

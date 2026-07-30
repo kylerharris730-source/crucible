@@ -281,6 +281,13 @@ static RECT g_toolSlotRect[TOOL_SLOTS_MAX];
 static int  g_toolSlotCount = 0;
 static int  g_toolPackSlot  = -1;   /* which inventory slot the bench is showing */
 
+/* Equipment slots, on the same screen and for the same reason as the tool
+   bench: putting a jetpack on is a transfer between two containers, and both
+   have to be visible for click-to-move to say what a drag would. Always drawn,
+   unlike the bench -- an empty equipment row tells you the slots exist and what
+   goes in them, whereas an absent tool bench tells you nothing is missing. */
+static RECT g_eqRect[EQ_COUNT];
+
 /* --- the camera ----------------------------------------------------------
    Top-left cell of the visible window. Kept as floats so the follow can be
    smoothed, and truncated to whole cells for every use -- a camera at a
@@ -480,8 +487,9 @@ static void layoutCreative() {
     const int rows = (g_creCount + CRE_COLS - 1) / CRE_COLS;
     const int cw = 168, ch = 26, gap = 4, pad = 14;
     const int benchH = g_toolSlotCount ? 62 : 0;
+    const int equipH = 62;
     const int w = pad * 2 + CRE_COLS * cw + (CRE_COLS - 1) * gap;
-    const int h = pad + 26 + rows * (ch + gap) + benchH + 38;
+    const int h = pad + 26 + rows * (ch + gap) + equipH + benchH + 38;
     const int cx = PANEL_W + VIEW_W / 2, cy = VIEW_H / 2;
     const int x0 = cx - w / 2, y0 = cy - h / 2;
     SetRect(&g_crePanel, x0, y0, x0 + w, y0 + h);
@@ -493,10 +501,17 @@ static void layoutCreative() {
         SetRect(&g_creRect[i], bx, by, bx + cw, by + ch);
     }
 
+    /* Equipment first, then the tool bench under it. Square slots, matching the
+       module slots, because they are the same gesture: click to move one item
+       between the pack and a named place. */
+    const int eqY = y0 + pad + 26 + rows * (ch + gap) + 22;
+    for (int i = 0; i < EQ_COUNT; ++i)
+        SetRect(&g_eqRect[i], x0 + pad + i * 40, eqY, x0 + pad + i * 40 + 34, eqY + 34);
+
     /* Module slots: square, and noticeably bigger than a grid row, because they
        are the one place on this screen where the arrangement carries meaning
        (slot order decides which module is the shot). */
-    const int by = y0 + pad + 26 + rows * (ch + gap) + 22;
+    const int by = eqY + equipH;
     for (int i = 0; i < g_toolSlotCount; ++i) {
         const int bx = x0 + pad + i * 40;
         SetRect(&g_toolSlotRect[i], bx, by, bx + 34, by + 34);
@@ -518,6 +533,23 @@ static int packModuleSlot() {
    it is modal, and letting a click through to the world would paint under it. */
 static bool handleCreativeClick(int mx, int my, bool remove) {
     if (inRect(g_creClear, mx, my)) { g_inv.clear(); layoutCreative(); return true; }
+
+    /* Equipment. Click an empty slot to put on the first thing in the pack that
+       belongs there, click a filled one to take it off. Nothing is destroyed
+       either way: unequip refuses when the pack is full and leaves the item
+       worn, which is the only safe answer -- a full pack must not be a way to
+       delete a jetpack. */
+    for (int i = 0; i < EQ_COUNT; ++i) {
+        if (!inRect(g_eqRect[i], mx, my)) continue;
+        if (!g_inv.equip[i].empty()) {
+            g_inv.unequip(i);
+        } else if (!remove) {
+            const int src = g_inv.packWorn(i);
+            if (src >= 0) g_inv.equipFromPack(g_inv.slot[src].item);
+        }
+        layoutCreative();
+        return true;
+    }
 
     /* Module slots. Click an empty one to install the first loose module in the
        pack, click a filled one to pull it back out. No drag-and-drop: with one
@@ -1029,6 +1061,35 @@ static void drawHotbar(HDC hdc) {
     HGDIOBJ oldFont = SelectObject(hdc, g_font);
     SetBkMode(hdc, TRANSPARENT);
 
+    /* --- the fuel gauge -----------------------------------------------------
+       Only drawn when there is flight gear on, because a permanent empty bar is
+       a permanent question. It goes above the hotbar rather than beside the
+       character: fuel is something you plan a jump with before you leave the
+       ground, so it wants to be where you are already looking for your
+       loadout, not attached to a figure that is about to move. */
+    if (g_player.fly.any()) {
+        /* Above BOTH text rows, not one of them. The name row occupies
+           top-20..top-4 and the stats line sits 16px above that, so anything
+           nearer than top-38 overprints the readout -- which is exactly what
+           top-30 did: an orange bar straight through "no module installed". */
+        const int x0 = g_hotRect[0].left, x1 = g_hotRect[INV_SLOTS - 1].right;
+        const int y1 = g_hotRect[0].top - 40, y0 = y1 - 7;
+        RECT bar = { x0, y0, x1, y1 };
+        FillRect(hdc, &bar, g_btnBg);
+        const float frac = g_player.fuel / (float)g_player.fly.fuel;
+        RECT fill = bar;
+        fill.right = x0 + (int)((float)(x1 - x0) * (frac < 0.0f ? 0.0f : frac));
+        if (fill.right > fill.left) {
+            /* Warm while it lasts, and red once there is not enough left to do
+               anything with -- the number that matters is not "how full" but
+               "can I still get out of this hole". */
+            HBRUSH b = CreateSolidBrush(frac > 0.25f ? RGB(226, 168, 74) : RGB(210, 88, 60));
+            FillRect(hdc, &fill, b);
+            DeleteObject(b);
+        }
+        FrameRect(hdc, &bar, g_borderBrush);
+    }
+
     for (int i = 0; i < INV_SLOTS; ++i) {
         RECT r = g_hotRect[i];
         const bool sel = (i == g_inv.selected);
@@ -1310,6 +1371,44 @@ static void drawCreative(HDC hdc) {
             RECT cr = r; cr.right -= 7;
             SetTextColor(hdc, RGB(150, 210, 150));
             DrawTextA(hdc, n, -1, &cr, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+        }
+    }
+
+    /* --- equipment --- */
+    {
+        const FlightSpec fly = flightSpec(g_inv);
+        RECT lr = g_crePanel;
+        lr.left = g_eqRect[0].left;
+        lr.top  = g_eqRect[0].top - 20;
+        char s[160];
+        /* The RESOLVED numbers, not an item's own, for the same reason the tool
+           bench states its resolved delay: two pieces of flight gear do not add
+           up (see flightSpec), so the only figure worth reading is the one you
+           will actually fly at. */
+        if (fly.any())
+            sprintf(s, "EQUIPPED  --  climb %.1f cells/s, %.1fs of fuel, reach +%d",
+                    fly.riseCap * 60.0f, (float)fly.fuel / 60.0f, g_inv.reachBonus());
+        else
+            sprintf(s, "EQUIPPED  --  nothing to fly with, reach +%d", g_inv.reachBonus());
+        SetTextColor(hdc, fly.any() ? RGB(226, 190, 90) : RGB(150, 156, 168));
+        DrawTextA(hdc, s, -1, &lr, DT_LEFT | DT_TOP | DT_SINGLELINE);
+
+        for (int i = 0; i < EQ_COUNT; ++i) {
+            RECT r = g_eqRect[i];
+            const ItemStack& eq = g_inv.equip[i];
+            const bool hot = inRect(r, g_mx, g_my);
+            FillRect(hdc, &r, hot ? g_btnBgHot : g_btnBg);
+            FrameRect(hdc, &r, eq.empty() ? g_borderBrush : g_accentBrush);
+            if (!eq.empty()) {
+                RECT ir = r; ir.left += 2; ir.top += 2; ir.right -= 2; ir.bottom -= 2;
+                drawItemIcon(hdc, ir, eq.item);
+            } else {
+                /* The slot's own name when it is empty, so the row explains
+                   itself rather than being four identical grey squares. */
+                SetTextColor(hdc, RGB(110, 116, 128));
+                RECT tr = r; tr.top += 10;
+                DrawTextA(hdc, EQ_NAMES[i], -1, &tr, DT_CENTER | DT_TOP | DT_SINGLELINE);
+            }
         }
     }
 
@@ -1635,6 +1734,10 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
             in.right = (GetAsyncKeyState('D') & 0x8000) || (GetAsyncKeyState(VK_RIGHT) & 0x8000);
             in.jump  = (GetAsyncKeyState('W') & 0x8000) || (GetAsyncKeyState(VK_UP) & 0x8000)
                     || (GetAsyncKeyState(VK_SPACE) & 0x8000);
+            /* Published before the step, so swapping a jetpack takes effect on
+               the same frame -- the same arrangement the collision box uses,
+               and the reason player.cpp knows nothing about inventories. */
+            g_player.fly = flightSpec(g_inv);
             g_player.update(g_world, in);
         }
 

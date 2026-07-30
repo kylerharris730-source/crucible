@@ -52,6 +52,15 @@ static u32 paletteOf(char c) {
     case 'k': return 0x3A3F49;     /* the bit: dark, on every tier */
     case 'p': return 0x8FC85A;     /* the shoot */
     case 'q': return 0x6A4A2A;     /* the husk */
+    /* Flight gear. The nozzle colours are shared between the boots and every
+       jetpack tier on purpose: what makes a tier legible is how much APPARATUS
+       there is, not a repaint, and three differently-coloured packs read as
+       three unrelated items rather than as a ladder. */
+    case 'n': return 0x3A4050;     /* nozzle housing */
+    case 'm': return 0x8A93A6;     /* metal, lit edge */
+    case 'f': return 0xFFC24A;     /* flame core */
+    case 'e': return 0xE05A20;     /* flame edge */
+    case 'c': return 0x6ED0FF;     /* coolant / tank window */
     default:  return 0xFF00FF;     /* unmapped: loud on purpose */
     }
 }
@@ -222,6 +231,80 @@ static const char* ART_SEED[SPR_H] = {
     "..............",
 };
 
+/* Boots with the thrusters on the heels. Drawn as a pair seen from the side so
+   the nozzles are visible, because the nozzle is the whole point of the item --
+   a plain boot silhouette would be indistinguishable from armour. */
+static const char* ART_BOOTS[SPR_H] = {
+    "..............",
+    "..............",
+    "...mm....mm...",
+    "..mUUm..mUUm..",
+    "..mUUm..mUUm..",
+    "..mUUm..mUUm..",
+    "..mUUmmmUUm...",
+    "..mUUUUUUUm...",
+    ".mmUUUUUUUmm..",
+    ".mnnmmmmmnnm..",
+    "..ff......ff..",
+    "..ee......ee..",
+    "...e.......e..",
+    "..............",
+};
+
+/* The jetpack ladder. One tank at Mk I, two at Mk II, two plus a bigger nozzle
+   block at Mk III -- so the tier is countable at a glance in the hotbar, which
+   is where you actually need to tell them apart. */
+static const char* ART_PACK1[SPR_H] = {
+    "..............",
+    "....mmmm......",
+    "...mccccm.....",
+    "...mccccm.....",
+    "...mccccm.....",
+    "...mUUUUm.....",
+    "...mUUUUm.....",
+    "...mnnnnm.....",
+    "....nnnn......",
+    "....ffff......",
+    "....eeee......",
+    ".....ee.......",
+    "..............",
+    "..............",
+};
+
+static const char* ART_PACK2[SPR_H] = {
+    "..............",
+    "..mmmm.mmmm...",
+    ".mcccmmcccm...",
+    ".mcccmmcccm...",
+    ".mcccmmcccm...",
+    ".mUUUmmUUUm...",
+    ".mUUUmmUUUm...",
+    ".mnnnmmnnnm...",
+    "..nnn...nnn...",
+    "..fff...fff...",
+    "..eee...eee...",
+    "...e.....e....",
+    "..............",
+    "..............",
+};
+
+static const char* ART_PACK3[SPR_H] = {
+    "...mmm.mmm....",
+    "..mcccmcccm...",
+    "..mcccmcccm...",
+    "..mcccmcccm...",
+    "..mUUUmUUUm...",
+    "..mUUUmUUUm...",
+    ".mmUUUmUUUmm..",
+    ".mnnnnmnnnnm..",
+    ".mnnnnmnnnnm..",
+    "..nnnn.nnnn...",
+    "..ffff.ffff...",
+    "..eeee.eeee...",
+    "...ee...ee....",
+    "....e....e....",
+};
+
 static void expand(int id, const char* const* art) {
     for (int y = 0; y < SPR_H; ++y) {
         /* A short row would silently read past the end of the string literal
@@ -342,6 +425,10 @@ void initSprites() {
     expand(SPR_MINE3,     ART_MINE3);
     expand(SPR_MINE4,     ART_MINE4);
     expand(SPR_SEED,      ART_SEED);
+    expand(SPR_BOOTS,     ART_BOOTS);
+    expand(SPR_PACK1,     ART_PACK1);
+    expand(SPR_PACK2,     ART_PACK2);
+    expand(SPR_PACK3,     ART_PACK3);
 
     memset(g_playerSpr, 0, sizeof(g_playerSpr));
     composePlayer(PF_IDLE,  LEG_STAND, false);

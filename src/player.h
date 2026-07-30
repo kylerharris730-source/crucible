@@ -83,6 +83,33 @@ struct PlayerInput {
     bool left, right, jump;
 };
 
+/* --- thrust ----------------------------------------------------------------
+
+   What a piece of worn flight gear does, resolved from equipment by item.cpp
+   and published onto the Player by the host each frame -- the same arrangement
+   World uses for the player's collision box, and for the same reason: movement
+   should not have to know that an inventory exists.
+
+   Three numbers rather than one, because they are the three things a player can
+   feel separately. `thrust` is how quickly it takes hold, `riseCap` is how fast
+   you end up going, and `fuel` is how long you get. A single "power" number
+   would make rocket boots and a jetpack the same item at different volumes.
+
+   riseCap is what makes this controllable rather than a second jump. Thrust
+   alone accelerates without limit, so holding the key would fling you off the
+   top of the world; capping the climb turns the key into "hold to go up at a
+   known rate", which is what you can actually aim with. It never BRAKES a
+   faster rise -- see the note in update() -- so thrusting out of a jump does
+   not feel like hitting a ceiling. */
+struct FlightSpec {
+    float thrust;    /* cells/frame^2 added while the key is held */
+    float riseCap;   /* fastest climb it will drive you to, cells/frame */
+    int   fuel;      /* frames of thrust from full */
+    float refuel;    /* frames of fuel restored per frame stood on the ground */
+
+    bool any() const { return fuel > 0 && riseCap > 0.0f; }
+};
+
 struct Player {
     /* Top-left of the collision box, in cells, with a fractional part.
        Sub-pixel position is not a luxury: integer-only movement quantises walk
@@ -112,6 +139,20 @@ struct Player {
     int   facing;
     float walkPhase;
     int   frame;       /* a PlayerFrame */
+
+    /* --- flight -------------------------------------------------------
+       `fly` is what is equipped and is written by the host every frame, so
+       swapping a jetpack takes effect immediately and nothing here has to
+       know where equipment lives. `fuel` is the state that persists, and it
+       is a float because refuel is a rate and rounding a rate to whole
+       frames is how you get gear that recharges either instantly or never.
+
+       thrusting is an output, for the exhaust plume. Kept rather than
+       recomputed in draw() because draw() has no input to look at, and a
+       plume that guessed from vy would fire while you were falling. */
+    FlightSpec fly;
+    float      fuel;
+    bool       thrusting;
 
     void reset(float cx, float cy);
     void update(const World& w, const PlayerInput& in);
