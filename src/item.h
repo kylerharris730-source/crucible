@@ -57,6 +57,7 @@ enum {
     ITEM_JETPACK3,
     /* Machines. See ITEMK_DEVICE. */
     ITEM_THERMOCOUPLE,
+    ITEM_CLOCK,
     ITEM_COUNT
 };
 

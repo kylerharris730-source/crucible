@@ -39,6 +39,7 @@ enum SpriteId {
        the object in the world -- see DEV_W in device.h -- so the art is read at
        two very different scales and has to survive both. */
     SPR_THERMO,
+    SPR_CLOCK,
     SPR_COUNT
 };
 

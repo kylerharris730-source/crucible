@@ -308,6 +308,13 @@ void initItems() {
     ITEMS[ITEM_THERMOCOUPLE].maxStack   = 64;
     ITEMS[ITEM_THERMOCOUPLE].colour     = 0x6E7888;
     ITEMS[ITEM_THERMOCOUPLE].sprite     = SPR_THERMO;
+
+    ITEMS[ITEM_CLOCK].name       = "Clock";
+    ITEMS[ITEM_CLOCK].kind       = ITEMK_DEVICE;
+    ITEMS[ITEM_CLOCK].deviceType = DEV_CLOCK;
+    ITEMS[ITEM_CLOCK].maxStack   = 64;
+    ITEMS[ITEM_CLOCK].colour     = 0x8A93A6;
+    ITEMS[ITEM_CLOCK].sprite     = SPR_CLOCK;
 }
 
 const char* const EQ_NAMES[EQ_COUNT] = { "Feet", "Back", "Trinket", "Trinket" };

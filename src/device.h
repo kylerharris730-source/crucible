@@ -66,8 +66,88 @@ static const int MAX_DEVICES = 128;
 
 enum DeviceType {
     DEV_THERMOCOUPLE = 0,   /* watches temperature, fires when it crosses a mark */
+    DEV_CLOCK,              /* fires on a period, so things can happen in order */
     DEV_COUNT
 };
+
+/* ==========================================================================
+   Electricity
+   ==========================================================================
+
+   A spark is absorbed by a conductor, travels through it, and is spat out at the
+   far end. That is the Powder Toy model and it is the right one here: it makes a
+   wire a thing you draw with an ordinary material rather than a special object,
+   and it makes a circuit something you can see working.
+
+   --- why a spark is an entity and not a cell state ---
+   Powder Toy implements this as a STATE applied to the conductor: the cell becomes
+   SPRK, remembers what it used to be, and reverts after a few frames. That needs
+   somewhere to keep the original material id and a countdown, per cell.
+
+   There is nowhere. A Cell is mat, moisture, tint and flags; moisture and tint
+   both mean something for metals, and flags is one direction bit plus a seven-bit
+   frame stamp whose width is load-bearing (see the note in world.h). The one
+   material that pulls this trick off, Clone, gets away with a single id in a
+   moisture byte it happens not to use -- and it still could not fit a timer.
+
+   So the spark is a small travelling entity and the conductor is untouched. That
+   turns out to be better rather than merely necessary: the grid is not written to
+   at all as a spark passes, so no chunk is dirtied, no cell is converted and
+   converted back, and a live circuit costs nothing in the simulation. The whole
+   system is a few hundred integers.
+
+   --- no branching ---
+   A spark takes ONE path. It prefers to carry straight on, and turns only when it
+   must. A junction does not split it.
+
+   That is a deliberate restriction and the reason is containment: splitting inside
+   a solid slab of metal doubles the spark count per cell crossed, and since there
+   is no cell state to mark a conductor as already-sparked there is nothing to stop
+   it. One path per spark means a wire behaves exactly as drawn, and a player who
+   wants two things to happen runs two wires -- which is legible, where a slab
+   full of exponentially multiplying sparks is not.
+
+   Even so a spark could circle a loop of wire forever, so every one carries a
+   lifetime. Between that and the array cap the worst case is bounded by
+   construction rather than by hope. */
+
+/* Cells a spark advances per frame. One, so a circuit is something you can watch
+   work -- at 60 Hz a 100-cell run of wire takes under two seconds, which is fast
+   enough to feel immediate and slow enough to debug by eye. */
+static const int SPARK_SPEED = 1;
+
+/* Frames before a spark gives up. The backstop against a loop of wire: with no
+   cell state marking where it has been, a ring circuit would carry one round for
+   ever. 600 is ten seconds, far longer than any sane run of wire. */
+static const int SPARK_LIFE = 600;
+
+static const int MAX_SPARKS = 512;
+
+struct Spark {
+    i32 x, y;
+    /* The step just taken. Two jobs: it is the direction to prefer next (a spark
+       carries on rather than doubling back), and its negation is the one move
+       that is forbidden. Without that a spark oscillates between two adjacent
+       conductor cells and never gets anywhere. */
+    i16 dx, dy;
+    i16 life;
+    bool used;
+};
+
+extern Spark g_sparks[MAX_SPARKS];
+
+int  sparkCount();
+void sparkClear();
+
+/* Inject a spark at a cell, heading (dx, dy). Fails quietly if the array is
+   full -- a dropped spark is a missed tick, which is far better than a machine
+   that stops working because something unrelated filled the array. */
+bool sparkAdd(int x, int y, int dx, int dy);
+
+/* Draw live sparks over the world. Never shaded by the light field: a spark is
+   its own light, and one crawling along a wire in an unlit cave is the single
+   most useful thing to be able to see. */
+void sparkDraw(u32* px, int camX, int camY);
 
 struct DeviceInfo {
     const char* name;
@@ -95,7 +175,19 @@ struct Device {
        furnace stays hot. Without it the device is a thermostat rather than a
        trigger, and sequencing anything off it becomes impossible. */
     bool firing;
+    /* A spark arrived this frame. The INPUT side, kept separate from `firing`
+       which is the output -- one device can be both fed and firing, and conflating
+       them would make a chain of machines impossible to reason about. Set by
+       sparkStep, consumed by devTick in the same frame. */
+    bool poked;
     bool latched;
+    /* Running total of sparks that have arrived. Shown on the panel, and it is
+       the only way to tell "the wire is not connected" from "the machine is
+       ignoring me" -- which is the first question anyone asks of a contraption
+       that is not working. `poked` cannot answer it: it is set and consumed inside
+       one devTick, so from outside it is never observably true. */
+    i32  received;
+    i32  phase;      /* the clock's counter; unused by other types */
     i32  reading;    /* last sensed value, for the panel to show */
 
     bool used;

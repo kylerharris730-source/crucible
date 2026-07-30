@@ -384,6 +384,27 @@ extern u8 g_matPassable[MAT_COUNT];
    than a chore you do because the game insists. */
 extern u8 g_matSmeltYield[MAT_COUNT];
 
+/* --- what carries a spark --------------------------------------------------
+   True for a material electricity travels through. See the electricity note in
+   device.h for the model.
+
+   SOLID metals only. Molten iron and molten copper are better conductors in real
+   life and are deliberately excluded, because a wire that FLOWS is not a wire --
+   a circuit drawn in a liquid would rearrange itself between one spark and the
+   next, and "my machine stopped working because the wiring ran downhill" is a
+   failure nobody could diagnose. Mercury is out for the same reason.
+
+   Graphene is in, and it is the interesting one: it is already the material with
+   no melting point, so it is the only wire that survives being run through a
+   furnace. That is a real reason to want the expensive conductor rather than a
+   bigger number on a stat sheet.
+
+   Deliberately NOT derived from heatCond, even though the same three materials
+   top both lists. They are different physical properties that happen to correlate,
+   and tying them together would mean a future insulator that conducts
+   electricity, or a heat sink that shorts a circuit, could not be expressed. */
+extern u8 g_matConducts[MAT_COUNT];
+
 /* Full brightness. A byte, so it is also the sun. */
 static const int LIGHT_MAX = 255;
 /* Unlit is genuinely zero in the light field. "Never quite dark" is a display

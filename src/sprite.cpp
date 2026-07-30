@@ -452,6 +452,30 @@ static const char* ART_THERMO[SPR_H] = {
     "..DDDDDDDDDD..",
 };
 
+/* The clock: the same casing as the thermocouple with a different face, which is
+   the whole point of a shared device palette -- you should know it is a machine
+   from the silhouette and which machine from the face alone. Two hands rather than
+   a dial, because a clock face is the one symbol nobody has to be taught.
+
+   Same strict columns as the thermocouple: 0 and 13 terminals, 1 and 12 casing,
+   2 and 11 bezel, 3..10 the face. */
+static const char* ART_CLOCK[SPR_H] = {
+    "..DDDDDDDDDD..",
+    ".DEEEEEEEEEED.",
+    ".DEFFFFFFFFED.",
+    "lDEFFFiFFFFEDl",
+    "lDEFFFiFFFFEDl",
+    ".DEFFFiiiiFED.",
+    ".DEFFFFFFFFED.",
+    ".DEFFFFFFFFED.",
+    ".DEFFFFFFFFED.",
+    ".DEEEEEEEEEED.",
+    ".DddddddddddD.",
+    ".DdEEEEEEEEdD.",
+    ".DddddddddddD.",
+    "..DDDDDDDDDD..",
+};
+
 void initSprites() {
     memset(g_sprite, 0, sizeof(g_sprite));
     expand(SPR_TOOL1,     ART_TOOL1);
@@ -468,6 +492,7 @@ void initSprites() {
     expand(SPR_PACK2,     ART_PACK2);
     expand(SPR_PACK3,     ART_PACK3);
     expand(SPR_THERMO,    ART_THERMO);
+    expand(SPR_CLOCK,     ART_CLOCK);
 
     memset(g_playerSpr, 0, sizeof(g_playerSpr));
     composePlayer(PF_IDLE,  LEG_STAND, false);

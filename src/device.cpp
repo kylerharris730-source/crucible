@@ -4,6 +4,8 @@
 
 Device g_devices[MAX_DEVICES];
 
+Spark g_sparks[MAX_SPARKS];
+
 const DeviceInfo DEVS[DEV_COUNT] = {
     /* The thermocouple. Its setpoint is a temperature in DEGREES CELSIUS, not in
        the stored units the simulation compares -- the panel is the one place in
@@ -17,7 +19,147 @@ const DeviceInfo DEVS[DEV_COUNT] = {
        Default 150 C sits above boiling water and below every melting point in the
        table, which makes it a sensible "the furnace is working" mark. */
     { "Thermocouple", "trips at", "C", -20, 210, 5, 150, SPR_THERMO },
+    /* The clock. Its number is a PERIOD IN FRAMES, shown as frames rather than
+       converted to seconds because everything else in this program is measured in
+       frames at a fixed 60 Hz step -- a player timing a contraption is counting
+       ticks, and a panel reading "0.75 s" would have to be converted back before
+       it was useful.
+
+       The floor of 6 frames is not arbitrary: a spark advances one cell a frame,
+       so a period shorter than the wire is long puts several sparks on the same
+       run at once. That is allowed and occasionally useful, but below about 6 it
+       becomes a solid stream and the array cap starts doing the tuning instead of
+       the player. */
+    { "Clock", "every", "frames", 6, 600, 6, 60, SPR_CLOCK },
 };
+
+int sparkCount() {
+    int n = 0;
+    for (int i = 0; i < MAX_SPARKS; ++i) if (g_sparks[i].used) ++n;
+    return n;
+}
+
+void sparkClear() {
+    for (int i = 0; i < MAX_SPARKS; ++i) g_sparks[i].used = false;
+}
+
+bool sparkAdd(int x, int y, int dx, int dy) {
+    for (int i = 0; i < MAX_SPARKS; ++i) {
+        Spark& s = g_sparks[i];
+        if (s.used) continue;
+        s.x = x; s.y = y;
+        s.dx = (i16)dx; s.dy = (i16)dy;
+        s.life = SPARK_LIFE;
+        s.used = true;
+        return true;
+    }
+    return false;
+}
+
+static inline bool conducts(const World& w, int x, int y) {
+    if (x < PLAY_X0 || x > PLAY_X1 || y < PLAY_Y0 || y > PLAY_Y1) return false;
+    return g_matConducts[w.at(x, y).mat] != 0;
+}
+
+/* Heat left behind where a spark is spat out. Small on purpose: a spark is
+   energy, and having it warm the end of a wire is the detail that makes the
+   system feel physical rather than symbolic. It is NOT meant to be a heat source
+   -- one spark a second lands nowhere near what a heater delivers, and if
+   electricity became the cheap way to run a furnace the whole ore process would
+   collapse into "wire it up". Flavour, with a deliberate ceiling. */
+static const int SPARK_HEAT = 4;
+
+/* Move one spark one step. Returns false when it has finished, either by being
+   spent, by triggering a machine, or by running out of conductor.
+
+   Straight on first, then the two turns, and NEVER back the way it came.
+   Preferring the current heading is what makes a wire behave as drawn; without it
+   a spark at a bend picks by array order and can crawl backwards along a straight
+   run.
+
+   Reversal was allowed at first, as a "last resort" for backing out of a dead-end
+   stub, and it made a straight wire into a resonator: the spark reached the end,
+   found the cell behind it conductive, turned round, ran back, turned round again,
+   and bounced until its lifetime expired. Measured, a 101-cell wire held one spark
+   for the full 400-frame test rather than the ~100 frames it should take, and a
+   two-cell stub held one for all 600 frames of its life. The mistake was thinking
+   a wire END is a dead end to escape from. It is not -- it is where the spark is
+   SPAT OUT, which is the behaviour being implemented. */
+static bool sparkStep(World& w, Spark& s) {
+    if (--s.life <= 0) return false;
+
+    /* Candidate steps, in order of preference. */
+    int cand[3][2];
+    int n = 0;
+    cand[n][0] = s.dx;  cand[n][1] = s.dy;  ++n;          /* straight on */
+    /* The two perpendiculars. For an axis-aligned heading one of dx/dy is zero,
+       so swapping them gives the turns. */
+    cand[n][0] = -s.dy; cand[n][1] = -s.dx; ++n;
+    cand[n][0] =  s.dy; cand[n][1] =  s.dx; ++n;
+
+    for (int k = 0; k < n; ++k) {
+        const int nx = s.x + cand[k][0], ny = s.y + cand[k][1];
+        if (nx == s.x && ny == s.y) continue;
+        if (nx < PLAY_X0 || nx > PLAY_X1 || ny < PLAY_Y0 || ny > PLAY_Y1) continue;
+
+        /* A machine is a SINK, not wire. Reaching one delivers the spark and ends
+           its journey -- which is what makes "wire the clock to the placer" mean
+           something. Devices deliberately do not conduct: a bank of machines
+           bolted together would otherwise act as one big lump of cable and a spark
+           would wander through all of them. */
+        Device* d = devAt(nx, ny);
+        if (d) { d->poked = true; ++d->received; return false; }
+
+        if (!conducts(w, nx, ny)) continue;
+        s.x = nx; s.y = ny;
+        s.dx = (i16)cand[k][0]; s.dy = (i16)cand[k][1];
+        return true;
+    }
+
+    /* Nowhere to go: spat out. The heat goes into the cell it was heading into if
+       that is open, and otherwise into the conductor it died in. */
+    const int ox = s.x + s.dx, oy = s.y + s.dy;
+    const bool openAhead = ox >= PLAY_X0 && ox <= PLAY_X1 && oy >= PLAY_Y0 && oy <= PLAY_Y1
+                           && w.at(ox, oy).mat == MAT_EMPTY;
+    w.heat(openAhead ? ox : s.x, openAhead ? oy : s.y, 1, SPARK_HEAT);
+    return false;
+}
+
+/* Emit a spark from a device into any conductor touching its perimeter, heading
+   outward. Returns true if one got away.
+
+   Scanning the perimeter rather than having a designated output side is what makes
+   a machine something you can wire from whichever direction is convenient -- and
+   the alternative would need a rotation to be part of every device's state, and a
+   way to see and change it, for very little gain. */
+static bool devEmit(World& w, const Device& d) {
+    for (int x = d.x; x < d.x + DEV_W; ++x) {
+        if (conducts(w, x, d.y - 1)      && sparkAdd(x, d.y - 1,      0, -1)) return true;
+        if (conducts(w, x, d.y + DEV_H)  && sparkAdd(x, d.y + DEV_H,  0,  1)) return true;
+    }
+    for (int y = d.y; y < d.y + DEV_H; ++y) {
+        if (conducts(w, d.x - 1, y)      && sparkAdd(d.x - 1, y,     -1,  0)) return true;
+        if (conducts(w, d.x + DEV_W, y)  && sparkAdd(d.x + DEV_W, y,  1,  0)) return true;
+    }
+    return false;
+}
+
+void sparkDraw(u32* px, int camX, int camY) {
+    for (int i = 0; i < MAX_SPARKS; ++i) {
+        const Spark& s = g_sparks[i];
+        if (!s.used) continue;
+        const int vx = s.x - camX, vy = s.y - camY;
+        /* Two cells across, so a spark on a one-cell wire is visible at all --
+           a single cell is two screen pixels and reads as noise. */
+        for (int oy = 0; oy < 2; ++oy)
+            for (int ox = 0; ox < 2; ++ox) {
+                const int px_ = vx + ox, py_ = vy + oy;
+                if (px_ < 0 || px_ >= VIEW_CELLS_W || py_ < 0 || py_ >= VIEW_CELLS_H) continue;
+                px[py_ * VIEW_CELLS_W + px_] = 0xCFF4FF;
+            }
+    }
+}
+
 
 int devCount() {
     int n = 0;
@@ -75,8 +217,11 @@ bool devPlace(World& w, u8 type, int cx, int cy) {
     d.x = x0; d.y = y0;
     d.value   = DEVS[type].vDefault;
     d.firing  = false;
+    d.poked   = false;
     d.latched = false;
+    d.phase   = 0;
     d.reading = 0;
+    d.received = 0;
     d.used    = true;
 
     for (int y = y0; y < y0 + DEV_H; ++y)
@@ -120,6 +265,21 @@ static bool devIntact(const World& w, const Device& d) {
 }
 
 void devTick(World& w) {
+    /* Sparks first, machines second, and the order is the contract. A spark
+       arriving this frame sets `poked` on the machine it reaches, and the machine's
+       own update below is what consumes it -- so a signal is acted on in the frame
+       it lands rather than the frame after, and a device can never see the same
+       poke twice. Reversed, every machine in a chain would lag one frame behind the
+       one feeding it, which for a sequencing system is exactly the wrong bug to
+       have to debug. */
+    for (int i = 0; i < MAX_SPARKS; ++i) {
+        Spark& s = g_sparks[i];
+        if (!s.used) continue;
+        for (int step = 0; step < SPARK_SPEED; ++step) {
+            if (!sparkStep(w, s)) { s.used = false; break; }
+        }
+    }
+
     for (int i = 0; i < MAX_DEVICES; ++i) {
         Device& d = g_devices[i];
         if (!d.used) continue;
@@ -128,6 +288,15 @@ void devTick(World& w) {
 
         d.firing = false;
         switch (d.type) {
+        case DEV_CLOCK: {
+            /* Counts frames and fires on the wrap. The phase is kept rather than
+               derived from the world frame number, which is what makes two clocks
+               with the same period able to run out of step -- and being able to
+               offset one against another is the whole basis of sequencing. */
+            if (++d.phase >= d.value) { d.phase = 0; d.firing = true; }
+            d.reading = d.value ? (i32)(d.value - d.phase) : 0;   /* frames to go */
+            break;
+        }
         case DEV_THERMOCOUPLE: {
             const int t = devTemp(w, d);
             d.reading = t - TEMP_OFFSET;             /* report in Celsius */
@@ -149,6 +318,17 @@ void devTick(World& w) {
         }
         default: break;
         }
+
+        /* Firing means putting a spark on the wire, if there is one to put it on.
+           A machine with nothing wired to it still fires -- the lamp still blinks
+           -- because a device that went silent when unwired would be impossible to
+           test in isolation, and because seeing it tick is how you work out which
+           side to run the wire to. */
+        if (d.firing) devEmit(w, d);
+
+        /* The poke is consumed here whether or not this device type does anything
+           with one, so a signal can never accumulate. */
+        d.poked = false;
     }
 }
 

@@ -562,6 +562,7 @@ u8  g_matDecay[MAT_COUNT];
 u8  g_matStrength[MAT_COUNT];
 u8  g_matPassable[MAT_COUNT];
 u8  g_matSmeltYield[MAT_COUNT];
+u8  g_matConducts[MAT_COUNT];
 u8  g_matLight[MAT_COUNT];
 u8  g_matOpacity[MAT_COUNT];
 u8  g_lightShade[256];
@@ -871,6 +872,16 @@ static void initSmelting() {
     g_matSmeltYield[MAT_IRON_ORE]   = 102;   /* 40% */
 }
 
+/* See g_matConducts in materials.h. A short explicit list rather than a rule, for
+   the reason given there: electrical and thermal conduction are different
+   properties that merely correlate in this table today. */
+static void initConducts() {
+    for (int m = 0; m < MAT_COUNT; ++m) g_matConducts[m] = 0;
+    g_matConducts[MAT_IRON]     = 1;
+    g_matConducts[MAT_COPPER]   = 1;
+    g_matConducts[MAT_GRAPHENE] = 1;
+}
+
 static void initPassable() {
     for (int m = 0; m < MAT_COUNT; ++m) g_matPassable[m] = 0;
     g_matPassable[MAT_TORCH] = 1;
@@ -880,6 +891,7 @@ void initMaterials() {
     initStrength();
     initPassable();
     initSmelting();
+    initConducts();
     initLight();
     for (int m = 0; m < MAT_COUNT; ++m) {
         MatInfo& mi = MATS[m];

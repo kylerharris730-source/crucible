@@ -689,6 +689,7 @@ static void makeWorld() {
        them -- they have to be dropped explicitly or a fresh world arrives haunted
        by the last one's contraptions. Same reason roomsClear() exists. */
     devClear();
+    sparkClear();
     generateWorld(g_world);
     /* Generation rebuilds every cell, so any room that existed described a
        building that no longer does. Nothing else clears them: a room outlives
@@ -1191,6 +1192,11 @@ static void drawDevPanel(HDC hdc) {
 
     sprintf(buf, "%s  %d %s", di.valueLabel, (int)d.value, di.valueUnit);
     drawText(hdc, tx, g_devpBox.top + 42, RGB(214, 216, 224), buf);
+
+    /* Sparks received. The first thing you want to know about a machine that is
+       not doing what you expected is whether the signal is reaching it at all. */
+    sprintf(buf, "sparks in  %d", (int)d.received);
+    drawText(hdc, tx, g_devpBox.top + 58, RGB(160, 200, 230), buf);
 
     /* The state line. "armed" rather than "off" because a thermocouple below its
        mark is not idle, it is waiting -- and that distinction is the whole
@@ -1940,6 +1946,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
             g_player.draw(g_pixels, g_camX, g_camY, g_lightOn);
             if (g_survival) drawHeldTool(g_pixels, currentAim(), g_lightOn);
         }
+        sparkDraw(g_pixels, g_camX, g_camY);
         projDraw(g_pixels, g_camX, g_camY);
         /* Modals dim the world in the pixel buffer, before it becomes a blit --
            see dimPixels(). Doing it to the window instead cost 500ms a frame. */
