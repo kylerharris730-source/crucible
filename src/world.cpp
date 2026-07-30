@@ -124,6 +124,11 @@ void World::setCell(int x, int y, u8 mat) {
     dirtyPoint(x, y);
 }
 
+void World::swapMat(int x, int y, u8 mat) {
+    cells[y * SIM_W + x].mat = mat;
+    dirtyPoint(x, y);
+}
+
 /* Swap material without disturbing temperature: a phase change carries its
    heat across, and the stamp is left alone so the new material waits until
    next frame to move. */

@@ -1,4 +1,5 @@
 #include "device.h"
+#include "door.h"
 #include "sprite.h"
 #include "light.h"
 
@@ -120,6 +121,14 @@ static bool sparkStep(World& w, Spark& s) {
            would wander through all of them. */
         Device* d = devAt(nx, ny);
         if (d) { d->poked = true; ++d->received; return false; }
+
+        /* A door is a sink too, on exactly the same terms as a machine: the
+           spark is delivered and its journey ends. That is what makes "wire the
+           clock to the door" mean something, and it is why doors are not
+           conductive -- a door in a metal wall would otherwise be a piece of the
+           wall as far as electricity is concerned, and every spark crossing the
+           wall would flap it. */
+        if (doorToggle(w, nx, ny)) return false;
 
         if (!conducts(w, nx, ny)) continue;
         s.x = nx; s.y = ny;

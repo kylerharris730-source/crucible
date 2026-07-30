@@ -623,6 +623,25 @@ MatInfo MATS[MAT_COUNT] = {
      capacity -- so it can hold a charge above iron's smelting point for long
      enough to get through it, which ember cannot. */
   { "FuelFire",KIND_STATIC,255,  0,    0,   0,   0,   0,  0,  255,  5,   0, degC(215), degC(95), MAT_EMPTY, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, 0xFFD8A0, 0xFF8830, 0xFFD8A0, 0xFF8830, 0 },
+  /* --- the door ------------------------------------------------------------
+     A built fixture, so both states are inert: no ignite row, no boil row,
+     nothing it turns into. A door that burned down would be thematic and would
+     also mean the sealed, lit workshop you built around a fire is on a timer
+     you were never shown -- and rooms make that failure expensive in a way it
+     was not before.
+
+     heatCond 12, between rubber's insulation and wood's. Low on purpose: a door
+     is a hole you cut in a wall you may have built to hold heat in, and if it
+     conducted like metal the good move would be never to fit one. Low enough to
+     keep the wall's job intact, not so low that a door is a better insulator
+     than the wall -- there should be a small price for the convenience.
+
+     The two colours are the entire visual language of the mechanism, so they are
+     far apart rather than a shade apart: closed is lit timber, open is the dark
+     of the recess the door has swung into. You should be able to see across a
+     room which of your doors are open. */
+  { "Door",  KIND_STATIC, 255,   0,    0,   0,   0,   0,  0,   12,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0x8A6034, 0x6E4A28, 0x8A6034, 0x6E4A28, 0 },
+  { "Open Door",KIND_STATIC,255, 0,    0,   0,   0,   0,  0,   12,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0x3A2A1C, 0x2A1E14, 0x3A2A1C, 0x2A1E14, 0 },
   { "Device",KIND_STATIC, 255,   0,    0,   0,   0,   0,  0,  200,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0x2A2F3A, 0x2A2F3A, 0x2A2F3A, 0x2A2F3A, 0 },
 };
 
@@ -634,6 +653,7 @@ u8  g_matDecay[MAT_COUNT];
 u8  g_matStrength[MAT_COUNT];
 u8  g_matPassable[MAT_COUNT];
 u8  g_matUnseen[MAT_COUNT];
+u8  g_matDropsAs[MAT_COUNT];
 u8  g_matSmeltYield[MAT_COUNT];
 u8  g_matConducts[MAT_COUNT];
 u8  g_matWetInto[MAT_COUNT];
@@ -680,6 +700,12 @@ static void initStrength() {
        byproduct the starting tool could not clear would dead-end the whole
        progression the moment the player smelted anything. */
     g_matStrength[MAT_SLAG]        = STR_LOOSE;
+
+    /* Both states, and they must MATCH. A door that was easier to break open
+       than closed would mean the way past a locked door is to open it with a
+       tool, which is not a door. */
+    g_matStrength[MAT_DOOR]        = STR_SOFT;
+    g_matStrength[MAT_DOOR_OPEN]   = STR_SOFT;
 
     g_matStrength[MAT_ICE]         = STR_SOFT;
     g_matStrength[MAT_LAMP]        = STR_SOFT;
@@ -825,6 +851,17 @@ static void initLight() {
        see by would be a strange thing to hold. */
     g_matLight[MAT_COLDFIRE] = 120;
     g_matLight[MAT_HEATER]   = 110;
+
+    /* An open door is a hole you can see through, and that has to be true of
+       LIGHT as well as of movement or the effect is half-built: you would walk
+       through an open doorway into the dark, with the lit room behind you
+       casting nothing ahead. 5 is the gas figure rather than air's 3 -- the
+       frame and the swung-back leaf are still there, so a long line of open
+       doors dims a little down its length, which is right.
+
+       A closed door keeps the default solid opacity and is therefore exactly as
+       dark behind as the wall it sits in. */
+    g_matOpacity[MAT_DOOR_OPEN] = 5;
 
     /* A source is transparent to its own light and to everyone else's --
        otherwise a wall of lamps lights only its front row, and a lava lake
@@ -1062,6 +1099,19 @@ static void initDrive() {
 static void initPassable() {
     for (int m = 0; m < MAT_COUNT; ++m) g_matPassable[m] = 0;
     g_matPassable[MAT_TORCH] = 1;
+    /* The open door, and the reason this table was worth generalising past the
+       torch. Note what is NOT here: MAT_DOOR_OPEN is still KIND_STATIC, so it
+       is solid to the simulation. Sand piles against an open door and a room
+       stays sealed through one -- passable is a fact about people, not about
+       physics, which is the whole argument in the g_matPassable note. */
+    g_matPassable[MAT_DOOR_OPEN] = 1;
+}
+
+static void initDrops() {
+    /* Identity by default, so a material added later drops itself without
+       anyone having to remember this table exists. */
+    for (int m = 0; m < MAT_COUNT; ++m) g_matDropsAs[m] = (u8)m;
+    g_matDropsAs[MAT_DOOR_OPEN] = MAT_DOOR;
 }
 
 static void initUnseen() {
@@ -1079,6 +1129,7 @@ void initMaterials() {
     initStrength();
     initPassable();
     initUnseen();
+    initDrops();
     initSmelting();
     initConducts();
     initSlaking();

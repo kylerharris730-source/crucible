@@ -455,6 +455,18 @@ struct World {
     void paint(int cx, int cy, int r, u8 mat, bool replace = true);
     void heat(int cx, int cy, int r, int delta);
     void setCell(int x, int y, u8 mat);
+    /* Change what a cell is MADE OF and nothing else: temperature, moisture and
+       speckle all survive. setCell is the wrong verb when the thing in the cell
+       is the same object in a different state -- it resets the temperature to
+       the material's spawn value and re-rolls the tint, so a door in a hot room
+       would come back to ambient every time you opened it and would visibly
+       re-grain as it swung.
+
+       Deliberately distinct from the private `convert` the phase-change rules
+       use. That one re-rolls the tint on purpose, because a cell of water
+       becoming a cell of steam really is new material and should not inherit the
+       old speckle. This one is for an object that stayed itself. */
+    void swapMat(int x, int y, u8 mat);
 
     /* Schedule cells for simulation next frame. dirtyArea covers a span plus a
        one-cell margin; anything that moves further than one cell in a step

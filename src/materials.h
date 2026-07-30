@@ -91,6 +91,33 @@ enum MatId {
     MAT_EMBER,       /* burning coal: static, enormous heat capacity, slow to spend */
     MAT_FUEL,        /* coal slaked in water. The step that unlocks metal */
     MAT_FUELFIRE,    /* burning fuel: hot enough to melt what coal cannot */
+    /* --- the door --------------------------------------------------------
+       Two materials rather than one with a flag, because there is nowhere to
+       keep the flag. A Cell is mat, moisture, tint and flags, and every byte
+       already means something -- the same wall the devices ran into. Open and
+       closed are the whole of a door's state, so spending an id on each buys
+       the entire mechanism for nothing but a table row.
+
+       They differ in exactly three ways, and each one is deliberate:
+
+         PASSABLE. The open one is in g_matPassable, the closed one is not. That
+         is the door.
+
+         OPAQUE. A closed door is dark behind, an open one is not, so light
+         through a doorway comes out of the existing light model rather than
+         needing a case.
+
+         What they are NOT is a difference in KIND. Both are KIND_STATIC, so
+         both are solid to the simulation and both seal a room. An open door
+         holds back sand and still lets you walk through, which is precisely the
+         material room.h was waiting for and the reason a room with its door
+         open is still your room.
+
+       Only the closed one is an item. See g_matDropsAs: mining an open door
+       gives you a door, because "open door" is a state a door is in, not a
+       thing you own. */
+    MAT_DOOR,
+    MAT_DOOR_OPEN,
     /* --- machinery -------------------------------------------------------
        The cells a multi-cell DEVICE occupies. One material for every device
        type, because the grid only needs to know "something solid and man-made is
@@ -390,6 +417,22 @@ extern u8 g_matPassable[MAT_COUNT];
    a comparison plus an array -- the empty case is by far the most common, and it
    wants to stay the cheap one. */
 extern u8 g_matUnseen[MAT_COUNT];
+
+/* --- what a cell gives you when you break it -------------------------------
+   The item a material yields when mined. The identity for almost everything --
+   stone gives stone -- and the table exists for the cases where the thing in the
+   world is a STATE rather than a possession.
+
+   The door is the one that needs it: mining an open door has to give you a door.
+   Without this you get an "Open Door" in your pack, which is a second item that
+   means the same object, stacks separately from the first, and paints a
+   permanently-open doorway when you place it. None of that is a door.
+
+   Deliberately not the same idea as a smelting product or a phase change: those
+   happen in the world, to the cell, and are already table-driven. This is about
+   what the PLAYER ends up holding, which is the one transformation the
+   simulation never sees. */
+extern u8 g_matDropsAs[MAT_COUNT];
 
 /* --- smelting --------------------------------------------------------------
    Chance out of 255 that a smelting ore cell yields its METAL rather than slag.

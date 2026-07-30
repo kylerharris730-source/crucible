@@ -104,6 +104,14 @@ void initItems() {
     ITEMS[MAT_EMPTY].name     = "";
     ITEMS[MAT_EMPTY].maxStack = 0;
 
+    /* Nor is an open door, on the same grounds: it is a door that happens to be
+       open. Leaving it carryable would give the world two items meaning one
+       object, stacking separately and painting a doorway that can never be
+       shut. g_matDropsAs is what makes this safe -- mining one still pays out,
+       it just pays out a door. */
+    ITEMS[MAT_DOOR_OPEN].name     = "";
+    ITEMS[MAT_DOOR_OPEN].maxStack = 0;
+
     /* Tiers. What separates them is slot count first and rate of fire second,
        because slots change what the tool can BE and delay only changes how fast
        it is at being it -- and an upgrade you have to re-plan around is worth
@@ -579,7 +587,10 @@ int digInto(World& w, Inventory& inv, int cx, int cy, int r, int maxCells) {
            order matters: dig-then-store would drop material on the floor of
            a full pack, and players notice that exactly once -- when it was
            something they wanted. */
-        if (inv.add((ItemId)m, 1) != 0) continue;
+        /* g_matDropsAs, not m: what you dig out and what you end up holding are
+           two different questions for anything whose cell is a STATE. Breaking
+           an open door puts a door in your pack. */
+        if (inv.add((ItemId)g_matDropsAs[m], 1) != 0) continue;
         w.setCell(x, y, MAT_EMPTY);
         ++dug;
     }

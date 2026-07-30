@@ -15,6 +15,7 @@
 #include "light.h"
 #include "room.h"
 #include "device.h"
+#include "door.h"
 
 /* The window is a fixed-size left-hand tool panel plus the sim viewport. The
    viewport keeps a clean integer scale so pixels stay crisp and the
@@ -120,6 +121,11 @@ static const BrushDef BRUSHES[] = {
        Heat/Cool rows below them are brushes that nudge temperature while you
        drag. Similar names, but one is scenery and the other is a tool, so they
        sit next to each other where the difference is easy to see. */
+    /* Only the closed door. Open Door is a state you put a door INTO -- the same
+       line already drawn around molten metal and burning coal -- and painting a
+       permanently-open doorway would be a hole that seals rooms and stops sand,
+       which is a strange thing to be able to build by accident. */
+    { MAT_DOOR,  "Door"  },
     { MAT_LAMP,  "Lamp"  },
     { MAT_HEATER,"Heater"},
     { MAT_COOLER,"Cooler"},
@@ -791,6 +797,23 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 /* Toggle: clicking the same machine again closes it. */
                 const int idx = (int)(d - g_devices);
                 g_devPanel = (g_devPanel == idx) ? -1 : idx;
+            } else if (doorToggle(g_world, a.x, a.y)) {
+                /* A door is the other thing you poke rather than dig, and it
+                   sits here for the same reason a machine does: right-click
+                   means "operate the thing under the cursor" wherever there is
+                   a thing under the cursor.
+
+                   Ahead of the dig branch and BELOW the device branch, so a
+                   door behind a machine still belongs to the machine. Note the
+                   drag flag is deliberately not set -- a door opens on the
+                   click, and a right-DRAG across a row of them should not flap
+                   every one it crosses. Digging a door out is the tool's job,
+                   exactly as it is for a device.
+
+                   Requires a real door under the cursor: doorToggle returns 0
+                   for anything else, so ordinary right-click digging is
+                   untouched everywhere in the world that is not a door. */
+                roomsNotifyEdit(g_world, a.x, a.y);
             } else {
                 g_devPanel = -1;
                 g_rmb = true;   /* right-drag digs, but only over the sim */
