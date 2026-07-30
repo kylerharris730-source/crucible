@@ -258,6 +258,47 @@ struct Cell {
    streaming one way instead of jittering in place. */
 static const u8 F_DIR = 0x01;
 
+/* --- the same bit, for powders ---------------------------------------------
+   Set on a powder cell that FELL STRAIGHT DOWN on the frame just gone. It is
+   what makes a stream of dirt something you can walk through instead of a wall
+   -- see cellFalling() below.
+
+   One bit, two meanings, split by kind, exactly like MatInfo::jitter: nothing
+   reads both, because a cell is either a liquid or a powder and never neither.
+   There was no spare bit to take -- the other seven are the frame stamp, and
+   narrowing that trades a 128-frame aliasing margin for a feature -- and the
+   swap in tryMove already carries this bit along with the material, which is
+   precisely the semantics both meanings want.
+
+   The worst a conversion between the two kinds can do is leave the bit stale for
+   one frame: a liquid that freezes into a powder might read as falling for a
+   frame, or a thawed powder might flow the wrong way once. Both self-correct on
+   the cell's next visit, and neither is observable. */
+static const u8 F_FALL = 0x01;
+
+/* --- material in free fall -------------------------------------------------
+   A powder cell that is on its way down. Two rules read this and they are two
+   halves of one idea: the player does not collide with it, and it does not
+   collide with the player. Both have to hold or neither works -- a stream that
+   the player can walk into but that still piles against their body stops
+   falling the moment it touches them, clears this flag, turns back into a wall
+   in exactly the place the player is standing, and the unstick lifts them into
+   the air. The pair is why this is one predicate used from both sides rather
+   than two mechanisms kept in step by hand.
+
+   FALLING, not merely moving, and the distinction is the whole design. The
+   obvious test -- "is there air underneath it?" -- describes only the LEADING
+   cell of a stream: measured on a 57-cell column of dirt in mid-air, 56 of them
+   had another dirt cell directly below, so a support test would have made a
+   falling stream 98% as solid as a wall. Sideways slides are excluded for the
+   opposite reason: a slumping pile is settling, not falling, and a heap that
+   went soft every time its surface shifted would swallow you whenever you dug
+   near it. Straight down is the one motion that means "this is not holding
+   anything up, including you". */
+static inline bool cellFalling(const Cell& c) {
+    return (c.flags & F_FALL) != 0 && MATS[c.mat].kind == KIND_POWDER;
+}
+
 /* flags bits 1..7 hold a 7-bit stamp of the frame this cell was last visited
    on. Comparing it against the current frame gives "already handled this
    frame" without clearing a flag array every frame.

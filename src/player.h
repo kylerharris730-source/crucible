@@ -46,22 +46,37 @@ static const int PLAYER_STEP_UP = 5;
        row 1    .XXXX.
        row 2+   XXXXXX     <- full width
 
-   A flat top collects things. Sand landing on a horizontal surface has nowhere
-   to slide to, so it sits there and keeps stacking -- measured, a flat-topped
-   head accumulated 24 cells of sand directly on it. On a 45-degree slope the
-   diagonal below-and-outward is free, and powders take diagonals readily
-   (sand's slideDry is 235 of 255), so it sheds instead of piling.
+   What this is FOR has changed, and the history matters because the numbers
+   below were tuned for the old job.
 
-   One cell of inset per row is exactly the slope a falling-sand powder rule can
-   see. A shallower taper would be geometry the simulation cannot act on, since
-   a powder only ever considers the three cells directly beneath it.
+   Originally it was about shedding. A flat top collects things: sand landing on
+   a horizontal surface has nowhere to slide to, so it sits there and keeps
+   stacking -- measured, a flat-topped head accumulated 24 cells of sand directly
+   on it, where a 45-degree slope leaves the diagonal below-and-outward free and
+   powders take diagonals readily (sand's slideDry is 235 of 255). One cell of
+   inset per row is exactly the slope a falling-sand powder rule can see; a
+   shallower taper would be geometry the simulation cannot act on, since a powder
+   only ever considers the three cells directly beneath it.
 
-   The taper has to GROW WITH THE WIDTH, and that is easy to miss: what matters
-   is the width of the apex, which is PLAYER_W - 2*PLAYER_TAPER. At 6 wide with
-   taper 2 the peak was 2 cells and shed everything. Widening the body to 8 and
-   leaving the taper alone made the peak 4 cells -- a flat roof again -- and
-   measured, it went straight back to keeping sand (4 cells stuck on the head
-   where the narrower peak kept none). 3 puts the apex back to 2 cells. */
+   That job is now done by something else. Powder in free fall passes straight
+   through the player (see cellFalling() in world.h), so nothing lands on the
+   head to be shed -- measured over 8 seeds after that change, a flat top kept
+   0.0 cells and a pointed one kept 0.0. The taper was SUPERSEDED here, not
+   broken, and it has never been what saves you from a deep drift: at depth the
+   sand overhead is supported by the sand beside it rather than by you, and every
+   taper from 0 to 3 measured identically at 441 cells.
+
+   What still earns it is the COLLISION OUTLINE. boxBlocked() tests this shape,
+   not the bounding box, so the player fits through exactly the gaps their
+   silhouette suggests -- the pointed shoulders get them under an overhang a
+   full-width head would catch on. Settled material still piles against the shape
+   too, so a rising heap meets a wedge rather than a shelf.
+
+   Keep the apex rule in mind if the body is ever resized, since it is what the
+   value was chosen by: what matters is the width of the apex, which is
+   PLAYER_W - 2*PLAYER_TAPER. At 6 wide with taper 2 the peak was 2 cells. Widening
+   the body to 8 and leaving the taper alone made the peak 4 cells -- a flat roof
+   again -- and 3 puts the apex back to 2. */
 static const int PLAYER_TAPER = 3;
 
 /* Cells to inset each side on a given row measured from the top of the box. */

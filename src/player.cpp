@@ -26,8 +26,15 @@ bool playerSolid(const World& w, int x, int y) {
     /* Outside the world counts as solid, so the player can never be walked out
        of bounds and no caller has to bounds-check first. */
     if (x < 0 || x >= SIM_W || y < 0 || y >= SIM_H) return true;
-    const u8 k = MATS[w.at(x, y).mat].kind;
-    return k == KIND_STATIC || k == KIND_POWDER;
+    const Cell& c = w.at(x, y);
+    const u8 k = MATS[c.mat].kind;
+    if (k != KIND_STATIC && k != KIND_POWDER) return false;
+    /* Powder in free fall is not ground. A stream of dirt pouring past you is
+       not a wall, and it used to be exactly that: measured, walking through one
+       covered 96 cells of a 200-cell crossing and spent 159 frames of 400 making
+       no progress at all. See cellFalling() in world.h -- the matching half of
+       this rule lives in tryMove(). */
+    return !cellFalling(c);
 }
 
 /* Is the collision shape blocked with its bounding box's top-left at (bx, by)?

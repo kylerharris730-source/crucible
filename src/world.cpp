@@ -181,8 +181,21 @@ bool World::tryMove(int sx, int sy, int tx, int ty) {
     /* Nothing moves into an occupied entity box -- see the note in world.h.
        First test in the function and first comparison of the box test, so the
        common case (no entity, or nowhere near it) costs one predictable
-       compare against a constant. */
-    if (blocksCell(tx, ty)) return false;
+       compare against a constant.
+
+       Material in FREE FALL is the one exception, and it is the other half of
+       the rule in player.cpp: the player passes through a falling stream, so a
+       falling stream has to pass through the player. Anything settled still
+       piles against the body exactly as before, which is what keeps a heap
+       something you stand on and a rising pile something that buries you -- what
+       changed is only that you no longer wear the stream on your shoulders on
+       its way down.
+
+       Ordered so the exception costs nothing when it does not apply: blocksCell
+       fails on its first compare against a constant almost everywhere in the
+       world, and the second test is only reached for cells actually inside the
+       box. */
+    if (blocksCell(tx, ty) && !cellFalling(cells[sy * SIM_W + sx])) return false;
 
     const int si = sy * SIM_W + sx, ti = ty * SIM_W + tx;
     Cell& s = cells[si];
@@ -217,7 +230,65 @@ void World::updatePowder(int x, int y) {
     Cell& c = cells[y * SIM_W + x];
     const MatInfo& m = MATS[c.mat];
 
-    if (tryMove(x, y, x, y + 1)) return;
+    /* F_FALL is maintained here and nowhere else: set on the cell the material
+       LANDED IN after a straight drop, cleared on any frame the drop failed.
+       Setting it after the move rather than before is not a detail -- tryMove
+       swaps, so by the time it returns the material is at (x, y+1) and `c` is
+       whatever used to be there.
+
+       Clearing it on failure is what lets a landed stream go quiet correctly. A
+       cell that stops falling is dirty from its own last move, so it is visited
+       once more, fails here, drops the flag, schedules nothing, and sleeps as
+       ordinary solid ground. Nothing has to sweep the flag, and a settled pile
+       is never revisited to have it cleared -- it was already cleared on the way
+       to settling. */
+    if (tryMove(x, y, x, y + 1)) {
+        cells[(y + 1) * SIM_W + x].flags |= F_FALL;
+        return;
+    }
+
+    /* --- eviction ------------------------------------------------------
+       A falling cell is allowed THROUGH the entity box, so it can also be
+       inside it when its fall ends -- and if it simply settled there it would
+       turn back into solid ground in the exact cells the player occupies. That
+       is not a corner case: measured, a wide pour left 164 settled sand cells
+       inside the body, which is essentially the whole figure, and the unstick in
+       Player::update could not lift them out from under a continuous pour, so
+       they read as BURIED. Passing through has to mean passing through, not
+       "phasing in".
+
+       So a falling cell that cannot continue and is inside the box gets pushed
+       out instead of settling, preferring the side it is already nearer to.
+       Diagonals first, because that is still descending; a purely sideways shove
+       only if it must, which is a move no powder makes on its own and is
+       justified here as eviction rather than flow.
+
+       If it cannot get out this frame it stays marked as falling and dirties
+       itself to try again. Both halves of that matter. Keeping the flag is what
+       keeps the player unblocked in the meantime, and re-dirtying is what stops a
+       trapped cell from sleeping in a state it must not stay in. Neither can spin
+       forever: the condition is "inside the box", so it ends when the player
+       moves, and then the ordinary path below clears the flag and lets the cell
+       settle like anything else.
+
+       Note this leaves pile behaviour completely alone, which is the point. Sand
+       still rests on the head and shoulders, a drift still walls you in -- what
+       changed is only that material in transit does not become part of you. */
+    if (blocksCell(x, y)) {
+        const int out = (x * 2 < blockX0 + blockX1) ? -1 : 1;
+        static const int TRY[4][2] = { {1,1}, {-1,1}, {1,0}, {-1,0} };
+        for (int t = 0; t < 4; ++t) {
+            const int tx = x + TRY[t][0] * out, ty = y + TRY[t][1];
+            if (tryMove(x, y, tx, ty)) {
+                cells[ty * SIM_W + tx].flags |= F_FALL;
+                return;
+            }
+        }
+        dirtyPoint(x, y);
+        return;                 /* F_FALL deliberately left set */
+    }
+
+    c.flags = (u8)(c.flags & ~F_FALL);
 
     /* Blocked below, so consider sliding off to a diagonal. The chance of
        doing so is what sets the angle of repose: dry sand nearly always
