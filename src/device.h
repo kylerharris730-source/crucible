@@ -67,8 +67,29 @@ static const int MAX_DEVICES = 128;
 enum DeviceType {
     DEV_THERMOCOUPLE = 0,   /* watches temperature, fires when it crosses a mark */
     DEV_CLOCK,              /* fires on a period, so things can happen in order */
+    /* --- the automation pair ---------------------------------------------
+       A placer puts material into the world, a miner takes it out, and both are
+       driven by a spark. Between them and the clock and the thermocouple, the ore
+       process becomes something you can build a machine to do: drop a charge, heat
+       it, wait for the trip, break the crust.
+
+       Both act on the ROW DIRECTLY BELOW their footprint, and neither has a
+       facing. That is a real restriction and it is chosen over the alternative:
+       rotation would mean another piece of state, another thing to show on the
+       panel, another thing to get wrong when you place one -- and a hopper that
+       drops downward and a drill that bites downward are what both of these are
+       for nine times out of ten. Gravity already gives "down" a meaning nothing
+       else has. */
+    DEV_PLACER,
+    DEV_MINER,
     DEV_COUNT
 };
+
+/* How much either machine can hold. Generous enough that a placer does not need
+   babysitting during a smelt, small enough that it is a buffer rather than a
+   warehouse -- a machine that could hold 100000 like a player's stack would make
+   the whole logistics question disappear. */
+static const int DEV_CAP = 2000;
 
 /* ==========================================================================
    Electricity
@@ -187,6 +208,18 @@ struct Device {
        that is not working. `poked` cannot answer it: it is set and consumed inside
        one devTick, so from outside it is never observably true. */
     i32  received;
+
+    /* --- the buffer, for the placer and the miner ------------------------
+       One material at a time, not a general inventory. A machine that could hold
+       a mixture would need a slot list on its panel and a rule for which slot a
+       pulse draws from, and neither earns its complexity: a placer places one
+       thing, and a miner biting into layered ground wants to tell you it has hit
+       something different rather than silently blending it.
+
+       `mat` is meaningless while `count` is zero, which is what lets a placer
+       accept whatever it is first fed. */
+    u8   mat;
+    i32  count;
     i32  phase;      /* the clock's counter; unused by other types */
     i32  reading;    /* last sensed value, for the panel to show */
 

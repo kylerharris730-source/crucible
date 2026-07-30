@@ -58,6 +58,8 @@ enum {
     /* Machines. See ITEMK_DEVICE. */
     ITEM_THERMOCOUPLE,
     ITEM_CLOCK,
+    ITEM_PLACER,
+    ITEM_MINER,
     ITEM_COUNT
 };
 

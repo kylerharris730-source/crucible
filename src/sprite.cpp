@@ -476,6 +476,46 @@ static const char* ART_CLOCK[SPR_H] = {
     "..DDDDDDDDDD..",
 };
 
+/* The placer: a funnel, mouth up. The face says which way the machine works,
+   which matters more here than on the sensors -- a hopper that took from below
+   would be a different machine, and the picture is the only thing that says so.
+
+   The miner is the same casing with a bit pointing down, so the pair read as
+   opposites at a glance: one open at the top, one toothed at the bottom. */
+static const char* ART_PLACER[SPR_H] = {
+    "..DDDDDDDDDD..",
+    ".DEEEEEEEEEED.",
+    ".DEFFFFFFFFED.",
+    "lDEiFFFFFFiEDl",
+    "lDEiiFFFFiiEDl",
+    ".DEFiiFFiiFED.",
+    ".DEFFiiiiFFED.",
+    ".DEFFFiiFFFED.",
+    ".DEFFFiiFFFED.",
+    ".DEEEEEEEEEED.",
+    ".DddddddddddD.",
+    ".DdEEEEEEEEdD.",
+    ".DddddddddddD.",
+    "..DDDDDDDDDD..",
+};
+
+static const char* ART_MINER[SPR_H] = {
+    "..DDDDDDDDDD..",
+    ".DEEEEEEEEEED.",
+    ".DEFFFFFFFFED.",
+    "lDEFFFiiFFFEDl",
+    "lDEFFFiiFFFEDl",
+    ".DEFFFiiFFFED.",
+    ".DEFFiiiiFFED.",
+    ".DEFFFiiFFFED.",
+    ".DEFFFFiFFFED.",
+    ".DEEEEEEEEEED.",
+    ".DdkdddddkddD.",
+    ".DdkEEEEEkddD.",
+    ".DdkddddkdddD.",
+    "..DDDDDDDDDD..",
+};
+
 void initSprites() {
     memset(g_sprite, 0, sizeof(g_sprite));
     expand(SPR_TOOL1,     ART_TOOL1);
@@ -493,6 +533,8 @@ void initSprites() {
     expand(SPR_PACK3,     ART_PACK3);
     expand(SPR_THERMO,    ART_THERMO);
     expand(SPR_CLOCK,     ART_CLOCK);
+    expand(SPR_PLACER,    ART_PLACER);
+    expand(SPR_MINER,     ART_MINER);
 
     memset(g_playerSpr, 0, sizeof(g_playerSpr));
     composePlayer(PF_IDLE,  LEG_STAND, false);

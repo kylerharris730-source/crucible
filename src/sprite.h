@@ -40,6 +40,8 @@ enum SpriteId {
        two very different scales and has to survive both. */
     SPR_THERMO,
     SPR_CLOCK,
+    SPR_PLACER,
+    SPR_MINER,
     SPR_COUNT
 };
 

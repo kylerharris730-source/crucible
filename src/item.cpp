@@ -315,6 +315,20 @@ void initItems() {
     ITEMS[ITEM_CLOCK].maxStack   = 64;
     ITEMS[ITEM_CLOCK].colour     = 0x8A93A6;
     ITEMS[ITEM_CLOCK].sprite     = SPR_CLOCK;
+
+    ITEMS[ITEM_PLACER].name       = "Placer";
+    ITEMS[ITEM_PLACER].kind       = ITEMK_DEVICE;
+    ITEMS[ITEM_PLACER].deviceType = DEV_PLACER;
+    ITEMS[ITEM_PLACER].maxStack   = 64;
+    ITEMS[ITEM_PLACER].colour     = 0xE8503A;
+    ITEMS[ITEM_PLACER].sprite     = SPR_PLACER;
+
+    ITEMS[ITEM_MINER].name       = "Miner";
+    ITEMS[ITEM_MINER].kind       = ITEMK_DEVICE;
+    ITEMS[ITEM_MINER].deviceType = DEV_MINER;
+    ITEMS[ITEM_MINER].maxStack   = 64;
+    ITEMS[ITEM_MINER].colour     = 0x9AA6B4;
+    ITEMS[ITEM_MINER].sprite     = SPR_MINER;
 }
 
 const char* const EQ_NAMES[EQ_COUNT] = { "Feet", "Back", "Trinket", "Trinket" };

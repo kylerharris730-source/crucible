@@ -31,6 +31,13 @@ const DeviceInfo DEVS[DEV_COUNT] = {
        becomes a solid stream and the array cap starts doing the tuning instead of
        the player. */
     { "Clock", "every", "frames", 6, 600, 6, 60, SPR_CLOCK },
+    /* Placer and miner. Their one number is CELLS PER PULSE, which is the right
+       axis for both: it is the difference between a machine that trickles and one
+       that empties itself in a few ticks, and it is the number you tune when a
+       contraption is running at the wrong rate. 14 is the width of the footprint,
+       so a pulse of 14 lays or lifts exactly one full row underneath. */
+    { "Placer", "places", "cells", 1, 14, 1, 4, SPR_PLACER },
+    { "Miner",  "mines",  "cells", 1, 14, 1, 4, SPR_MINER  },
 };
 
 int sparkCount() {
@@ -125,23 +132,60 @@ static bool sparkStep(World& w, Spark& s) {
     return false;
 }
 
-/* Emit a spark from a device into any conductor touching its perimeter, heading
-   outward. Returns true if one got away.
+/* Emit from a device into every conductor touching its perimeter, heading
+   outward. Returns how many sparks got away.
 
    Scanning the perimeter rather than having a designated output side is what makes
-   a machine something you can wire from whichever direction is convenient -- and
-   the alternative would need a rotation to be part of every device's state, and a
-   way to see and change it, for very little gain. */
-static bool devEmit(World& w, const Device& d) {
+   a machine something you can wire from whichever direction is convenient -- the
+   alternative would need a rotation on every device, shown and adjustable, for very
+   little gain.
+
+   EVERY run of conductor, not the first one found, and that was a real bug rather
+   than a nicety. A thermocouple bolted flush to a graphene crucible -- which is
+   what you build a crucible from, since it is the one material with no melting
+   point -- had its signal swallowed by the furnace body: devEmit found the housing
+   before it found the wire, put the spark into it, and returned. The contraption
+   smelted correctly and then simply never triggered its second stage. A firing
+   machine energising everything touching it is both the fix and the more honest
+   behaviour for a terminal.
+
+   One spark per CONTIGUOUS RUN, not per cell, or a device flush against a slab
+   would emit fourteen sparks into the same lump of metal. Bounded by half the
+   perimeter in the worst case, which is small and finite. This is not the
+   branching that sparkStep deliberately refuses -- that is one spark multiplying
+   as it travels, which is unbounded; this is a fixed number of outputs on a fixed
+   perimeter. */
+static int devEmit(World& w, const Device& d) {
+    int sent = 0;
+    bool run = false;
+    /* Top edge, then bottom, then the two sides. `run` resets between edges so a
+       conductor wrapping a corner counts once per side, which is what you want:
+       the two sides of a corner are two different directions to leave in. */
+    run = false;
     for (int x = d.x; x < d.x + DEV_W; ++x) {
-        if (conducts(w, x, d.y - 1)      && sparkAdd(x, d.y - 1,      0, -1)) return true;
-        if (conducts(w, x, d.y + DEV_H)  && sparkAdd(x, d.y + DEV_H,  0,  1)) return true;
+        const bool c = conducts(w, x, d.y - 1);
+        if (c && !run && sparkAdd(x, d.y - 1, 0, -1)) ++sent;
+        run = c;
     }
+    run = false;
+    for (int x = d.x; x < d.x + DEV_W; ++x) {
+        const bool c = conducts(w, x, d.y + DEV_H);
+        if (c && !run && sparkAdd(x, d.y + DEV_H, 0, 1)) ++sent;
+        run = c;
+    }
+    run = false;
     for (int y = d.y; y < d.y + DEV_H; ++y) {
-        if (conducts(w, d.x - 1, y)      && sparkAdd(d.x - 1, y,     -1,  0)) return true;
-        if (conducts(w, d.x + DEV_W, y)  && sparkAdd(d.x + DEV_W, y,  1,  0)) return true;
+        const bool c = conducts(w, d.x - 1, y);
+        if (c && !run && sparkAdd(d.x - 1, y, -1, 0)) ++sent;
+        run = c;
     }
-    return false;
+    run = false;
+    for (int y = d.y; y < d.y + DEV_H; ++y) {
+        const bool c = conducts(w, d.x + DEV_W, y);
+        if (c && !run && sparkAdd(d.x + DEV_W, y, 1, 0)) ++sent;
+        run = c;
+    }
+    return sent;
 }
 
 void sparkDraw(u32* px, int camX, int camY) {
@@ -222,6 +266,8 @@ bool devPlace(World& w, u8 type, int cx, int cy) {
     d.phase   = 0;
     d.reading = 0;
     d.received = 0;
+    d.mat     = MAT_EMPTY;
+    d.count   = 0;
     d.used    = true;
 
     for (int y = y0; y < y0 + DEV_H; ++y)
@@ -264,6 +310,81 @@ static bool devIntact(const World& w, const Device& d) {
     return true;
 }
 
+
+/* --- the buffer ------------------------------------------------------------
+   A placer draws loose material touching its footprint into store; a miner puts
+   what it breaks there. Both share one rule about mixing: a buffer holds a single
+   material, and anything else is refused rather than blended. Silently converting
+   one material into another inside a machine is the kind of behaviour that makes a
+   contraption impossible to trust. */
+static bool devTakeInto(Device& d, u8 mat) {
+    if (d.count >= DEV_CAP) return false;
+    if (d.count > 0 && d.mat != mat) return false;
+    d.mat = mat;
+    ++d.count;
+    return true;
+}
+
+/* Cells drawn in per frame while something is piled against a placer. A rate
+   rather than "all of it at once", so pouring a heap into one looks like the heap
+   draining and not like it vanishing. */
+static const int INTAKE_RATE = 3;
+
+static void devIntake(World& w, Device& d) {
+    int taken = 0;
+    for (int y = d.y - 1; y <= d.y + DEV_H && taken < INTAKE_RATE; ++y) {
+        for (int x = d.x - 1; x <= d.x + DEV_W && taken < INTAKE_RATE; ++x) {
+            /* Perimeter only -- the interior is the machine itself. */
+            const bool edge = (x == d.x - 1 || x == d.x + DEV_W ||
+                               y == d.y - 1 || y == d.y + DEV_H);
+            if (!edge) continue;
+            if (x < PLAY_X0 || x > PLAY_X1 || y < PLAY_Y0 || y > PLAY_Y1) continue;
+            const u8 m = w.at(x, y).mat;
+            if (m == MAT_EMPTY) continue;
+            const u8 k = MATS[m].kind;
+            if (k != KIND_POWDER && k != KIND_LIQUID) continue;
+            if (!devTakeInto(d, m)) continue;
+            w.setCell(x, y, MAT_EMPTY);
+            ++taken;
+        }
+    }
+}
+
+/* Lay up to `value` cells of the buffer into the row under the footprint, left to
+   right, skipping anything already occupied. Skipping rather than stopping matters:
+   a placer over a partly-filled furnace should top it up, not jam because its
+   leftmost outlet happens to be blocked. */
+static void devPlaceRow(World& w, Device& d) {
+    const int y = d.y + DEV_H;
+    if (y > PLAY_Y1) return;
+    int done = 0;
+    for (int x = d.x; x < d.x + DEV_W && done < d.value && d.count > 0; ++x) {
+        if (x < PLAY_X0 || x > PLAY_X1) continue;
+        if (w.at(x, y).mat != MAT_EMPTY) continue;
+        w.setCell(x, y, d.mat);
+        --d.count;
+        ++done;
+    }
+}
+
+/* Take up to `value` cells out of the row under the footprint. Refuses anything
+   it cannot hold, and -- importantly -- refuses to eat another MACHINE: a miner
+   bolted under a device should not quietly dismantle it. Wall is exempt too, since
+   it is the indestructible border. */
+static void devMineRow(World& w, Device& d) {
+    const int y = d.y + DEV_H;
+    if (y > PLAY_Y1) return;
+    int done = 0;
+    for (int x = d.x; x < d.x + DEV_W && done < d.value; ++x) {
+        if (x < PLAY_X0 || x > PLAY_X1) continue;
+        const u8 m = w.at(x, y).mat;
+        if (m == MAT_EMPTY || m == MAT_WALL || m == MAT_DEVICE) continue;
+        if (!devTakeInto(d, m)) break;      /* full, or holding something else */
+        w.setCell(x, y, MAT_EMPTY);
+        ++done;
+    }
+}
+
 void devTick(World& w) {
     /* Sparks first, machines second, and the order is the contract. A spark
        arriving this frame sets `poked` on the machine it reaches, and the machine's
@@ -295,6 +416,24 @@ void devTick(World& w) {
                offset one against another is the whole basis of sequencing. */
             if (++d.phase >= d.value) { d.phase = 0; d.firing = true; }
             d.reading = d.value ? (i32)(d.value - d.phase) : 0;   /* frames to go */
+            break;
+        }
+        case DEV_PLACER: {
+            /* Fed by POURING onto it. Any loose material touching the footprint is
+               drawn into the buffer, which makes loading a placer a thing you do
+               with a shovel rather than through a menu -- and means a miner or a
+               chute can feed one without either knowing the other exists.
+
+               Only powders and liquids: a placer that ate the stone wall it was
+               bolted to would dismantle its own housing. */
+            devIntake(w, d);
+            d.reading = d.count;
+            if (d.poked && d.count > 0) devPlaceRow(w, d);
+            break;
+        }
+        case DEV_MINER: {
+            d.reading = d.count;
+            if (d.poked) devMineRow(w, d);
             break;
         }
         case DEV_THERMOCOUPLE: {

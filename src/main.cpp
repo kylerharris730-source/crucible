@@ -1124,8 +1124,8 @@ static void drawButton(HDC hdc, const RECT& r, const char* label,
    ONE adjustable number, deliberately. See the note on DeviceInfo::valueLabel --
    a machine with six settings is a machine nobody can understand by looking at
    it, and the whole interaction should be "read it, nudge it, get on with it". */
-static const int DEVP_W = 210, DEVP_H = 96;
-static RECT g_devpBox, g_devpDec, g_devpInc, g_devpClose;
+static const int DEVP_W = 260, DEVP_H = 96;
+static RECT g_devpBox, g_devpDec, g_devpInc, g_devpTake, g_devpClose;
 
 static void layoutDevPanel(const Device& d) {
     /* Sit it just above and right of the machine, in screen pixels. */
@@ -1140,6 +1140,7 @@ static void layoutDevPanel(const Device& d) {
     const int by = py + DEVP_H - 30;
     SetRect(&g_devpDec,   px + 10,  by, px + 40,  by + 22);
     SetRect(&g_devpInc,   px + 44,  by, px + 74,  by + 22);
+    SetRect(&g_devpTake,  px + 82,  by, px + 142, by + 22);
     SetRect(&g_devpClose, px + DEVP_W - 40, by, px + DEVP_W - 10, by + 22);
 }
 
@@ -1158,6 +1159,16 @@ static bool handleDevPanelClick(int mx, int my) {
     if (PtInRect(&g_devpDec, pt))        d.value -= di.vStep;
     else if (PtInRect(&g_devpInc, pt))   d.value += di.vStep;
     else if (PtInRect(&g_devpClose, pt)) { g_devPanel = -1; return true; }
+    else if (PtInRect(&g_devpTake, pt) && d.count > 0) {
+        /* Empty the machine's buffer into the pack. The counterpart to loading a
+           placer by pouring onto it -- a miner fills up with what it has broken
+           and this is how you get it out. Moves only what actually fits, so a full
+           pack leaves the rest in the machine rather than destroying it. */
+        const int moved = g_inv.add((ItemId)d.mat, (int)d.count);
+        d.count -= moved;
+        if (d.count <= 0) { d.count = 0; d.mat = MAT_EMPTY; }
+        return true;
+    }
     if (d.value < di.vMin) d.value = di.vMin;
     if (d.value > di.vMax) d.value = di.vMax;
     /* Changing the setpoint has to clear the latch, or a thermocouple you have
@@ -1198,6 +1209,15 @@ static void drawDevPanel(HDC hdc) {
     sprintf(buf, "sparks in  %d", (int)d.received);
     drawText(hdc, tx, g_devpBox.top + 58, RGB(160, 200, 230), buf);
 
+    /* The buffer, for machines that have one. Named rather than shown as a
+       swatch: "holds 340 Fe Ore" is what you need to know, and at this size a
+       colour chip would be indistinguishable between the two ores. */
+    if (d.type == DEV_PLACER || d.type == DEV_MINER) {
+        if (d.count > 0) sprintf(buf, "holds %d %s", (int)d.count, MATS[d.mat].name);
+        else             sprintf(buf, "holds nothing");
+        drawText(hdc, tx + 96, g_devpBox.top + 58, RGB(214, 216, 224), buf);
+    }
+
     /* The state line. "armed" rather than "off" because a thermocouple below its
        mark is not idle, it is waiting -- and that distinction is the whole
        difference between a device you can sequence with and a thermostat. */
@@ -1208,6 +1228,8 @@ static void drawDevPanel(HDC hdc) {
     POINT pt = { g_mx, g_my };
     drawButton(hdc, g_devpDec, "-", 0, false, PtInRect(&g_devpDec, pt) != 0);
     drawButton(hdc, g_devpInc, "+", 0, false, PtInRect(&g_devpInc, pt) != 0);
+    if (d.type == DEV_PLACER || d.type == DEV_MINER)
+        drawButton(hdc, g_devpTake, "take", 0, false, PtInRect(&g_devpTake, pt) != 0);
     drawButton(hdc, g_devpClose, "x", 0, false, PtInRect(&g_devpClose, pt) != 0);
     SelectObject(hdc, oldFont);
 }
