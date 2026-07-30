@@ -69,6 +69,8 @@ enum MatId {
     MAT_COOLER,      /* holds itself at min temperature, forever */
     MAT_LAMP,        /* the only light source you can build: bright, cold, and
                         it stays where you put it */
+    MAT_TORCH,       /* the cheap light: dimmer than a lamp, and the only solid
+                        in the table you can WALK THROUGH */
     MAT_COUNT
 };
 
@@ -310,6 +312,29 @@ extern u8 g_matStrength[MAT_COUNT];
    be before it is properly dark behind it. */
 extern u8 g_matLight[MAT_COUNT];
 extern u8 g_matOpacity[MAT_COUNT];
+
+/* --- what an entity can walk through ---------------------------------------
+   True for a cell the PLAYER passes through as if it were air. Only the torch
+   is, so far.
+
+   This is about ENTITIES ONLY, and the distinction is the whole reason it is a
+   separate table rather than a new MatKind. A torch still occupies its cell for
+   every other purpose: sand piles on top of it, a shot has to break it, light
+   reads it, and the movement rules will not shove material into it. What it does
+   not do is stop a person -- which is a fact about collision, not about physics,
+   and the falling-sand rules should not have to learn a new kind to express it.
+
+   A new KIND_ would have been the wrong shape twice over. Every switch on kind
+   in world.cpp would need a case for something that behaves exactly like
+   KIND_STATIC, and the property is not exclusive: a torch is a static solid AND
+   passable, so it wants an adjective, not a category. Compare cellFalling() in
+   world.h, which is the other half of "solid to the sim, not to you" -- that one
+   is per-cell and temporary, this one is per-material and permanent.
+
+   Standalone rather than a MatInfo column for the reason the tables above it all
+   give: as a field it would be the one entry missing from every MATS[] row, which
+   trips -Wmissing-field-initializers on all of them under -Wextra. */
+extern u8 g_matPassable[MAT_COUNT];
 
 /* Full brightness. A byte, so it is also the sun. */
 static const int LIGHT_MAX = 255;

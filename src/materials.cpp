@@ -479,6 +479,24 @@ MatInfo MATS[MAT_COUNT] = {
      (g_matLight is not derived from temperature), and the lamp is the material
      that makes that separation visible. */
   { "Lamp",  KIND_STATIC, 255,   0,    0,   0,   0,   0,  0,    6,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0xFFF2C4, 0xFFD87A, 0xFFF2C4, 0xFFD87A, 0 },
+  /* The torch: the cheap light, and the first thing in the table you can walk
+     through (see g_matPassable in materials.h).
+
+     Cold, for the reason the lamp's note gives at length -- it applies with more
+     force here, not less. A torch is exactly the thing you want to stud a wooden
+     corridor with, so making it hot enough to look like a flame is making it hot
+     enough to burn the corridor down some minutes later, in a way you would
+     never connect to the decision. The colour carries the fire; the temperature
+     column does not have to.
+
+     Dimmer than the lamp on purpose, and by enough to feel: 150 against 255
+     reaches 50 cells through air where the lamp reaches 85. That is the whole
+     difference between them apart from collision, so it has to be a real one, or
+     the lamp becomes the torch you happen to have more of.
+
+     STR_LOOSE, softer than the lamp's STR_SOFT, so the starting tool clears one.
+     A light you can walk through is a light you will put in the wrong place. */
+  { "Torch", KIND_STATIC, 255,   0,    0,   0,   0,   0,  0,    6,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0xFFC46A, 0xF08A2A, 0xFFC46A, 0xF08A2A, 0 },
 };
 
 u32 g_colorLut[MAT_COUNT * 256];
@@ -487,6 +505,7 @@ u8  g_heatAlpha[256];
 u8  g_matGlows[MAT_COUNT];
 u8  g_matDecay[MAT_COUNT];
 u8  g_matStrength[MAT_COUNT];
+u8  g_matPassable[MAT_COUNT];
 u8  g_matLight[MAT_COUNT];
 u8  g_matOpacity[MAT_COUNT];
 u8  g_lightShade[256];
@@ -519,6 +538,8 @@ static void initStrength() {
     g_matStrength[MAT_SAND]        = STR_LOOSE;
     g_matStrength[MAT_DIRT]        = STR_LOOSE;
     g_matStrength[MAT_GRASS]       = STR_LOOSE;
+
+    g_matStrength[MAT_TORCH]       = STR_LOOSE;
 
     g_matStrength[MAT_ICE]         = STR_SOFT;
     g_matStrength[MAT_LAMP]        = STR_SOFT;
@@ -609,6 +630,25 @@ static void initLight() {
     /* The lamp is the only thing you build for light, so it is the brightest
        and everything else is measured against it. */
     g_matLight[MAT_LAMP]     = LIGHT_MAX;
+    /* The torch. 150 was the first guess and it was wrong, in a way only a
+       screenshot found: it lit nothing. The trap is that emission sets PEAK
+       BRIGHTNESS and REACH with one number -- reach is emission/attenuation, and
+       attenuation belongs to the medium, not the source -- so "dimmer" cannot
+       mean "bright but local", it means murky everywhere. At 150 the torch
+       rendered its OWN CELL at 69% and a corridor built to its measured spacing
+       still read as unlit beside an identical corridor lit by lamps.
+
+       A reach test hid this, and it is worth naming why: it asked for light > 0,
+       and reported 49 cells. At the far end of a linear falloff the value is 1,
+       and 1 is not light, it is arithmetic. Half brightness or better -- with
+       unlit already rendering at 15% -- is the honest measure, and by it 150
+       reached 20 cells, not 49.
+
+       205 renders the torch's own cell at 85% and holds half brightness to 38
+       cells, against the lamp's 100% and 55. That is a real ladder in both
+       numbers rather than a difference you have to be told about, and it leaves
+       the torch what it should be: a light that works. */
+    g_matLight[MAT_TORCH]    = 205;
     g_matLight[MAT_PLASMA]   = 240;
     g_matLight[MAT_FIRE]     = 200;
     g_matLight[MAT_LAVA]     = 190;
@@ -744,8 +784,18 @@ static void initBgColours() {
     for (int k = 0; k < 16; ++k) g_bgColorLut[(MAT_EMPTY << 4) | k] = 0x000000;
 }
 
+/* See g_matPassable in materials.h. A whitelist rather than a rule derived from
+   some other column, because there is no honest rule to derive it from: nothing
+   about being a light, or being cheap, or being static makes a thing walkable.
+   It is a per-material decision and the list should stay short enough to read. */
+static void initPassable() {
+    for (int m = 0; m < MAT_COUNT; ++m) g_matPassable[m] = 0;
+    g_matPassable[MAT_TORCH] = 1;
+}
+
 void initMaterials() {
     initStrength();
+    initPassable();
     initLight();
     for (int m = 0; m < MAT_COUNT; ++m) {
         MatInfo& mi = MATS[m];

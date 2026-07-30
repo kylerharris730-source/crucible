@@ -106,6 +106,10 @@ static const BrushDef BRUSHES[] = {
        drag. Similar names, but one is scenery and the other is a tool, so they
        sit next to each other where the difference is easy to see. */
     { MAT_LAMP,  "Lamp"  },
+    /* Next to the lamp because the choice between them is the only thing worth
+       thinking about when you want light: brighter and solid, or dimmer and
+       something you can stand in. */
+    { MAT_TORCH, "Torch" },
     { MAT_HEATER,"Heater"},
     { MAT_COOLER,"Cooler"},
     { TOOL_HEAT, "Heat"  },

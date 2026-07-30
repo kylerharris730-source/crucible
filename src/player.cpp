@@ -29,6 +29,9 @@ bool playerSolid(const World& w, int x, int y) {
     const Cell& c = w.at(x, y);
     const u8 k = MATS[c.mat].kind;
     if (k != KIND_STATIC && k != KIND_POWDER) return false;
+    /* Materials you walk through -- the torch, so far. Per-material and
+       permanent; see g_matPassable in materials.h. */
+    if (g_matPassable[c.mat]) return false;
     /* Powder in free fall is not ground. A stream of dirt pouring past you is
        not a wall, and it used to be exactly that: measured, walking through one
        covered 96 cells of a 200-cell crossing and spent 159 frames of 400 making
