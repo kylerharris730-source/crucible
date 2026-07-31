@@ -585,9 +585,17 @@ static void generateOre(World& w) {
    Deliberately DEEP and SPARSE. Deep because a hotspot near the surface would be
    the first thing anyone found and would skip the coal step entirely; sparse
    because the interesting version of a free heat source is one you build a
-   settlement around, not one you trip over. */
+   settlement around, not one you trip over.
+
+   The depth floor started at 900 and moved to 1300 after playing with it. The
+   world gives roughly 1750 cells between the stone line and the bottom, so 900
+   put hotspots anywhere in the lower five-sixths of it -- which is deep in
+   absolute terms and not deep in the only sense that matters, which is how far
+   past everything else you have to go to reach one. At 1300 they sit in the
+   bottom quarter, below every ore vein and every cave, and getting to one is a
+   trip you outfit for rather than something that happens on the way past. */
 static const int HOT_COUNT   = 14;     /* blobs in the whole world */
-static const int HOT_MIN_DEP = 900;    /* cells below the stone line, at least */
+static const int HOT_MIN_DEP = 1300;   /* cells below the stone line, at least */
 static const int HOT_R       = 46;     /* radius, in cells */
 
 static void generateHotspots(World& w) {

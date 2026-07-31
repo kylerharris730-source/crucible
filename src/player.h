@@ -125,6 +125,66 @@ struct FlightSpec {
     bool any() const { return fuel > 0 && riseCap > 0.0f; }
 };
 
+/* --- health ----------------------------------------------------------------
+
+   One pool, and three ways to lose it: hitting the ground too fast, standing
+   somewhere too hot, standing somewhere too cold.
+
+   100 is chosen so that damage can be quoted as a percentage in ordinary speech
+   and so a single number on the HUD needs no units. It is not a budget the
+   other systems were tuned against -- the thresholds below were each measured
+   on their own and the total is what fell out. */
+static const int PLAYER_HP_MAX = 100;
+
+/* --- falling ---------------------------------------------------------------
+   Damage comes from DISTANCE FALLEN, not from impact speed, and that is forced
+   rather than preferred: MAX_FALL caps the descent at 6 cells a frame, so a
+   30-cell drop and a 300-cell drop arrive at exactly the same speed. Speed
+   cannot tell them apart and distance can.
+
+   The safe distance has to clear a plain jump or jumping would cost health. The
+   jump is 2.6 cells/frame against 0.18 gravity, so its peak is v^2/2g = 18.8
+   cells and you land from 19. 26 leaves room to jump off a modest ledge as
+   well, which is the same motion and should feel the same.
+
+   Past that it is 1.5 points a cell, so a fall of about 93 cells kills from
+   full. That is deliberately survivable-but-serious at the depth of an ordinary
+   cave and fatal down a shaft you dug yourself -- the mistake it is there to
+   punish is not looking before stepping off. */
+static const float FALL_SAFE   = 26.0f;
+static const float FALL_DAMAGE = 1.5f;
+
+/* --- heat and cold ---------------------------------------------------------
+   Both are measured over the cells the BODY occupies rather than the ones
+   around it. That sounds like it would read nothing, since the collision box
+   keeps material out -- but the box holds air, and air beside lava is hot air.
+   So this measures what you are standing in, which is the honest question, and
+   it costs one pass over 176 cells a frame.
+
+   55 C is above anything the weather does and below every process temperature
+   in the game, so a furnace room is uncomfortable and a workshop is not. -5 C
+   is below freezing rather than at it, so standing on ice is free and standing
+   in liquid nitrogen is not.
+
+   The rate is per degree past the line, which makes the ladder come out of the
+   material table instead of being a second set of numbers to keep in step: fire
+   at 235 C is far worse than steam at 115 C because it is, not because anybody
+   said so. 0.004 puts a character in open flame at about two and a half seconds
+   from full health.
+
+   The two rates DIFFER, and the reason is the scale rather than a judgement
+   about which is nastier. Temperature is stored in one byte running -40 C to
+   +215 C, so there are 160 degrees of headroom above the heat line and only 35
+   below the cold one. At a shared rate the worst possible cold is a fifth as
+   dangerous as the worst possible heat -- measured, twelve seconds to freeze
+   against two and a half to burn -- which is not a design decision anybody
+   made, it is the byte showing through. 0.018 puts the coldest thing in the
+   game on the same footing as the hottest. */
+static const u8    HEAT_HURT_AT = degC(55);
+static const u8    COLD_HURT_AT = degC(-5);
+static const float HEAT_DAMAGE  = 0.004f;
+static const float COLD_DAMAGE  = 0.018f;
+
 struct Player {
     /* Top-left of the collision box, in cells, with a fractional part.
        Sub-pixel position is not a luxury: integer-only movement quantises walk
@@ -169,8 +229,38 @@ struct Player {
     float      fuel;
     bool       thrusting;
 
+    /* --- health -------------------------------------------------------
+       `hurt` is the sub-point accumulator, and it is why heat damage can be
+       a rate rather than a tick. Rounding damage to whole points per frame
+       would make everything below one point a frame do nothing at all --
+       which is most of the temperature range, and exactly the part that
+       should read as "you can stand here for a while, but not forever".
+
+       `hurtFlash` counts down frames of red on the figure. Damage you cannot
+       see is damage you cannot learn from: the number on the HUD tells you
+       afterwards, the flash tells you which step did it.
+
+       `fallFromY` is where the current descent started -- see FALL_SAFE.
+       `feltTemp` is the last temperature sampled from the body, kept for the
+       HUD so it can warn before the damage rather than after. */
+    int   hp;
+    float hurt;
+    int   hurtFlash;
+    float fallFromY;
+    u8    feltTemp;
+    /* How far the last landing fell, in cells. Zero except on the frame of an
+       impact. Published because "why did that hurt" is the first question a
+       fall-damage system has to be able to answer. */
+    float lastFall;
+
     void reset(float cx, float cy);
     void update(const World& w, const PlayerInput& in);
+
+    /* Take damage. Rounds UP through the accumulator rather than truncating, so
+       a rate slower than a point a frame still eventually kills -- see `hurt`. */
+    void damage(float amount);
+    bool hurtingHot()  const { return feltTemp >= HEAT_HURT_AT; }
+    bool hurtingCold() const { return feltTemp <= COLD_HURT_AT; }
     void animate();          /* called by update(); picks facing and frame */
     /* Draws into the VIEW buffer, so it takes the camera's top-left cell.
        Everything that draws into that buffer now needs it -- see render.h. */

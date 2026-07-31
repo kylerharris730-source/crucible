@@ -236,6 +236,33 @@ static bool g_uiCapture = false;   /* the click landed on the panel, not the sim
 static bool g_overwrite = true;    /* false = brush only fills empty space */
 static int  g_view      = VIEW_NORMAL;
 static bool g_lmb = false, g_rmb = false;
+
+/* --- the line tool ---------------------------------------------------------
+   Hold R, press a mouse button, drag, release: the brush is laid down along the
+   straight line between where you pressed and where you let go, once, rather
+   than following the mouse.
+
+   It is a MODIFIER on whatever you were already doing rather than a mode of its
+   own -- the same brush, the same radius, the same material, the same
+   left-builds / right-erases split. A mode would mean a button on the panel, a
+   state to notice you are in, and a second way for every one of those choices
+   to be wrong.
+
+   Implemented by holding the stroke's start point instead of advancing it: the
+   brush already interpolates from the previous point to the current one, so a
+   straight line is what you get by simply not moving the previous point until
+   the button comes up. Nothing new draws anything.
+
+   --- sharing R with respawn ---
+   R was already "respawn at the cursor", which is the escape hatch when you
+   bury yourself and is worth keeping. The two coexist because one is a TAP and
+   the other is a HOLD: respawn moved to key-UP and is suppressed if the hold
+   was used to draw. That is subtle enough to be worth stating, and it is still
+   better than moving a binding somebody relies on. */
+static bool g_lineKey  = false;   /* R is down */
+static bool g_lineOn   = false;   /* ...and a drag is in progress */
+static bool g_lineDrew = false;   /* this hold of R drew something */
+static int  g_lineX = 0, g_lineY = 0;
 /* One device per press, not per frame. Cleared on button-up -- see the placement
    branch in applyBrush for why holding must not repeat. */
 static bool g_devPlaced = false;
@@ -348,6 +375,32 @@ struct Aim {
     bool clamped;
 };
 static Aim currentAim();
+static void applyBrush();
+
+/* Lay down the line and end the drag. g_pmx/g_pmy still hold the press point,
+   which is the whole trick -- applyBrush interpolates from there to the current
+   aim, so one ordinary call draws the straight line.
+
+   Called from the button-up handlers BEFORE they clear g_lmb/g_rmb, since
+   applyBrush does nothing with no button held. */
+/* Begin a line drag, if R is held. The anchor goes straight into the stroke's
+   "previous point", which is where a freehand stroke would have put it anyway --
+   the only difference is that applyBrush will not advance it. */
+static void startLine() {
+    if (!g_lineKey || g_uiCapture || g_mx < PANEL_W) return;
+    const Aim a = currentAim();
+    g_pmx = a.x; g_pmy = a.y;
+    g_lineX = a.x; g_lineY = a.y;     /* kept separately, for the preview */
+    g_lineOn = true;
+}
+
+static void commitLine() {
+    if (!g_lineOn) return;
+    g_lineOn   = false;
+    g_lineDrew = true;      /* so releasing R does not also respawn */
+    applyBrush();
+    g_pmx = -1;
+}
 
 /* Base reach plus whatever the pack is carrying. Reading it through a function
    rather than a constant is what lets an item change it -- and later a tool. */
@@ -774,10 +827,11 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
            in whatever is behind the button. */
         else if (handleDevPanelClick(g_mx, g_my)) g_uiCapture = true;
         else if (handlePanelClick(g_mx, g_my)) g_uiCapture = true;
-        else                                   g_lmb = true;
+        else                                   { g_lmb = true; startLine(); }
         SetCapture(hwnd);
         return 0;
     case WM_LBUTTONUP:
+        commitLine();       /* before the button clears -- see commitLine */
         g_lmb = false; g_devPlaced = false; g_uiCapture = false; ReleaseCapture(); return 0;
     case WM_RBUTTONDOWN:
         g_mx = (short)LOWORD(lp);
@@ -817,11 +871,13 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             } else {
                 g_devPanel = -1;
                 g_rmb = true;   /* right-drag digs, but only over the sim */
+                startLine();
             }
         }
         SetCapture(hwnd);
         return 0;
     case WM_RBUTTONUP:
+        commitLine();
         g_rmb = false; ReleaseCapture(); return 0;
 
     case WM_SETCURSOR:
@@ -870,12 +926,12 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case 'H': g_brushMat = TOOL_HEAT; break;
         case 'J': g_brushMat = TOOL_COOL; break;
         case 'C': g_world.reset(); makeWorld(); break;
-        /* Respawn at the cursor. Indispensable while tuning movement, and the
-           obvious escape hatch when you bury yourself. */
+        /* R HELD is the line tool; R TAPPED still respawns at the cursor. The
+           respawn moved to key-up so the two can share one key -- see the note
+           on g_lineKey. Auto-repeat means this arrives many times while held,
+           so the flags are set rather than toggled. */
         case 'R':
-            if (g_mx >= PANEL_W)
-                g_player.reset((float)((g_mx - PANEL_W) / SCALE + g_camX),
-                               (float)(g_my / SCALE + g_camY));
+            g_lineKey = true;
             break;
         case 'O': g_overwrite = !g_overwrite; break;
         case 'L': g_bgLayer   = !g_bgLayer;   break;   /* L for layer */
@@ -900,6 +956,26 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (g_creativeOpen) g_creativeOpen = false;
             else                g_menuOpen = !g_menuOpen;
             break;
+        }
+        return 0;
+
+    case WM_KEYUP:
+        if (wp == 'R') {
+            /* A TAP of R respawns. A HOLD that drew a line does not, because
+               teleporting to the cursor every time you finish drawing a wall
+               would be an unforgettable way to lose your place. Note this fires
+               on the release rather than the press: with the key doing two jobs
+               there is nothing to act on until it is known which one it was. */
+            if (!g_lineDrew && g_mx >= PANEL_W && !g_menuOpen && !g_creativeOpen)
+                g_player.reset((float)((g_mx - PANEL_W) / SCALE + g_camX),
+                               (float)(g_my / SCALE + g_camY));
+            g_lineKey = false;
+            g_lineDrew = false;
+            /* A drag still in progress when R comes up is committed rather than
+               dropped -- the line was already anchored, and letting go of the
+               modifier mid-drag should not throw away the work. */
+            commitLine();
+            g_lineDrew = false;
         }
         return 0;
     }
@@ -987,6 +1063,12 @@ static void fireTool(const Aim& aim) {
 
 static void applyBrush() {
     if (g_uiCapture || (!g_lmb && !g_rmb)) { g_pmx = -1; return; }
+
+    /* A line drag lays nothing down until it is released. The anchor is already
+       in g_pmx/g_pmy (set on the press), and leaving it there is what makes the
+       committing call draw a straight line rather than the path the mouse
+       wandered along. */
+    if (g_lineOn) return;
 
     /* Stroke interpolation runs between successive CLAMPED points, not raw
        mouse positions. Interpolating the raw ones and clamping afterwards would
@@ -1294,6 +1376,65 @@ static void drawHotbar(HDC hdc) {
     HGDIOBJ oldFont = SelectObject(hdc, g_font);
     SetBkMode(hdc, TRANSPARENT);
 
+    /* --- the health bar -----------------------------------------------------
+       Always drawn, unlike the fuel gauge, and the difference is deliberate:
+       fuel is a property of gear you may not be wearing, health is a property of
+       being alive. A bar that comes and goes teaches you not to look at it.
+
+       Directly above the hotbar and the full width of it, so the two read as one
+       block of "your state" rather than as decorations at opposite corners.
+
+       It carries a temperature warning as well, on the same strip. Heat and cold
+       are the two things in this game that will kill you without touching you,
+       and they are survivable for several seconds -- which is long enough to
+       react to and far too long to notice by watching a number tick down. The
+       bar goes orange or blue while it is happening, so the warning is in the
+       place you are already looking for the consequence. */
+    {
+        /* ABOVE the fuel gauge, which is above the two text rows. The stack from
+           the hotbar upward is: name (top-20..top-4), stats (top-36..top-20),
+           fuel (top-47..top-40), health here. Anything lower overprints the
+           readout, which is exactly what a first attempt at top-6 did.
+
+           Health keeps its slot whether or not flight gear is worn, so the bar
+           does not jump when you take a jetpack off -- the gap where the fuel
+           gauge would be is the better cost. */
+        const int x0 = g_hotRect[0].left;
+        const int y1 = g_hotRect[0].top - 51, y0 = y1 - 9;
+        const int x1 = x0 + 132;
+        RECT bar = { x0, y0, x1, y1 };
+        FillRect(hdc, &bar, g_btnBg);
+
+        const float frac = (float)g_player.hp / (float)PLAYER_HP_MAX;
+        RECT fill = bar;
+        fill.right = x0 + (int)((float)(x1 - x0) * (frac < 0.0f ? 0.0f : frac));
+        if (fill.right > fill.left) {
+            COLORREF c = RGB(96, 176, 96);
+            if (frac <= 0.25f)     c = RGB(210, 60, 52);
+            else if (frac <= 0.5f) c = RGB(214, 158, 60);
+            /* The environment warning WINS over the health colour, because it
+               is the more urgent of the two: a full bar turning orange is the
+               only notice you get that standing here is a mistake. */
+            if (g_player.hurtingHot())       c = RGB(238, 120, 40);
+            else if (g_player.hurtingCold()) c = RGB(90, 170, 236);
+            HBRUSH b = CreateSolidBrush(c);
+            FillRect(hdc, &fill, b);
+            DeleteObject(b);
+        }
+        FrameRect(hdc, &bar, g_borderBrush);
+
+        char hpTxt[48];
+        if (!g_player.alive)               sprintf(hpTxt, "DEAD  -  tap R to respawn");
+        else if (g_player.hurtingHot())    sprintf(hpTxt, "%d   BURNING", g_player.hp);
+        else if (g_player.hurtingCold())   sprintf(hpTxt, "%d   FREEZING", g_player.hp);
+        else                               sprintf(hpTxt, "%d", g_player.hp);
+        /* Beside the bar rather than above it, so the whole readout is one row
+           and cannot collide with anything below. */
+        SetTextColor(hdc, g_player.alive ? RGB(206, 212, 224) : RGB(232, 96, 88));
+        RECT t = { x1 + 8, y0 - 3, x1 + 260, y1 + 3 };
+        DrawTextA(hdc, hpTxt, -1, &t, DT_LEFT | DT_SINGLELINE);
+    }
+
     /* --- the fuel gauge -----------------------------------------------------
        Only drawn when there is flight gear on, because a permanent empty bar is
        a permanent question. It goes above the hotbar rather than beside the
@@ -1532,6 +1673,28 @@ static void drawCursor(HDC hdc) {
         drawCross(hdc, ax, ay, RGB(150, 158, 174), 3, 4);
     }
     drawCross(hdc, gx, gy, RGB(236, 240, 248), 3, 5);
+
+    /* The line preview. Solid rather than dotted, and drawn on top of the
+       tether, because the tether means "you cannot reach that" and this means
+       "this is what will happen" -- two different messages that should not look
+       alike. A ring at the anchor says which end is pinned, which is the only
+       thing about a line drag that is not obvious from watching it. */
+    if (g_lineOn) {
+        const int lx = PANEL_W + (g_lineX - g_camX) * SCALE + SCALE / 2;
+        const int ly = (g_lineY - g_camY) * SCALE + SCALE / 2;
+
+        HPEN edge = CreatePen(PS_SOLID, 3, RGB(0, 0, 0));
+        HGDIOBJ o = SelectObject(hdc, edge);
+        MoveToEx(hdc, lx, ly, NULL); LineTo(hdc, ax, ay);
+        SelectObject(hdc, o); DeleteObject(edge);
+
+        HPEN pen = CreatePen(PS_SOLID, 1, RGB(255, 214, 120));
+        o = SelectObject(hdc, pen);
+        MoveToEx(hdc, lx, ly, NULL); LineTo(hdc, ax, ay);
+        SelectObject(hdc, o); DeleteObject(pen);
+
+        drawCross(hdc, lx, ly, RGB(255, 214, 120), 2, 3);
+    }
 }
 
 /* Dim the world behind a modal, by halving every channel of the frame we are

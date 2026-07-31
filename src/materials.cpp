@@ -830,11 +830,23 @@ static void initLight() {
        unlit already rendering at 15% -- is the honest measure, and by it 150
        reached 20 cells, not 49.
 
-       205 renders the torch's own cell at 85% and holds half brightness to 38
-       cells, against the lamp's 100% and 55. That is a real ladder in both
-       numbers rather than a difference you have to be told about, and it leaves
-       the torch what it should be: a light that works. */
-    g_matLight[MAT_TORCH]    = 205;
+       205 fixed that and was still too dim in play, which is the sort of thing
+       only using the game finds. 235 renders the torch's own cell at 95% and
+       holds half brightness to 36 cells, against the lamp's 100% and 42.
+
+       That gap is now narrow, and it is worth saying what is left of it. The
+       lamp keeps a sixth more reach, which is a room's width at these
+       distances, and it is the only one of the two that renders its own cell at
+       full brightness. What the torch bought by closing the gap is that it is
+       no longer a light you have to plan around -- which was the complaint, and
+       a torch you space carefully is a worse object than a torch you stud a
+       corridor with.
+
+       If a brighter light is ever wanted at the top of the ladder, raise the
+       LAMP rather than lowering this: at 235 against 255 there is not much room
+       left below it, and the two collapsing into one item would cost more than
+       the torch being dim ever did. */
+    g_matLight[MAT_TORCH]    = 235;
     g_matLight[MAT_PLASMA]   = 240;
     /* Molten slag is incandescent, so a working furnace lights its own room --
        which is worth having, since a furnace is somewhere you stand and wait. */

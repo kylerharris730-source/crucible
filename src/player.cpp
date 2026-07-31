@@ -70,6 +70,52 @@ void Player::reset(float cx, float cy) {
     fly.fuel   = 0;
     fuel       = 0.0f;
     thrusting  = false;
+    /* Respawning restores health, which is what makes reset() the whole answer
+       to dying rather than needing a separate revive path. */
+    hp        = PLAYER_HP_MAX;
+    hurt      = 0.0f;
+    hurtFlash = 0;
+    fallFromY = y;
+    feltTemp  = (u8)AMBIENT_TEMP;
+    lastFall  = 0.0f;
+}
+
+void Player::damage(float amount) {
+    if (!alive || amount <= 0.0f) return;
+    hurt += amount;
+    /* Whole points come out of the accumulator and the remainder stays in it,
+       so a rate of a tenth of a point a frame is a point every ten frames
+       rather than nothing at all. */
+    const int whole = (int)hurt;
+    if (whole > 0) {
+        hurt -= (float)whole;
+        hp -= whole;
+    }
+    /* Flashed on the DAMAGE rather than on the point, so a slow burn still
+       shows something every frame it is happening. */
+    hurtFlash = 8;
+    if (hp <= 0) { hp = 0; alive = false; }
+}
+
+/* The hottest and coldest cell the body is standing in. Both ends in one pass,
+   because the body is 176 cells and walking it twice to ask two questions about
+   the same bytes would be silly.
+
+   Reads the grid directly rather than through playerSolid: this is about
+   temperature, and the material in a cell has nothing to do with it. */
+static void bodyExtremes(const World& w, const Player& p, u8* hottest, u8* coldest) {
+    u8 hi = 0, lo = 255;
+    const int y0 = imax(0, p.top()),  y1 = imin(SIM_H - 1, p.bottom());
+    const int x0 = imax(0, p.left()), x1 = imin(SIM_W - 1, p.right());
+    for (int y = y0; y <= y1; ++y) {
+        const u8* row = w.temp + y * SIM_W;
+        for (int x = x0; x <= x1; ++x) {
+            const u8 t = row[x];
+            if (t > hi) hi = t;
+            if (t < lo) lo = t;
+        }
+    }
+    *hottest = hi; *coldest = lo;
 }
 
 /* Picks the frame from what the body is actually doing, rather than from what
@@ -105,6 +151,31 @@ void Player::animate() {
 
 void Player::update(const World& w, const PlayerInput& in) {
     if (!alive) return;
+    if (hurtFlash > 0) --hurtFlash;
+    lastFall = 0.0f;
+
+    /* --- heat and cold ------------------------------------------------
+       Before movement, so what hurts you is where you were standing when the
+       frame began rather than where this frame's step happens to end -- which
+       matters at the edge of a lava pool, where a single step can cross the
+       line and it should be the step you SEE that costs you.
+
+       Both ends are sampled every frame even though only one can be over the
+       line at once, because a body spanning 22 cells can genuinely have its
+       feet in something hot and its head in something cold, and taking the
+       worse of the two is more honest than picking one to look at. */
+    {
+        u8 hot, cold;
+        bodyExtremes(w, *this, &hot, &cold);
+        const int over  = (int)hot  - (int)HEAT_HURT_AT;
+        const int under = (int)COLD_HURT_AT - (int)cold;
+        /* feltTemp reports whichever end is worse, so the HUD has one number
+           to show and it is the one that is about to matter. */
+        feltTemp = (over >= under) ? hot : cold;
+        if (over  > 0) damage((float)over  * HEAT_DAMAGE);
+        if (under > 0) damage((float)under * COLD_DAMAGE);
+        if (!alive) return;
+    }
 
     /* --- unstick ------------------------------------------------------
        Terrain closing over the player is not an edge case here, it is Tuesday:
@@ -229,8 +300,18 @@ void Player::update(const World& w, const PlayerInput& in) {
         else         { x = target; }
     }
 
+    /* Captured before the vertical step clears it -- see the impact note below,
+       which is the only reader. */
+    const bool wasOnGround = onGround;
+
     /* vertical */
     {
+        /* Where this descent began. While grounded or rising the reference
+           follows the body, so it freezes at the apex the moment the fall
+           starts -- which means it measures the drop rather than the arc, and a
+           jump off a cliff costs only the part below the ledge. */
+        if (onGround || vy <= 0.0f) fallFromY = y;
+
         const float target = y + vy;
         const int   end    = (int)target;
         const int   dir    = (vy > 0.0f) ? 1 : -1;
@@ -255,6 +336,33 @@ void Player::update(const World& w, const PlayerInput& in) {
        walking off a ledge has to clear onGround even though nothing was hit. */
     if (!onGround && vy >= 0.0f)
         onGround = boxBlocked(w, left(), top() + 1);
+
+    /* --- the impact ---------------------------------------------------
+       Fall damage is applied HERE, on the transition into onGround, and not in
+       the blocked branch above where it started. The two are not the same
+       event, and the difference was invisible until it was measured: a descent
+       that ends without the box crossing a cell boundary never enters the
+       blocked branch at all -- `while (cur != end)` does not run when they are
+       already equal -- and is caught by the standing check instead.
+
+       Dropped from a range of heights, that lost the impact entirely at 100
+       cells and again at 160, while 120, 140, 180 and 200 all worked. A fall
+       damage system with holes in it at particular heights is worse than none:
+       it teaches you the drop is survivable and then kills you the next time
+       from the same ledge.
+
+       Keyed on the transition, both paths are one event and there is nothing
+       to keep in step. */
+    if (onGround && !wasOnGround) {
+        /* Measured from the apex. Anything inside FALL_SAFE costs nothing at
+           all rather than a token amount -- a fall you can walk away from
+           should not chip at you, or the number on the HUD stops meaning "I am
+           in trouble". */
+        lastFall = y - fallFromY;
+        if (lastFall > FALL_SAFE)
+            damage((lastFall - FALL_SAFE) * FALL_DAMAGE);
+        if (!alive) return;
+    }
 
     /* Resting on the floor, gravity would otherwise accumulate all the way to
        terminal velocity inside a single cell before the box finally crossed a
@@ -317,7 +425,14 @@ void Player::draw(u32* px, int camX, int camY, bool lit) const {
                difference between walking out of a cave mouth lighting you from
                the feet up and the whole sprite stepping through a brightness
                threshold at once. */
-            px[wy * VIEW_CELLS_W + wx] = lit ? shadeColor(c, viewShade(wx, wy)) : c;
+            u32 out = lit ? shadeColor(c, viewShade(wx, wy)) : c;
+            /* The damage flash, applied AFTER shading so it reads in an unlit
+               cave -- which is where most of the damage in this game is going
+               to happen. Blended rather than a flat overwrite so the silhouette
+               stays legible: a solid red figure loses the limbs, and the whole
+               point of the flash is that you can see what you were doing. */
+            if (hurtFlash > 0) out = lerpColor(out, 0xE03428, 150);
+            px[wy * VIEW_CELLS_W + wx] = out;
         }
     }
 
