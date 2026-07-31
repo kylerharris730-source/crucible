@@ -144,15 +144,67 @@ static const int PLAYER_HP_MAX = 100;
 
    The safe distance has to clear a plain jump or jumping would cost health. The
    jump is 2.6 cells/frame against 0.18 gravity, so its peak is v^2/2g = 18.8
-   cells and you land from 19. 26 leaves room to jump off a modest ledge as
-   well, which is the same motion and should feel the same.
+   cells and you land from 19.
 
-   Past that it is 1.5 points a cell, so a fall of about 93 cells kills from
-   full. That is deliberately survivable-but-serious at the depth of an ordinary
+   52 -- doubled from the 26 it started at, after playing with it. The original
+   number cleared a jump and not much else, which made every ordinary piece of
+   terrain a thing to be careful about, and "careful about ordinary terrain" is
+   not tension, it is friction. At 52 a two-storey drop is free and the number
+   only speaks up for falls you would have hesitated at anyway.
+
+   Past that it is still 1.5 points a cell, so a fall of about 119 cells kills
+   from full. Deliberately survivable-but-serious at the depth of an ordinary
    cave and fatal down a shaft you dug yourself -- the mistake it is there to
    punish is not looking before stepping off. */
-static const float FALL_SAFE   = 26.0f;
+static const float FALL_SAFE   = 52.0f;
 static const float FALL_DAMAGE = 1.5f;
+
+/* --- water -----------------------------------------------------------------
+
+   Being in water changes three things: you sink slowly, you can swim upward
+   whenever you like, and you eventually drown.
+
+   The body is 22 cells tall and water fills it completely once you are under
+   (measured: 176 of 176 cells), so "am I in water" is a count over the same box
+   the temperature damage already walks. Two different questions come off it,
+   and they need different tests:
+
+     SWIMMING is about the body, so it is a fraction of the whole box. Half is
+     the line: waist-deep is wading and you should still walk, chest-deep is
+     swimming. Anything sharper makes the transition at the water's edge flicker
+     as the surface sloshes.
+
+     DROWNING is about the HEAD, so it is the top rows only. Standing on the
+     bottom of a shallow pool with your head out must never drown you, and a
+     whole-body fraction cannot express that.
+
+   Buoyancy is a gravity scale and a much lower terminal velocity rather than an
+   upward force: an upward force has to be balanced against gravity to get a
+   sink rate, and then the sink rate is the difference of two numbers you cannot
+   read off the page. This way the number IS the sink rate. */
+static const float WATER_LINE     = 0.5f;   /* fraction of the body submerged */
+static const int   BREATH_HEAD    = 3;      /* rows counted as the head */
+static const float WATER_GRAVITY  = 0.22f;  /* multiplier on GRAVITY */
+static const float WATER_MAX_FALL = 0.9f;   /* against 6.0 in air */
+static const float WATER_DRAG     = 0.86f;  /* per frame, on both axes */
+/* One stroke of the jump key, and the ceiling it drives you to. Repeatable
+   every frame, which is what "jump over and over" means in water -- there is no
+   ground to require, so the onGround gate simply does not apply. Deliberately
+   slower than a jump (2.6): swimming up out of a flooded shaft should be a
+   climb you commit to, not a launch. */
+static const float SWIM_STROKE    = 0.24f;
+static const float SWIM_RISE      = 1.1f;
+
+/* Frames of air, and what running out costs. 900 is fifteen seconds, which is
+   long enough to cross a lake or dive for something on the bottom and short
+   enough that a flooded tunnel is a real problem. Refilling is far faster than
+   draining -- four to one -- because the interesting decision is "can I make it
+   across", not "have I stood on the beach long enough yet". */
+static const int   BREATH_MAX     = 900;
+static const int   BREATH_REFILL  = 4;
+/* Once the air is gone. 0.35 a frame is about five seconds from full health,
+   so drowning is survivable if you turn round the moment the bar empties. */
+static const float DROWN_DAMAGE   = 0.35f;
 
 /* --- heat and cold ---------------------------------------------------------
    Both are measured over the cells the BODY occupies rather than the ones
@@ -248,6 +300,24 @@ struct Player {
     int   hurtFlash;
     float fallFromY;
     u8    feltTemp;
+
+    /* --- water --------------------------------------------------------
+       `swimming` is the body test, `underwater` is the head test, and they
+       are genuinely different: wading has neither, chest-deep has the first,
+       and diving has both. `breath` only ever counts down on the second.
+
+       Both are outputs, recomputed every frame from the grid, so nothing has
+       to be cleared when the water drains away from around you. */
+    bool  swimming;
+    bool  underwater;
+    int   breath;
+
+    /* Extra ground speed, as a multiplier, published by the host each frame
+       from what is worn -- the same arrangement `fly` uses, and for the same
+       reason: movement should not have to know an inventory exists. 1.0 is
+       unequipped, and it is a multiplier rather than a percentage so this
+       side never has to do the conversion. */
+    float speedMul;
     /* How far the last landing fell, in cells. Zero except on the frame of an
        impact. Published because "why did that hurt" is the first question a
        fall-damage system has to be able to answer. */

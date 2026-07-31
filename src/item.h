@@ -52,6 +52,11 @@ enum {
        compete for the FEET slot later, and makes combining the two a thing
        crafting can reward rather than something the slots decide for you. */
     ITEM_ROCKET_BOOTS,
+    /* Hermes boots: ground speed, and the thing that finally makes the FEET
+       slot a decision. Rocket boots get you UP, these get you ALONG, both go on
+       the feet, and you cannot have both -- which is exactly the contest the
+       slot was split off to create. See speedPct. */
+    ITEM_HERMES,
     ITEM_JETPACK1,
     ITEM_JETPACK2,
     ITEM_JETPACK3,
@@ -144,6 +149,18 @@ struct ItemDef {
        lenses better than one good relay, which turns an upgrade ladder into a
        slot-stuffing puzzle. */
     i16  reachBonus;
+
+    /* Extra ground speed while worn, as a PERCENTAGE. Zero on everything else.
+       Resolved by Inventory::speedBonus() on the same "largest, never summed"
+       rule as reachBonus, and for the same reason: two cheap pairs of boots
+       should not beat one good pair, or an upgrade ladder becomes a
+       slot-stuffing puzzle.
+
+       A percentage rather than an absolute speed because the base is tuned to
+       the world -- MAX_SPEED is what makes the character feel heavy against
+       one-cell terrain -- and a bonus quoted in cells per frame would have to
+       be retuned every time that changed. */
+    i16  speedPct;
 
     /* Thrust, for boots and jetpacks. Zero on everything else, and resolved
        through flightSpec() rather than read directly -- see the note there for
@@ -310,6 +327,8 @@ struct Inventory {
 
     /* Largest reachBonus among everything WORN; 0 with nothing. */
     int  reachBonus() const;
+    /* Largest speedPct among everything WORN; 0 with nothing. Same rule. */
+    int  speedBonus() const;
 
     /* The first tool in the pack, or -1. The inventory screen shows one tool's
        loadout and this is the one it shows -- with a single multitool in play

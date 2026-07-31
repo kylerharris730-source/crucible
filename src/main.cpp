@@ -1423,10 +1423,36 @@ static void drawHotbar(HDC hdc) {
         }
         FrameRect(hdc, &bar, g_borderBrush);
 
-        char hpTxt[48];
+        /* --- the breath bar -------------------------------------------------
+           Shown ONLY while it is draining or refilling, unlike health. A full
+           lungful is the normal state of affairs and a permanently full bar
+           beside a permanently visible health bar is two things to ignore
+           instead of one; this one appearing is itself the warning.
+
+           Directly under the health bar and the same width, so the pair read as
+           one readout rather than as two unrelated gauges. */
+        if (g_player.breath < BREATH_MAX) {
+            RECT br = { x0, y1 + 2, x1, y1 + 7 };
+            FillRect(hdc, &br, g_btnBg);
+            const float bf = (float)g_player.breath / (float)BREATH_MAX;
+            RECT bfill = br;
+            bfill.right = x0 + (int)((float)(x1 - x0) * bf);
+            if (bfill.right > bfill.left) {
+                HBRUSH b = CreateSolidBrush(bf > 0.25f ? RGB(90, 170, 236)
+                                                       : RGB(210, 60, 52));
+                FillRect(hdc, &bfill, b);
+                DeleteObject(b);
+            }
+            FrameRect(hdc, &br, g_borderBrush);
+        }
+
+        char hpTxt[64];
         if (!g_player.alive)               sprintf(hpTxt, "DEAD  -  tap R to respawn");
+        else if (g_player.breath == 0)     sprintf(hpTxt, "%d   DROWNING", g_player.hp);
         else if (g_player.hurtingHot())    sprintf(hpTxt, "%d   BURNING", g_player.hp);
         else if (g_player.hurtingCold())   sprintf(hpTxt, "%d   FREEZING", g_player.hp);
+        else if (g_player.underwater)      sprintf(hpTxt, "%d   %ds of air",
+                                                   g_player.hp, g_player.breath / 60);
         else                               sprintf(hpTxt, "%d", g_player.hp);
         /* Beside the bar rather than above it, so the whole readout is one row
            and cannot collide with anything below. */
@@ -1782,10 +1808,12 @@ static void drawCreative(HDC hdc) {
            up (see flightSpec), so the only figure worth reading is the one you
            will actually fly at. */
         if (fly.any())
-            sprintf(s, "EQUIPPED  --  climb %.1f cells/s, %.1fs of fuel, reach +%d",
-                    fly.riseCap * 60.0f, (float)fly.fuel / 60.0f, g_inv.reachBonus());
+            sprintf(s, "EQUIPPED  --  climb %.1f cells/s, %.1fs of fuel, reach +%d, speed +%d%%",
+                    fly.riseCap * 60.0f, (float)fly.fuel / 60.0f,
+                    g_inv.reachBonus(), g_inv.speedBonus());
         else
-            sprintf(s, "EQUIPPED  --  nothing to fly with, reach +%d", g_inv.reachBonus());
+            sprintf(s, "EQUIPPED  --  nothing to fly with, reach +%d, speed +%d%%",
+                    g_inv.reachBonus(), g_inv.speedBonus());
         SetTextColor(hdc, fly.any() ? RGB(226, 190, 90) : RGB(150, 156, 168));
         DrawTextA(hdc, s, -1, &lr, DT_LEFT | DT_TOP | DT_SINGLELINE);
 
@@ -2134,6 +2162,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
                the same frame -- the same arrangement the collision box uses,
                and the reason player.cpp knows nothing about inventories. */
             g_player.fly = flightSpec(g_inv);
+            g_player.speedMul = 1.0f + (float)g_inv.speedBonus() / 100.0f;
             g_player.update(g_world, in);
         }
 

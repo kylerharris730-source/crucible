@@ -61,6 +61,13 @@ static u32 paletteOf(char c) {
     case 'f': return 0xFFC24A;     /* flame core */
     case 'e': return 0xE05A20;     /* flame edge */
     case 'c': return 0x6ED0FF;     /* coolant / tank window */
+    /* Hermes boots. Their own two colours rather than the flight-gear metal,
+       because they are not flight gear and the palette is only worth having
+       while a colour means one thing: 'm' and 'n' say "there is a nozzle on
+       this", which is the single fact these boots most need not to imply. */
+    case 'y': return 0xE8D45A;     /* winged leather */
+    case 'z': return 0xB09A2E;     /* its shade */
+    case 'A': return 0xF6F0D0;     /* feather */
     /* Devices. A shared casing palette so every machine reads as part of one
        family of equipment, with only the FACE -- the dial, the gauge, whatever the
        thing actually does -- differing between them. That is the same reasoning as
@@ -516,6 +523,28 @@ static const char* ART_MINER[SPR_H] = {
     "..DDDDDDDDDD..",
 };
 
+/* Hermes boots: the same pair of boots as ART_BOOTS with wings where the
+   nozzles are. Deliberately the same silhouette below the ankle -- they are
+   boots, and the reader should get that from the shape before reading anything
+   else -- with everything that says WHICH boots happening above it. Rocket
+   boots point down and burn; these point out and have feathers. */
+static const char* ART_HERMES[SPR_H] = {
+    "..............",
+    "..............",
+    "...zz....zz...",
+    "..zyyz..zyyz..",
+    "AAAyyz..zyyAAA",
+    "AAAzyz..zyzAAA",
+    ".AAzyyzzyyzAA.",
+    "..zyyyyyyyz...",
+    ".zzyyyyyyyzz..",
+    ".zyyyyyyyyyz..",
+    ".zzzzzzzzzzz..",
+    "..zz......zz..",
+    "..............",
+    "..............",
+};
+
 /* A wall torch: a bracket, a shaft, and a flame. Deliberately NOT the boxed casing
    the machines share -- it is not machinery, and the whole point of a shared device
    palette is that it should mean something. */
@@ -548,6 +577,7 @@ void initSprites() {
     expand(SPR_MINE4,     ART_MINE4);
     expand(SPR_SEED,      ART_SEED);
     expand(SPR_BOOTS,     ART_BOOTS);
+    expand(SPR_HERMES,    ART_HERMES);
     expand(SPR_PACK1,     ART_PACK1);
     expand(SPR_PACK2,     ART_PACK2);
     expand(SPR_PACK3,     ART_PACK3);

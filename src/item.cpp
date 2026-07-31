@@ -281,6 +281,25 @@ void initItems() {
     ITEMS[ITEM_ROCKET_BOOTS].fly.fuel    = 26;
     ITEMS[ITEM_ROCKET_BOOTS].fly.refuel  = 4.0f;
 
+    /* Hermes boots. +60%, which is a big number on purpose: the base walk is
+       1.2 cells a frame and anything under about half again is not something
+       you notice while you are busy digging, so a small speed bonus is a stat
+       you read rather than a thing you feel. 60% takes the character from 72
+       cells a second to 115, which is the difference between crossing your
+       base and getting somewhere.
+
+       No flight at all, and that is the point -- see ITEM_HERMES. Wearing
+       these means not wearing rocket boots, so the choice is "get out of holes"
+       against "cover ground", and both are real answers depending on whether
+       you are exploring or building. */
+    ITEMS[ITEM_HERMES].name      = "Hermes Boots";
+    ITEMS[ITEM_HERMES].kind      = ITEMK_WORN;
+    ITEMS[ITEM_HERMES].equipSlot = EQ_FEET;
+    ITEMS[ITEM_HERMES].maxStack  = 1;
+    ITEMS[ITEM_HERMES].colour    = 0xE8D45A;
+    ITEMS[ITEM_HERMES].sprite    = SPR_HERMES;
+    ITEMS[ITEM_HERMES].speedPct  = 60;
+
     struct PackTier { ItemId id; const char* name; u32 colour; u8 sprite;
                       float thrust, riseCap; int fuel; float refuel; };
     static const PackTier PACKS[] = {
@@ -447,6 +466,16 @@ int Inventory::reachBonus() const {
     for (int i = 0; i < EQ_COUNT; ++i) {
         if (equip[i].empty()) continue;
         const int b = ITEMS[equip[i].item].reachBonus;
+        if (b > best) best = b;
+    }
+    return best;
+}
+
+int Inventory::speedBonus() const {
+    int best = 0;
+    for (int i = 0; i < EQ_COUNT; ++i) {
+        if (equip[i].empty()) continue;
+        const int b = ITEMS[equip[i].item].speedPct;
         if (b > best) best = b;
     }
     return best;

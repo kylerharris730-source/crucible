@@ -78,6 +78,10 @@ void Player::reset(float cx, float cy) {
     fallFromY = y;
     feltTemp  = (u8)AMBIENT_TEMP;
     lastFall  = 0.0f;
+    swimming   = false;
+    underwater = false;
+    breath     = BREATH_MAX;
+    speedMul   = 1.0f;
 }
 
 void Player::damage(float amount) {
@@ -116,6 +120,36 @@ static void bodyExtremes(const World& w, const Player& p, u8* hottest, u8* colde
         }
     }
     *hottest = hi; *coldest = lo;
+}
+
+/* How much of the body is in liquid, and whether the head is. One pass for both
+   -- see the note on WATER_LINE for why they are separate questions.
+
+   By KIND rather than by MAT_WATER, so molten metal and fuel float you and
+   drown you exactly as water does. That is the right answer and it is free:
+   a liquid is a liquid to a body in it, and singling water out would mean a
+   character who can tread lava but not a puddle. What it is NOT is a claim that
+   they are equally survivable -- the temperature damage already has plenty to
+   say about a lava swim, and it says it far faster than the breath counter. */
+static void bodyInLiquid(const World& w, const Player& p, float* frac, bool* headUnder) {
+    const int y0 = imax(0, p.top()),  y1 = imin(SIM_H - 1, p.bottom());
+    const int x0 = imax(0, p.left()), x1 = imin(SIM_W - 1, p.right());
+    if (y1 < y0 || x1 < x0) { *frac = 0.0f; *headUnder = false; return; }
+
+    int wet = 0, total = 0, headWet = 0, headTotal = 0;
+    for (int y = y0; y <= y1; ++y) {
+        const bool isHead = (y - p.top()) < BREATH_HEAD;
+        for (int x = x0; x <= x1; ++x) {
+            const bool liq = MATS[w.cells[y * SIM_W + x].mat].kind == KIND_LIQUID;
+            ++total; wet += liq ? 1 : 0;
+            if (isHead) { ++headTotal; headWet += liq ? 1 : 0; }
+        }
+    }
+    *frac = total ? (float)wet / (float)total : 0.0f;
+    /* MOST of the head, not any of it: a single stray cell of spray across the
+       helmet is not being underwater, and at the surface of a choppy pool there
+       is nearly always one. */
+    *headUnder = headTotal && headWet * 2 > headTotal;
 }
 
 /* Picks the frame from what the body is actually doing, rather than from what
@@ -177,6 +211,25 @@ void Player::update(const World& w, const PlayerInput& in) {
         if (!alive) return;
     }
 
+    /* --- water, and breathing -----------------------------------------
+       Sampled before movement for the same reason temperature is: what happens
+       to you this frame should be decided by the water you can see yourself
+       standing in, not by wherever the step lands. */
+    {
+        float wet = 0.0f;
+        bodyInLiquid(w, *this, &wet, &underwater);
+        swimming = wet >= WATER_LINE;
+
+        if (underwater) {
+            if (breath > 0) --breath;
+            else            damage(DROWN_DAMAGE);
+        } else {
+            breath += BREATH_REFILL;
+            if (breath > BREATH_MAX) breath = BREATH_MAX;
+        }
+        if (!alive) return;
+    }
+
     /* --- unstick ------------------------------------------------------
        Terrain closing over the player is not an edge case here, it is Tuesday:
        sand falls, lava flows, a wall is drawn straight onto you. So before
@@ -202,20 +255,47 @@ void Player::update(const World& w, const PlayerInput& in) {
         if (!freed) { buried = true; vx = vy = 0.0f; return; }
     }
 
-    /* --- horizontal ---------------------------------------------------- */
+    /* --- horizontal ----------------------------------------------------
+       Acceleration is scaled with the top speed, not just the cap. Raising the
+       cap alone means the same shove getting you to a higher number eventually,
+       which reads as the boots making the character HEAVIER for the first
+       second -- the opposite of what they are for. */
     const float want = (in.right ? 1.0f : 0.0f) - (in.left ? 1.0f : 0.0f);
+    const float topSpeed = MAX_SPEED * speedMul;
     if (want != 0.0f) {
-        vx += want * MOVE_ACCEL;
-        if (vx >  MAX_SPEED) vx =  MAX_SPEED;
-        if (vx < -MAX_SPEED) vx = -MAX_SPEED;
+        vx += want * MOVE_ACCEL * speedMul;
+        if (vx >  topSpeed) vx =  topSpeed;
+        if (vx < -topSpeed) vx = -topSpeed;
     } else {
         vx *= onGround ? GROUND_DRAG : AIR_DRAG;
         if (vx > -0.02f && vx < 0.02f) vx = 0.0f;
     }
 
     /* --- vertical ------------------------------------------------------ */
-    if (in.jump && onGround) { vy = -JUMP_VEL; onGround = false; }
-    vy += GRAVITY;
+    if (swimming) {
+        /* No ground needed, and repeatable every frame -- which is what makes
+           this a swim rather than a jump you get one of. The stroke is added
+           to velocity and capped, rather than assigned like JUMP_VEL, so
+           holding the key climbs steadily instead of pinning you to one speed
+           the moment you touch it. */
+        if (in.jump) {
+            vy -= SWIM_STROKE;
+            if (vy < -SWIM_RISE) vy = -SWIM_RISE;
+        }
+        vy += GRAVITY * WATER_GRAVITY;
+        vx *= WATER_DRAG;
+        vy *= WATER_DRAG;
+        if (vy >  WATER_MAX_FALL) vy =  WATER_MAX_FALL;
+
+        /* Water breaks a fall. The reference has to be dragged along or the
+           drop that got you here is still on the books, and hitting the bottom
+           of a deep pool would cost you the whole descent -- which is the one
+           thing everybody expects diving into water NOT to do. */
+        fallFromY = y;
+    } else {
+        if (in.jump && onGround) { vy = -JUMP_VEL; onGround = false; }
+        vy += GRAVITY;
+    }
 
     /* --- thrust --------------------------------------------------------
        Applied AFTER gravity, so `riseCap` is a true rate of climb rather than
@@ -242,8 +322,12 @@ void Player::update(const World& w, const PlayerInput& in) {
        thrust. Measured, that cost the boots almost all their point -- 25 cells
        of height against a plain jump's 17, where spending the same fuel where
        it works gives 31. You should not pay for a boost you did not get. */
+    /* Not underwater. Rocket boots that worked submerged would make the stroke
+       pointless and would also be the only thing in the game that burns without
+       air -- and more practically, thrust and the swim stroke share the jump
+       key, so both firing at once is one press doing two jobs. */
     thrusting = false;
-    if (in.jump && !onGround && fly.any() && fuel > 0.0f && vy > -fly.riseCap) {
+    if (!swimming && in.jump && !onGround && fly.any() && fuel > 0.0f && vy > -fly.riseCap) {
         vy -= fly.thrust;
         if (vy < -fly.riseCap) vy = -fly.riseCap;
         fuel -= 1.0f;
@@ -251,7 +335,11 @@ void Player::update(const World& w, const PlayerInput& in) {
         thrusting = true;
     }
 
+    /* The air cap. Water has its own, applied above and far lower, so this must
+       not undo it -- taking the smaller of the two is the honest way to say
+       "whichever medium you are in decides". */
     if (vy > MAX_FALL) vy = MAX_FALL;
+    if (swimming && vy > WATER_MAX_FALL) vy = WATER_MAX_FALL;
 
     /* --- move ----------------------------------------------------------
        Walk the box a whole cell at a time toward the destination, and only if
