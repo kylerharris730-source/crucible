@@ -1,0 +1,412 @@
+#include "save.h"
+#include "player.h"
+#include "item.h"
+#include "room.h"
+#include "device.h"
+#include "tree.h"
+#include "worldgen.h"
+#include <stdio.h>
+#include <string.h>
+
+static char g_err[256] = "";
+const char* saveError() { return g_err; }
+
+/* ==========================================================================
+   Section bookkeeping
+   ========================================================================== */
+
+static const int MAX_STATS = 16;
+static SaveStat g_stats[MAX_STATS];
+static int      g_nStats = 0;
+static u64      g_total  = 0;
+
+int             saveStatCount() { return g_nStats; }
+const SaveStat* saveStats()     { return g_stats; }
+u64             saveTotalBytes(){ return g_total; }
+
+static void statAdd(const char* name, u64 bytes) {
+    if (g_nStats < MAX_STATS) { g_stats[g_nStats].name = name;
+                                g_stats[g_nStats].bytes = bytes; ++g_nStats; }
+    g_total += bytes;
+}
+static void statSort() {
+    for (int i = 1; i < g_nStats; ++i)
+        for (int j = i; j > 0 && g_stats[j].bytes > g_stats[j-1].bytes; --j) {
+            const SaveStat t = g_stats[j]; g_stats[j] = g_stats[j-1]; g_stats[j-1] = t;
+        }
+}
+
+/* ==========================================================================
+   Run-length encoding, one PLANE at a time
+   ==========================================================================
+
+   Per plane and not per Cell, and that is the whole reason this works. A Cell
+   is mat, moisture, tint and flags interleaved; the tint byte is random per
+   cell, so encoding Cells as 4-byte units finds a run length of one nearly
+   everywhere and the output is larger than the input. Split apart, `mat` is
+   enormous runs of stone and air, `moisture` is almost entirely zero, and the
+   noise is confined to the plane that has to carry it.
+
+   [count:u16][value:u8], count 1..65535. Two bytes a run means a plane of one
+   value costs 2 bytes per 65535 cells -- about 400 bytes for the whole world --
+   and a plane of pure noise costs 3 bytes per 1: worse than raw, which is why
+   nothing incompressible is put through here. */
+static void rleWrite(FILE* f, const u8* src, u64 n, u64* outBytes) {
+    u64 written = 0;
+    u64 i = 0;
+    while (i < n) {
+        const u8 v = src[i];
+        u64 run = 1;
+        while (i + run < n && src[i + run] == v && run < 65535) ++run;
+        const u16 c = (u16)run;
+        fwrite(&c, sizeof(c), 1, f);
+        fwrite(&v, 1, 1, f);
+        written += 3;
+        i += run;
+    }
+    *outBytes = written;
+}
+
+static bool rleRead(FILE* f, u8* dst, u64 n) {
+    u64 i = 0;
+    while (i < n) {
+        u16 c; u8 v;
+        if (fread(&c, sizeof(c), 1, f) != 1) return false;
+        if (fread(&v, 1, 1, f) != 1) return false;
+        if (c == 0 || (u64)c > n - i) return false;
+        memset(dst + i, v, c);
+        i += c;
+    }
+    return true;
+}
+
+/* ==========================================================================
+   Framing
+   ========================================================================== */
+
+static u32 fourcc(const char* s) {
+    return (u32)s[0] | ((u32)s[1] << 8) | ((u32)s[2] << 16) | ((u32)s[3] << 24);
+}
+
+/* A section is written with its length patched in afterwards, because most of
+   them do not know their own size until they have produced it -- an RLE plane
+   least of all. Seek back, write the count, seek forward. */
+struct SectionWriter {
+    FILE* f; long lenPos; const char* name;
+    void begin(FILE* file, const char* tag, const char* label) {
+        f = file; name = label;
+        const u32 t = fourcc(tag);
+        fwrite(&t, sizeof(t), 1, f);
+        lenPos = ftell(f);
+        const u64 zero = 0;
+        fwrite(&zero, sizeof(zero), 1, f);
+    }
+    void end() {
+        const long here = ftell(f);
+        const u64 len = (u64)(here - lenPos - (long)sizeof(u64));
+        fseek(f, lenPos, SEEK_SET);
+        fwrite(&len, sizeof(len), 1, f);
+        fseek(f, here, SEEK_SET);
+        statAdd(name, len + 12);      /* payload, plus tag and length */
+    }
+};
+
+/* ==========================================================================
+   The material name table
+   ========================================================================== */
+
+static void writeMatTable(FILE* f) {
+    SectionWriter s; s.begin(f, "MATS", "material names");
+    const u16 n = (u16)MAT_COUNT;
+    fwrite(&n, sizeof(n), 1, f);
+    for (int m = 0; m < MAT_COUNT; ++m) {
+        const char* nm = MATS[m].name ? MATS[m].name : "";
+        u8 len = (u8)strlen(nm);
+        if (len > 63) len = 63;
+        const u8 id = (u8)m;
+        fwrite(&id, 1, 1, f);
+        fwrite(&len, 1, 1, f);
+        fwrite(nm, 1, len, f);
+    }
+    s.end();
+}
+
+/* saved id -> current id. Anything whose name no longer exists becomes
+   MAT_EMPTY: a material that was deleted between saves is genuinely gone, and
+   air is the one substitution that cannot break anything downstream -- it
+   cannot fall, burn, block, or be mistaken for something valuable. */
+static u8  g_remap[256];
+static int g_lostMats = 0;
+
+static bool readMatTable(FILE* f, u64 len) {
+    for (int i = 0; i < 256; ++i) g_remap[i] = MAT_EMPTY;
+    g_lostMats = 0;
+    const long end = ftell(f) + (long)len;
+
+    u16 n;
+    if (fread(&n, sizeof(n), 1, f) != 1) return false;
+    for (int i = 0; i < (int)n; ++i) {
+        u8 id, len8;
+        if (fread(&id, 1, 1, f) != 1) return false;
+        if (fread(&len8, 1, 1, f) != 1) return false;
+        char nm[64];
+        if (len8 && fread(nm, 1, len8, f) != len8) return false;
+        nm[len8] = 0;
+
+        u8 to = MAT_EMPTY; bool found = false;
+        for (int m = 0; m < MAT_COUNT; ++m)
+            if (MATS[m].name && strcmp(MATS[m].name, nm) == 0) { to = (u8)m; found = true; break; }
+        if (!found && len8) ++g_lostMats;
+        g_remap[id] = to;
+    }
+    fseek(f, end, SEEK_SET);
+    return true;
+}
+
+/* ==========================================================================
+   Writing
+   ========================================================================== */
+
+static u8 g_plane[SIM_W * SIM_H];
+
+bool saveWrite(const char* path, const World& w) {
+    g_nStats = 0; g_total = 0; g_err[0] = 0;
+
+    FILE* f = fopen(path, "wb");
+    if (!f) { sprintf(g_err, "could not open %s for writing", path); return false; }
+
+    const u32 magic = fourcc("CRUC");
+    const u32 ver   = SAVE_VERSION;
+    const i32 dims[2] = { SIM_W, SIM_H };
+    fwrite(&magic, sizeof(magic), 1, f);
+    fwrite(&ver,   sizeof(ver),   1, f);
+    fwrite(dims,   sizeof(dims),  1, f);
+    statAdd("header", sizeof(magic) + sizeof(ver) + sizeof(dims));
+
+    writeMatTable(f);
+
+    /* --- the three big planes ---------------------------------------- */
+    {
+        SectionWriter s; s.begin(f, "CMAT", "cell material");
+        for (int i = 0; i < SIM_W * SIM_H; ++i) g_plane[i] = w.cells[i].mat;
+        u64 b; rleWrite(f, g_plane, SIM_W * SIM_H, &b);
+        s.end();
+    }
+    {
+        SectionWriter s; s.begin(f, "CMOI", "cell moisture");
+        for (int i = 0; i < SIM_W * SIM_H; ++i) g_plane[i] = w.cells[i].moisture;
+        u64 b; rleWrite(f, g_plane, SIM_W * SIM_H, &b);
+        s.end();
+    }
+    /* Tint is NOT saved, and flags are not either.
+
+       Tint is per-cell colour jitter -- the speckle that stops a slab of stone
+       being one flat colour. It is random per cell, so it is the one plane RLE
+       cannot touch: stored it would be 12.6 MB, which is more than everything
+       else in this file put together, to preserve noise nobody could identify
+       in a screenshot. It is re-rolled on load instead. The world looks
+       statistically identical and not bit-identical, which is the right trade
+       for a twelve-megabyte saving.
+
+       Flags carry the direction bit and a frame stamp -- scheduling state for
+       the frame that was in progress. Zeroing them on load costs at most one
+       frame of settling. */
+    {
+        SectionWriter s; s.begin(f, "TEMP", "temperature");
+        u64 b; rleWrite(f, w.temp, SIM_W * SIM_H, &b);
+        s.end();
+    }
+    {
+        SectionWriter s; s.begin(f, "BGND", "background");
+        u64 b; rleWrite(f, w.bg, SIM_W * SIM_H, &b);
+        s.end();
+    }
+    {
+        SectionWriter s; s.begin(f, "ZONE", "zones");
+        fwrite(w.zone, 1, CHUNK_COUNT, f);
+        s.end();
+    }
+    /* The height maps. Derived from generation, but the player digs, so they
+       cannot simply be regenerated -- and at 32 KB they are not worth being
+       clever about. */
+    {
+        SectionWriter s; s.begin(f, "HGHT", "height maps");
+        fwrite(g_surfaceY, sizeof(int), SIM_W, f);
+        fwrite(g_stoneY,   sizeof(int), SIM_W, f);
+        s.end();
+    }
+
+    /* --- entities ---------------------------------------------------- */
+    {
+        SectionWriter s; s.begin(f, "PLYR", "character");
+        fwrite(&g_player, sizeof(Player), 1, f);
+        s.end();
+    }
+    {
+        SectionWriter s; s.begin(f, "INVN", "inventory");
+        fwrite(&g_inv, sizeof(Inventory), 1, f);
+        s.end();
+    }
+    {
+        SectionWriter s; s.begin(f, "DEVS", "machines");
+        fwrite(g_devices, sizeof(Device), MAX_DEVICES, f);
+        fwrite(g_sparks,  sizeof(Spark),  MAX_SPARKS,  f);
+        s.end();
+    }
+    {
+        SectionWriter s; s.begin(f, "ROOM", "rooms");
+        fwrite(g_rooms, sizeof(Room), MAX_ROOMS, f);
+        s.end();
+    }
+    {
+        SectionWriter s; s.begin(f, "TREE", "growing trees");
+        fwrite(g_trees, sizeof(Tree), MAX_TREES, f);
+        s.end();
+    }
+
+    const u32 endTag = 0;
+    fwrite(&endTag, sizeof(endTag), 1, f);
+    statAdd("end", sizeof(endTag));
+
+    const bool ok = ferror(f) == 0;
+    fclose(f);
+    if (!ok) { sprintf(g_err, "write failed part way through %s", path); return false; }
+    statSort();
+    return true;
+}
+
+/* ==========================================================================
+   Reading
+   ========================================================================== */
+
+/* Remap a material plane through the name table. */
+static void remapPlane(u8* p, u64 n) {
+    for (u64 i = 0; i < n; ++i) p[i] = g_remap[p[i]];
+}
+
+bool saveRead(const char* path, World& w) {
+    g_nStats = 0; g_total = 0; g_err[0] = 0;
+
+    FILE* f = fopen(path, "rb");
+    if (!f) { sprintf(g_err, "no save at %s", path); return false; }
+
+    u32 magic = 0, ver = 0; i32 dims[2] = { 0, 0 };
+    if (fread(&magic, sizeof(magic), 1, f) != 1 ||
+        fread(&ver,   sizeof(ver),   1, f) != 1 ||
+        fread(dims,   sizeof(dims),  1, f) != 1) {
+        sprintf(g_err, "%s is too short to be a save", path); fclose(f); return false;
+    }
+    if (magic != fourcc("CRUC")) {
+        sprintf(g_err, "%s is not a crucible save", path); fclose(f); return false;
+    }
+    /* Refused, not guessed at -- see the note on migration in save.h. */
+    if (ver != SAVE_VERSION) {
+        sprintf(g_err, "save is format %u, this build reads %u", ver, SAVE_VERSION);
+        fclose(f); return false;
+    }
+    if (dims[0] != SIM_W || dims[1] != SIM_H) {
+        sprintf(g_err, "save is %dx%d, this build is %dx%d", dims[0], dims[1], SIM_W, SIM_H);
+        fclose(f); return false;
+    }
+    statAdd("header", sizeof(magic) + sizeof(ver) + sizeof(dims));
+
+    /* Defaults for anything the file does not carry, so a save written by an
+       older build simply arrives without the parts that did not exist. */
+    w.reset();
+    devClear(); sparkClear(); roomsClear(w); treesClear();
+
+    bool haveMats = false;
+    for (;;) {
+        u32 tag = 0; u64 len = 0;
+        if (fread(&tag, sizeof(tag), 1, f) != 1) break;
+        if (tag == 0) { statAdd("end", 4); break; }
+        if (fread(&len, sizeof(len), 1, f) != 1) break;
+        const long payload = ftell(f);
+        const long next    = payload + (long)len;
+
+        if (tag == fourcc("MATS")) {
+            if (!readMatTable(f, len)) { sprintf(g_err, "bad material table"); fclose(f); return false; }
+            haveMats = true;
+            statAdd("material names", len + 12);
+        } else if (tag == fourcc("CMAT")) {
+            if (!haveMats) { sprintf(g_err, "cells before the material table"); fclose(f); return false; }
+            if (!rleRead(f, g_plane, SIM_W * SIM_H)) { sprintf(g_err, "bad cell data"); fclose(f); return false; }
+            remapPlane(g_plane, SIM_W * SIM_H);
+            for (int i = 0; i < SIM_W * SIM_H; ++i) {
+                w.cells[i].mat   = g_plane[i];
+                w.cells[i].flags = 0;
+                /* Speckle, re-rolled rather than stored -- see the note in
+                   saveWrite. Drawn from the position so a save reloaded twice
+                   looks the same both times. */
+                const u32 h = ((u32)i * 2654435761u) ^ (((u32)i >> 13) * 40503u);
+                w.cells[i].tint = (u8)(h >> 24);
+            }
+            statAdd("cell material", len + 12);
+        } else if (tag == fourcc("CMOI")) {
+            if (!rleRead(f, g_plane, SIM_W * SIM_H)) { sprintf(g_err, "bad moisture data"); fclose(f); return false; }
+            for (int i = 0; i < SIM_W * SIM_H; ++i) w.cells[i].moisture = g_plane[i];
+            statAdd("cell moisture", len + 12);
+        } else if (tag == fourcc("TEMP")) {
+            if (!rleRead(f, w.temp, SIM_W * SIM_H)) { sprintf(g_err, "bad temperature data"); fclose(f); return false; }
+            statAdd("temperature", len + 12);
+        } else if (tag == fourcc("BGND")) {
+            if (!rleRead(f, w.bg, SIM_W * SIM_H)) { sprintf(g_err, "bad background data"); fclose(f); return false; }
+            /* The background stores a material id beside a flag bit, so it
+               needs the same remap the foreground got -- and it has to keep the
+               flag while doing it. Missing this would repaint every wall you
+               have ever built as whatever now sits at that index. */
+            for (int i = 0; i < SIM_W * SIM_H; ++i) {
+                const u8 raw = w.bg[i];
+                const u8 m   = g_remap[raw & BG_MAT_MASK];
+                w.bg[i] = (u8)((m & BG_MAT_MASK) | (raw & BG_PLACED));
+            }
+            statAdd("background", len + 12);
+        } else if (tag == fourcc("ZONE")) {
+            if (fread(w.zone, 1, CHUNK_COUNT, f) != (size_t)CHUNK_COUNT) {
+                sprintf(g_err, "bad zone data"); fclose(f); return false;
+            }
+            statAdd("zones", len + 12);
+        } else if (tag == fourcc("HGHT")) {
+            fread(g_surfaceY, sizeof(int), SIM_W, f);
+            fread(g_stoneY,   sizeof(int), SIM_W, f);
+            statAdd("height maps", len + 12);
+        } else if (tag == fourcc("PLYR")) {
+            if (len == sizeof(Player)) fread(&g_player, sizeof(Player), 1, f);
+            statAdd("character", len + 12);
+        } else if (tag == fourcc("INVN")) {
+            if (len == sizeof(Inventory)) fread(&g_inv, sizeof(Inventory), 1, f);
+            statAdd("inventory", len + 12);
+        } else if (tag == fourcc("DEVS")) {
+            if (len == sizeof(Device) * MAX_DEVICES + sizeof(Spark) * MAX_SPARKS) {
+                fread(g_devices, sizeof(Device), MAX_DEVICES, f);
+                fread(g_sparks,  sizeof(Spark),  MAX_SPARKS,  f);
+                for (int i = 0; i < MAX_DEVICES; ++i)
+                    if (g_devices[i].used) g_devices[i].mat = g_remap[g_devices[i].mat];
+            }
+            statAdd("machines", len + 12);
+        } else if (tag == fourcc("ROOM")) {
+            if (len == sizeof(Room) * MAX_ROOMS) fread(g_rooms, sizeof(Room), MAX_ROOMS, f);
+            statAdd("rooms", len + 12);
+        } else if (tag == fourcc("TREE")) {
+            if (len == sizeof(Tree) * MAX_TREES) fread(g_trees, sizeof(Tree), MAX_TREES, f);
+            statAdd("growing trees", len + 12);
+        } else {
+            /* Unknown tag: skipped, which is the whole point of the framing.
+               A save written by a later build loads here without whatever this
+               was, rather than being refused. */
+            statAdd("skipped", len + 12);
+        }
+        fseek(f, next, SEEK_SET);
+    }
+
+    fclose(f);
+
+    /* Everything must be simulated once, and the room flags rebuilt from the
+       rooms that were loaded. Dirtying the whole world is a one-off cost on
+       load and it is what stops sand hanging in mid-air where the save caught
+       it between frames. */
+    w.dirtyArea(0, 0, SIM_W - 1, SIM_H - 1);
+    statSort();
+    if (g_lostMats) sprintf(g_err, "%d material(s) in the save no longer exist", g_lostMats);
+    return true;
+}

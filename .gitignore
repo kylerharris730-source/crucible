@@ -4,6 +4,9 @@ build/
 *.o
 *.obj
 
+# Saved games -- yours, not the repository's
+*.sav
+
 # Editor / OS cruft
 .vscode/
 .idea/

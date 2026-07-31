@@ -18,6 +18,7 @@
 #include "door.h"
 #include "tree.h"
 #include "craft.h"
+#include "save.h"
 
 /* The window is a fixed-size left-hand tool panel plus the sim viewport. The
    viewport keeps a clean integer scale so pixels stay crisp and the
@@ -264,6 +265,13 @@ static bool g_lmb = false, g_rmb = false;
    the other is a HOLD: respawn moved to key-UP and is suppressed if the hold
    was used to draw. That is subtle enough to be worth stating, and it is still
    better than moving a binding somebody relies on. */
+/* What the last save or load said, and for how long to keep saying it. A save
+   that reports nothing is a save you do not trust; four seconds is long enough
+   to read and short enough not to become furniture. */
+static char g_saveMsg[256] = "";
+static int  g_saveMsgFrames = 0;
+static const char* const SAVE_PATH = "crucible.sav";
+
 static bool g_lineKey  = false;   /* R is down */
 static bool g_lineOn   = false;   /* ...and a drag is in progress */
 static bool g_lineDrew = false;   /* this hold of R drew something */
@@ -568,6 +576,7 @@ static const KeyHint KEY_HINTS[] = {
     { "wheel",         "pick a hotbar slot" },
     { "Q + wheel",     "brush size" },
     { "C",             "crafting" },
+    { "F5 / F9",       "save / load" },
     { "Tab",           "the item grid" },
     { "L",             "build on the backdrop" },
     { "V / K",         "cycle view / lights" },
@@ -576,7 +585,8 @@ static const KeyHint KEY_HINTS[] = {
 static const int N_KEY_HINTS = (int)(sizeof(KEY_HINTS) / sizeof(KEY_HINTS[0]));
 
 static void layoutMenu() {
-    const int w = 344, h = 150 + N_KEY_HINTS * 15 + 22;
+    const int w = 344, h = 150 + N_KEY_HINTS * 15 + 22
+                    + (saveTotalBytes() > 0 ? 26 + 8 * 15 : 0);
     const int cx = PANEL_W + VIEW_W / 2, cy = VIEW_H / 2;
     SetRect(&g_menuPanel, cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2);
     const int bw = w - 120, bx = cx - bw / 2;
@@ -970,6 +980,39 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (g_craftOpen) { layoutCraft(); g_lmb = g_rmb = false; }
             break;
         case 'N': g_world.reset(); makeWorld(); break;
+
+        /* F5 saves, F9 loads -- the pair every game has used for thirty years,
+           and deliberately not on letters: the letters are all brush and tool
+           shortcuts, and losing your world to a mistyped one is the failure
+           this whole feature exists to prevent. */
+        case VK_F5: {
+            const bool ok = saveWrite(SAVE_PATH, g_world);
+            if (ok) {
+                double mb = (double)saveTotalBytes() / (1024.0 * 1024.0);
+                sprintf(g_saveMsg, "Saved %s -- %.2f MB", SAVE_PATH, mb);
+            } else {
+                sprintf(g_saveMsg, "SAVE FAILED: %s", saveError());
+            }
+            g_saveMsgFrames = 240;
+            break;
+        }
+        case VK_F9: {
+            const bool ok = saveRead(SAVE_PATH, g_world);
+            if (ok) {
+                double mb = (double)saveTotalBytes() / (1024.0 * 1024.0);
+                sprintf(g_saveMsg, "Loaded %s -- %.2f MB%s%s", SAVE_PATH, mb,
+                        saveError()[0] ? " -- " : "", saveError());
+                updateCamera(true);
+            } else {
+                /* A failed load leaves the world half-written, so it is not
+                   somewhere to carry on from. Regenerating is the honest
+                   recovery and it is better than a plausible-looking ruin. */
+                sprintf(g_saveMsg, "LOAD FAILED: %s", saveError());
+                g_world.reset(); makeWorld();
+            }
+            g_saveMsgFrames = 240;
+            break;
+        }
         /* R HELD is the line tool; R TAPPED still respawns at the cursor. The
            respawn moved to key-up so the two can share one key -- see the note
            on g_lineKey. Auto-repeat means this arrives many times while held,
@@ -2050,6 +2093,39 @@ static void drawMenu(HDC hdc) {
         DrawTextA(hdc, KEY_HINTS[i].what, -1, &wr, DT_LEFT | DT_TOP | DT_SINGLELINE);
     }
 
+    /* --- where the save's bytes went ------------------------------------
+       Here rather than on the HUD because it is a thing to STUDY, not glance
+       at: the interesting part is watching a section grow as the game does,
+       and that is a comparison across sessions rather than a number you keep
+       an eye on while playing.
+
+       Biggest first, and only sections above a kilobyte -- below that a row is
+       noise, and eight rows of noise would bury the two that matter. */
+    if (saveTotalBytes() > 0) {
+        int ry = g_menuQuit.bottom + 14 + N_KEY_HINTS * 15 + 10;
+        char s[128];
+        sprintf(s, "last save  %.2f MB", (double)saveTotalBytes() / (1024.0 * 1024.0));
+        SetTextColor(hdc, RGB(226, 190, 90));
+        RECT tr = { g_menuPanel.left + 16, ry, g_menuPanel.right - 12, ry + 14 };
+        DrawTextA(hdc, s, -1, &tr, DT_LEFT | DT_TOP | DT_SINGLELINE);
+        ry += 16;
+        const SaveStat* st = saveStats();
+        for (int i = 0; i < saveStatCount(); ++i) {
+            if (st[i].bytes < 1024) break;
+            if (st[i].bytes >= 1024 * 1024)
+                sprintf(s, "%.2f MB", (double)st[i].bytes / (1024.0 * 1024.0));
+            else
+                sprintf(s, "%.1f KB", (double)st[i].bytes / 1024.0);
+            SetTextColor(hdc, RGB(150, 156, 168));
+            RECT nr = { g_menuPanel.left + 24, ry, g_menuPanel.left + 200, ry + 14 };
+            DrawTextA(hdc, st[i].name, -1, &nr, DT_LEFT | DT_TOP | DT_SINGLELINE);
+            SetTextColor(hdc, RGB(190, 196, 208));
+            RECT vr = { g_menuPanel.left + 200, ry, g_menuPanel.right - 16, ry + 14 };
+            DrawTextA(hdc, s, -1, &vr, DT_RIGHT | DT_TOP | DT_SINGLELINE);
+            ry += 15;
+        }
+    }
+
     RECT hint = g_menuPanel;
     hint.top = g_menuPanel.bottom - 22;
     SetTextColor(hdc, RGB(120, 126, 138));
@@ -2141,10 +2217,40 @@ static void drawPanel(HDC hdc) {
     }
     sprintf(s, "%.0f fps", g_fps);                         drawText(hdc, 10, sy + 20, RGB(150, 200, 150), s);
     sprintf(s, "sim %.2f ms", g_simMs);                    drawText(hdc, 10, sy + 36, RGB(170, 178, 190), s);
-    sprintf(s, "cells %d", g_cellCount);                   drawText(hdc, 10, sy + 52, RGB(170, 178, 190), s);
+    /* The save total shares the cells line rather than taking one of its own.
+       A line of its own at sy+84 ran off the bottom edge of the window -- the
+       stats block already finishes about ten pixels from it. */
+    if (saveTotalBytes() > 0)
+        sprintf(s, "cells %d   save %.2f MB", g_cellCount,
+                (double)saveTotalBytes() / (1024.0 * 1024.0));
+    else
+        sprintf(s, "cells %d", g_cellCount);
+    drawText(hdc, 10, sy + 52, RGB(170, 178, 190), s);
     sprintf(s, "chunks %d/%d   rooms %d (+%d)", g_world.activeChunks, CHUNK_COUNT,
             roomCount(), g_world.keptChunks);
     drawText(hdc, 10, sy + 68, RGB(170, 178, 190), s);
+
+    /* --- where the save's bytes went ------------------------------------
+       Shown after a save or load and then left up, rather than flashed with
+       the status line, because the interesting thing about it is watching it
+       CHANGE as the game grows -- which you cannot do with a number that
+       vanishes after four seconds.
+
+       Biggest section first, and only the ones worth a line: below about a
+       kilobyte a section is noise, and eleven rows of noise would bury the
+       three that matter. */
+    /* The status line last, over the top of everything, since it is the one
+       thing that is a REPLY to something you just pressed. */
+    if (g_saveMsgFrames > 0) {
+        --g_saveMsgFrames;
+        RECT r = { PANEL_W + 16, 14, WIN_W - 16, 34 };
+        SetBkMode(hdc, TRANSPARENT);
+        SetTextColor(hdc, RGB(20, 22, 28));
+        RECT sh = r; sh.left += 1; sh.top += 1;
+        DrawTextA(hdc, g_saveMsg, -1, &sh, DT_LEFT | DT_TOP | DT_SINGLELINE);
+        SetTextColor(hdc, strstr(g_saveMsg, "FAILED") ? RGB(232, 96, 88) : RGB(226, 190, 90));
+        DrawTextA(hdc, g_saveMsg, -1, &r, DT_LEFT | DT_TOP | DT_SINGLELINE);
+    }
 
     SelectObject(hdc, oldFont);
 }
