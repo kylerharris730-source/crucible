@@ -27,6 +27,20 @@ const Recipe RECIPES[] = {
        what stops doors being the default way to close a room. */
     { { { (ItemId)MAT_WOOD, 2 }, { ITEM_NONE, 0 }, { ITEM_NONE, 0 } },
       (ItemId)MAT_DOOR, 1, "Door" },
+
+    /* --- birch --------------------------------------------------------------
+       One recipe, not a second copy of all four. Birch logs convert to ordinary
+       wood at one for one, and everything downstream is unchanged.
+
+       Forking every wooden recipe per species was the alternative and it is
+       worse in every direction: the crafting list doubles in length, each entry
+       has a twin that differs by one word, and the player has to read both to
+       find out they do the same thing. A conversion says the real relationship
+       -- birch is wood you happen to have in a different colour -- in one row,
+       and it leaves room for birch to be worth something specific later
+       without unpicking anything. */
+    { { { (ItemId)MAT_BIRCH_WOOD, 1 }, { ITEM_NONE, 0 }, { ITEM_NONE, 0 } },
+      (ItemId)MAT_WOOD, 1, "Wood from Birch" },
 };
 
 const int N_RECIPES = (int)(sizeof(RECIPES) / sizeof(RECIPES[0]));

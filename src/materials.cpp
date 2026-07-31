@@ -658,10 +658,25 @@ MatInfo MATS[MAT_COUNT] = {
      Sapling, leaf and pod are static and light. All three burn -- a forest
      fire is a thing that should be able to happen, and it costs nothing to
      allow beyond the rows already being written. */
-  { "Tree Seed",KIND_POWDER,120, 60,  30,   0,   0,   0,  0,   12,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY, degC(95), MAT_FIRE,   0,  0x8A6A3A, 0x6A5028, 0x8A6A3A, 0x6A5028, 0 },
-  { "Sapling",KIND_STATIC, 255,  0,    0,   0,   0,   0,  0,   12,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY, degC(85), MAT_FIRE,   0,  0x6EA83E, 0x4E8A2E, 0x6EA83E, 0x4E8A2E, 0 },
-  { "Leaves",KIND_STATIC,  255,  0,    0,   0,   0,   0,  0,   10,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY, degC(80), MAT_FIRE,   0,  0x4E9A3A, 0x357028, 0x4E9A3A, 0x357028, 0 },
-  { "Seed Pod",KIND_STATIC,255,  0,    0,   0,   0,   0,  0,   10,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY, degC(80), MAT_FIRE,   0,  0xC8B44A, 0xA08A28, 0xC8B44A, 0xA08A28, 0 },
+  { "Oak Seed",KIND_POWDER,120, 60,  30,   0,   0,   0,  0,   12,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY, degC(95), MAT_FIRE,   0,  0x8A6A3A, 0x6A5028, 0x8A6A3A, 0x6A5028, 0 },
+  { "Oak Sapling",KIND_STATIC,255,0,   0,   0,   0,   0,  0,   12,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY, degC(85), MAT_FIRE,   0,  0x6EA83E, 0x4E8A2E, 0x6EA83E, 0x4E8A2E, 0 },
+  { "Oak Leaves",KIND_STATIC,255, 0,   0,   0,   0,   0,  0,   10,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY, degC(80), MAT_FIRE,   0,  0x4E9A3A, 0x357028, 0x4E9A3A, 0x357028, 0 },
+  { "Oak Seed Pod",KIND_STATIC,255,0,  0,   0,   0,   0,  0,   10,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY, degC(80), MAT_FIRE,   0,  0xC8B44A, 0xA08A28, 0xC8B44A, 0xA08A28, 0 },
+  /* --- birch ---------------------------------------------------------------
+     The short one. Pale in both bark and leaf, because at a glance across a
+     valley the only thing that distinguishes two trees of similar shape is
+     colour -- and once one of them is a third the height of the other, colour
+     is what stops the short one reading as a distant oak.
+
+     Everything else is copied from oak deliberately: same burn thresholds,
+     same conduction, same heat capacity. A second species is a second SHAPE,
+     and giving it different physics as well would be two changes wearing one
+     name. */
+  { "Birch Seed",KIND_POWDER,120,60,  30,   0,   0,   0,  0,   12,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY, degC(95), MAT_FIRE,   0,  0xC8C0A8, 0xA09880, 0xC8C0A8, 0xA09880, 0 },
+  { "Birch Sapling",KIND_STATIC,255,0, 0,   0,   0,   0,  0,   12,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY, degC(85), MAT_FIRE,   0,  0x9AD06A, 0x76B04A, 0x9AD06A, 0x76B04A, 0 },
+  { "Birch Wood",KIND_STATIC,255, 0,   0,   0,   0,   0,  0,   14,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY, degC(90), MAT_FIRE,   0,  0xDCD8C8, 0xB0AC9A, 0xDCD8C8, 0xB0AC9A, 0 },
+  { "Birch Leaves",KIND_STATIC,255,0,  0,   0,   0,   0,  0,   10,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY, degC(80), MAT_FIRE,   0,  0x8AC44E, 0x66A034, 0x8AC44E, 0x66A034, 0 },
+  { "Birch Seed Pod",KIND_STATIC,255,0,0,   0,   0,   0,  0,   10,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY, degC(80), MAT_FIRE,   0,  0xE8E0A0, 0xC0B878, 0xE8E0A0, 0xC0B878, 0 },
   { "Device",KIND_STATIC, 255,   0,    0,   0,   0,   0,  0,  200,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0x2A2F3A, 0x2A2F3A, 0x2A2F3A, 0x2A2F3A, 0 },
 };
 
@@ -676,6 +691,7 @@ u8  g_matUnseen[MAT_COUNT];
 u8  g_matClimb[MAT_COUNT];
 u8  g_matPlatform[MAT_COUNT];
 u8  g_matSheer[MAT_COUNT];
+u8  g_matIsSeed[MAT_COUNT];
 u8  g_matDropsAs[MAT_COUNT];
 u8  g_matSmeltYield[MAT_COUNT];
 u8  g_matConducts[MAT_COUNT];
@@ -733,6 +749,7 @@ static void initStrength() {
     g_matStrength[MAT_ICE]         = STR_SOFT;
     g_matStrength[MAT_LAMP]        = STR_SOFT;
     g_matStrength[MAT_WOOD]        = STR_SOFT;
+    g_matStrength[MAT_BIRCH_WOOD]  = STR_SOFT;
     g_matStrength[MAT_RUBBER]      = STR_SOFT;
 
     g_matStrength[MAT_STONE]       = STR_ROCK;
@@ -902,8 +919,10 @@ static void initLight() {
        sunbeams, this handles everything else -- a torch hung in a tree, a fire
        under one, the daylight that has already made it into the crown spreading
        sideways within it. Gas-low, for the same reason it is sheer at all. */
-    g_matOpacity[MAT_LEAF]    = 5;
-    g_matOpacity[MAT_SEEDPOD] = 5;
+    g_matOpacity[MAT_OAK_LEAF]    = 5;
+    g_matOpacity[MAT_OAK_POD]     = 5;
+    g_matOpacity[MAT_BIRCH_LEAF]  = 5;
+    g_matOpacity[MAT_BIRCH_POD]   = 5;
 
     /* A source is transparent to its own light and to everyone else's --
        otherwise a wall of lamps lights only its front row, and a lava lake
@@ -1156,7 +1175,8 @@ static void initPassable() {
     g_matPassable[MAT_ROPE]     = 1;
     g_matPassable[MAT_PLATFORM] = 1;
     /* The sapling, so a tree you planted is not a fence post while it grows. */
-    g_matPassable[MAT_SAPLING]  = 1;
+    g_matPassable[MAT_OAK_SAPLING]   = 1;
+    g_matPassable[MAT_BIRCH_SAPLING] = 1;
 
     /* --- the canopy ------------------------------------------------------
        Leaves and pods, and NOT wood. That split is the whole answer to "a
@@ -1183,8 +1203,10 @@ static void initPassable() {
        Solid to the SIMULATION regardless, so a canopy still catches falling
        sand and still holds up a rainstorm -- passable is a fact about people.
        See g_matPassable's own note. */
-    g_matPassable[MAT_LEAF]     = 1;
-    g_matPassable[MAT_SEEDPOD]  = 1;
+    g_matPassable[MAT_OAK_LEAF]      = 1;
+    g_matPassable[MAT_OAK_POD]       = 1;
+    g_matPassable[MAT_BIRCH_LEAF]    = 1;
+    g_matPassable[MAT_BIRCH_POD]     = 1;
 }
 
 static void initClimb() {
@@ -1195,6 +1217,12 @@ static void initClimb() {
 static void initPlatform() {
     for (int m = 0; m < MAT_COUNT; ++m) g_matPlatform[m] = 0;
     g_matPlatform[MAT_PLATFORM] = 1;
+}
+
+static void initSeeds() {
+    for (int m = 0; m < MAT_COUNT; ++m) g_matIsSeed[m] = 0;
+    g_matIsSeed[MAT_OAK_SEED]   = 1;
+    g_matIsSeed[MAT_BIRCH_SEED] = 1;
 }
 
 static void initSheer() {
@@ -1216,8 +1244,10 @@ static void initSheer() {
        canopy to the depths of it, which is depth you can see, while leaving the
        darkest part well clear of the floor. 5 and up put the middle back near
        the unlit minimum, which is where this started. */
-    g_matSheer[MAT_LEAF]    = 3;
-    g_matSheer[MAT_SEEDPOD] = 3;
+    g_matSheer[MAT_OAK_LEAF]    = 3;
+    g_matSheer[MAT_OAK_POD]     = 3;
+    g_matSheer[MAT_BIRCH_LEAF]  = 3;
+    g_matSheer[MAT_BIRCH_POD]   = 3;
 }
 
 static void initDrops() {
@@ -1228,10 +1258,12 @@ static void initDrops() {
     /* A pod in the canopy gives you a SEED, which is what makes trees
        renewable without anything having to model reproduction. Breaking the pod
        is the harvest. */
-    g_matDropsAs[MAT_SEEDPOD]   = MAT_TREESEED;
+    g_matDropsAs[MAT_OAK_POD]     = MAT_OAK_SEED;
+    g_matDropsAs[MAT_BIRCH_POD]   = MAT_BIRCH_SEED;
     /* And a sapling gives back the seed you planted, so changing your mind
        about where the tree goes costs nothing. */
-    g_matDropsAs[MAT_SAPLING]   = MAT_TREESEED;
+    g_matDropsAs[MAT_OAK_SAPLING]   = MAT_OAK_SEED;
+    g_matDropsAs[MAT_BIRCH_SAPLING] = MAT_BIRCH_SEED;
 }
 
 static void initUnseen() {
@@ -1251,6 +1283,7 @@ void initMaterials() {
     initClimb();
     initPlatform();
     initSheer();
+    initSeeds();
     initUnseen();
     initDrops();
     initSmelting();

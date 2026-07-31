@@ -742,11 +742,16 @@ void generateWorld(World& w) {
 
    Everything is drawn from hash1 on the lattice index, so a world's trees are
    as reproducible as its terrain -- see the note on determinism in tree.h. */
-static const int TREE_SPACING = 300;   /* lattice pitch, in cells */
-static const int TREE_JITTER  = 130;   /* how far a tree may wander from it */
-/* Chance out of 255 that a given lattice cell has a tree at all. The gaps are
-   what make a wood look like a wood rather than an avenue. */
-static const int TREE_CHANCE  = 190;
+static const int TREE_SPACING = 620;   /* lattice pitch, in cells */
+static const int TREE_JITTER  = 240;   /* how far a tree may wander from it */
+/* Chance out of 255 that a given lattice cell has a tree at all.
+
+   These three together give three or four oaks in the whole world, which is
+   what the world wants rather than what looks generous on paper. An oak is 320
+   cells tall with a 200-cell crown and it throws a shadow to match: six of them
+   made the plains somewhere you walked between trees rather than open country
+   with landmarks in it. At this density a tree is a place. */
+static const int TREE_CHANCE  = 150;
 /* Tries per lattice cell before giving up on it.
    Without retries, a cell whose one jittered position happened to land on
    rock, on a slope or in the lake produced nothing -- and since only 43% of
@@ -797,7 +802,7 @@ static bool treeSpotOk(const World& w, int x) {
     /* Room overhead. A crown that would be clipped by the top of the world is a
        tree with its head cut off, and the mountain's summit is high enough for
        that to be a real case rather than a theoretical one. */
-    if (surf - TREE_MAX_H - 60 < PLAY_Y0) return false;
+    if (surf - treeMaxHeight() - 60 < PLAY_Y0) return false;
 
     /* Nothing hollow underneath. A cave roof will not hold a tree up, and a
        trunk hanging into a cavern is the sort of thing you notice once and
@@ -831,7 +836,9 @@ static void generateTrees(World& w) {
 
                Salted on POSITION, so the same world always grows the same wood
                and two trees that land near each other still differ. */
-            treeGrowNow(w, x, g_surfaceY[x] - 1, hash1(x, 0x3F0Eu));
+            /* Oak only, for now. Birch exists as a seed you plant rather than
+               as scenery -- see TREE_KINDS. */
+            treeGrowNow(w, x, g_surfaceY[x] - 1, hash1(x, 0x3F0Eu), TREE_OAK);
             lastX = x;
             ++planted;
             break;

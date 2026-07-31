@@ -16,7 +16,7 @@
    memory at all -- every frame it re-asks "am I next to dirt" -- and a tree
    cannot be written that way without the trunk forgetting how tall it is.
 
-   So a sapling is one MAT_SAPLING cell plus a row in a side table, exactly the
+   So a sapling is one MAT_OAK_SAPLING cell plus a row in a side table, exactly the
    arrangement machines use. The simulation is told only "something solid is
    here", which is all it needs.
 
@@ -54,28 +54,40 @@ static const int TREE_STEPS = 150;
    would look like a much bigger bug. */
 static const float TREE_TRUNK_FRAC = 0.65f;
 
-/* Trunk height, in cells, before the crown. Five times what it was.
+/* --- the species ------------------------------------------------------------
+   Every number that makes one tree look unlike another, in one row each. A
+   table rather than two builders, because the two trees differ only in their
+   MEASUREMENTS -- a trunk, some branches, a lumpy crown, pods in it -- and a
+   second copy of that logic would be a second place for the crown to go hollow.
 
-   The character is 22 cells tall, so the short end of this is eight body
-   heights and the tall end is sixteen -- a thing you climb, or rope up, or fell
-   for a great deal of wood. At the old 34-72 a tree was chest-high to
-   waist-high scenery. */
-static const int TREE_MIN_H = 170;
-static const int TREE_MAX_H = 360;
+   Adding a species is a row here plus its five materials. */
+struct TreeKind {
+    const char* name;
+    int minH, maxH;        /* trunk height before the crown */
+    int wTop, wBase;       /* trunk width at the crown and at the root */
+    int leanMin, leanSpan; /* how far the top wanders off the root */
+    int branchMin, branchSpan;
+    int branchLenMin, branchLenSpan;
+    int tuftR;             /* leaves at a branch tip */
+    int lumps;             /* overlapping blobs making the crown */
+    int lumpMin, lumpSpan; /* their radii */
+    int spreadX, spreadY;  /* how far they scatter from the trunk top */
+    int podMin, podSpan;
+    u8  seed, sapling, wood, leaf, pod;
+};
 
-/* Trunk width at the top and at the base. A 170-cell tree one cell thick would
-   be a wire; these are the numbers that make it read as timber. */
-static const int TREE_W_TOP  = 9;
-static const int TREE_W_BASE = 15;
+enum TreeSpecies { TREE_OAK = 0, TREE_BIRCH, TREE_SPECIES_COUNT };
+extern const TreeKind TREE_KINDS[TREE_SPECIES_COUNT];
 
-/* How many pods the crown carries. Up from 2-4 with the size, but not by five:
-   the point of a pod is that felling one tree pays for several more, and past
-   about six that stops being a supply and starts being a reason never to plant
-   anything again. */
-static const int TREE_POD_MIN = 3;
-static const int TREE_POD_MAX = 6;
+/* The tallest any species grows, for callers that need headroom before they
+   know which tree they are placing -- worldgen, mostly. */
+int treeMaxHeight();
+
+/* Which species a seed material grows, or -1. */
+int treeSpeciesOfSeed(u8 mat);
 
 struct Tree {
+    u8   kind;         /* a TreeSpecies */
     i32  x, y;         /* the cell the sapling stands in: the base of the trunk */
     i32  step;         /* 0..TREE_STEPS */
     i32  tick;
@@ -93,11 +105,11 @@ void treesClear();
    of the planting rule and a test should be able to ask it directly. */
 bool treeCanRoot(const World& w, int x, int y);
 
-/* Plant one. Converts the cell to MAT_SAPLING and opens a row in the table.
+/* Plant one. Converts the cell to MAT_OAK_SAPLING and opens a row in the table.
    Returns false if the table is full, in which case the seed stays a seed and
    will try again next time it is looked at -- a dropped seed that silently
    vanished would be the worst possible failure here. */
-bool treePlant(World& w, int x, int y);
+bool treePlant(World& w, int x, int y, int species);
 
 /* One frame: roots any seed that has come to rest on wet soil, and advances
    every growing tree. Cheap by construction -- the seed scan only looks at
@@ -107,4 +119,4 @@ void treesTick(World& w);
 /* Grow a full tree at (x, y) immediately, ignoring the timer. Used by worldgen
    to put forests in the world at generation time, and by tests that have no
    interest in waiting a minute. */
-void treeGrowNow(World& w, int x, int y, u32 salt);
+void treeGrowNow(World& w, int x, int y, u32 salt, int species = TREE_OAK);

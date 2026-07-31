@@ -10,7 +10,7 @@
    --- what actually breaks a save ---
    MATERIAL IDS. Every cell stores a u8 index into MatId, and materials get
    inserted in the MIDDLE of that enum all the time -- MAT_ROPE and MAT_PLATFORM
-   went in ahead of MAT_DEVICE, MAT_TREESEED ahead of those. A save written
+   went in ahead of MAT_DEVICE, MAT_OAK_SEED ahead of those. A save written
    before any of that would decode every cell in the world as the wrong thing:
    stone reading as ceramic, iron as clay. Silent, total, and it looks like
    corruption rather than like a version problem.

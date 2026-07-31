@@ -988,7 +988,7 @@ void World::updateCell(int x, int y) {
        moved -- a seed still falling past wet ground should not root in mid-air,
        and a seed that has settled is exactly a seed whose chunk is still awake
        from the frame it landed on. */
-    if (c.mat == MAT_TREESEED && sproutCount < MAX_SPROUTS) {
+    if (g_matIsSeed[c.mat] && sproutCount < MAX_SPROUTS) {
         const u8 below = (y < PLAY_Y1) ? cells[(y + 1) * SIM_W + x].mat : (u8)MAT_WALL;
         if (below == MAT_DIRT || below == MAT_GRASS) {
             sprout[sproutCount++] = i;

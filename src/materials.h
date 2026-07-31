@@ -138,10 +138,25 @@ enum MatId {
        The pod is the renewable half: it is a cell of the canopy that drops a
        SEED rather than itself (see g_matDropsAs), so every tree you fell pays
        for the next two or three. That is a table entry rather than a rule. */
-    MAT_TREESEED,
-    MAT_SAPLING,
-    MAT_LEAF,
-    MAT_SEEDPOD,
+    MAT_OAK_SEED,
+    MAT_OAK_SAPLING,
+    MAT_OAK_LEAF,
+    MAT_OAK_POD,
+    /* --- the second species ----------------------------------------------
+       Birch: shorter, paler, slighter. It has its OWN seed, sapling, leaf,
+       pod and wood rather than sharing oak's, and the pod is the reason that
+       is not fussiness -- g_matDropsAs maps one material to one item, so a
+       shared pod could only ever drop one species' seed and half of every
+       harvest would come back as the wrong tree.
+
+       Its wood is a separate material too, so a birch log reads as birch in
+       the pack. See the note on the recipes in craft.cpp for why that does not
+       fork every wooden recipe in two. */
+    MAT_BIRCH_SEED,
+    MAT_BIRCH_SAPLING,
+    MAT_BIRCH_WOOD,
+    MAT_BIRCH_LEAF,
+    MAT_BIRCH_POD,
     /* --- machinery -------------------------------------------------------
        The cells a multi-cell DEVICE occupies. One material for every device
        type, because the grid only needs to know "something solid and man-made is
@@ -459,6 +474,14 @@ extern u8 g_matPlatform[MAT_COUNT];
    untouched. It is the same distinction lightOpen() already draws for smoke,
    which is why that note is worth reading beside this one. */
 extern u8 g_matSheer[MAT_COUNT];
+
+/* --- what will sprout ------------------------------------------------------
+   True for a material that becomes a plant when it settles on the right
+   ground. The SIMULATION is the only thing that knows a powder has come to
+   rest, so it has to be able to ask the question -- but which plant, and on
+   what, is tree.cpp's business entirely. One bit here keeps world.cpp from
+   learning what a tree is. */
+extern u8 g_matIsSeed[MAT_COUNT];
 
 /* --- what the renderer does not draw ----------------------------------------
    True for a cell whose material is NOT painted: the backdrop is drawn in its

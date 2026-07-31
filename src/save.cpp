@@ -156,6 +156,25 @@ static bool readMatTable(FILE* f, u64 len) {
         u8 to = MAT_EMPTY; bool found = false;
         for (int m = 0; m < MAT_COUNT; ++m)
             if (MATS[m].name && strcmp(MATS[m].name, nm) == 0) { to = (u8)m; found = true; break; }
+        /* Names a material used to have. Keying on the name makes moving a
+           material free and RENAMING one the breaking operation -- which is
+           the trade, and it is the right one, but a rename should still not
+           silently turn a world to air.
+
+           This is a list of identities, not a migration: it says "this used to
+           be called that", and nothing about meaning. When a rename genuinely
+           changes what a material IS, the old name belongs in neither column
+           and the cells should go. */
+        if (!found) {
+            static const struct { const char* was; u8 now; } ALIAS[] = {
+                { "Tree Seed", MAT_OAK_SEED    },
+                { "Sapling",   MAT_OAK_SAPLING },
+                { "Leaves",    MAT_OAK_LEAF    },
+                { "Seed Pod",  MAT_OAK_POD     },
+            };
+            for (unsigned a = 0; a < sizeof(ALIAS) / sizeof(ALIAS[0]); ++a)
+                if (strcmp(ALIAS[a].was, nm) == 0) { to = ALIAS[a].now; found = true; break; }
+        }
         if (!found && len8) ++g_lostMats;
         g_remap[id] = to;
     }
