@@ -29,7 +29,7 @@ static u8 g_soak[LIGHT_W * LIGHT_H];
    attenuate light (see g_matOpacity) but they do not cast a shadow, which is
    the difference between smoke dimming a room and smoke turning it to night. */
 static inline bool lightOpen(u8 m) {
-    return m == MAT_EMPTY || MATS[m].kind == KIND_GAS;
+    return m == MAT_EMPTY || MATS[m].kind == KIND_GAS || g_matSheer[m] != 0;
 }
 
 /* --- skylight, from more than one direction --------------------------------
@@ -79,7 +79,18 @@ static const int RAY_WEIGHT[SUN_RAYS] = { 85, 51, 51, 34, 34 };   /* = 255 */
    so source indices run from -LIGHT_H to LIGHT_W + LIGHT_H. */
 static const int RAY_BIAS = LIGHT_H + 2;
 static const int RAY_SPAN = LIGHT_W + 2 * RAY_BIAS;
-static u8 g_ray[SUN_RAYS][RAY_SPAN];
+/* u16 holding the weight shifted up by RAY_FRAC bits, not a bare u8.
+   Fixed point, and it is forced rather than tidy. The weights are 85, 51 and
+   34; attenuating a ray by a fraction of itself in a u8 truncates to a
+   SUBTRACTION OF ONE per cell however small the fraction is, so the weakest
+   rays died after 34 cells and a canopy stayed black no matter what the sheer
+   value said. Swept from 1 to 16 it made no difference at all, which is the
+   tell: the number being tuned was not the number doing the work.
+
+   Eight fractional bits give a beam room to lose half a percent per cell for a
+   hundred cells and still mean something. Costs 18 KB, once. */
+static const int RAY_FRAC = 8;
+static u16 g_ray[SUN_RAYS][RAY_SPAN];
 
 /* --- how far down daylight gets ---------------------------------------------
    Skylight fades with depth below the sky/underground zone boundary, and
@@ -446,7 +457,8 @@ void lightCompute(const World& w, int camX, int camY) {
         const int depth = wy0 - g_boundY[lx];
         if (depth > 0 && ((depth * SUN_FADE_Q8) >> 8) >= LIGHT_MAX) continue;
         if (!openAbove(w, wx0 + lx, wy0)) continue;
-        for (int r = 0; r < SUN_RAYS; ++r) g_ray[r][lx + RAY_BIAS] = (u8)RAY_WEIGHT[r];
+        for (int r = 0; r < SUN_RAYS; ++r)
+            g_ray[r][lx + RAY_BIAS] = (u16)(RAY_WEIGHT[r] << RAY_FRAC);
         anySky = true;
     }
     if (anySky)
@@ -524,12 +536,32 @@ void lightCompute(const World& w, int camX, int camY) {
                    dirties a cache line where a read does not, which for cells
                    the rays reach diagonally is most of the cost. */
                 for (int r = 0; r < SUN_RAYS; ++r) {
-                    u8& v = g_ray[r][lx - off[r] + RAY_BIAS];
+                    u16& v = g_ray[r][lx - off[r] + RAY_BIAS];
                     if (v) v = 0;
                 }
             } else {
+                /* Sheer material -- foliage -- dims every ray passing through
+                   it instead of stopping it. Applied BEFORE the sum, so a cell
+                   is lit by the beam as it arrives and the next cell down gets
+                   what is left: the outside of a canopy is bright and the
+                   depths are dim, which is the whole point of the table. See
+                   g_matSheer in materials.h.
+
+                   Multiplicative rather than a subtraction, because a fixed
+                   subtraction would kill the two weakest rays (weight 34) five
+                   times sooner than the vertical one and a canopy would go
+                   flat-shadowed rather than soft. */
+                const u8 sheer = g_matSheer[m];
+                if (sheer) {
+                    const int keep = 256 - (int)sheer;
+                    for (int r = 0; r < SUN_RAYS; ++r) {
+                        u16& v = g_ray[r][lx - off[r] + RAY_BIAS];
+                        if (v) v = (u16)(((u32)v * (u32)keep) >> 8);
+                    }
+                }
                 int sum = 0;
-                for (int r = 0; r < SUN_RAYS; ++r) sum += g_ray[r][lx - off[r] + RAY_BIAS];
+                for (int r = 0; r < SUN_RAYS; ++r)
+                    sum += g_ray[r][lx - off[r] + RAY_BIAS] >> RAY_FRAC;
                 if (sum) {
                     const int depth = wy - g_boundY[lx];
                     if (depth > 0) sum -= (depth * SUN_FADE_Q8) >> 8;

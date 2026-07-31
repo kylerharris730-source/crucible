@@ -675,6 +675,7 @@ u8  g_matPassable[MAT_COUNT];
 u8  g_matUnseen[MAT_COUNT];
 u8  g_matClimb[MAT_COUNT];
 u8  g_matPlatform[MAT_COUNT];
+u8  g_matSheer[MAT_COUNT];
 u8  g_matDropsAs[MAT_COUNT];
 u8  g_matSmeltYield[MAT_COUNT];
 u8  g_matConducts[MAT_COUNT];
@@ -896,6 +897,13 @@ static void initLight() {
        A closed door keeps the default solid opacity and is therefore exactly as
        dark behind as the wall it sits in. */
     g_matOpacity[MAT_DOOR_OPEN] = 5;
+
+    /* Leaves, for the OTHER half of the lighting model: g_matSheer handles the
+       sunbeams, this handles everything else -- a torch hung in a tree, a fire
+       under one, the daylight that has already made it into the crown spreading
+       sideways within it. Gas-low, for the same reason it is sheer at all. */
+    g_matOpacity[MAT_LEAF]    = 5;
+    g_matOpacity[MAT_SEEDPOD] = 5;
 
     /* A source is transparent to its own light and to everyone else's --
        otherwise a wall of lamps lights only its front row, and a lava lake
@@ -1189,6 +1197,29 @@ static void initPlatform() {
     g_matPlatform[MAT_PLATFORM] = 1;
 }
 
+static void initSheer() {
+    for (int m = 0; m < MAT_COUNT; ++m) g_matSheer[m] = 0;
+    /* 3 of 256 per cell, so a beam keeps (253/256)^n as it goes down.
+
+       Swept against a real 221x181 crown, measuring the light straight across
+       its middle:
+
+           sheer   edge          centre
+             2      216            130
+             3      206             92
+             4      202             67
+             5      200             47
+             6      197             33
+
+       and as shipped, opaque, it was 191 at the edge and 0 -- zero -- across
+       the entire middle. 3 keeps a factor of about two from the outside of a
+       canopy to the depths of it, which is depth you can see, while leaving the
+       darkest part well clear of the floor. 5 and up put the middle back near
+       the unlit minimum, which is where this started. */
+    g_matSheer[MAT_LEAF]    = 3;
+    g_matSheer[MAT_SEEDPOD] = 3;
+}
+
 static void initDrops() {
     /* Identity by default, so a material added later drops itself without
        anyone having to remember this table exists. */
@@ -1219,6 +1250,7 @@ void initMaterials() {
     initPassable();
     initClimb();
     initPlatform();
+    initSheer();
     initUnseen();
     initDrops();
     initSmelting();

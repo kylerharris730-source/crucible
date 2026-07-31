@@ -437,6 +437,29 @@ extern u8 g_matClimb[MAT_COUNT];
    bit; this one answers "solid to what". */
 extern u8 g_matPlatform[MAT_COUNT];
 
+/* --- what dims light without blocking it -----------------------------------
+   Per-cell attenuation of a SUNBEAM, out of 256, for material that daylight
+   filters through rather than stopping at. Zero for everything solid.
+
+   Leaves need this and nothing else in the game did. The skylight model is
+   binary -- a ray either reaches a cell or was stopped somewhere above it --
+   which is right for rock and hopeless for a canopy: measured on a grown tree,
+   a 221x181 crown read ZERO across its entire middle, and so did the ground
+   underneath. Trees were black cut-outs.
+
+   The two obvious fixes are both wrong. Leaving leaves opaque and lowering
+   g_matOpacity only helps the propagation sweeps, which crawl in from the edges
+   and cannot reach the centre of a hundred-cell crown. Making leaves count as
+   OPEN passes every ray at full strength, so the crown is uniformly bright, the
+   tree cast no shadow at all, and foliage stops being foliage.
+
+   Attenuating instead gives the thing itself: a ray loses this fraction per
+   leaf cell it crosses, so the outside of a crown is bright, the depths are
+   dim, and the ground beneath is dappled rather than either black or
+   untouched. It is the same distinction lightOpen() already draws for smoke,
+   which is why that note is worth reading beside this one. */
+extern u8 g_matSheer[MAT_COUNT];
+
 /* --- what the renderer does not draw ----------------------------------------
    True for a cell whose material is NOT painted: the backdrop is drawn in its
    place, exactly as if the cell were empty.
