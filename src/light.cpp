@@ -17,6 +17,14 @@ static u8 g_att[LIGHT_W * LIGHT_H];
    everything else mixed into it. */
 static u8 g_sky[LIGHT_W * LIGHT_H];
 
+/* Solidity, gathered alongside attenuation, for the two soak passes -- both of
+   which need to know where material starts and stops and neither of which
+   should be re-reading Cell to find out. */
+static u8 g_solid[LIGHT_W * LIGHT_H];
+
+/* The solid soak's own field. See solidSoak(). */
+static u8 g_soak[LIGHT_W * LIGHT_H];
+
 /* Anything that is not solid or liquid lets daylight straight through. Gases
    attenuate light (see g_matOpacity) but they do not cast a shadow, which is
    the difference between smoke dimming a room and smoke turning it to night. */
@@ -170,8 +178,11 @@ static void findBoundaries(const World& w, int wx0, int lx0, int lx1) {
    The second pair is the difference between a corridor that doubles back being
    lit and being black; the third changes literally nothing, because by then
    the light has run out on its own rather than on the algorithm. That is what
-   makes 2 a measurement instead of a guess. It costs 0.8 ms of the 2.6 ms
-   total. */
+   makes 2 a measurement instead of a guess. It costs 0.8 ms of the total.
+
+   These are the MAIN sweeps, over g_light. The solid soak has a pair of its own
+   and takes one rather than two; see solidSoak for why a lump of rock has no
+   switchback to light around. */
 static const int LIGHT_PASSES = 2;
 
 static void sweepForward() {
@@ -206,6 +217,118 @@ static void sweepBackward() {
             t = (int)D[lx + 1] - d; if (t > v) v = t;
             t = (int)D[lx - 1] - d; if (t > v) v = t;
             L[lx] = (u8)v;
+        }
+    }
+}
+
+/* --- how far ANY light reads into solid material ----------------------------
+
+   A thick pillar of stone was pure black in the middle, and at the shipped
+   numbers it did not have to be very thick: measured across the middle of one,
+   16 cells wide was already dead black four cells in, and even 8 cells wide had
+   a centre of 43. Rock read as a silhouette rather than as a mass.
+
+   The obvious fix is to make solids less opaque, and it does work -- at 13 a
+   16-wide pillar has a centre of 91. It also puts 142 of 255 through an
+   EIGHT-CELL WALL from a single lamp, which is the thing g_matOpacity's solid
+   figure exists to prevent and which lit.cpp tests for by name. Those are not
+   two effects that happen to conflict; they are one measurement. "Light reaches
+   6 cells into rock" and "6 cells of rock is opaque" are the same sentence, so
+   no value of that number gives both.
+
+   sunSoak had already met this and answered it -- see the long note below. A
+   pass that runs AFTER the sweeps and writes only to SOLID cells lights the
+   material it is in and transmits from there to nothing, because nothing reads
+   those values again. That is the shape reused here, with two differences:
+   this one comes from every direction rather than downward, and it is seeded
+   from whatever light actually reached each open cell rather than from the sun
+   specifically.
+
+   The consequence worth stating plainly, because it is what makes this safe:
+   propagation in g_light is COMPLETELY UNCHANGED. Air on the far side of a wall
+   gets exactly what it got before, so no room lights through a wall, no lamp
+   reaches next door, and every existing guarantee holds at its existing number.
+   What changes is only how deep the rock you can see is lit.
+
+   The one artefact it does have: the far FACE of a wall is lit from the near
+   side, so standing in a dark room you see the shared wall dimly rather than
+   black. That is the honest consequence of light reading 20 cells into rock,
+   the wall is genuinely lit rock, and it is a surface rather than a room -- the
+   air beside it stays dark, which is the part that would actually have looked
+   broken.
+
+   Open cells are seeded and then held: the sweep writes solids only, so air
+   acts as a fixed source and can never GAIN from the soak. Without that, light
+   would pool in air at the soak's low attenuation and creep along corridors it
+   has no business in. */
+static const int SOLID_SOAK     = 20;    /* cells of material light reads into */
+static const int SOLID_SOAK_ATT = LIGHT_MAX / SOLID_SOAK;
+
+/* One forward/backward pair, where the main sweeps use two. The second pair
+   buys light that turns a corner and comes back -- a switchback corridor -- and
+   there is no such path inside a lump of rock: the soak travels from a surface
+   inward and has nowhere to double back from. Measured, a second pair changes
+   no cell of any of the shapes tested.
+
+   Seeding and merging are folded INTO the two sweeps rather than being loops of
+   their own, which is worth the slight awkwardness: written as four separate
+   walks over the field this pass measured 1.12 ms, and four walks over 378 k
+   cells is mostly the walking. A sweep visits every cell exactly once in an
+   order that only ever reads already-finalised neighbours, so there is nowhere
+   a separate pass can see anything these two cannot. */
+static void solidSoak() {
+    /* Forward, and the seed. Air takes the light the main sweeps gave it and
+       keeps it -- so a lamp lights the rock around it and a sunlit hillside
+       lights its own stone, with no second notion of where light comes from.
+       Material starts at nothing and collects from its neighbours.
+
+       Note `v = 0` rather than `v = K[lx]` for material: g_soak holds LAST
+       frame's values, and starting from them would make the soak accumulate
+       over time instead of being recomputed -- the exact bug the whole
+       recompute-every-frame design exists to avoid. */
+    /* Row 0 first, and it MUST be first: the sweep starts at row 1 and reads the
+       row above it, so seeding row 0 afterwards would feed the whole field one
+       row of LAST frame's values. */
+    for (int lx = 0; lx < LIGHT_W; ++lx)
+        g_soak[lx] = g_solid[lx] ? 0 : g_light[lx];
+
+    for (int ly = 1; ly < LIGHT_H; ++ly) {
+        u8*       K = g_soak  + ly * LIGHT_W;
+        const u8* U = K - LIGHT_W;
+        const u8* L = g_light + ly * LIGHT_W;
+        const u8* S = g_solid + ly * LIGHT_W;
+        K[0] = S[0] ? 0 : L[0];
+        K[LIGHT_W - 1] = S[LIGHT_W - 1] ? 0 : L[LIGHT_W - 1];
+        for (int lx = 1; lx < LIGHT_W - 1; ++lx) {
+            if (!S[lx]) { K[lx] = L[lx]; continue; }
+            const int a = SOLID_SOAK_ATT, d = a + (a >> 1);
+            int v = 0, t;
+            t = (int)K[lx - 1] - a; if (t > v) v = t;
+            t = (int)U[lx]     - a; if (t > v) v = t;
+            t = (int)U[lx - 1] - d; if (t > v) v = t;
+            t = (int)U[lx + 1] - d; if (t > v) v = t;
+            K[lx] = (u8)v;
+        }
+    }
+    /* Backward, and the merge. Writing back into g_light for MATERIAL ONLY is
+       the whole safety property of this pass: an open cell is never written, so
+       nothing the soak carried through a wall can light the space on the other
+       side of it. */
+    for (int ly = LIGHT_H - 2; ly >= 0; --ly) {
+        u8*       K = g_soak  + ly * LIGHT_W;
+        const u8* D = K + LIGHT_W;
+        u8*       L = g_light + ly * LIGHT_W;
+        const u8* S = g_solid + ly * LIGHT_W;
+        for (int lx = LIGHT_W - 2; lx >= 1; --lx) {
+            if (!S[lx]) continue;                  /* air holds its seed */
+            const int a = SOLID_SOAK_ATT, d = a + (a >> 1);
+            int v = K[lx], t;
+            t = (int)K[lx + 1] - a; if (t > v) v = t;
+            t = (int)D[lx]     - a; if (t > v) v = t;
+            t = (int)D[lx + 1] - d; if (t > v) v = t;
+            t = (int)D[lx - 1] - d; if (t > v) v = t;
+            K[lx] = (u8)v;
+            if (v > L[lx]) L[lx] = (u8)v;
         }
     }
 }
@@ -342,16 +465,23 @@ void lightCompute(const World& w, int camX, int camY) {
         u8* L = g_light + ly * LIGHT_W;
         u8* A = g_att   + ly * LIGHT_W;
         u8* S = g_sky   + ly * LIGHT_W;
+        u8* O = g_solid + ly * LIGHT_W;
 
+        /* Off the world counts as SOLID, not air. It is the one place the two
+           choices differ visibly: as air it would seed the soak field with a
+           border of darkness that then held, since air holds its seed, and draw
+           a dark line down the edge of a world-edge view. */
         if (wy < 0 || wy >= SIM_H) {
             memset(L, 0, LIGHT_W);
             memset(S, 0, LIGHT_W);
             memset(A, 255, LIGHT_W);        /* the void swallows light */
+            memset(O, 1, LIGHT_W);
             continue;
         }
-        if (lx0 > 0)       { memset(L, 0, lx0); memset(S, 0, lx0); memset(A, 255, lx0); }
+        if (lx0 > 0)       { memset(L, 0, lx0); memset(S, 0, lx0); memset(A, 255, lx0);
+                             memset(O, 1, lx0); }
         if (lx1 < LIGHT_W) { memset(L + lx1, 0, LIGHT_W - lx1); memset(S + lx1, 0, LIGHT_W - lx1);
-                             memset(A + lx1, 255, LIGHT_W - lx1); }
+                             memset(A + lx1, 255, LIGHT_W - lx1); memset(O + lx1, 1, LIGHT_W - lx1); }
 
         const Cell* row = w.cells + wy * SIM_W + wx0;
 
@@ -367,6 +497,7 @@ void lightCompute(const World& w, int camX, int camY) {
                 L[lx] = g_matLight[m];
                 A[lx] = g_matOpacity[m];
                 S[lx] = 0;
+                O[lx] = (u8)!lightOpen(m);
             }
             continue;
         }
@@ -381,6 +512,7 @@ void lightCompute(const World& w, int camX, int camY) {
             u8 lit = g_matLight[m];
             A[lx] = g_matOpacity[m];
             u8 sky = 0;
+            O[lx] = (u8)!lightOpen(m);
 
             if (!lightOpen(m)) {
                 /* Solid: every ray passing through this cell ends here, and
@@ -415,6 +547,11 @@ void lightCompute(const World& w, int camX, int camY) {
         sweepBackward();
     }
 
-    /* Last, and that ordering is the whole mechanism -- see sunSoak(). */
+    /* Both soaks run AFTER the sweeps, and that ordering is the whole mechanism
+       -- see the notes on solidSoak() and sunSoak(). Between themselves the
+       order does not matter: each writes only to material, each takes the
+       brighter of what it found and what is already there, and neither reads
+       what the other wrote. */
+    solidSoak();
     if (anySky) sunSoak(w, wx0, wy0, lx0, lx1);
 }
