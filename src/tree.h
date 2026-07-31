@@ -39,20 +39,41 @@ static const int MAX_TREES = 64;
 
 /* Frames between growth steps, and how many steps a tree takes. 24 * 150 is
    about a minute -- long enough that planting is a thing you come back to and
-   short enough that you do come back. */
+   short enough that you do come back. Unchanged when the trees were scaled up
+   five times: a bigger tree taking the same minute is a tree that grows more
+   visibly, which is better, and the time was already the number that felt
+   right. */
 static const int TREE_TICK  = 24;
 static const int TREE_STEPS = 150;
 
-/* Trunk height, in cells, before the canopy. The character is 22 tall, so the
-   short end of this is still something you climb rather than step over. */
-static const int TREE_MIN_H = 34;
-static const int TREE_MAX_H = 72;
+/* --- how the minute is spent -----------------------------------------------
+   The trunk goes up over the first stretch and the crown fills out over the
+   rest. Splitting it matters more at this scale than it did at the old one: a
+   tree that grew a stick for a minute and then flashed a sixty-cell canopy into
+   existence on the last tick looked like a bug, and at five times the size it
+   would look like a much bigger bug. */
+static const float TREE_TRUNK_FRAC = 0.65f;
 
-/* Canopy radius, and how many pods it carries. Two to four pods means felling
-   one tree pays for at least two more -- deliberately more than one, or a
-   forest shrinks every time you use it and the renewable half is a lie. */
-static const int TREE_POD_MIN = 2;
-static const int TREE_POD_MAX = 4;
+/* Trunk height, in cells, before the crown. Five times what it was.
+
+   The character is 22 cells tall, so the short end of this is eight body
+   heights and the tall end is sixteen -- a thing you climb, or rope up, or fell
+   for a great deal of wood. At the old 34-72 a tree was chest-high to
+   waist-high scenery. */
+static const int TREE_MIN_H = 170;
+static const int TREE_MAX_H = 360;
+
+/* Trunk width at the top and at the base. A 170-cell tree one cell thick would
+   be a wire; these are the numbers that make it read as timber. */
+static const int TREE_W_TOP  = 9;
+static const int TREE_W_BASE = 15;
+
+/* How many pods the crown carries. Up from 2-4 with the size, but not by five:
+   the point of a pod is that felling one tree pays for several more, and past
+   about six that stops being a supply and starts being a reason never to plant
+   anything again. */
+static const int TREE_POD_MIN = 3;
+static const int TREE_POD_MAX = 6;
 
 struct Tree {
     i32  x, y;         /* the cell the sapling stands in: the base of the trunk */

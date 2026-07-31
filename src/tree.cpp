@@ -82,7 +82,7 @@ static int trunkHeight(u32 salt) {
 /* Horizontal offset of the trunk at height h above the base. A slow lean, so a
    stand of trees does not read as a row of posts. */
 static int trunkLean(u32 salt, int h, int height) {
-    const int amp = 3 + (int)pick(salt, 2u, 6);
+    const int amp = 15 + (int)pick(salt, 2u, 30);
     const int dir = pick(salt, 3u, 2) ? 1 : -1;
     /* Quadratic, so the base stays put and the top does the moving -- a trunk
        that leaned linearly would look like it had been knocked over. */
@@ -108,31 +108,56 @@ static void put(World& w, int x, int y, u8 mat, bool overGrow) {
 /* Build the tree up to `frac` of its full size. Idempotent: calling it with a
    larger fraction adds cells and never removes any, which is exactly what an
    incremental grower needs and what makes the one-shot worldgen call correct. */
-static void buildTree(World& w, int bx, int by, u32 salt, float frac) {
+/* `from` is how far the tree had already grown, `to` is how far it has grown
+   now. The pair is what lets the crown fill only the ring it has just reached
+   instead of the whole disc every step -- and it must be PASSED rather than
+   inferred from a step size, which is the mistake the first version made: it
+   assumed one step's worth of progress, so the one-shot call used by worldgen
+   (from 0 straight to 1) skipped everything inside 98% of the radius and grew
+   trees whose crowns were hollow rings. They looked like wire sculptures. */
+static void buildTree(World& w, int bx, int by, u32 salt, float from, float frac) {
     if (frac <= 0.0f) return;
     if (frac > 1.0f) frac = 1.0f;
+    if (from < 0.0f) from = 0.0f;
 
     const int height = trunkHeight(salt);
-    const int grown  = (int)((float)height * frac);
 
-    /* The trunk. Two cells wide from the ground up, which at this character
-       scale is a sapling; three in the lower third once the tree is mature, so
-       an old tree reads as heavier at the base. */
+    /* Two phases, not one. `up` is how far the trunk has risen, `out` is how
+       far the crown has spread, and only one of them is moving at a time --
+       see TREE_TRUNK_FRAC. */
+    const float up  = frac < TREE_TRUNK_FRAC ? frac / TREE_TRUNK_FRAC : 1.0f;
+    const float out = frac < TREE_TRUNK_FRAC ? 0.0f
+                    : (frac - TREE_TRUNK_FRAC) / (1.0f - TREE_TRUNK_FRAC);
+    /* The crown spread the tree had ALREADY reached, from the caller's `from`.
+       Zero for a one-shot build, which is what makes that case fill solid. */
+    const float outWas = from < TREE_TRUNK_FRAC ? 0.0f
+                       : (from - TREE_TRUNK_FRAC) / (1.0f - TREE_TRUNK_FRAC);
+    const int grown = (int)((float)height * up);
+
+    /* The trunk. Tapered: TREE_W_BASE at the root down to TREE_W_TOP at the
+       crown, interpolated over the height. A parallel-sided trunk at this size
+       reads as a pillar rather than a tree, and the taper costs one lerp.
+
+       The width also grows with the tree rather than being final from the
+       first tick, so a young trunk is a stem that thickens. */
     for (int h = 0; h <= grown; ++h) {
         const int tx = bx + trunkLean(salt, h, height);
         const int ty = by - h;
-        put(w, tx, ty, MAT_WOOD, true);
-        put(w, tx + 1, ty, MAT_WOOD, true);
-        if (frac > 0.6f && h < height / 3) put(w, tx - 1, ty, MAT_WOOD, true);
+        const int full = TREE_W_BASE - (TREE_W_BASE - TREE_W_TOP) * h / imax(1, height);
+        int wide = (int)((float)full * (0.35f + 0.65f * up));
+        if (wide < 2) wide = 2;
+        for (int k = 0; k < wide; ++k) put(w, tx + k - wide / 2, ty, MAT_WOOD, true);
     }
-    if (grown < height) {
-        /* Still growing: cap the stem with leaves so a half-grown tree looks
-           like a young tree rather than an amputated one. */
+    if (out <= 0.0f) {
+        /* Still climbing: cap the stem with a tuft so a half-grown tree looks
+           like a young tree rather than an amputated one. Sized with the
+           trunk, so the tuft grows too. */
         const int tx = bx + trunkLean(salt, grown, height);
         const int ty = by - grown;
-        for (int dy = -2; dy <= 0; ++dy)
-            for (int dx = -1; dx <= 2; ++dx)
-                if (dx * dx + dy * dy <= 4) put(w, tx + dx, ty + dy, MAT_LEAF, false);
+        const int r  = 4 + (int)(10.0f * up);
+        for (int dy = -r; dy <= r / 2; ++dy)
+            for (int dx = -r; dx <= r; ++dx)
+                if (dx * dx + dy * dy <= r * r) put(w, tx + dx, ty + dy, MAT_LEAF, false);
         return;
     }
 
@@ -140,23 +165,31 @@ static void buildTree(World& w, int bx, int by, u32 salt, float frac) {
        Off the upper half only, alternating sides, each one shorter than the
        trunk is tall at that point. Trees do not branch at ground level and a
        tree that did would be a bush. */
-    const int nBranch = 3 + (int)pick(salt, 4u, 4);
+    const int nBranch = 4 + (int)pick(salt, 4u, 5);
     for (int b = 0; b < nBranch; ++b) {
-        const int h  = height / 2 + (int)pick(salt, 10u + (u32)b, (u32)imax(1, height / 2 - 4));
+        const int h  = height / 2 + (int)pick(salt, 10u + (u32)b, (u32)imax(1, height / 2 - 20));
         const int dir = ((int)pick(salt, 40u + (u32)b, 2)) ? 1 : -1;
-        const int len = 6 + (int)pick(salt, 70u + (u32)b, 10);
+        const int full = 30 + (int)pick(salt, 70u + (u32)b, 50);
+        /* Branches extend with the crown, so the tree spreads rather than
+           unfolding limbs it did not have a moment ago. */
+        const int len = (int)((float)full * out);
+        if (len < 2) continue;
         const int tx = bx + trunkLean(salt, h, height);
         const int ty = by - h;
         for (int s = 1; s <= len; ++s) {
             /* Rising as it goes out, which is what makes a branch read as a
-               branch rather than as a shelf. */
-            put(w, tx + dir * s, ty - s / 2, MAT_WOOD, true);
+               branch rather than as a shelf. Thicker at the trunk end, on the
+               same reasoning as the trunk taper. */
+            const int bw = 1 + (3 * (len - s)) / imax(1, len);
+            for (int k = 0; k <= bw; ++k)
+                put(w, tx + dir * s, ty - s / 2 + k, MAT_WOOD, true);
         }
         /* A tuft at the end of each. */
         const int ex = tx + dir * len, ey = ty - len / 2;
-        for (int dy = -4; dy <= 4; ++dy)
-            for (int dx = -4; dx <= 4; ++dx)
-                if (dx * dx + dy * dy <= 16) put(w, ex + dx, ey + dy, MAT_LEAF, false);
+        const int tr = (int)(20.0f * out);
+        for (int dy = -tr; dy <= tr; ++dy)
+            for (int dx = -tr; dx <= tr; ++dx)
+                if (dx * dx + dy * dy <= tr * tr) put(w, ex + dx, ey + dy, MAT_LEAF, false);
     }
 
     /* --- the canopy -------------------------------------------------------
@@ -165,13 +198,23 @@ static void buildTree(World& w, int bx, int by, u32 salt, float frac) {
        foliage, and it costs nothing but two more hash draws. */
     const int cx = bx + trunkLean(salt, height, height);
     const int cy = by - height;
-    for (int lump = 0; lump < 3; ++lump) {
-        const int r  = 9 + (int)pick(salt, 100u + (u32)lump, 7);
-        const int ox = (int)pick(salt, 110u + (u32)lump, 15) - 7;
-        const int oy = (int)pick(salt, 120u + (u32)lump, 11) - 7;
+    for (int lump = 0; lump < 5; ++lump) {
+        const int rFull = 45 + (int)pick(salt, 100u + (u32)lump, 36);
+        const int r  = (int)((float)rFull * out);
+        if (r < 2) continue;
+        const int ox = (int)pick(salt, 110u + (u32)lump, 75) - 37;
+        const int oy = (int)pick(salt, 120u + (u32)lump, 55) - 35;
+        /* Only the cells the crown has just reached. Filling the whole disc
+           every step is O(r^2) per step and at r = 80 that is sixty thousand
+           cell tests fifty times over per tree; the annulus is O(r) worth of
+           new area and gets the identical result, because `put` never
+           overwrites what earlier steps already placed. */
+        const int rPrev = (int)((float)rFull * outWas);
         for (int dy = -r; dy <= r; ++dy)
             for (int dx = -r; dx <= r; ++dx) {
-                if (dx * dx + dy * dy > r * r) continue;
+                const int d2 = dx * dx + dy * dy;
+                if (d2 > r * r) continue;
+                if (rPrev > 1 && d2 < (rPrev - 1) * (rPrev - 1)) continue;
                 put(w, cx + ox + dx, cy + oy + dy, MAT_LEAF, false);
             }
     }
@@ -180,11 +223,12 @@ static void buildTree(World& w, int bx, int by, u32 salt, float frac) {
        Placed LAST and only over leaves that exist, so a pod is always genuinely
        part of the canopy rather than hanging in the air where a lump happened
        not to reach. */
+    if (out < 1.0f) return;   /* pods last, on a finished crown */
     const int nPod = TREE_POD_MIN + (int)pick(salt, 5u, TREE_POD_MAX - TREE_POD_MIN + 1);
     int placed = 0;
-    for (int tryN = 0; tryN < 60 && placed < nPod; ++tryN) {
-        const int px = cx + (int)pick(salt, 200u + (u32)tryN, 25) - 12;
-        const int py = cy + (int)pick(salt, 300u + (u32)tryN, 21) - 10;
+    for (int tryN = 0; tryN < 400 && placed < nPod; ++tryN) {
+        const int px = cx + (int)pick(salt, 200u + (u32)tryN, 190) - 95;
+        const int py = cy + (int)pick(salt, 300u + (u32)tryN, 150) - 100;
         if (px < PLAY_X0 || px > PLAY_X1 || py < PLAY_Y0 || py > PLAY_Y1) continue;
         if (w.at(px, py).mat != MAT_LEAF) continue;
         w.setCell(px, py, MAT_SEEDPOD);
@@ -193,7 +237,8 @@ static void buildTree(World& w, int bx, int by, u32 salt, float frac) {
 }
 
 void treeGrowNow(World& w, int x, int y, u32 salt) {
-    buildTree(w, x, y, salt, 1.0f);
+    /* From nothing to everything in one call, so no ring is skipped. */
+    buildTree(w, x, y, salt, 0.0f, 1.0f);
 }
 
 void treesTick(World& w) {
@@ -228,7 +273,9 @@ void treesTick(World& w) {
         t.tick = 0;
         ++t.step;
 
-        buildTree(w, t.x, t.y, t.salt, (float)t.step / (float)TREE_STEPS);
+        buildTree(w, t.x, t.y, t.salt,
+                  (float)(t.step - 1) / (float)TREE_STEPS,
+                  (float)t.step       / (float)TREE_STEPS);
 
         /* Retired at full size. A grown tree is just cells -- there is nothing
            left for the table to remember, and holding the row would cap how

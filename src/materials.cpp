@@ -1149,6 +1149,34 @@ static void initPassable() {
     g_matPassable[MAT_PLATFORM] = 1;
     /* The sapling, so a tree you planted is not a fence post while it grows. */
     g_matPassable[MAT_SAPLING]  = 1;
+
+    /* --- the canopy ------------------------------------------------------
+       Leaves and pods, and NOT wood. That split is the whole answer to "a
+       forest you cannot walk through", and it is worth being precise about why
+       it is drawn here rather than around the whole tree.
+
+       Measured over five grown trees, the crown is 70-76% of their cells. So
+       this removes about three quarters of the obstruction and leaves the
+       trunk, which is a thing you walk around the way you walk around a
+       boulder, and which reads correctly as an object with mass.
+
+       That figure is worth stating rather than guessing at: the trunk is 9-15
+       cells wide and up to 360 tall at this scale, so it is a real obstacle and
+       not a technicality. If a forest still turns out to be tiresome to cross,
+       the remaining move is a trunk material of its own that drops MAT_WOOD --
+       g_matDropsAs already does exactly that job for the seed pod -- rather
+       than making the building material passable.
+
+       Wood staying solid is not incidental either: MAT_WOOD is a general
+       building material, and a wooden wall you could stroll through would be a
+       far worse bug than a forest you have to weave through. The trunk being
+       solid is what lets one material be both.
+
+       Solid to the SIMULATION regardless, so a canopy still catches falling
+       sand and still holds up a rainstorm -- passable is a fact about people.
+       See g_matPassable's own note. */
+    g_matPassable[MAT_LEAF]     = 1;
+    g_matPassable[MAT_SEEDPOD]  = 1;
 }
 
 static void initClimb() {
