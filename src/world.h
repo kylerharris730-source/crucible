@@ -484,6 +484,24 @@ struct World {
        old speckle. This one is for an object that stayed itself. */
     void swapMat(int x, int y, u8 mat);
 
+    /* Destroy a cell the way a blast or a falling canopy does: it leaves
+       nothing behind, UNLESS it was a husk -- something whose whole job is to
+       hold something smaller. A seed pod broken in mid-air leaves its seed,
+       which is a powder, so it drops out of the tree and lands where you can
+       pick it up or water it.
+
+       Not the same thing as digInto(), which banks the drop straight into the
+       pack. That is right for a tool you are holding and wrong for everything
+       else: a shot has no inventory to put anything in, and a canopy shedding
+       into your pack from four hundred cells away would be absurd. So the two
+       differ in WHERE the drop goes and agree on what it is.
+
+       "Husk" is spelled as "the thing it drops is a seed" rather than as a
+       list, which keeps it right when a species is added and keeps it from
+       catching the other user of g_matDropsAs: an open door drops a closed
+       one, and a door you blew up should not leave a door standing. */
+    void breakCell(int x, int y);
+
     /* Schedule cells for simulation next frame. dirtyArea covers a span plus a
        one-cell margin; anything that moves further than one cell in a step
        must use it, or cells along the swept path never get woken. */

@@ -43,7 +43,10 @@ void explodeAt(World& w, int cx, int cy, int radius, int power) {
         if (m == MAT_EMPTY) continue;
         if (g_matStrength[m] == STR_NOTHING) continue;
         if ((int)g_matStrength[m] > here) continue;
-        w.setCell(x, y, MAT_EMPTY);
+        /* breakCell rather than clearing it: a pod caught in a blast leaves
+           its seed to fall, which is the only thing in the game a destroyed
+           cell leaves behind. See World::breakCell. */
+        w.breakCell(x, y);
     }
 
     /* Fire in the core, scattered rather than solid so it looks like a
@@ -156,7 +159,7 @@ int projUpdate(World& w) {
 
             if (strength > p.power) { p.alive = false; blocked = true; break; }
 
-            w.setCell(cx, cy, MAT_EMPTY);
+            w.breakCell(cx, cy);
             ++destroyed;
             if (--p.pierce <= 0) { p.alive = false; blocked = true; break; }
         }

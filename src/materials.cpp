@@ -737,6 +737,26 @@ static void initStrength() {
     g_matStrength[MAT_GRASS]       = STR_LOOSE;
 
     g_matStrength[MAT_TORCH]       = STR_LOOSE;
+
+    /* --- the pod, and NOT the leaves ------------------------------------
+       A crown starts about two hundred cells up and the tool reaches
+       fifty-six, so the only way to a pod on a standing tree is to shoot it
+       down -- and with the pod at STR_NOTHING a shot flew straight through
+       and nothing happened. That, plus destroyed cells leaving nothing
+       behind, is why seeds were reported as almost impossible to get: every
+       route to one was closed.
+
+       The leaves stay at STR_NOTHING deliberately, and the pair is the whole
+       mechanic. A shot passes through foliage as if it were not there and
+       knocks out any pod it happens to cross, so harvesting is aiming rather
+       than clearing -- and a canopy still does not stop your shots, which is
+       what you want when you are firing at something on the far side of a
+       wood.
+
+       STR_LOOSE, so the starting shot does it. A seed you cannot get until
+       you have upgraded is a tree you cannot plant until you have upgraded. */
+    g_matStrength[MAT_OAK_POD]     = STR_LOOSE;
+    g_matStrength[MAT_BIRCH_POD]   = STR_LOOSE;
     /* Slag is deliberately the softest solid in the table. It is waste, and a
        byproduct the starting tool could not clear would dead-end the whole
        progression the moment the player smelted anything. */

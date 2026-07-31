@@ -141,6 +141,12 @@ void World::setCell(int x, int y, u8 mat) {
     dirtyPoint(x, y);
 }
 
+void World::breakCell(int x, int y) {
+    const u8 m    = cells[y * SIM_W + x].mat;
+    const u8 drop = g_matDropsAs[m];
+    setCell(x, y, (drop != m && g_matIsSeed[drop]) ? drop : (u8)MAT_EMPTY);
+}
+
 void World::swapMat(int x, int y, u8 mat) {
     cells[y * SIM_W + x].mat = mat;
     dirtyPoint(x, y);
@@ -226,12 +232,26 @@ bool World::tryMove(int sx, int sy, int tx, int ty) {
 
     if (t.mat != MAT_EMPTY) {
         const MatInfo& tm = MATS[t.mat];
+        /* A seed falls through foliage, and this is the one exception to
+           "powders do not enter solids". Without it the whole harvest is
+           stuck: a pod broken high in a crown leaves its seed resting on the
+           first leaf under it, three hundred cells up and out of reach, which
+           is not a seed you can pick up or water -- it is a seed you can look
+           at.
+
+           A swap rather than a hole, like every other move here. Traced
+           through, a seed falling past a column of leaves leaves them each one
+           cell higher and one empty cell where it came out, so a crown it
+           passes through keeps its shape and its leaf count. */
+        const bool throughFoliage = g_matIsSeed[s.mat] && g_matIsLeaf[t.mat];
+        if (!throughFoliage) {
         if (tm.kind != KIND_LIQUID && tm.kind != KIND_GAS) return false;
         const MatInfo& sm = MATS[s.mat];
         /* Gases invert the density test: they displace anything *heavier*,
            which is how steam bubbles up through water. */
         if (sm.kind == KIND_GAS) { if (tm.density <= sm.density) return false; }
         else                     { if (tm.density >= sm.density) return false; }
+        }
     }
 
     Cell tmp = t;
@@ -954,8 +974,7 @@ bool World::airWithin(int x, int y, int r) const {
 void World::updateLeafFall(int x, int y) {
     Cell& c = cells[y * SIM_W + x];
     if (--c.moisture) { dirtyPoint(x, y); return; }
-    const u8 drop = g_matDropsAs[c.mat];
-    setCell(x, y, (drop && drop != c.mat) ? drop : (u8)MAT_EMPTY);
+    breakCell(x, y);
     /* The neighbourhood, not the cell: the light that was blocked by this leaf
        now reaches past it, and the cells under a vanishing canopy have to be
        given a look or the hole stays dark until something else wakes them. */
