@@ -157,6 +157,36 @@ enum MatId {
     MAT_BIRCH_WOOD,
     MAT_BIRCH_LEAF,
     MAT_BIRCH_POD,
+    /* --- crops -------------------------------------------------------------
+       Three plants you sow, and only FIVE materials between them, which is the
+       whole reason they are listed together.
+
+       A crop is a stalk with something edible or spinnable in it, and the stalk
+       is the same stalk whichever crop it belongs to -- so wheat and flax share
+       one green stem and cotton gets a brown one because a cotton plant does
+       not look like a cereal. Splitting the stem per species would be three
+       materials that differ in nothing, and the reason trees DO split theirs is
+       specific and does not apply here: an oak's leaf and a birch's leaf have
+       to differ because each carries a pod that must drop its own species'
+       seed, and a shared one could only drop one of them. Nothing drops off a
+       stalk at all.
+
+       That is the other half of it. A stalk drops NOTHING when you cut it --
+       see g_matDropsAs -- so a harvested field leaves you the grain and not a
+       pile of straw you have to throw away. What you take off the plant is the
+       head: wheat, flax, cotton, each dropping itself.
+
+       Growing them is the tree machinery with small numbers in it, because a
+       wheat plant genuinely is a short thin trunk with a tuft on top and grain
+       in the tuft. See TREE_KINDS in tree.h. */
+    MAT_STALK,        /* green: wheat and flax */
+    MAT_STALK_DRY,    /* brown: cotton */
+    MAT_WHEAT_SEED,
+    MAT_WHEAT,
+    MAT_FLAX_SEED,
+    MAT_FLAX,
+    MAT_COTTON_SEED,
+    MAT_COTTON,
     /* --- machinery -------------------------------------------------------
        The cells a multi-cell DEVICE occupies. One material for every device
        type, because the grid only needs to know "something solid and man-made is
@@ -503,6 +533,19 @@ extern u8 g_matIsSeed[MAT_COUNT];
    would leave a felled tree as a constellation of dots. */
 extern u8 g_matIsLeaf[MAT_COUNT];
 extern u8 g_matIsWood[MAT_COUNT];
+
+/* --- what grew ------------------------------------------------------------
+   Everything a harvesting tool will cut, and nothing else. DERIVED from the
+   tables above rather than listed by hand, so a species added later is covered
+   by the rows that define it -- the alternative is a sickle that silently
+   refuses to cut whatever somebody forgot to add, which looks like a bug in the
+   tool rather than a missing table entry.
+
+   The point of it is a tool that takes the tree and leaves the hillside. Wood,
+   leaves, pods, saplings, stalks, grain and loose seed are in; dirt, grass and
+   stone are out, so clearing a canopy over your field cannot take the field
+   with it. */
+extern u8 g_matIsPlant[MAT_COUNT];
 
 /* --- what the renderer does not draw ----------------------------------------
    True for a cell whose material is NOT painted: the backdrop is drawn in its

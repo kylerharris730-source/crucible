@@ -41,6 +41,9 @@ enum {
     ITEM_AUGER,
     ITEM_LANCE,
     ITEM_DISRUPTOR,
+    /* The one mining tool that is not a tier: it cuts ONLY what grew. See
+       ItemDef::minePlantsOnly. */
+    ITEM_SICKLE,
     /* Reach extenders. They do nothing when held and everything when carried --
        see ITEMK_CARRIED below. */
     ITEM_LENS,
@@ -188,6 +191,16 @@ struct ItemDef {
     u8   mineRadius;
     u8   mineBite;      /* cells per action */
     u8   mineCooldown;  /* frames between actions */
+    /* --- the harvesting tool -------------------------------------------
+       When set, the tool passes over anything that is not g_matIsPlant. It is
+       a RESTRICTION and it is the whole value of the tool: clearing a canopy
+       or reaping a field with an ordinary drill takes the ground with it, and
+       then you are standing in a crater putting the dirt back by hand.
+
+       A filter rather than a separate tool kind, because everything else about
+       it is a mining tool -- radius, bite, cooldown, the same cooldown clock,
+       the same banking into the pack. One bit says what it will bite. */
+    u8   minePlantsOnly;
 
     /* --- ITEMK_MODULE only ------------------------------------------- */
     /* Added to the tool's baseDelay. A module that hits harder should cost
@@ -232,7 +245,27 @@ void initItems();
    dirt. 100000 is about nine such sweeps, which is a pack you empty because you
    want to rather than because the game keeps stopping you. */
 static const int MATERIAL_STACK = 100000;
-static const int INV_SLOTS = 10;
+/* --- how much you can carry ------------------------------------------------
+   The pack is ONE array and the hotbar is the first row of it, which is the
+   arrangement worth having rather than two containers with rules for moving
+   between them. Everything that already worked on the pack -- add, take,
+   countOf, the crafting screen, the save -- keeps working on all of it, and
+   "put this in the hotbar" is a drag from one slot to another rather than a
+   transfer between two systems that each have their own idea of what a slot is.
+
+   Four rows of ten. Ten across because that is the hotbar's width and the grid
+   has to line up under it to read as the same container; four rows because a
+   stack is 100000 and the thing that fills a pack is VARIETY rather than
+   volume -- forty is enough to hold one of everything the world currently
+   contains and still have room for what you dug up on the way.
+
+   Widening this DOES cost the inventory section of a save, which is checked by
+   exact size: an older file's pack is skipped and the world loads without it.
+   That is the format working as designed -- see save.cpp -- and it is the right
+   trade here, since the alternative is never being able to change the number. */
+static const int HOTBAR_SLOTS = 10;
+static const int INV_ROWS     = 4;
+static const int INV_SLOTS    = HOTBAR_SLOTS * INV_ROWS;
 
 /* --- tools carry state, materials do not -----------------------------------
 
@@ -386,6 +419,7 @@ struct ToolSpec {
     int maxRadius;      /* the brush radius is clamped to this */
     int cellsPerBite;   /* cells removed per action */
     int cooldown;       /* frames between actions */
+    bool plantsOnly;    /* cuts only what grew; see ItemDef::minePlantsOnly */
 };
 
 /* Hands. Slow and small on purpose: this is the baseline every tool is measured
@@ -450,7 +484,8 @@ void initDiscTable();   /* called by initItems() */
 
    maxCells caps how much comes out in one call; 0 means the whole disc, which
    is what the unlimited sandbox brush wants. A tool passes its cellsPerBite. */
-int digInto(World& w, Inventory& inv, int cx, int cy, int r, int maxCells = 0);
+int digInto(World& w, Inventory& inv, int cx, int cy, int r, int maxCells = 0,
+            bool plantsOnly = false);
 
 /* Places the held stack into empty cells of a disc, one item per cell, until
    the stack runs out. Returns how many cells were filled. Never overwrites

@@ -677,6 +677,19 @@ MatInfo MATS[MAT_COUNT] = {
   { "Birch Wood",KIND_STATIC,255, 0,   0,   0,   0,   0,  0,   14,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY, degC(90), MAT_FIRE,   0,  0xDCD8C8, 0xB0AC9A, 0xDCD8C8, 0xB0AC9A, 0 },
   { "Birch Leaves",KIND_STATIC,255,0,  0,   0,   0,   0,  0,   10,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY, degC(80), MAT_FIRE,   0,  0x8AC44E, 0x66A034, 0x8AC44E, 0x66A034, 0 },
   { "Birch Seed Pod",KIND_STATIC,255,0,0,   0,   0,   0,  0,   10,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY, degC(80), MAT_FIRE,   0,  0xE8E0A0, 0xC0B878, 0xE8E0A0, 0xC0B878, 0 },
+  /* --- crops -----------------------------------------------------------
+     All eight burn a little more readily than a tree does. Dry plant matter
+     catching before timber is right, and it makes a field something you can
+     lose, which is the only interesting thing that can happen to a crop you
+     are not standing next to. */
+  { "Stalk",  KIND_STATIC,255,   0,    0,   0,   0,   0,  0,    9,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY, degC(70), MAT_FIRE,   0,  0x6CB33C, 0x4E8C28, 0x6CB33C, 0x4E8C28, 0 },
+  { "Dry Stalk",KIND_STATIC,255, 0,    0,   0,   0,   0,  0,    9,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY, degC(65), MAT_FIRE,   0,  0x9A7A46, 0x785C32, 0x9A7A46, 0x785C32, 0 },
+  { "Wheat Seed",KIND_POWDER,110,70,  35,   0,   0,   0,  0,   10,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY, degC(90), MAT_FIRE,   0,  0xC8A85A, 0xA08840, 0xC8A85A, 0xA08840, 0 },
+  { "Wheat",  KIND_STATIC,255,   0,    0,   0,   0,   0,  0,   10,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY, degC(70), MAT_FIRE,   0,  0xE6C868, 0xC0A44C, 0xE6C868, 0xC0A44C, 0 },
+  { "Flax Seed",KIND_POWDER,110, 70,  35,   0,   0,   0,  0,   10,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY, degC(90), MAT_FIRE,   0,  0x8A7A5A, 0x685C44, 0x8A7A5A, 0x685C44, 0 },
+  { "Flax",   KIND_STATIC,255,   0,    0,   0,   0,   0,  0,   10,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY, degC(70), MAT_FIRE,   0,  0x8FA8DC, 0x6C84B4, 0x8FA8DC, 0x6C84B4, 0 },
+  { "Cotton Seed",KIND_POWDER,110,70, 35,   0,   0,   0,  0,   10,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY, degC(90), MAT_FIRE,   0,  0x6A5A48, 0x4E4234, 0x6A5A48, 0x4E4234, 0 },
+  { "Cotton", KIND_STATIC,255,   0,    0,   0,   0,   0,  0,   10,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY, degC(60), MAT_FIRE,   0,  0xF0EEE6, 0xCCC8BC, 0xF0EEE6, 0xCCC8BC, 0 },
   { "Device",KIND_STATIC, 255,   0,    0,   0,   0,   0,  0,  200,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0x2A2F3A, 0x2A2F3A, 0x2A2F3A, 0x2A2F3A, 0 },
 };
 
@@ -694,6 +707,7 @@ u8  g_matSheer[MAT_COUNT];
 u8  g_matIsSeed[MAT_COUNT];
 u8  g_matIsLeaf[MAT_COUNT];
 u8  g_matIsWood[MAT_COUNT];
+u8  g_matIsPlant[MAT_COUNT];
 u8  g_matDropsAs[MAT_COUNT];
 u8  g_matSmeltYield[MAT_COUNT];
 u8  g_matConducts[MAT_COUNT];
@@ -757,6 +771,15 @@ static void initStrength() {
        you have upgraded is a tree you cannot plant until you have upgraded. */
     g_matStrength[MAT_OAK_POD]     = STR_LOOSE;
     g_matStrength[MAT_BIRCH_POD]   = STR_LOOSE;
+
+    /* Crops, on the same footing as a pod: soft enough that anything can clear
+       them, and present in the table at all so that a shot does not sail
+       through a field leaving it standing. */
+    g_matStrength[MAT_STALK]       = STR_LOOSE;
+    g_matStrength[MAT_STALK_DRY]   = STR_LOOSE;
+    g_matStrength[MAT_WHEAT]       = STR_LOOSE;
+    g_matStrength[MAT_FLAX]        = STR_LOOSE;
+    g_matStrength[MAT_COTTON]      = STR_LOOSE;
     /* Slag is deliberately the softest solid in the table. It is waste, and a
        byproduct the starting tool could not clear would dead-end the whole
        progression the moment the player smelted anything. */
@@ -1229,6 +1252,14 @@ static void initPassable() {
     g_matPassable[MAT_OAK_POD]       = 1;
     g_matPassable[MAT_BIRCH_LEAF]    = 1;
     g_matPassable[MAT_BIRCH_POD]     = 1;
+    /* You walk THROUGH a crop, not over it. A field you had to jump across
+       would be a field nobody plants near their door, and a wheat stalk is not
+       a thing that holds a person up. */
+    g_matPassable[MAT_STALK]         = 1;
+    g_matPassable[MAT_STALK_DRY]     = 1;
+    g_matPassable[MAT_WHEAT]         = 1;
+    g_matPassable[MAT_FLAX]          = 1;
+    g_matPassable[MAT_COTTON]        = 1;
 }
 
 static void initClimb() {
@@ -1245,6 +1276,9 @@ static void initSeeds() {
     for (int m = 0; m < MAT_COUNT; ++m) g_matIsSeed[m] = 0;
     g_matIsSeed[MAT_OAK_SEED]   = 1;
     g_matIsSeed[MAT_BIRCH_SEED] = 1;
+    g_matIsSeed[MAT_WHEAT_SEED]  = 1;
+    g_matIsSeed[MAT_FLAX_SEED]   = 1;
+    g_matIsSeed[MAT_COTTON_SEED] = 1;
 
     for (int m = 0; m < MAT_COUNT; ++m) g_matIsLeaf[m] = g_matIsWood[m] = 0;
     g_matIsLeaf[MAT_OAK_LEAF]   = 1;
@@ -1256,6 +1290,7 @@ static void initSeeds() {
        tree kept the tree's leaves alive after the tree was gone. */
     g_matIsWood[MAT_WOOD]       = 1;
     g_matIsWood[MAT_BIRCH_WOOD] = 1;
+
 }
 
 static void initSheer() {
@@ -1281,6 +1316,11 @@ static void initSheer() {
     g_matSheer[MAT_OAK_POD]     = 3;
     g_matSheer[MAT_BIRCH_LEAF]  = 3;
     g_matSheer[MAT_BIRCH_POD]   = 3;
+    g_matSheer[MAT_STALK]       = 3;
+    g_matSheer[MAT_STALK_DRY]   = 3;
+    g_matSheer[MAT_WHEAT]       = 3;
+    g_matSheer[MAT_FLAX]        = 3;
+    g_matSheer[MAT_COTTON]      = 3;
 }
 
 static void initDrops() {
@@ -1297,6 +1337,31 @@ static void initDrops() {
        about where the tree goes costs nothing. */
     g_matDropsAs[MAT_OAK_SAPLING]   = MAT_OAK_SEED;
     g_matDropsAs[MAT_BIRCH_SAPLING] = MAT_BIRCH_SEED;
+    /* A stalk gives you nothing, which is the point of a stalk. MAT_EMPTY here
+       means "destroy it and bank nothing" -- see digInto, which has to treat
+       that as a success rather than as a pack that was full, or cutting a crop
+       would leave the straw standing. */
+    g_matDropsAs[MAT_STALK]     = MAT_EMPTY;
+    g_matDropsAs[MAT_STALK_DRY] = MAT_EMPTY;
+
+    /* --- what a harvesting tool will cut --------------------------------
+       Everything that grew. Derived from the tables above rather than listed,
+       so a species added later is covered by the row that defines it and
+       nobody has to remember this exists -- which is exactly the omission that
+       would show up as a sickle that mysteriously refuses to cut cotton.
+
+       The seeds are in it too: a seed lying on the ground is plant matter, and
+       a harvesting tool that could not pick up the thing it just knocked loose
+       would be a strange tool. */
+    for (int m = 0; m < MAT_COUNT; ++m)
+        g_matIsPlant[m] = (u8)(g_matIsLeaf[m] || g_matIsWood[m] || g_matIsSeed[m]
+                               || g_matDropsAs[m] == MAT_OAK_SEED
+                               || g_matDropsAs[m] == MAT_BIRCH_SEED);
+    g_matIsPlant[MAT_STALK]     = 1;
+    g_matIsPlant[MAT_STALK_DRY] = 1;
+    g_matIsPlant[MAT_WHEAT]     = 1;
+    g_matIsPlant[MAT_FLAX]      = 1;
+    g_matIsPlant[MAT_COTTON]    = 1;
 }
 
 static void initUnseen() {

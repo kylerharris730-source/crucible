@@ -41,6 +41,29 @@ const Recipe RECIPES[] = {
        without unpicking anything. */
     { { { (ItemId)MAT_BIRCH_WOOD, 1 }, { ITEM_NONE, 0 }, { ITEM_NONE, 0 } },
       (ItemId)MAT_WOOD, 1, "Wood from Birch" },
+
+    /* --- sowing again ---------------------------------------------------
+       A crop drops its head and nothing else, so replanting has to come from
+       somewhere and this is it: part of the harvest goes back in the ground.
+
+       Two seeds for one head, which is the number that decides whether farming
+       is worth doing at all. At one for one a field is a treadmill -- you spend
+       a harvest to plant the next one and end where you started. At two you
+       double every season, so the first handful of seed is genuinely a
+       beginning, and the surplus is what you actually keep. It also makes the
+       decision legible every time you craft: half of this goes back.
+
+       Three near-identical rows rather than one clever one, and deliberately.
+       The alternative is a "seeds from any crop" recipe, which cannot exist
+       here -- a recipe has one output, so it could only ever hand back one
+       species' seed and two thirds of every harvest would come back wrong.
+       That is the same reason each tree has its own pod. */
+    { { { (ItemId)MAT_WHEAT, 1 }, { ITEM_NONE, 0 }, { ITEM_NONE, 0 } },
+      (ItemId)MAT_WHEAT_SEED, 2, "2 Wheat Seed" },
+    { { { (ItemId)MAT_FLAX, 1 }, { ITEM_NONE, 0 }, { ITEM_NONE, 0 } },
+      (ItemId)MAT_FLAX_SEED, 2, "2 Flax Seed" },
+    { { { (ItemId)MAT_COTTON, 1 }, { ITEM_NONE, 0 }, { ITEM_NONE, 0 } },
+      (ItemId)MAT_COTTON_SEED, 2, "2 Cotton Seed" },
 };
 
 const int N_RECIPES = (int)(sizeof(RECIPES) / sizeof(RECIPES[0]));

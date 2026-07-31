@@ -163,28 +163,33 @@ static const int PLAYER_HP_MAX = 100;
    jump is 2.6 cells/frame against 0.18 gravity, so its peak is v^2/2g = 18.8
    cells and you land from 19.
 
-   208, doubled three times from the 26 it started at, every time after playing
-   with it rather than after reasoning about it. Worth recording why each double
-   was not enough, because the arithmetic looked convincing each time and the
-   game disagreed: a body is 22 cells, so 52 is under two and a half of them,
-   and a drop of two and a half body heights is not a fall anybody expects to be
-   hurt by. Reading the number in cells makes it sound generous; reading it in
+   174. The doubling went one step too far -- 208 cells is a drop you would
+   look down at and not take, and it cost nothing -- so both numbers came back
+   by a fifth: the safe distance divided by 1.2 and the rate multiplied by it,
+   which is a fall a fifth more expensive at every distance rather than a
+   different shape of fall.
+
+   The history is worth keeping because the arithmetic looked convincing at
+   every step and the game disagreed at every step. It started at 26 and
+   doubled three times. 52 is under two and a half body heights, and a drop of
+   two and a half body heights is not a fall anybody expects to be hurt by;
+   reading the number in cells makes it sound generous and reading it in
    CHARACTERS makes it sound like tripping over. 104 was nearly five body
    heights and still read as a normal descent, because the shafts and cliffs
    this world generates are hundreds of cells deep -- the yardstick is not the
-   character, it is the terrain, and the terrain here is tall.
+   character, it is the terrain, and the terrain here is tall. 208 was finally
+   too much.
 
-   208 is nine and a half body heights, and more usefully it is a drop that
-   takes three and a half seconds at terminal velocity.
+   174 is eight body heights, and a drop that takes three seconds at terminal
+   velocity.
 
-   The rate halves with it every time, now 0.375 a cell, so a fall is fatal at
-   about 475 cells rather than 237. That second half is a separate number and it
-   has to move too: doubling only the safe distance would push where damage
-   STARTS while leaving the gap between "first scratch" and "dead" at the same
-   267 cells, so a fall that hurt at all would still be within sight of one that
-   killed. Both doubling keeps the ramp in proportion to itself. */
-static const float FALL_SAFE   = 208.0f;
-static const float FALL_DAMAGE = 0.375f;
+   The rate moves WITH it, every time, and that is a separate number doing a
+   separate job: changing only the safe distance would move where damage starts
+   while leaving the gap between "first scratch" and "dead" the same, so a fall
+   that hurt at all would stay within sight of one that killed. At 0.45 a cell
+   a fall is fatal at about 396 cells rather than 475. */
+static const float FALL_SAFE   = 174.0f;
+static const float FALL_DAMAGE = 0.45f;
 
 /* --- water -----------------------------------------------------------------
 

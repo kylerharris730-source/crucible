@@ -323,7 +323,7 @@ static bool g_bgLayer = false;
    letterboxed into a strip and the module chips were unreadable. Icons want
    square space, and the row still spans well under half the viewport. */
 static const int HOTBAR_SLOT = 42;   /* screen pixels per hotbar cell */
-static RECT g_hotRect[INV_SLOTS];
+static RECT g_hotRect[HOTBAR_SLOTS];
 static RECT g_menuResume, g_menuQuit, g_menuPanel;
 
 /* --- the creative inventory ----------------------------------------------
@@ -342,11 +342,32 @@ static RECT g_menuResume, g_menuQuit, g_menuPanel;
    Right-click removes rather than adds, because the tedious half of testing an
    item is getting rid of it again. */
 static bool g_creativeOpen = false;
-static const int CRE_COLS = 4;
+static const int CRE_COLS = 20;
 static RECT g_creRect[ITEM_COUNT];
 static RECT g_crePanel, g_creClear;
 static int  g_creCount = 0;              /* entries actually laid out */
 static ItemId g_creItem[ITEM_COUNT];     /* which item each rect belongs to */
+
+/* --- the pack, and the thing on the cursor ---------------------------------
+   The player's own forty slots, drawn under the creative palette, with the
+   hotbar as the bottom row -- because it IS the bottom row: the hotbar is the
+   first ten entries of the same array, so the grid has to line up under it or
+   the two read as separate containers when they are one.
+
+   g_drag is what the cursor is carrying, and it is the whole of the
+   click-and-carry model. One stack, held between slots, exactly as every game
+   with an inventory screen does it: click a slot to lift its contents, click
+   another to put them down, click a matching one to merge. Everything the
+   screen can do -- move, split, merge, swap, equip, install a module -- is that
+   one gesture against different slots, which is why it replaces four separate
+   click rules rather than adding a fifth.
+
+   An ItemStack rather than an item id and a count, so a tool keeps its `inst`
+   while it is on the cursor. A multitool that lost its modules by being dragged
+   two slots to the left would be the worst possible bug to ship in a feature
+   whose entire purpose is rearranging things. */
+static RECT g_packRect[INV_SLOTS];
+static ItemStack g_drag = { ITEM_NONE, 0, 0 };
 
 /* The tool bench: the carried multitool's own slots, drawn inside the inventory
    screen. It belongs here rather than in a screen of its own because installing
@@ -614,94 +635,215 @@ static void layoutCreative() {
     if (g_toolPackSlot >= 0)
         g_toolSlotCount = imin(ITEMS[g_inv.slot[g_toolPackSlot].item].toolSlots, TOOL_SLOTS_MAX);
 
+    /* --- everything on this screen is a slot ------------------------------
+       The palette used to be four columns of named rows, which was right when
+       it was the only thing here. It is not any more: the pack sits under it,
+       equipment under that, and the bench under that, and all three of those
+       are grids of square slots you lift from and drop into. A palette of text
+       rows among them read as a different kind of thing that happened to be on
+       the same screen, and at 83 entries it was 630 pixels tall -- with the
+       pack added the panel ran 122 pixels off the top of the window and 122 off
+       the bottom.
+
+       So the palette is squares too, twenty across, with the name shown for
+       whichever one the pointer is over. That costs a hover to read a name and
+       buys a screen that fits, is a third the height, and has one visual idiom
+       instead of two. */
+    const int ps = 34, pgap = 3;
     const int rows = (g_creCount + CRE_COLS - 1) / CRE_COLS;
-    const int cw = 168, ch = 26, gap = 4, pad = 14;
+    const int pad = 14;
     const int benchH = g_toolSlotCount ? 62 : 0;
     const int equipH = 62;
-    const int w = pad * 2 + CRE_COLS * cw + (CRE_COLS - 1) * gap;
-    const int h = pad + 26 + rows * (ch + gap) + equipH + benchH + 38;
+    const int paletteH = rows * (ps + pgap) + 20;   /* +20 for the hover name */
+    const int packH    = 22 + INV_ROWS * (ps + pgap) + 10;
+    const int w = pad * 2 + CRE_COLS * ps + (CRE_COLS - 1) * pgap;
+    const int h = pad + 26 + paletteH + packH + equipH + benchH + 38;
     const int cx = PANEL_W + VIEW_W / 2, cy = VIEW_H / 2;
     const int x0 = cx - w / 2, y0 = cy - h / 2;
     SetRect(&g_crePanel, x0, y0, x0 + w, y0 + h);
 
     for (int i = 0; i < g_creCount; ++i) {
         const int c = i % CRE_COLS, r = i / CRE_COLS;
-        const int bx = x0 + pad + c * (cw + gap);
-        const int by = y0 + pad + 26 + r * (ch + gap);
-        SetRect(&g_creRect[i], bx, by, bx + cw, by + ch);
+        const int bx = x0 + pad + c * (ps + pgap);
+        const int by = y0 + pad + 26 + r * (ps + pgap);
+        SetRect(&g_creRect[i], bx, by, bx + ps, by + ps);
     }
 
-    /* Equipment first, then the tool bench under it. Square slots, matching the
-       module slots, because they are the same gesture: click to move one item
-       between the pack and a named place. */
-    const int eqY = y0 + pad + 26 + rows * (ch + gap) + 22;
+    /* The pack, then equipment, then the tool bench. Same size and spacing as
+       the palette, because they behave the same way -- a slot that acted the
+       same and looked different would be a lie about what the screen does. */
+    const int packY = y0 + pad + 26 + paletteH + 22;
+    for (int i = 0; i < INV_SLOTS; ++i) {
+        const int c = i % HOTBAR_SLOTS, r = i / HOTBAR_SLOTS;
+        /* The HOTBAR row drawn LAST, at the bottom, the way it sits on screen.
+           Slots 0..9 are the hotbar and they belong under the rest of the pack,
+           not above it, or the grid contradicts the bar it describes. */
+        const int rr = (r == 0) ? INV_ROWS - 1 : r - 1;
+        const int bx = x0 + pad + c * (ps + pgap);
+        const int by = packY + rr * (ps + pgap);
+        SetRect(&g_packRect[i], bx, by, bx + ps, by + ps);
+    }
+
+    const int eqY = packY + packH;
     for (int i = 0; i < EQ_COUNT; ++i)
         SetRect(&g_eqRect[i], x0 + pad + i * 40, eqY, x0 + pad + i * 40 + 34, eqY + 34);
 
     /* Module slots: square, and noticeably bigger than a grid row, because they
        are the one place on this screen where the arrangement carries meaning
        (slot order decides which module is the shot). */
-    const int by = eqY + equipH;
+    const int by2 = eqY + equipH;
     for (int i = 0; i < g_toolSlotCount; ++i) {
         const int bx = x0 + pad + i * 40;
-        SetRect(&g_toolSlotRect[i], bx, by, bx + 34, by + 34);
+        SetRect(&g_toolSlotRect[i], bx, by2, bx + 34, by2 + 34);
     }
 
     SetRect(&g_creClear, x0 + pad, y0 + h - 32, x0 + pad + 120, y0 + h - 8);
 }
 
-/* First module sitting loose in the pack, or -1. */
-static int packModuleSlot() {
-    for (int i = 0; i < INV_SLOTS; ++i) {
-        const ItemStack& s = g_inv.slot[i];
-        if (!s.empty() && ITEMS[s.item].kind == ITEMK_MODULE) return i;
+/* --- one gesture ----------------------------------------------------------
+   Everything the inventory screen does is this: the cursor either holds a stack
+   or it does not, and a click on a slot resolves the two against each other.
+
+     cursor empty, slot full   ->  lift it (right-click lifts half)
+     cursor full, slot empty   ->  put it down (right-click puts one)
+     cursor full, slot same    ->  merge, up to the stack limit
+     cursor full, slot other   ->  swap them
+
+   That one rule replaces four separate ones -- click-to-equip, click-to-unequip,
+   click-to-install, click-to-uninstall -- and it replaces them with the rule
+   every player already knows from every other game with an inventory screen.
+
+   Splitting on the RIGHT button is the half that makes it worth having over
+   click-to-move. Stacks here run to a hundred thousand, so "take some" is the
+   common case and "take all" is the rare one, and a screen whose only way to
+   move thirty sand is to move a hundred thousand sand and put most of it back
+   is a screen you fight.
+
+   Returns whether anything happened, so a caller can tell a handled click from
+   one that landed on the background. */
+static bool slotClick(ItemStack& st, bool right) {
+    if (g_drag.empty()) {
+        if (st.empty()) return false;
+        if (right && st.count > 1) {
+            /* Half, rounded UP, so a stack of one still splits into something
+               rather than into nothing and a confused player. */
+            const u32 half = (st.count + 1) / 2;
+            g_drag = st;
+            g_drag.count = half;
+            /* The instance handle stays with the part left behind. A tool never
+               stacks above one so this branch cannot split one, and copying the
+               handle would put the same tool in two places. */
+            g_drag.inst = 0;
+            st.count -= half;
+            if (st.count == 0) st.item = ITEM_NONE;
+        } else {
+            g_drag = st;
+            st.item = ITEM_NONE; st.count = 0; st.inst = 0;
+        }
+        return true;
     }
-    return -1;
+
+    if (st.empty()) {
+        if (right && g_drag.count > 1) {
+            st.item = g_drag.item; st.count = 1; st.inst = 0;
+            --g_drag.count;
+        } else {
+            st = g_drag;
+            g_drag.item = ITEM_NONE; g_drag.count = 0; g_drag.inst = 0;
+        }
+        return true;
+    }
+
+    if (st.item == g_drag.item && g_drag.inst == 0 && st.inst == 0) {
+        const u32 cap  = ITEMS[st.item].maxStack;
+        const u32 room = cap > st.count ? cap - st.count : 0;
+        if (room == 0) return false;
+        const u32 move = right ? 1u : (g_drag.count < room ? g_drag.count : room);
+        st.count     += move;
+        g_drag.count -= move;
+        if (g_drag.count == 0) { g_drag.item = ITEM_NONE; g_drag.inst = 0; }
+        return true;
+    }
+
+    /* Two different things: swap, and only on the left button. Swapping on the
+       right as well would make "put one down" and "exchange everything" the
+       same gesture whenever the target happened to be occupied. */
+    if (right) return false;
+    const ItemStack tmp = st;
+    st = g_drag;
+    g_drag = tmp;
+    return true;
+}
+
+/* An equipment slot: the same gesture, refusing anything that does not belong
+   there. Without the check the boots slot would accept a stack of sand, which
+   is not a rule anybody should have to be told. */
+static bool equipClick(int eqSlot, bool right) {
+    ItemStack& eq = g_inv.equip[eqSlot];
+    if (!g_drag.empty() && !equipFits(g_drag.item, eqSlot)) return false;
+    /* Never split into or out of a worn slot: you wear one of a thing. */
+    if (right) return false;
+    return slotClick(eq, false);
+}
+
+/* A module slot holds a bare ItemId rather than a stack, so the same rules are
+   spelled out against one. Modules are unique and unstackable, which collapses
+   the four cases to two. */
+static bool moduleClick(ItemId& m, bool right) {
+    if (right) return false;
+    if (g_drag.empty()) {
+        if (m == ITEM_NONE) return false;
+        g_drag.item = m; g_drag.count = 1; g_drag.inst = 0;
+        m = ITEM_NONE;
+        return true;
+    }
+    if (ITEMS[g_drag.item].kind != ITEMK_MODULE || g_drag.count != 1) return false;
+    const ItemId was = m;
+    m = g_drag.item;
+    if (was != ITEM_NONE) { g_drag.item = was; g_drag.count = 1; }
+    else                  { g_drag.item = ITEM_NONE; g_drag.count = 0; }
+    return true;
+}
+
+/* Put whatever the cursor is holding back in the pack. Called when the screen
+   closes, because a stack on a cursor that is no longer drawn is a stack that
+   has silently ceased to exist. If it will not fit it stays on the cursor and
+   comes back with the screen, which is the only lossless answer. */
+static void dragStow() {
+    if (g_drag.empty()) return;
+    for (int i = 0; i < INV_SLOTS && !g_drag.empty(); ++i) {
+        ItemStack& st = g_inv.slot[i];
+        if (st.empty() || (st.item == g_drag.item && st.inst == 0 && g_drag.inst == 0))
+            slotClick(st, false);
+    }
 }
 
 /* Returns true if the click was consumed, which while this is open is always:
    it is modal, and letting a click through to the world would paint under it. */
 static bool handleCreativeClick(int mx, int my, bool remove) {
-    if (inRect(g_creClear, mx, my)) { g_inv.clear(); layoutCreative(); return true; }
-
-    /* Equipment. Click an empty slot to put on the first thing in the pack that
-       belongs there, click a filled one to take it off. Nothing is destroyed
-       either way: unequip refuses when the pack is full and leaves the item
-       worn, which is the only safe answer -- a full pack must not be a way to
-       delete a jetpack. */
-    for (int i = 0; i < EQ_COUNT; ++i) {
-        if (!inRect(g_eqRect[i], mx, my)) continue;
-        if (!g_inv.equip[i].empty()) {
-            g_inv.unequip(i);
-        } else if (!remove) {
-            const int src = g_inv.packWorn(i);
-            if (src >= 0) g_inv.equipFromPack(g_inv.slot[src].item);
-        }
+    if (inRect(g_creClear, mx, my)) {
+        g_inv.clear();
+        g_drag.item = ITEM_NONE; g_drag.count = 0; g_drag.inst = 0;
         layoutCreative();
         return true;
     }
 
-    /* Module slots. Click an empty one to install the first loose module in the
-       pack, click a filled one to pull it back out. No drag-and-drop: with one
-       module type and three slots, click-to-move says everything a drag would
-       and needs no notion of a cursor carrying something. */
-    if (g_toolPackSlot >= 0 && g_inv.slot[g_toolPackSlot].inst) {
-        ToolInst& ti = g_toolInst[g_inv.slot[g_toolPackSlot].inst];
-        for (int i = 0; i < g_toolSlotCount; ++i) {
-            if (!inRect(g_toolSlotRect[i], mx, my)) continue;
-            if (ti.slot[i] != ITEM_NONE) {
-                /* Only clear the slot if the pack actually took it back, or a
-                   full pack would quietly delete the module. */
-                if (g_inv.add(ti.slot[i], 1) == 0) ti.slot[i] = ITEM_NONE;
-            } else if (!remove) {
-                const int src = packModuleSlot();
-                if (src >= 0) {
-                    const ItemId m = g_inv.slot[src].item;
-                    if (g_inv.take(m, 1) == 1) ti.slot[i] = m;
-                }
-            }
+    for (int i = 0; i < INV_SLOTS; ++i)
+        if (inRect(g_packRect[i], mx, my)) {
+            slotClick(g_inv.slot[i], remove);
+            /* Picking a tool up or putting one down changes whether the bench
+               exists, which changes the panel height. */
+            layoutCreative();
             return true;
         }
+
+    for (int i = 0; i < EQ_COUNT; ++i)
+        if (inRect(g_eqRect[i], mx, my)) { equipClick(i, remove); layoutCreative(); return true; }
+
+    if (g_toolPackSlot >= 0 && g_inv.slot[g_toolPackSlot].inst) {
+        ToolInst& ti = g_toolInst[g_inv.slot[g_toolPackSlot].inst];
+        for (int i = 0; i < g_toolSlotCount; ++i)
+            if (inRect(g_toolSlotRect[i], mx, my)) { moduleClick(ti.slot[i], remove); return true; }
     }
 
     for (int i = 0; i < g_creCount; ++i) {
@@ -709,15 +851,25 @@ static bool handleCreativeClick(int mx, int my, bool remove) {
         const ItemId it = g_creItem[i];
         if (remove) {
             /* Take everything, not one: the point of the right-click is to
-               clear a slot out, and holding the button down to drain 9999 sand
-               one unit at a time is not a feature. */
+               clear a slot out, and holding the button down to drain a hundred
+               thousand sand one unit at a time is not a feature. */
             g_inv.take(it, 100000);
+        } else if (g_drag.item == it && g_drag.inst == 0) {
+            g_drag.count = ITEMS[it].maxStack;
         } else {
-            g_inv.add(it, ITEMS[it].maxStack);
+            /* Onto the CURSOR, not into the pack, so the palette obeys the same
+               rule as everything else here and you can put the stack exactly
+               where you want it.
+
+               Whatever the cursor was carrying is discarded, which makes the
+               palette the bin as well as the source. That is the only sensible
+               meaning for "click an infinite supply while holding something",
+               and it saves inventing a separate trash square. */
+            if (g_drag.inst) toolInstFree(g_drag.inst);
+            g_drag.item  = it;
+            g_drag.count = ITEMS[it].maxStack;
+            g_drag.inst  = (ITEMS[it].kind == ITEMK_TOOL) ? toolInstNew() : 0;
         }
-        /* Taking or dropping a tool changes whether the bench exists at all,
-           which changes the panel's height. Re-laying out here means the rects
-           the next click tests against are the ones actually on screen. */
         layoutCreative();
         return true;
     }
@@ -816,7 +968,7 @@ static bool handlePanelClick(int mx, int my) {
         return true;
     }
     if (g_survival && g_playerOn) {
-        for (int i = 0; i < INV_SLOTS; ++i)
+        for (int i = 0; i < HOTBAR_SLOTS; ++i)
             if (inRect(g_hotRect[i], mx, my)) { g_inv.selected = i; return true; }
     }
     for (int i = 0; i < N_BRUSH; ++i) {
@@ -931,7 +1083,11 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         /* Hide the arrow over the playfield so the crosshair is the only
            pointer there. Still the system cursor over the panel and the menu,
            where you are clicking buttons rather than aiming. */
-        if (LOWORD(lp) == HTCLIENT && g_mx >= PANEL_W && !g_menuOpen && !g_creativeOpen) {
+        /* Every modal screen has to be listed, and the crafting menu was
+           missing -- so opening it left the playfield's hidden cursor in
+           force and there was nothing to click its rows with. */
+        if (LOWORD(lp) == HTCLIENT && g_mx >= PANEL_W
+            && !g_menuOpen && !g_creativeOpen && !g_craftOpen) {
             SetCursor(NULL);
             return TRUE;
         }
@@ -949,7 +1105,7 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             changeSize(dir);
         } else {
             /* Up scrolls left along the bar, matching the usual convention. */
-            g_inv.selected = (g_inv.selected - dir + INV_SLOTS) % INV_SLOTS;
+            g_inv.selected = (g_inv.selected - dir + HOTBAR_SLOTS) % HOTBAR_SLOTS;
         }
         return 0;
     }
@@ -1036,13 +1192,14 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case VK_TAB:
             g_creativeOpen = !g_creativeOpen;
             if (g_creativeOpen) { layoutCreative(); g_lmb = g_rmb = false; }
+            else                dragStow();
             break;
         /* Escape backs out of the creative grid before it reaches the pause
            menu -- one key that always means "close the thing in front of me" is
            worth more than a second binding to remember. */
         case VK_ESCAPE:
             if (g_craftOpen)         g_craftOpen = false;
-            else if (g_creativeOpen) g_creativeOpen = false;
+            else if (g_creativeOpen) { g_creativeOpen = false; dragStow(); }
             else                     g_menuOpen = !g_menuOpen;
             break;
         }
@@ -1230,7 +1387,7 @@ static void applyBrush() {
     if (g_survival && g_playerOn && g_rmb) {
         const ToolSpec d = digSpec();
         if (g_digCool <= 0) {
-            digInto(g_world, g_inv, aim.x, aim.y, digRadius(), d.cellsPerBite);
+            digInto(g_world, g_inv, aim.x, aim.y, digRadius(), d.cellsPerBite, d.plantsOnly);
             g_digCool = d.cooldown;
         }
         roomsNotifyEdit(g_world, aim.x, aim.y);
@@ -1452,10 +1609,10 @@ static void drawDevPanel(HDC hdc) {
    next to the world you are carrying it through -- glancing down at your hands
    should not mean looking away to the side. */
 static void layoutHotbar() {
-    const int totalW = INV_SLOTS * HOTBAR_SLOT;
+    const int totalW = HOTBAR_SLOTS * HOTBAR_SLOT;
     const int x0 = PANEL_W + (VIEW_W - totalW) / 2;
     const int y0 = VIEW_H - HOTBAR_SLOT - 10;
-    for (int i = 0; i < INV_SLOTS; ++i)
+    for (int i = 0; i < HOTBAR_SLOTS; ++i)
         SetRect(&g_hotRect[i], x0 + i * HOTBAR_SLOT, y0,
                 x0 + i * HOTBAR_SLOT + HOTBAR_SLOT - 3, y0 + HOTBAR_SLOT - 3);
 }
@@ -1561,7 +1718,7 @@ static void drawHotbar(HDC hdc) {
            top-20..top-4 and the stats line sits 16px above that, so anything
            nearer than top-38 overprints the readout -- which is exactly what
            top-30 did: an orange bar straight through "no module installed". */
-        const int x0 = g_hotRect[0].left, x1 = g_hotRect[INV_SLOTS - 1].right;
+        const int x0 = g_hotRect[0].left, x1 = g_hotRect[HOTBAR_SLOTS - 1].right;
         const int y1 = g_hotRect[0].top - 40, y0 = y1 - 7;
         RECT bar = { x0, y0, x1, y1 };
         FillRect(hdc, &bar, g_btnBg);
@@ -1579,7 +1736,7 @@ static void drawHotbar(HDC hdc) {
         FrameRect(hdc, &bar, g_borderBrush);
     }
 
-    for (int i = 0; i < INV_SLOTS; ++i) {
+    for (int i = 0; i < HOTBAR_SLOTS; ++i) {
         RECT r = g_hotRect[i];
         const bool sel = (i == g_inv.selected);
         const ItemStack& st = g_inv.slot[i];
@@ -1845,43 +2002,69 @@ static void drawCreative(HDC hdc) {
     RECT title = g_crePanel;
     title.top += 10; title.left += 14;
     SetTextColor(hdc, RGB(226, 190, 90));
-    DrawTextA(hdc, "CREATIVE  --  click to take, right-click to drop", -1, &title,
+    DrawTextA(hdc, "CREATIVE  --  click a swatch to fill the cursor; click a slot to drop it, right-click for half", -1, &title,
               DT_LEFT | DT_TOP | DT_SINGLELINE);
 
+    const char* hoverName = NULL;
     for (int i = 0; i < g_creCount; ++i) {
         const ItemId it = g_creItem[i];
         const RECT& r = g_creRect[i];
         const int have = g_inv.countOf(it);
+        const bool hot = inRect(r, g_mx, g_my);
 
-        /* Swatches are made and destroyed per frame here rather than cached,
-           unlike the palette's. This is a modal screen that is open for a
-           second at a time, and 30 brush creations once in a while is nothing
-           next to keeping a second parallel array in step with ITEMS[]. */
-        /* Materials keep their colour swatch here; tools and modules get their
-           sprite drawn over the top of it, in the same place, so the row layout
-           does not change between the two kinds. */
-        HBRUSH sw = CreateSolidBrush(RGB((ITEMS[it].colour >> 16) & 0xFF,
-                                         (ITEMS[it].colour >> 8) & 0xFF,
-                                          ITEMS[it].colour & 0xFF));
-        /* The swatch brush is passed either way so drawButton reserves the same
-           box and indents the label identically; the icon is then painted over
-           that box. Passing NULL for icon rows instead would left-align their
-           labels and the column of names would zig-zag. */
-        drawButton(hdc, r, ITEMS[it].name, sw, have > 0, inRect(r, g_mx, g_my));
-        DeleteObject(sw);
-        if (ITEMS[it].sprite > SPR_NONE) {
-            RECT ir = { r.left + 4, r.top + 1, r.left + 22, r.bottom - 1 };
-            FillRect(hdc, &ir, g_panelBg);
-            drawItemIcon(hdc, ir, it);
-        }
+        FillRect(hdc, &r, hot ? g_btnBgHot : g_btnBg);
+        FrameRect(hdc, &r, have > 0 ? g_accentBrush : g_borderBrush);
+        RECT ir = r; ir.left += 3; ir.right -= 3; ir.top += 3; ir.bottom -= 3;
+        drawItemIcon(hdc, ir, it);
+        if (hot) hoverName = ITEMS[it].name;
+    }
 
-        /* What you are already carrying, right-aligned, so the grid doubles as
-           a readout of the pack -- otherwise you cannot tell a click landed. */
-        if (have > 0) {
-            char n[16]; sprintf(n, "%d", have);
-            RECT cr = r; cr.right -= 7;
-            SetTextColor(hdc, RGB(150, 210, 150));
-            DrawTextA(hdc, n, -1, &cr, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+    /* The name of whatever the pointer is over, under the palette. One line
+       rather than a label per square: eighty-three names at this size would be
+       unreadable, and the one you want is always the one you are pointing at. */
+    {
+        RECT lr = g_crePanel;
+        lr.left = g_creRect[0].left;
+        lr.top  = g_creRect[g_creCount - 1].bottom + 3;
+        SetTextColor(hdc, hoverName ? RGB(226, 190, 90) : RGB(110, 116, 128));
+        DrawTextA(hdc, hoverName ? hoverName : "click a swatch to pick up a stack",
+                  -1, &lr, DT_LEFT | DT_TOP | DT_SINGLELINE);
+    }
+
+    /* --- the pack ---------------------------------------------------------
+       Forty squares in the same grid the hotbar is the bottom row of. Drawn
+       with the hotbar row highlighted and the held slot ringed, so the screen
+       answers "which of these am I actually swinging" without being asked. */
+    {
+        RECT lr = g_crePanel;
+        lr.left = g_packRect[0].left;
+        lr.top  = g_packRect[HOTBAR_SLOTS].top - 18;
+        SetTextColor(hdc, RGB(150, 156, 168));
+        DrawTextA(hdc, "PACK  --  click to lift a stack, right-click for half",
+                  -1, &lr, DT_LEFT | DT_TOP | DT_SINGLELINE);
+
+        for (int i = 0; i < INV_SLOTS; ++i) {
+            RECT r = g_packRect[i];
+            const ItemStack& st = g_inv.slot[i];
+            const bool hot   = inRect(r, g_mx, g_my);
+            const bool onBar = (i < HOTBAR_SLOTS);
+            const bool held  = (i == g_inv.selected);
+            FillRect(hdc, &r, hot ? g_btnBgHot : (onBar ? g_btnBgSel : g_btnBg));
+            FrameRect(hdc, &r, held ? g_accentBrush : g_borderBrush);
+            if (st.empty()) continue;
+            RECT ir = r;
+            ir.left += 3; ir.right -= 3; ir.top += 2; ir.bottom -= 11;
+            drawItemIcon(hdc, ir, st.item);
+            /* Counts under the swatch, and only when there is more than one:
+               a "1" on every tool is noise on a screen that is already dense. */
+            if (st.count > 1) {
+                char n[24];
+                if (st.count >= 10000) sprintf(n, "%uk", (unsigned)(st.count / 1000));
+                else                   sprintf(n, "%u", (unsigned)st.count);
+                RECT cr = r; cr.top = r.bottom - 12; cr.right -= 3;
+                SetTextColor(hdc, RGB(200, 206, 218));
+                DrawTextA(hdc, n, -1, &cr, DT_RIGHT | DT_TOP | DT_SINGLELINE);
+            }
         }
     }
 
@@ -1967,6 +2150,31 @@ static void drawCreative(HDC hdc) {
         SetTextColor(hdc, RGB(120, 126, 138));
         DrawTextA(hdc, "Tab or Esc to close", -1, &hint, DT_LEFT | DT_TOP | DT_SINGLELINE);
     }
+    /* --- what the cursor is carrying -------------------------------------
+       Drawn LAST and at the pointer, over every panel on the screen, because
+       that is the entire illusion: the stack is attached to the mouse rather
+       than living in a slot. Anything drawn after it would break that, which is
+       why this sits at the bottom of the function and not with the pack.
+
+       Offset down and right by a few pixels so the system arrow is still
+       readable on top of it -- a stack drawn centred on the hotspot swallows
+       the pointer and you lose track of where you are actually clicking. */
+    if (!g_drag.empty()) {
+        RECT r = { g_mx + 8, g_my + 8, g_mx + 8 + 30, g_my + 8 + 30 };
+        FillRect(hdc, &r, g_btnBgSel);
+        FrameRect(hdc, &r, g_accentBrush);
+        RECT ir = r; ir.left += 3; ir.right -= 3; ir.top += 2; ir.bottom -= 11;
+        drawItemIcon(hdc, ir, g_drag.item);
+        if (g_drag.count > 1) {
+            char n[24];
+            if (g_drag.count >= 10000) sprintf(n, "%uk", (unsigned)(g_drag.count / 1000));
+            else                       sprintf(n, "%u", (unsigned)g_drag.count);
+            RECT cr = r; cr.top = r.bottom - 12; cr.right -= 3;
+            SetTextColor(hdc, RGB(226, 190, 90));
+            DrawTextA(hdc, n, -1, &cr, DT_RIGHT | DT_TOP | DT_SINGLELINE);
+        }
+    }
+
     SelectObject(hdc, oldFont);
 }
 

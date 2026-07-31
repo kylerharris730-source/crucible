@@ -31,18 +31,25 @@
    The consequence worth having: replanting in the same spot gives the same
    tree, which makes a deliberately laid-out orchard possible. */
 
-/* How many trees can be growing at once. Grown trees are NOT tracked -- once
+/* How many plants can be growing at once. Grown ones are NOT tracked -- once
    the last branch is placed the entity is retired and the tree is just cells,
    like everything else you build. So this caps saplings in progress, not
-   forests, and 64 is far more than anyone plants in one minute. */
-static const int MAX_TREES = 64;
+   forests.
 
-/* Frames between growth steps, and how many steps a tree takes. 24 * 150 is
-   about a minute -- long enough that planting is a thing you come back to and
-   short enough that you do come back. Unchanged when the trees were scaled up
-   five times: a bigger tree taking the same minute is a tree that grows more
-   visibly, which is better, and the time was already the number that felt
-   right. */
+   64 was far more than anyone plants in a minute when the only thing that grew
+   was a tree. A FIELD is the case that changed it: sowing a row of wheat is one
+   sweep of the arm and a hundred seeds, and a cap of 64 would have most of them
+   waiting on the ground for a slot. Overflow is handled gracefully -- the seed
+   stays a seed and roots when one frees up -- but "gracefully" still means a
+   field that comes up in patches. A Tree is 24 bytes, so 256 costs 6 KB. */
+static const int MAX_TREES = 256;
+
+/* Oak's timing, and the default for anything that does not say otherwise.
+   24 * 150 is about a minute -- long enough that planting is a thing you come
+   back to and short enough that you do come back. Unchanged when the trees were
+   scaled up five times: a bigger tree taking the same minute is a tree that
+   grows more visibly, which is better, and the time was already the number that
+   felt right. Crops set their own; see TreeKind::tick. */
 static const int TREE_TICK  = 24;
 static const int TREE_STEPS = 150;
 
@@ -60,9 +67,21 @@ static const float TREE_TRUNK_FRAC = 0.65f;
    MEASUREMENTS -- a trunk, some branches, a lumpy crown, pods in it -- and a
    second copy of that logic would be a second place for the crown to go hollow.
 
-   Adding a species is a row here plus its five materials. */
+   Adding a species is a row here plus its five materials.
+
+   "Tree" is the file's name rather than the table's limit. A wheat plant is a
+   short thin trunk with a tuft on top and grain in the tuft, which is this
+   description with small numbers in it -- so the crops are rows here too, and
+   the alternative would have been a second grower with its own version of
+   every bug this one has already had. Two things make it fit: a crop's leaf
+   material and its wood material are the SAME stalk, and its pods are the
+   harvest.
+
+   `tick` and `steps` are per species because a crop that took a tree's minute
+   would be a crop nobody plants twice. */
 struct TreeKind {
     const char* name;
+    int tick, steps;       /* frames per growth step, and how many steps */
     int minH, maxH;        /* trunk height before the crown */
     int wTop, wBase;       /* trunk width at the crown and at the root */
     int leanMin, leanSpan; /* how far the top wanders off the root */
@@ -76,7 +95,11 @@ struct TreeKind {
     u8  seed, sapling, wood, leaf, pod;
 };
 
-enum TreeSpecies { TREE_OAK = 0, TREE_BIRCH, TREE_SPECIES_COUNT };
+enum TreeSpecies {
+    TREE_OAK = 0, TREE_BIRCH,
+    PLANT_WHEAT, PLANT_FLAX, PLANT_COTTON,
+    TREE_SPECIES_COUNT
+};
 extern const TreeKind TREE_KINDS[TREE_SPECIES_COUNT];
 
 /* The tallest any species grows, for callers that need headroom before they
@@ -89,7 +112,7 @@ int treeSpeciesOfSeed(u8 mat);
 struct Tree {
     u8   kind;         /* a TreeSpecies */
     i32  x, y;         /* the cell the sapling stands in: the base of the trunk */
-    i32  step;         /* 0..TREE_STEPS */
+    i32  step;         /* 0..TREE_KINDS[kind].steps */
     i32  tick;
     u32  salt;         /* the hash seed; see the note above on determinism */
     bool used;

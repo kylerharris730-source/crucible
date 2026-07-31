@@ -23,7 +23,7 @@ void toolInstFree(u16 inst) {
     memset(&g_toolInst[inst], 0, sizeof(ToolInst));
 }
 
-const ToolSpec HAND = { "Hands", 6, 10, 6 };
+const ToolSpec HAND = { "Hands", 6, 10, 6, false };
 
 DiscOff g_disc[DISC_MAX_CELLS];
 int     g_discEnd[DISC_MAX_R + 1];
@@ -223,6 +223,32 @@ void initItems() {
     ITEMS[ITEM_GRASS_SEED].maxStack = MATERIAL_STACK;
     ITEMS[ITEM_GRASS_SEED].colour   = 0x8FC85A;
     ITEMS[ITEM_GRASS_SEED].sprite   = SPR_SEED;
+
+    /* --- the sickle -------------------------------------------------------
+       Not a tier. It is slower per cell than the Rock Auger and it will not
+       touch stone, dirt or grass at all -- what it buys is that a swing at a
+       tree takes the tree.
+
+       That is worth a slot because the alternative is what the game did
+       before: harvesting anything meant a drill, a drill takes a disc out of
+       whatever is behind what you were aiming at, and reaping a field left the
+       field as a crater you then had to fill in. A tool that cannot damage the
+       ground is a tool you can use carelessly, and carelessness is the whole
+       point of a harvesting pass.
+
+       Generous on radius (18) and bite (40) because there is nothing to be
+       careful ABOUT: the filter is the safety, so the tool may as well be
+       broad. That is also what makes it feel like a scythe rather than a
+       smaller drill -- one sweep takes a row. */
+    ITEMS[ITEM_SICKLE].name           = "Harvesting Sickle";
+    ITEMS[ITEM_SICKLE].kind           = ITEMK_MINING;
+    ITEMS[ITEM_SICKLE].maxStack       = 1;
+    ITEMS[ITEM_SICKLE].colour         = 0x8CD44C;
+    ITEMS[ITEM_SICKLE].mineRadius     = 18;
+    ITEMS[ITEM_SICKLE].mineBite       = 40;
+    ITEMS[ITEM_SICKLE].mineCooldown   = 5;
+    ITEMS[ITEM_SICKLE].minePlantsOnly = 1;
+    ITEMS[ITEM_SICKLE].sprite         = SPR_MINE1;
 
     /* Reach extenders. Two tiers so the ladder is visible; the numbers are
        relative to a base reach of 56, so the lens is "half again as far" and
@@ -570,6 +596,7 @@ ToolSpec miningSpec(const ItemStack& held) {
             s.maxRadius    = d.mineRadius;
             s.cellsPerBite = d.mineBite;
             s.cooldown     = d.mineCooldown;
+            s.plantsOnly   = d.minePlantsOnly != 0;
             return s;
         }
     }
@@ -614,7 +641,8 @@ ToolShot toolResolve(const ItemStack& st) {
     return s;
 }
 
-int digInto(World& w, Inventory& inv, int cx, int cy, int r, int maxCells) {
+int digInto(World& w, Inventory& inv, int cx, int cy, int r, int maxCells,
+            bool plantsOnly) {
     int dug = 0;
     const int n = g_discEnd[imax(0, imin(r, DISC_MAX_R))];
     for (int i = 0; i < n; ++i) {
@@ -623,14 +651,27 @@ int digInto(World& w, Inventory& inv, int cx, int cy, int r, int maxCells) {
         if (x < PLAY_X0 || x > PLAY_X1 || y < PLAY_Y0 || y > PLAY_Y1) continue;
         const u8 m = w.at(x, y).mat;
         if (m == MAT_EMPTY) continue;
-        /* Bank it first, and only remove it from the world if it fit. The
-           order matters: dig-then-store would drop material on the floor of
-           a full pack, and players notice that exactly once -- when it was
-           something they wanted. */
+        /* The harvesting tool passes over everything that did not grow, and
+           passes over it WITHOUT spending a bite -- skipping before the counter
+           rather than after is what lets one sweep take a whole row of wheat
+           standing in a field of grass, instead of the bite being eaten by the
+           ground between the plants. */
+        if (plantsOnly && !g_matIsPlant[m]) continue;
         /* g_matDropsAs, not m: what you dig out and what you end up holding are
            two different questions for anything whose cell is a STATE. Breaking
-           an open door puts a door in your pack. */
-        if (inv.add((ItemId)g_matDropsAs[m], 1) != 0) continue;
+           an open door puts a door in your pack.
+           
+           MAT_EMPTY there means the cell yields nothing at all -- a stalk --
+           and that has to be a success rather than a full pack, or cutting a
+           crop would leave every stem standing. */
+        const u8 drop = g_matDropsAs[m];
+        if (drop != MAT_EMPTY) {
+            /* Bank it first, and only remove it from the world if it fit. The
+               order matters: dig-then-store would drop material on the floor of
+               a full pack, and players notice that exactly once -- when it was
+               something they wanted. */
+            if (inv.add((ItemId)drop, 1) != 0) continue;
+        }
         w.setCell(x, y, MAT_EMPTY);
         ++dug;
     }

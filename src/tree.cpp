@@ -11,11 +11,43 @@ Tree g_trees[MAX_TREES];
    the height reduction alone would give, which is what makes it read as a
    different tree rather than as a distant one. */
 const TreeKind TREE_KINDS[TREE_SPECIES_COUNT] = {
-  /* name    minH maxH wTop wBase lean   branch  branchLen tuft lumps lumpR  spread  pods */
-  { "Oak",   170, 360,   9,  15,  15, 30,  4, 5,   30, 50,  20,   5,  45, 36, 75, 55,  3, 4,
+  /* name   tick steps  minH maxH wTop wBase lean   branch  branchLen tuft lumps lumpR  spread  pods */
+  { "Oak",    24, 150,  170, 360,   9,  15,  15, 30,  4, 5,   30, 50,  20,   5,  45, 36, 75, 55,  3, 4,
     MAT_OAK_SEED,   MAT_OAK_SAPLING,   MAT_WOOD,       MAT_OAK_LEAF,   MAT_OAK_POD },
-  { "Birch",  70, 120,   4,   7,   8, 16,  3, 3,   14, 20,  10,   4,  20, 14, 32, 24,  2, 3,
+  { "Birch",  24, 150,   70, 120,   4,   7,   8, 16,  3, 3,   14, 20,  10,   4,  20, 14, 32, 24,  2, 3,
     MAT_BIRCH_SEED, MAT_BIRCH_SAPLING, MAT_BIRCH_WOOD, MAT_BIRCH_LEAF, MAT_BIRCH_POD },
+
+  /* --- the crops -------------------------------------------------------
+     Twenty-odd cells tall against an oak's three hundred, and sixteen seconds
+     to grow rather than a minute: a field is something you come back to
+     between other jobs, and a crop on a tree's clock is a crop you plant once
+     and forget.
+
+     The mapping that makes this work is the LEAF slot. On a tree the leaf is
+     foliage and the pod is the harvest hidden in it; on a crop the head IS the
+     harvest, so leaf and pod are both the grain and the only stalk is the
+     stem. Sown the other way round first -- a green head with a few grains
+     scattered in it -- and it was unreadable: fourteen plants carried 54 cells
+     of wheat between them, three or four specks each, and wheat and flax were
+     the same green smudge from two paces. Making the head the crop makes the
+     species tell themselves apart by colour at a glance, which is what a field
+     has to do.
+
+     Their SAPLING and their WOOD are both the stalk, which is what lets a
+     plant with no woody part use a grower built for trunks: treesTick asks "is
+     the base still sapling or wood" to know the plant is still standing, and
+     for a crop both answers are the same stalk.
+
+     Cotton is the odd one -- brown stem, a couple of short branches, three
+     bolls -- because it is not a cereal and should not read as one from across
+     a field. Flax is the tallest and thinnest, with two small flowers, which
+     is what a flax plant is. */
+  { "Wheat",   8,  60,   18,  26,   1,   2,   1,  3,  0, 0,    0,  0,   2,   1,   2,  2,  2,  2,  0, 0,
+    MAT_WHEAT_SEED,  MAT_STALK,     MAT_STALK,     MAT_WHEAT,     MAT_WHEAT },
+  { "Flax",    8,  60,   22,  32,   1,   2,   2,  4,  0, 0,    0,  0,   2,   2,   2,  1,  5,  3,  0, 0,
+    MAT_FLAX_SEED,   MAT_STALK,     MAT_STALK,     MAT_FLAX,      MAT_FLAX },
+  { "Cotton",  8,  60,   14,  20,   1,   3,   2,  4,  2, 2,    4,  4,   3,   3,   3,  2,  9,  5,  0, 0,
+    MAT_COTTON_SEED, MAT_STALK_DRY, MAT_STALK_DRY, MAT_COTTON,    MAT_COTTON },
 };
 
 int treeMaxHeight() {
@@ -216,7 +248,7 @@ static void buildTree(World& w, int bx, int by, u32 salt, int species,
         if (wasGrown < grown) {
             const int wx = bx + trunkLean(k, salt, wasGrown, height);
             const int wy = by - wasGrown;
-            const int wr = 4 + (int)(10.0f * upWas);
+            const int wr = 1 + (int)((float)k.tuftR * upWas);
             for (int dy = -wr; dy <= wr / 2; ++dy)
                 for (int dx = -wr; dx <= wr; ++dx) {
                     if (dx * dx + dy * dy > wr * wr) continue;
@@ -227,7 +259,12 @@ static void buildTree(World& w, int bx, int by, u32 salt, int species,
         }
         const int tx = bx + trunkLean(k, salt, grown, height);
         const int ty = by - grown;
-        const int r  = 4 + (int)(10.0f * up);
+        /* Sized from the species rather than from a constant. 4 + 10 was fine
+           when everything that grew was three hundred cells tall; on a wheat
+           plant twenty cells tall it put a fourteen-radius ball on top of a
+           two-wide stem. tuftR is already "how much foliage this species puts
+           at the end of a limb", which is exactly what this is. */
+        const int r  = 1 + (int)((float)k.tuftR * up);
         for (int dy = -r; dy <= r / 2; ++dy)
             for (int dx = -r; dx <= r; ++dx)
                 if (dx * dx + dy * dy <= r * r) put(w, tx + dx, ty + dy, k.leaf, false);
@@ -462,17 +499,17 @@ void treesTick(World& w) {
             continue;
         }
 
-        if (++t.tick < TREE_TICK) continue;
+        if (++t.tick < tk.tick) continue;
         t.tick = 0;
         ++t.step;
 
         buildTree(w, t.x, t.y, t.salt, t.kind,
-                  (float)(t.step - 1) / (float)TREE_STEPS,
-                  (float)t.step       / (float)TREE_STEPS);
+                  (float)(t.step - 1) / (float)tk.steps,
+                  (float)t.step       / (float)tk.steps);
 
         /* Retired at full size. A grown tree is just cells -- there is nothing
            left for the table to remember, and holding the row would cap how
            many trees a world may contain rather than how many may be growing. */
-        if (t.step >= TREE_STEPS) t.used = false;
+        if (t.step >= tk.steps) t.used = false;
     }
 }
