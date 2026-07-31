@@ -146,18 +146,26 @@ static const int PLAYER_HP_MAX = 100;
    jump is 2.6 cells/frame against 0.18 gravity, so its peak is v^2/2g = 18.8
    cells and you land from 19.
 
-   52 -- doubled from the 26 it started at, after playing with it. The original
-   number cleared a jump and not much else, which made every ordinary piece of
-   terrain a thing to be careful about, and "careful about ordinary terrain" is
-   not tension, it is friction. At 52 a two-storey drop is free and the number
-   only speaks up for falls you would have hesitated at anyway.
+   104, doubled twice from the 26 it started at, both times after playing with
+   it rather than after reasoning about it. Worth recording why the first double
+   was not enough, because the arithmetic looked convincing and the game
+   disagreed: a body is 22 cells, so 52 is under two and a half of them, and a
+   drop of two and a half body heights is not a fall anybody expects to be hurt
+   by. Reading the number in cells makes it sound generous; reading it in
+   CHARACTERS makes it sound like tripping over.
 
-   Past that it is still 1.5 points a cell, so a fall of about 119 cells kills
-   from full. Deliberately survivable-but-serious at the depth of an ordinary
-   cave and fatal down a shaft you dug yourself -- the mistake it is there to
-   punish is not looking before stepping off. */
-static const float FALL_SAFE   = 52.0f;
-static const float FALL_DAMAGE = 1.5f;
+   104 is nearly five body heights, which is the first figure that reads as a
+   height you would think twice about.
+
+   The rate halved with it, to 0.75 a cell, so a fall is fatal at about 237
+   cells rather than 171. That second half is the other complaint and it is a
+   separate number: doubling only the safe distance would have moved where
+   damage STARTS while leaving the gap between "first scratch" and "dead" the
+   same 67 cells, so a fall that hurt at all would still have been close to one
+   that killed. Both thresholds doubling keeps the ramp in proportion to
+   itself. */
+static const float FALL_SAFE   = 104.0f;
+static const float FALL_DAMAGE = 0.75f;
 
 /* --- water -----------------------------------------------------------------
 

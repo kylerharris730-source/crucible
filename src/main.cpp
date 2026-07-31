@@ -541,13 +541,39 @@ static void layoutPanel() {
 
 /* The menu is laid out fresh each time rather than in layoutPanel(), because it
    is centred on the viewport and nothing else depends on where it lands. */
+/* --- the controls list -----------------------------------------------------
+   Added because the line tool's binding had to be ASKED FOR, which is the only
+   evidence that matters about whether a shortcut is discoverable. Every binding
+   here was equally invisible; the line tool is just the one that got noticed,
+   because it is the only one with no button on the panel doing the same job.
+
+   In the pause menu rather than a screen of its own: it is where you already
+   go when you want to stop and work something out, and a help screen nobody
+   opens is the same as no help screen. */
+struct KeyHint { const char* key; const char* what; };
+static const KeyHint KEY_HINTS[] = {
+    { "WASD / arrows", "move, and jump" },
+    { "hold R + drag", "draw a straight line" },
+    { "tap R",         "respawn at the cursor" },
+    { "left / right",  "build / dig" },
+    { "right-click",   "open a machine, or a door" },
+    { "wheel",         "pick a hotbar slot" },
+    { "Q + wheel",     "brush size" },
+    { "Tab",           "the item grid" },
+    { "L",             "build on the backdrop" },
+    { "V / K",         "cycle view / lights" },
+    { "P / .",         "pause / step one frame" },
+};
+static const int N_KEY_HINTS = (int)(sizeof(KEY_HINTS) / sizeof(KEY_HINTS[0]));
+
 static void layoutMenu() {
-    const int w = 220, h = 150;
+    const int w = 344, h = 150 + N_KEY_HINTS * 15 + 22;
     const int cx = PANEL_W + VIEW_W / 2, cy = VIEW_H / 2;
     SetRect(&g_menuPanel, cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2);
-    const int bw = w - 48, bx = cx - bw / 2;
-    SetRect(&g_menuResume, bx, cy - 18, bx + bw, cy + 14);
-    SetRect(&g_menuQuit,   bx, cy + 26, bx + bw, cy + 58);
+    const int bw = w - 120, bx = cx - bw / 2;
+    const int top = g_menuPanel.top;
+    SetRect(&g_menuResume, bx, top + 42, bx + bw, top + 74);
+    SetRect(&g_menuQuit,   bx, top + 82, bx + bw, top + 114);
 }
 
 /* Laid out fresh on open, like the pause menu, and for the same reason: it is
@@ -1901,8 +1927,24 @@ static void drawMenu(HDC hdc) {
     drawButton(hdc, g_menuResume, "Resume", NULL, false, inRect(g_menuResume, g_mx, g_my));
     drawButton(hdc, g_menuQuit,   "Quit",   NULL, false, inRect(g_menuQuit,   g_mx, g_my));
 
+    /* Two columns: the key on the left, what it does on the right. Aligned on
+       a fixed split rather than measured per row, because the alternative is a
+       ragged left edge on the descriptions, which is what makes a list of this
+       length hard to scan. */
+    const int keyX  = g_menuPanel.left + 16;
+    const int whatX = g_menuPanel.left + 130;
+    int ry = g_menuQuit.bottom + 14;
+    for (int i = 0; i < N_KEY_HINTS; ++i, ry += 15) {
+        SetTextColor(hdc, RGB(226, 190, 90));
+        RECT kr = { keyX, ry, whatX - 6, ry + 14 };
+        DrawTextA(hdc, KEY_HINTS[i].key, -1, &kr, DT_LEFT | DT_TOP | DT_SINGLELINE);
+        SetTextColor(hdc, RGB(176, 182, 194));
+        RECT wr = { whatX, ry, g_menuPanel.right - 12, ry + 14 };
+        DrawTextA(hdc, KEY_HINTS[i].what, -1, &wr, DT_LEFT | DT_TOP | DT_SINGLELINE);
+    }
+
     RECT hint = g_menuPanel;
-    hint.top = g_menuPanel.bottom - 26;
+    hint.top = g_menuPanel.bottom - 22;
     SetTextColor(hdc, RGB(120, 126, 138));
     DrawTextA(hdc, "Esc to resume", -1, &hint, DT_CENTER | DT_TOP | DT_SINGLELINE);
 
