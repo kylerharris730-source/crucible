@@ -299,6 +299,38 @@ bool saveWrite(const char* path, const World& w) {
    ========================================================================== */
 
 /* Remap a material plane through the name table. */
+/* --- the speckle -----------------------------------------------------------
+   Every cell carries a random tint byte that the colour LUT uses to break up
+   flat material into texture. It is NOT saved: it is a byte of pure noise per
+   cell, so it is the one plane run-length encoding cannot help with, and 12.6
+   million incompressible bytes on every save to preserve something purely
+   cosmetic is a bad trade. It is re-derived from the cell index instead, which
+   also means a save reloaded twice looks the same both times.
+
+   What it must be is a HASH, and the first version was not one. It was
+
+       h = i * 2654435761 ^ ((i >> 13) * 40503);   tint = h >> 24
+
+   which looks like mixing and is a straight line: multiplying by a constant
+   makes the top byte an arithmetic progression in i, and the second term only
+   changes every 8192 cells -- twice per row. Loaded ground came back as a
+   smooth regular plaid instead of noise, which is exactly what it looked like.
+
+   Measured over a 320x200 patch: real noise has two neighbouring cells share a
+   tint 0.39% of the time, and the old formula managed 0.00% -- not "less
+   random" but arithmetically impossible for noise, because a ramp never
+   repeats a value. That zero is the tell, and it is what this is checked
+   against.
+
+   The finalizer below is the one worldgen and the tree shapes already use: a
+   multiply, an xor-shift, another multiply, another shift. Every input bit
+   reaches every output bit. */
+u8 tintAt(u32 i) {
+    u32 h = i * 374761393u + 668265263u;
+    h = (h ^ (h >> 13)) * 1274126177u;
+    return (u8)(h ^ (h >> 16));
+}
+
 static void remapPlane(u8* p, u64 n) {
     for (u64 i = 0; i < n; ++i) p[i] = g_remap[p[i]];
 }
@@ -354,11 +386,7 @@ bool saveRead(const char* path, World& w) {
             for (int i = 0; i < SIM_W * SIM_H; ++i) {
                 w.cells[i].mat   = g_plane[i];
                 w.cells[i].flags = 0;
-                /* Speckle, re-rolled rather than stored -- see the note in
-                   saveWrite. Drawn from the position so a save reloaded twice
-                   looks the same both times. */
-                const u32 h = ((u32)i * 2654435761u) ^ (((u32)i >> 13) * 40503u);
-                w.cells[i].tint = (u8)(h >> 24);
+                w.cells[i].tint = tintAt((u32)i);
             }
             statAdd("cell material", len + 12);
         } else if (tag == fourcc("CMOI")) {

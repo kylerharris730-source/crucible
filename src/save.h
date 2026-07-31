@@ -67,3 +67,8 @@ bool saveWrite(const char* path, const World& w);
 bool saveRead(const char* path, World& w);
 
 const char* saveError();
+
+/* The per-cell colour speckle, derived from the cell index rather than stored
+   -- see the note in save.cpp for why, and for what happens when the thing
+   deriving it is not actually a hash. Exposed so a test can measure it. */
+u8 tintAt(u32 i);

@@ -255,10 +255,10 @@ static const float DROWN_DAMAGE   = 0.35f;
    So this measures what you are standing in, which is the honest question, and
    it costs one pass over 176 cells a frame.
 
-   70 C is above anything the weather does and below every process temperature
-   in the game, so a furnace room is uncomfortable and a workshop is not. -12 C
-   is well below freezing, so standing on ice is free and standing in liquid
-   nitrogen is not.
+   60 C is above anything the weather does and below every process temperature
+   in the game, so a furnace room is uncomfortable and a workshop is not. -8 C
+   is below freezing rather than at it, so standing on ice is free and standing
+   in liquid nitrogen is not.
 
    The rate is per degree past the line, which makes the ladder come out of the
    material table instead of being a second set of numbers to keep in step: fire
@@ -267,38 +267,49 @@ static const float DROWN_DAMAGE   = 0.35f;
 
    The two rates DIFFER, and the reason is the scale rather than a judgement
    about which is nastier. Temperature is stored in one byte running -40 C to
-   +215 C, so there are 145 degrees of headroom above the heat line and only 28
+   +215 C, so there are 155 degrees of headroom above the heat line and only 32
    below the cold one. At a shared rate the worst possible cold would be a fifth
    as dangerous as the worst possible heat, which is not a design decision
    anybody made -- it is the byte showing through. The two figures below are
    picked so that the coldest thing in the game and the hottest kill at the same
-   speed: about two and a half seconds from full health, immersed.
-
-   Both lines moved outward (from 55 C and -5 C) and both rates were rescaled by
-   exactly the change in headroom, so that FULL IMMERSION in the worst the game
-   has costs precisely what it always did. Resistance is meant to buy you the
-   middle of the range -- the warm room, the drifting steam -- not to make lava
-   survivable. */
-static const u8    HEAT_HURT_AT = degC(70);
-static const u8    COLD_HURT_AT = degC(-12);
-static const float HEAT_DAMAGE  = 0.0044f;
-static const float COLD_DAMAGE  = 0.0225f;
+   speed: about two and a half seconds from full health, immersed. */
+static const u8    HEAT_HURT_AT = degC(60);
+static const u8    COLD_HURT_AT = degC(-8);
+static const float HEAT_DAMAGE  = 0.0041f;
+static const float COLD_DAMAGE  = 0.020f;
 
 /* --- exposure --------------------------------------------------------------
-   How much of you is in it, not whether any of you is.
+   Two things decide what heat costs: how hot the worst of it is, and how much
+   of you is in it. The first alone was the original rule and it made one
+   drifting pixel of steam against a boot cost exactly what a furnace does. The
+   second alone replaced it and went too far the other way -- a plain mean over
+   the whole body priced standing against a lava pool at four minutes to die,
+   because the pool only ever gets a tenth of you warm.
 
-   The body spans 176 cells and the old rule took the single hottest of them, so
-   one drifting pixel of steam touching a boot hurt exactly as much as being
-   dropped in a furnace. That is the complaint this answers, and taking the mean
-   excess over the whole body answers it by arithmetic rather than by a special
-   case: one steam cell at 115 C is 45 degrees past the line spread over 176
-   cells, which is a quarter of a degree, which is nothing. Standing waist-deep
-   in lava is half the body at the top of the scale, which is half the rate.
-   Immersion is the full rate, unchanged.
+   So: severity is the WORST cell's excess, scaled by how much of the body is
+   over the line. That scale is SQUARED and it SATURATES -- half of you against
+   something is full exposure, because you do not have to be immersed to be in
+   serious trouble, and past that the fraction stops telling you anything.
+
+   The ladder it produces, all measured:
+
+     one cell of steam held on you    4 cells of 176   0 health in ten seconds
+     touching a 32-cell lava pool    50 cells of 176   37 health in five
+     engulfed in 115 C steam         the whole body    dead in seven
+     standing in a lava pool         the whole body,   dead in under three
+                                     and much hotter
+
+   Neither simpler rule reaches that shape. The worst cell alone makes the first
+   line as bad as the last. A plain mean over the body makes the second line
+   harmless, because beside a pool the mean excess is 1.4 degrees against a
+   steam cell's 0.26 -- a factor of five, where the game needs a factor of a
+   hundred. What separates them is the COUNT: 50 cells against 4. Squaring the
+   fraction turns that 12x into 150x, which is the gap the ladder needs.
 
    The extremes are still reported to the HUD -- feltTemp is the WARNING, and a
    warning should fire on the first cell, not on the hundredth. It is only the
    damage that is weighted. */
+static const float CONTACT_FULL = 0.5f;   /* body fraction that costs the full rate */
 
 /* Degrees of protection from worn equipment, added to the heat line and
    subtracted from the cold one. Zero on a bare character: the constants above

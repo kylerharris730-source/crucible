@@ -1,5 +1,6 @@
 #include "player.h"
 #include "light.h"    /* VIEW_CELLS_W/H, and shading the figure by the field */
+#include <math.h>
 
 Player g_player;
 
@@ -127,7 +128,7 @@ void Player::damage(float amount) {
 }
 
 /* What the body is standing in, thermally: the extremes for the HUD and the
-   MEAN EXCESS past each line for the damage. All of it in one pass, because the
+   SEVERITY past each line for the damage. All of it in one pass, because the
    body is 176 cells and walking it three times to ask three questions about the
    same bytes would be silly.
 
@@ -141,14 +142,31 @@ void Player::damage(float amount) {
 
    Reads the grid directly rather than through playerSolid: this is about
    temperature, and the material in a cell has nothing to do with it. */
+/* How much a given fraction of the body being in it counts for. SQUARED, and
+   that is what makes the ladder in player.h come out: linear in the fraction,
+   a stray cell of steam still costs a point a second, because heating four
+   cells of a hundred and seventy-six is a fortieth of full contact and a
+   fortieth of a furnace is not nothing. Squared it is a sixteen-hundredth,
+   which is nothing, while a tenth of the body against a lava pool is still a
+   hundredth of full and dies in a comfortable ten seconds.
+
+   It is not merely a curve that fits. A small warm patch on a body is being
+   carried away by the rest of the body, and the bigger the patch the less of
+   it there is to carry -- so the cost really is faster than linear in contact
+   area. */
+static float exposure(float frac) {
+    const float f = frac / CONTACT_FULL;
+    return f >= 1.0f ? 1.0f : f * f;
+}
+
 struct BodyTemp {
     u8    hottest, coldest;
-    float overMean, underMean;   /* degrees past each line, averaged over the body */
+    float hotSeverity, coldSeverity;   /* degrees past each line, after exposure */
 };
 static void bodyTemp(const World& w, const Player& p, u8 heatLine, u8 coldLine,
                      BodyTemp* out) {
     u8 hi = 0, lo = 255;
-    long overSum = 0, underSum = 0;
+    int nOver = 0, nUnder = 0;
     const int y0 = imax(0, p.top()),  y1 = imin(SIM_H - 1, p.bottom());
     const int x0 = imax(0, p.left()), x1 = imin(SIM_W - 1, p.right());
     for (int y = y0; y <= y1; ++y) {
@@ -157,17 +175,19 @@ static void bodyTemp(const World& w, const Player& p, u8 heatLine, u8 coldLine,
             const u8 t = row[x];
             if (t > hi) hi = t;
             if (t < lo) lo = t;
-            if (t > heatLine) overSum  += (int)t - (int)heatLine;
-            if (t < coldLine) underSum += (int)coldLine - (int)t;
+            if (t > heatLine) ++nOver;
+            if (t < coldLine) ++nUnder;
         }
     }
-    /* Divided by the WHOLE body, not by the cells that were over the line.
-       Dividing by the affected cells would give back the maximum rule with
-       extra steps: one steam cell would be one cell of mean excess. */
     const float cells = (float)imax(1, (y1 - y0 + 1) * (x1 - x0 + 1));
+    /* Counted against the WHOLE body, not against the cells that were over the
+       line. Dividing by the affected cells would give back the maximum rule
+       with extra steps: one hot cell would be a body entirely in contact. */
     out->hottest = hi; out->coldest = lo;
-    out->overMean  = (float)overSum  / cells;
-    out->underMean = (float)underSum / cells;
+    out->hotSeverity  = (hi > heatLine)
+        ? (float)((int)hi - (int)heatLine) * exposure((float)nOver  / cells) : 0.0f;
+    out->coldSeverity = (lo < coldLine)
+        ? (float)((int)coldLine - (int)lo) * exposure((float)nUnder / cells) : 0.0f;
 }
 
 /* How much of the body is in liquid, and whether the head is. One pass for both
@@ -257,8 +277,8 @@ void Player::update(const World& w, const PlayerInput& in) {
         const int over  = (int)bt.hottest - (int)hl;
         const int under = (int)cl - (int)bt.coldest;
         feltTemp = (over >= under) ? bt.hottest : bt.coldest;
-        if (bt.overMean  > 0.0f) damage(bt.overMean  * HEAT_DAMAGE);
-        if (bt.underMean > 0.0f) damage(bt.underMean * COLD_DAMAGE);
+        if (bt.hotSeverity  > 0.0f) damage(bt.hotSeverity  * HEAT_DAMAGE);
+        if (bt.coldSeverity > 0.0f) damage(bt.coldSeverity * COLD_DAMAGE);
         if (!alive) return;
     }
 
