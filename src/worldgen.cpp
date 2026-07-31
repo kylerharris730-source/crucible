@@ -1,4 +1,5 @@
 #include "worldgen.h"
+#include "tree.h"
 #include "player.h"
 #include <string.h>
 #include <math.h>
@@ -259,6 +260,8 @@ static const int   CAVE_ROOF     = 40;
    that a grain of dirt is never the thing above a void. */
 static const int   CAVE_ROCK     = 12;
 /* Deepest a cave may reach, clear of the world's border wall. */
+static void generateTrees(World& w);
+
 static const int   CAVE_FLOOR_Y  = SIM_H - 60;
 /* How far a worm turns off its base heading, in radians. Held well under a
    quarter turn so tunnels meander rather than doubling back -- a worm that can
@@ -701,6 +704,8 @@ void generateWorld(World& w) {
        already claimed. */
     generateHotspots(w);
 
+    generateTrees(w);
+
     /* --- zones ------------------------------------------------------------
        A chunk is underground only if it is ENTIRELY below the ground, using
        the deepest surface across its own columns. That keeps the sky/cave join
@@ -718,6 +723,121 @@ void generateWorld(World& w) {
         for (int cy = 0; cy < CHUNKS_Y; ++cy)
             w.zone[cy * CHUNKS_X + cx] = (u8)(cy >= firstUnder ? ZONE_UNDER : ZONE_SKY);
     }
+}
+
+/* ==========================================================================
+   Trees
+   ==========================================================================
+
+   Sparse, on turf, and nowhere else. A tree is about 200 cells across and 320
+   tall, so "sparse" is not a stylistic preference here -- at anything closer
+   than a couple of hundred cells the crowns merge into one continuous roof and
+   the plains stop being plains.
+
+   Placed on a JITTERED LATTICE rather than by rejection sampling. A lattice
+   guarantees the minimum spacing that keeps trees from merging, and the jitter
+   is what stops it reading as an orchard; picking positions at random and
+   discarding the ones too close to a neighbour gets the same look for more work
+   and gives no guarantee at all about the worst case.
+
+   Everything is drawn from hash1 on the lattice index, so a world's trees are
+   as reproducible as its terrain -- see the note on determinism in tree.h. */
+static const int TREE_SPACING = 300;   /* lattice pitch, in cells */
+static const int TREE_JITTER  = 130;   /* how far a tree may wander from it */
+/* Chance out of 255 that a given lattice cell has a tree at all. The gaps are
+   what make a wood look like a wood rather than an avenue. */
+static const int TREE_CHANCE  = 190;
+/* Tries per lattice cell before giving up on it.
+   Without retries, a cell whose one jittered position happened to land on
+   rock, on a slope or in the lake produced nothing -- and since only 43% of
+   the world's columns can hold a tree, most cells produced nothing. Measured,
+   the whole world got ONE tree. Retrying is what turns "43% of columns are
+   usable" into "usable country gets planted". */
+static const int TREE_TRIES   = 14;
+/* No two trunks closer than this. Enforced against the last tree placed rather
+   than left to lattice arithmetic, which is what lets the jitter be generous:
+   a pitch and a jitter that guarantee a gap on their own have to be so tight
+   that the row reads as an orchard. A crown is about 200 across, so this keeps
+   most neighbours clear of each other while allowing the occasional pair that
+   have grown together -- which is what a wood actually looks like. */
+static const int TREE_MIN_GAP = 190;
+
+/* Where trees may stand. Deliberately strict, and every clause is a place a
+   tree looked wrong rather than a place it was merely unusual. */
+static bool treeSpotOk(const World& w, int x) {
+    if (x < PLAY_X0 + 120 || x > PLAY_X1 - 120) return false;
+
+    const int surf = g_surfaceY[x];
+    /* Turf, not bare rock or sand: the treeline draws itself from where the
+       grass pass decided the soil was too thin, which is exactly the line a
+       tree should stop at. */
+    if (w.at(x, surf).mat != MAT_GRASS) return false;
+
+    /* Not in the lake, and not on its shore where a trunk would stand in
+       water. The lake is filled by now, so this can simply look. */
+    for (int d = -40; d <= 40; d += 8)
+        for (int dy = -2; dy <= 6; ++dy) {
+            const int sx = imin(PLAY_X1, imax(PLAY_X0, x + d));
+            const int sy = imin(PLAY_Y1, g_surfaceY[sx] + dy);
+            if (MATS[w.at(sx, sy).mat].kind == KIND_LIQUID) return false;
+        }
+
+    /* Flat enough. A tree on a steep slope buries half its trunk on the uphill
+       side and hangs the other half over nothing, and the mountain flank is
+       where that happens. 30 cells of rise across its own width is about the
+       limit before it reads as a mistake. */
+    int lo = SIM_H, hi = 0;
+    for (int d = -80; d <= 80; d += 10) {
+        const int sx = imin(PLAY_X1, imax(PLAY_X0, x + d));
+        if (g_surfaceY[sx] < lo) lo = g_surfaceY[sx];
+        if (g_surfaceY[sx] > hi) hi = g_surfaceY[sx];
+    }
+    if (hi - lo > 30) return false;
+
+    /* Room overhead. A crown that would be clipped by the top of the world is a
+       tree with its head cut off, and the mountain's summit is high enough for
+       that to be a real case rather than a theoretical one. */
+    if (surf - TREE_MAX_H - 60 < PLAY_Y0) return false;
+
+    /* Nothing hollow underneath. A cave roof will not hold a tree up, and a
+       trunk hanging into a cavern is the sort of thing you notice once and
+       never stop noticing. */
+    for (int dy = 1; dy <= 40; ++dy)
+        if (w.at(x, imin(PLAY_Y1, surf + dy)).mat == MAT_EMPTY) return false;
+
+    return true;
+}
+
+int g_treesPlanted = 0;
+
+static void generateTrees(World& w) {
+    treesClear();
+    int planted = 0;
+    int lastX = -TREE_MIN_GAP * 4;
+    for (int i = 0; i * TREE_SPACING < SIM_W; ++i) {
+        if ((int)(hash1(i, 0x7EEEu) % 255u) >= TREE_CHANCE) continue;
+
+        const int base = i * TREE_SPACING + TREE_SPACING / 2;
+        for (int t = 0; t < TREE_TRIES; ++t) {
+            const u32 h = hash1(i * 64 + t, 0xB4A5u);
+            const int x = base + (int)(h % (u32)(TREE_JITTER * 2 + 1)) - TREE_JITTER;
+            if (x < PLAY_X0 || x > PLAY_X1) continue;
+            if (x - lastX < TREE_MIN_GAP) continue;
+            if (!treeSpotOk(w, x)) continue;
+
+            /* Grown to full size immediately -- this is a world that has been
+               here a while, not one that starts as saplings. treeGrowNow leaves
+               no entity behind, so a generated forest costs nothing per frame.
+
+               Salted on POSITION, so the same world always grows the same wood
+               and two trees that land near each other still differ. */
+            treeGrowNow(w, x, g_surfaceY[x] - 1, hash1(x, 0x3F0Eu));
+            lastX = x;
+            ++planted;
+            break;
+        }
+    }
+    g_treesPlanted = planted;
 }
 
 void worldSpawnPoint(float* outX, float* outY) {

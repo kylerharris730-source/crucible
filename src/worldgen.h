@@ -38,6 +38,9 @@ static const int SURFACE_Y = 1200;
 
 void generateWorld(World& w);
 
+/* How many trees the last generation put down, for the HUD and for tests. */
+extern int g_treesPlanted;
+
 /* Where the character should start: on the grass, in the plains, clear of
    anything. */
 void worldSpawnPoint(float* outX, float* outY);
