@@ -342,7 +342,22 @@ static RECT g_menuResume, g_menuQuit, g_menuPanel;
    Right-click removes rather than adds, because the tedious half of testing an
    item is getting rid of it again. */
 static bool g_creativeOpen = false;
-static const int CRE_COLS = 20;
+static const int CRE_COLS = 4;
+/* How many rows of the palette are on screen at once, and where the window
+   starts. The list is 83 entries and growing; at four columns that is 21 rows,
+   and a panel tall enough for all of them ran off the top and bottom of the
+   window once the pack was added under it.
+
+   Scrolling rather than shrinking the rows, because the rows are the point.
+   They were tried as bare icon squares -- twenty across, name on hover -- which
+   fit beautifully and was unusable: two thirds of this table is materials whose
+   swatch is a flat colour, so Stone, Wall, Slag and Ceramic were four grey
+   squares and the only way to tell them apart was to point at each one. A list
+   you can read is worth more than a list that fits. */
+static const int CRE_VIS_ROWS = 10;
+static int g_creScroll = 0;      /* first visible row */
+static int g_creRowCount = 0;    /* total rows, for clamping and the bar */
+static RECT g_creTrack, g_creThumb;
 static RECT g_creRect[ITEM_COUNT];
 static RECT g_crePanel, g_creClear;
 static int  g_creCount = 0;              /* entries actually laid out */
@@ -635,44 +650,59 @@ static void layoutCreative() {
     if (g_toolPackSlot >= 0)
         g_toolSlotCount = imin(ITEMS[g_inv.slot[g_toolPackSlot].item].toolSlots, TOOL_SLOTS_MAX);
 
-    /* --- everything on this screen is a slot ------------------------------
-       The palette used to be four columns of named rows, which was right when
-       it was the only thing here. It is not any more: the pack sits under it,
-       equipment under that, and the bench under that, and all three of those
-       are grids of square slots you lift from and drop into. A palette of text
-       rows among them read as a different kind of thing that happened to be on
-       the same screen, and at 83 entries it was 630 pixels tall -- with the
-       pack added the panel ran 122 pixels off the top of the window and 122 off
-       the bottom.
+    /* --- the palette scrolls ---------------------------------------------
+       A fixed window of CRE_VIS_ROWS rows with the rest scrolled past, so the
+       panel's height no longer depends on how many materials exist. That
+       matters more every time one is added: the crops alone put eight new rows
+       in here.
 
-       So the palette is squares too, twenty across, with the name shown for
-       whichever one the pointer is over. That costs a hover to read a name and
-       buys a screen that fits, is a third the height, and has one visual idiom
-       instead of two. */
+       Rects for rows outside the window are set EMPTY rather than merely being
+       skipped when drawing. inRect() then fails on them for free, so a click
+       cannot land on a row that is scrolled out of sight -- which is the bug
+       this shape avoids rather than the bug it would otherwise have. */
+    const int cw = 168, ch = 26, gap = 4, pad = 14;
     const int ps = 34, pgap = 3;
-    const int rows = (g_creCount + CRE_COLS - 1) / CRE_COLS;
-    const int pad = 14;
+    g_creRowCount = (g_creCount + CRE_COLS - 1) / CRE_COLS;
+    const int visRows = imin(CRE_VIS_ROWS, g_creRowCount);
+    const int maxScroll = imax(0, g_creRowCount - CRE_VIS_ROWS);
+    if (g_creScroll > maxScroll) g_creScroll = maxScroll;
+    if (g_creScroll < 0) g_creScroll = 0;
+
     const int benchH = g_toolSlotCount ? 62 : 0;
     const int equipH = 62;
-    const int paletteH = rows * (ps + pgap) + 20;   /* +20 for the hover name */
+    const int paletteH = visRows * (ch + gap);
     const int packH    = 22 + INV_ROWS * (ps + pgap) + 10;
-    const int w = pad * 2 + CRE_COLS * ps + (CRE_COLS - 1) * pgap;
-    const int h = pad + 26 + paletteH + packH + equipH + benchH + 38;
+    const int barW     = 10;
+    const int w = pad * 2 + CRE_COLS * cw + (CRE_COLS - 1) * gap + barW + 6;
+    const int h = pad + 26 + paletteH + 10 + packH + equipH + benchH + 38;
     const int cx = PANEL_W + VIEW_W / 2, cy = VIEW_H / 2;
     const int x0 = cx - w / 2, y0 = cy - h / 2;
     SetRect(&g_crePanel, x0, y0, x0 + w, y0 + h);
 
+    const int listTop = y0 + pad + 26;
     for (int i = 0; i < g_creCount; ++i) {
-        const int c = i % CRE_COLS, r = i / CRE_COLS;
-        const int bx = x0 + pad + c * (ps + pgap);
-        const int by = y0 + pad + 26 + r * (ps + pgap);
-        SetRect(&g_creRect[i], bx, by, bx + ps, by + ps);
+        const int c = i % CRE_COLS, r = i / CRE_COLS - g_creScroll;
+        if (r < 0 || r >= visRows) { SetRectEmpty(&g_creRect[i]); continue; }
+        const int bx = x0 + pad + c * (cw + gap);
+        const int by = listTop + r * (ch + gap);
+        SetRect(&g_creRect[i], bx, by, bx + cw, by + ch);
     }
 
-    /* The pack, then equipment, then the tool bench. Same size and spacing as
-       the palette, because they behave the same way -- a slot that acted the
-       same and looked different would be a lie about what the screen does. */
-    const int packY = y0 + pad + 26 + paletteH + 22;
+    /* The bar. A track the full height of the window with a thumb sized to the
+       fraction on screen, which is the one piece of information a scrollbar has
+       to carry: how much of the list you are looking at. */
+    const int trackX = x0 + w - pad - barW + 4;
+    SetRect(&g_creTrack, trackX, listTop, trackX + barW, listTop + paletteH);
+    if (maxScroll > 0) {
+        const int th = imax(24, paletteH * visRows / g_creRowCount);
+        const int ty = listTop + (paletteH - th) * g_creScroll / maxScroll;
+        SetRect(&g_creThumb, trackX, ty, trackX + barW, ty + th);
+    } else {
+        g_creThumb = g_creTrack;
+    }
+
+    /* The pack, then equipment, then the tool bench. */
+    const int packY = listTop + paletteH + 10 + 22;
     for (int i = 0; i < INV_SLOTS; ++i) {
         const int c = i % HOTBAR_SLOTS, r = i / HOTBAR_SLOTS;
         /* The HOTBAR row drawn LAST, at the bottom, the way it sits on screen.
@@ -824,6 +854,17 @@ static bool handleCreativeClick(int mx, int my, bool remove) {
     if (inRect(g_creClear, mx, my)) {
         g_inv.clear();
         g_drag.item = ITEM_NONE; g_drag.count = 0; g_drag.inst = 0;
+        layoutCreative();
+        return true;
+    }
+
+    /* The scrollbar. Clicking the track pages toward the click, which is the
+       behaviour of every scrollbar and needs no drag handling to be useful --
+       and dragging a thumb across a modal panel is a second input mode for a
+       list the wheel already scrolls. */
+    if (inRect(g_creTrack, mx, my)) {
+        if      (my < g_creThumb.top)    g_creScroll -= CRE_VIS_ROWS;
+        else if (my > g_creThumb.bottom) g_creScroll += CRE_VIS_ROWS;
         layoutCreative();
         return true;
     }
@@ -1095,6 +1136,16 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
     case WM_MOUSEWHEEL: {
         const int dir = (short)HIWORD(wp) > 0 ? 1 : -1;
+        /* While the item grid is up the wheel scrolls IT, and nothing else.
+           A wheel that quietly changed which hotbar slot was selected while you
+           were reading a list would be a wheel you learn not to touch. Three
+           rows a notch, which is about a third of the window -- one row a notch
+           is a long way from Stone to Wheat Seed. */
+        if (g_creativeOpen) {
+            g_creScroll -= dir * 3;
+            layoutCreative();
+            return 0;
+        }
         /* The wheel picks what you are holding, which is what it does in every
            game with a hotbar, and Q turns it into a size dial. Sizing is the
            rarer action once you are playing rather than drawing, so it is the
@@ -2005,30 +2056,60 @@ static void drawCreative(HDC hdc) {
     DrawTextA(hdc, "CREATIVE  --  click a swatch to fill the cursor; click a slot to drop it, right-click for half", -1, &title,
               DT_LEFT | DT_TOP | DT_SINGLELINE);
 
-    const char* hoverName = NULL;
     for (int i = 0; i < g_creCount; ++i) {
         const ItemId it = g_creItem[i];
         const RECT& r = g_creRect[i];
+        /* Scrolled out of the window: layoutCreative left the rect empty, and
+           an empty rect must not be painted or it lands as a stripe at the
+           panel's top-left corner. */
+        if (IsRectEmpty(&r)) continue;
         const int have = g_inv.countOf(it);
-        const bool hot = inRect(r, g_mx, g_my);
 
-        FillRect(hdc, &r, hot ? g_btnBgHot : g_btnBg);
-        FrameRect(hdc, &r, have > 0 ? g_accentBrush : g_borderBrush);
-        RECT ir = r; ir.left += 3; ir.right -= 3; ir.top += 3; ir.bottom -= 3;
-        drawItemIcon(hdc, ir, it);
-        if (hot) hoverName = ITEMS[it].name;
+        /* Swatches are made and destroyed per frame here rather than cached,
+           unlike the palette's. This is a modal screen that is open for a
+           second at a time, and 40 brush creations once in a while is nothing
+           next to keeping a second parallel array in step with ITEMS[]. */
+        /* Materials keep their colour swatch here; tools and modules get their
+           sprite drawn over the top of it, in the same place, so the row layout
+           does not change between the two kinds. */
+        HBRUSH sw = CreateSolidBrush(RGB((ITEMS[it].colour >> 16) & 0xFF,
+                                         (ITEMS[it].colour >> 8) & 0xFF,
+                                          ITEMS[it].colour & 0xFF));
+        /* The swatch brush is passed either way so drawButton reserves the same
+           box and indents the label identically; the icon is then painted over
+           that box. Passing NULL for icon rows instead would left-align their
+           labels and the column of names would zig-zag. */
+        drawButton(hdc, r, ITEMS[it].name, sw, have > 0, inRect(r, g_mx, g_my));
+        DeleteObject(sw);
+        if (ITEMS[it].sprite > SPR_NONE) {
+            RECT ir = { r.left + 4, r.top + 1, r.left + 22, r.bottom - 1 };
+            FillRect(hdc, &ir, g_panelBg);
+            drawItemIcon(hdc, ir, it);
+        }
+
+        /* What you are already carrying, right-aligned, so the grid doubles as
+           a readout of the pack -- otherwise you cannot tell a click landed. */
+        if (have > 0) {
+            char n[16];
+            if (have >= 10000) sprintf(n, "%dk", have / 1000);
+            else               sprintf(n, "%d", have);
+            RECT cr = r; cr.right -= 7;
+            SetTextColor(hdc, RGB(150, 210, 150));
+            DrawTextA(hdc, n, -1, &cr, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+        }
     }
 
-    /* The name of whatever the pointer is over, under the palette. One line
-       rather than a label per square: eighty-three names at this size would be
-       unreadable, and the one you want is always the one you are pointing at. */
+    /* The bar. Drawn even when the whole list fits, so the panel does not
+       change width the moment somebody adds the material that makes it
+       scroll -- a layout that reflows on a content threshold is a layout that
+       looks broken exactly once and nobody can reproduce it. */
     {
-        RECT lr = g_crePanel;
-        lr.left = g_creRect[0].left;
-        lr.top  = g_creRect[g_creCount - 1].bottom + 3;
-        SetTextColor(hdc, hoverName ? RGB(226, 190, 90) : RGB(110, 116, 128));
-        DrawTextA(hdc, hoverName ? hoverName : "click a swatch to pick up a stack",
-                  -1, &lr, DT_LEFT | DT_TOP | DT_SINGLELINE);
+        FillRect(hdc, &g_creTrack, g_btnBg);
+        if (g_creRowCount > CRE_VIS_ROWS) {
+            FillRect(hdc, &g_creThumb, inRect(g_creTrack, g_mx, g_my)
+                                       ? g_btnBgHot : g_btnBgSel);
+            FrameRect(hdc, &g_creThumb, g_borderBrush);
+        }
     }
 
     /* --- the pack ---------------------------------------------------------
