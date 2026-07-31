@@ -16,6 +16,8 @@
 #include "room.h"
 #include "device.h"
 #include "door.h"
+#include "tree.h"
+#include "craft.h"
 
 /* The window is a fixed-size left-hand tool panel plus the sim viewport. The
    viewport keeps a clean integer scale so pixels stay crisp and the
@@ -126,6 +128,9 @@ static const BrushDef BRUSHES[] = {
        permanently-open doorway would be a hole that seals rooms and stops sand,
        which is a strange thing to be able to build by accident. */
     { MAT_DOOR,  "Door"  },
+    { MAT_ROPE,  "Rope"  },
+    { MAT_PLATFORM,"Platform"},
+    { MAT_TREESEED,"Seed" },
     { MAT_LAMP,  "Lamp"  },
     { MAT_HEATER,"Heater"},
     { MAT_COOLER,"Cooler"},
@@ -272,6 +277,9 @@ static bool g_devPlaced = false;
    every frame it draws. */
 static int  g_devPanel = -1;
 static bool handleDevPanelClick(int mx, int my);
+static bool handleCraftClick(int mx, int my);
+static void layoutCraft();
+extern bool g_craftOpen;
 static void drawDevPanel(HDC hdc);
 static int  g_mx = 0, g_my = 0;      /* current mouse, window pixels */
 static int  g_pmx = -1, g_pmy = -1;  /* previous aim point, in cells */
@@ -559,6 +567,7 @@ static const KeyHint KEY_HINTS[] = {
     { "right-click",   "open a machine, or a door" },
     { "wheel",         "pick a hotbar slot" },
     { "Q + wheel",     "brush size" },
+    { "C",             "crafting" },
     { "Tab",           "the item grid" },
     { "L",             "build on the backdrop" },
     { "V / K",         "cycle view / lights" },
@@ -851,6 +860,7 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         /* The device panel floats over the world, so it has to swallow the click
            before the world does -- otherwise nudging a setpoint also digs a hole
            in whatever is behind the button. */
+        else if (handleCraftClick(g_mx, g_my)) g_uiCapture = true;
         else if (handleDevPanelClick(g_mx, g_my)) g_uiCapture = true;
         else if (handlePanelClick(g_mx, g_my)) g_uiCapture = true;
         else                                   { g_lmb = true; startLine(); }
@@ -951,7 +961,15 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case 'I': g_survival = !g_survival; break;
         case 'H': g_brushMat = TOOL_HEAT; break;
         case 'J': g_brushMat = TOOL_COOL; break;
-        case 'C': g_world.reset(); makeWorld(); break;
+        /* C crafts. Regenerating the world moved to N, which it should
+           arguably always have been -- C for "clear" was a sandbox verb from
+           before there was a game to be in the middle of, and losing your world
+           to a mistyped craft key would be unforgivable. */
+        case 'C':
+            g_craftOpen = !g_craftOpen;
+            if (g_craftOpen) { layoutCraft(); g_lmb = g_rmb = false; }
+            break;
+        case 'N': g_world.reset(); makeWorld(); break;
         /* R HELD is the line tool; R TAPPED still respawns at the cursor. The
            respawn moved to key-up so the two can share one key -- see the note
            on g_lineKey. Auto-repeat means this arrives many times while held,
@@ -979,8 +997,9 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
            menu -- one key that always means "close the thing in front of me" is
            worth more than a second binding to remember. */
         case VK_ESCAPE:
-            if (g_creativeOpen) g_creativeOpen = false;
-            else                g_menuOpen = !g_menuOpen;
+            if (g_craftOpen)         g_craftOpen = false;
+            else if (g_creativeOpen) g_creativeOpen = false;
+            else                     g_menuOpen = !g_menuOpen;
             break;
         }
         return 0;
@@ -1910,6 +1929,94 @@ static void drawCreative(HDC hdc) {
 /* A modal overlay, deliberately plain: dim the world behind it so it is
    obviously not interactive, then the two things anyone opens a pause menu
    for. Escape closes it again. */
+/* --- the crafting panel ----------------------------------------------------
+   Every recipe you can make RIGHT NOW, one per row, click to make one. See
+   craft.h for why it is a filtered list rather than a grid.
+
+   Recipes you cannot afford are shown greyed rather than hidden, and that is
+   the one real UI decision here. Hiding them makes the panel shorter and makes
+   the game unlearnable: you would never discover that wood makes rope until the
+   moment you already had wood, and by then you have probably built a staircase.
+   Greyed-out rows are a shopping list. */
+static RECT g_craftPanel;
+static RECT g_craftRow[64];
+bool g_craftOpen = false;
+
+static void layoutCraft() {
+    const int w = 260;
+    const int h = 46 + N_RECIPES * 30 + 12;
+    const int cx = PANEL_W + VIEW_W / 2, cy = VIEW_H / 2;
+    SetRect(&g_craftPanel, cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2);
+    for (int i = 0; i < N_RECIPES && i < 64; ++i)
+        SetRect(&g_craftRow[i], g_craftPanel.left + 12, g_craftPanel.top + 40 + i * 30,
+                g_craftPanel.right - 12, g_craftPanel.top + 40 + i * 30 + 26);
+}
+
+static bool handleCraftClick(int mx, int my) {
+    if (!g_craftOpen) return false;
+    for (int i = 0; i < N_RECIPES && i < 64; ++i)
+        if (inRect(g_craftRow[i], mx, my)) { craftMake(g_inv, i); return true; }
+    /* Anywhere else inside the panel is swallowed, so a miss does not dig a
+       hole in the world behind it. */
+    return inRect(g_craftPanel, mx, my);
+}
+
+static void drawCraft(HDC hdc) {
+    layoutCraft();
+    FillRect(hdc, &g_craftPanel, g_panelBg);
+    FrameRect(hdc, &g_craftPanel, g_accentBrush);
+
+    HGDIOBJ oldFont = SelectObject(hdc, g_font);
+    SetBkMode(hdc, TRANSPARENT);
+
+    RECT title = g_craftPanel; title.top += 12;
+    SetTextColor(hdc, RGB(226, 190, 90));
+    DrawTextA(hdc, "CRAFTING", -1, &title, DT_CENTER | DT_TOP | DT_SINGLELINE);
+
+    for (int i = 0; i < N_RECIPES && i < 64; ++i) {
+        const Recipe& rc = RECIPES[i];
+        const bool can = craftCan(g_inv, i);
+        const bool hot = can && inRect(g_craftRow[i], g_mx, g_my);
+
+        RECT r = g_craftRow[i];
+        FillRect(hdc, &r, hot ? g_btnBgHot : g_btnBg);
+        FrameRect(hdc, &r, can ? g_borderBrush : g_panelBg);
+
+        /* The output's own swatch, the same one the hotbar uses, so a row and
+           the thing it makes are recognisably the same object. */
+        RECT sw = { r.left + 5, r.top + 4, r.left + 21, r.bottom - 4 };
+        drawItemIcon(hdc, sw, rc.out);
+
+        SetTextColor(hdc, can ? RGB(226, 232, 244) : RGB(104, 110, 122));
+        RECT t = r; t.left = sw.right + 8;
+        DrawTextA(hdc, rc.label, -1, &t, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+
+        /* What it costs, right-aligned, and coloured per ingredient so a row
+           you cannot afford says WHICH part you are short of rather than just
+           being dim. That is the difference between a locked door and a sign. */
+        char cost[128]; cost[0] = 0;
+        for (int k = 0; k < CRAFT_MAX_IN; ++k) {
+            if (rc.in[k].item == ITEM_NONE || rc.in[k].count <= 0) continue;
+            char one[48];
+            const int have = g_inv.countOf(rc.in[k].item);
+            sprintf(one, "%s%d/%d %s", cost[0] ? "  " : "",
+                    have > rc.in[k].count ? rc.in[k].count : have,
+                    rc.in[k].count, ITEMS[rc.in[k].item].name);
+            if (strlen(cost) + strlen(one) < sizeof(cost) - 1) strcat(cost, one);
+        }
+        SetTextColor(hdc, can ? RGB(150, 190, 140) : RGB(190, 120, 110));
+        RECT ct = r; ct.right -= 8;
+        DrawTextA(hdc, cost, -1, &ct, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+    }
+
+    RECT hint = g_craftPanel;
+    hint.top = g_craftPanel.bottom - 20;
+    SetTextColor(hdc, RGB(120, 126, 138));
+    DrawTextA(hdc, "C to close", -1, &hint, DT_CENTER | DT_TOP | DT_SINGLELINE);
+
+    SelectObject(hdc, oldFont);
+}
+
 static void drawMenu(HDC hdc) {
     layoutMenu();
 
@@ -2151,7 +2258,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
            instance rather than beside the input handler. */
         for (int i = 1; i < MAX_TOOL_INST; ++i)
             if (g_toolInst[i].used && g_toolInst[i].cooldown > 0) --g_toolInst[i].cooldown;
-        if (!g_menuOpen && !g_creativeOpen) applyBrush();
+        if (!g_menuOpen && !g_creativeOpen && !g_craftOpen) applyBrush();
         /* Whether the sim actually advanced this frame, so the character moves
            in lockstep with the world -- including on a single frame-advance. */
         bool steppedThisFrame = false;
@@ -2200,6 +2307,9 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
             in.right = (GetAsyncKeyState('D') & 0x8000) || (GetAsyncKeyState(VK_RIGHT) & 0x8000);
             in.jump  = (GetAsyncKeyState('W') & 0x8000) || (GetAsyncKeyState(VK_UP) & 0x8000)
                     || (GetAsyncKeyState(VK_SPACE) & 0x8000);
+            /* Down: climbs a rope, and drops through a platform. S and the down
+               arrow, matching the other three. */
+            in.down  = (GetAsyncKeyState('S') & 0x8000) || (GetAsyncKeyState(VK_DOWN) & 0x8000);
             /* Published before the step, so swapping a jetpack takes effect on
                the same frame -- the same arrangement the collision box uses,
                and the reason player.cpp knows nothing about inventories. */
@@ -2229,6 +2339,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
            ceiling. */
         roomsTick(g_world);
         devTick(g_world);
+        treesTick(g_world);
 
         /* Light is computed for this camera position and consumed immediately
            by renderView. The two must agree about where the camera is, which
@@ -2248,7 +2359,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         projDraw(g_pixels, g_camX, g_camY);
         /* Modals dim the world in the pixel buffer, before it becomes a blit --
            see dimPixels(). Doing it to the window instead cost 500ms a frame. */
-        if (g_menuOpen || g_creativeOpen) dimPixels();
+        if (g_menuOpen || g_creativeOpen || g_craftOpen) dimPixels();
 
         /* Compose off-screen: sim into the viewport, then the panel, then out
            to the window in one BitBlt. */
@@ -2257,8 +2368,9 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         drawPanel(g_backDC);
         if (g_survival && g_playerOn) drawHotbar(g_backDC);
         drawDevPanel(g_backDC);
-        if (!g_menuOpen && !g_creativeOpen) drawCursor(g_backDC);
+        if (!g_menuOpen && !g_creativeOpen && !g_craftOpen) drawCursor(g_backDC);
         if (g_creativeOpen) drawCreative(g_backDC);
+        if (g_craftOpen)    drawCraft(g_backDC);
         if (g_menuOpen)     drawMenu(g_backDC);
 
         HDC hdc = GetDC(hwnd);

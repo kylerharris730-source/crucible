@@ -642,6 +642,26 @@ MatInfo MATS[MAT_COUNT] = {
      room which of your doors are open. */
   { "Door",  KIND_STATIC, 255,   0,    0,   0,   0,   0,  0,   12,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0x8A6034, 0x6E4A28, 0x8A6034, 0x6E4A28, 0 },
   { "Open Door",KIND_STATIC,255, 0,    0,   0,   0,   0,  0,   12,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0x3A2A1C, 0x2A1E14, 0x3A2A1C, 0x2A1E14, 0 },
+  /* Rope and platform. Both inert and both wooden, so they burn for the same
+     reason a wooden floor does -- a rope down a shaft beside a furnace is a
+     decision, not a free ride. ignite/burnsTo copied from Wood deliberately:
+     if wood's numbers ever move, these should move with them, and the way to
+     notice is that they are written the same. */
+  { "Rope",  KIND_STATIC, 255,   0,    0,   0,   0,   0,  0,   14,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY, degC(90), MAT_FIRE,   0,  0xA8814A, 0x7E5C32, 0xA8814A, 0x7E5C32, 0 },
+  { "Platform",KIND_STATIC,255,  0,    0,   0,   0,   0,  0,   14,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY, degC(90), MAT_FIRE,   0,  0xB08A50, 0x8A6A3A, 0xB08A50, 0x8A6A3A, 0 },
+  /* --- the tree ------------------------------------------------------------
+     The seed is a POWDER, which is the whole of "dropped on wet soil": you let
+     go of it and it falls, and where it lands is where the tree is. Slides
+     poorly (60) so a seed dropped on a slope stays roughly where you put it
+     rather than skittering to the bottom of the hill.
+
+     Sapling, leaf and pod are static and light. All three burn -- a forest
+     fire is a thing that should be able to happen, and it costs nothing to
+     allow beyond the rows already being written. */
+  { "Tree Seed",KIND_POWDER,120, 60,  30,   0,   0,   0,  0,   12,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY, degC(95), MAT_FIRE,   0,  0x8A6A3A, 0x6A5028, 0x8A6A3A, 0x6A5028, 0 },
+  { "Sapling",KIND_STATIC, 255,  0,    0,   0,   0,   0,  0,   12,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY, degC(85), MAT_FIRE,   0,  0x6EA83E, 0x4E8A2E, 0x6EA83E, 0x4E8A2E, 0 },
+  { "Leaves",KIND_STATIC,  255,  0,    0,   0,   0,   0,  0,   10,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY, degC(80), MAT_FIRE,   0,  0x4E9A3A, 0x357028, 0x4E9A3A, 0x357028, 0 },
+  { "Seed Pod",KIND_STATIC,255,  0,    0,   0,   0,   0,  0,   10,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY, degC(80), MAT_FIRE,   0,  0xC8B44A, 0xA08A28, 0xC8B44A, 0xA08A28, 0 },
   { "Device",KIND_STATIC, 255,   0,    0,   0,   0,   0,  0,  200,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0x2A2F3A, 0x2A2F3A, 0x2A2F3A, 0x2A2F3A, 0 },
 };
 
@@ -653,6 +673,8 @@ u8  g_matDecay[MAT_COUNT];
 u8  g_matStrength[MAT_COUNT];
 u8  g_matPassable[MAT_COUNT];
 u8  g_matUnseen[MAT_COUNT];
+u8  g_matClimb[MAT_COUNT];
+u8  g_matPlatform[MAT_COUNT];
 u8  g_matDropsAs[MAT_COUNT];
 u8  g_matSmeltYield[MAT_COUNT];
 u8  g_matConducts[MAT_COUNT];
@@ -1117,6 +1139,26 @@ static void initPassable() {
        stays sealed through one -- passable is a fact about people, not about
        physics, which is the whole argument in the g_matPassable note. */
     g_matPassable[MAT_DOOR_OPEN] = 1;
+    /* Rope and platform. The platform is passable in the general table AND
+       listed in g_matPlatform, which is not a contradiction: passable is the
+       default answer and the platform table is the exception that puts it back
+       under your feet. Written this way round so that anything which forgets to
+       ask about platforms lets you through, which is the safe failure -- the
+       other way round, a forgotten check entombs you in a floor. */
+    g_matPassable[MAT_ROPE]     = 1;
+    g_matPassable[MAT_PLATFORM] = 1;
+    /* The sapling, so a tree you planted is not a fence post while it grows. */
+    g_matPassable[MAT_SAPLING]  = 1;
+}
+
+static void initClimb() {
+    for (int m = 0; m < MAT_COUNT; ++m) g_matClimb[m] = 0;
+    g_matClimb[MAT_ROPE] = 1;
+}
+
+static void initPlatform() {
+    for (int m = 0; m < MAT_COUNT; ++m) g_matPlatform[m] = 0;
+    g_matPlatform[MAT_PLATFORM] = 1;
 }
 
 static void initDrops() {
@@ -1124,6 +1166,13 @@ static void initDrops() {
        anyone having to remember this table exists. */
     for (int m = 0; m < MAT_COUNT; ++m) g_matDropsAs[m] = (u8)m;
     g_matDropsAs[MAT_DOOR_OPEN] = MAT_DOOR;
+    /* A pod in the canopy gives you a SEED, which is what makes trees
+       renewable without anything having to model reproduction. Breaking the pod
+       is the harvest. */
+    g_matDropsAs[MAT_SEEDPOD]   = MAT_TREESEED;
+    /* And a sapling gives back the seed you planted, so changing your mind
+       about where the tree goes costs nothing. */
+    g_matDropsAs[MAT_SAPLING]   = MAT_TREESEED;
 }
 
 static void initUnseen() {
@@ -1140,6 +1189,8 @@ static void initUnseen() {
 void initMaterials() {
     initStrength();
     initPassable();
+    initClimb();
+    initPlatform();
     initUnseen();
     initDrops();
     initSmelting();

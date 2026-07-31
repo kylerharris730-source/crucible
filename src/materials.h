@@ -118,6 +118,30 @@ enum MatId {
        thing you own. */
     MAT_DOOR,
     MAT_DOOR_OPEN,
+    /* --- the two ways of getting about ------------------------------------
+       Rope you climb, platform you stand on. Both are solid to the SIMULATION
+       and not to you, which is the trick MAT_TORCH established and the reason
+       g_matPassable is a table rather than a MatKind: sand piles on a platform
+       and water pools on it, while you walk through the side of it.
+
+       They are the movement half of what doors started. A door is a hole in a
+       wall you control; these are a hole in the FLOOR and a hole in the
+       ceiling, and between the three of them a base becomes something you lay
+       out rather than something you tunnel. */
+    MAT_ROPE,
+    MAT_PLATFORM,
+    /* --- the tree ---------------------------------------------------------
+       A seed you drop, what it becomes, and what a grown tree is made of.
+       MAT_WOOD already existed and is the trunk, so nothing new is needed for
+       the part you actually want.
+
+       The pod is the renewable half: it is a cell of the canopy that drops a
+       SEED rather than itself (see g_matDropsAs), so every tree you fell pays
+       for the next two or three. That is a table entry rather than a rule. */
+    MAT_TREESEED,
+    MAT_SAPLING,
+    MAT_LEAF,
+    MAT_SEEDPOD,
     /* --- machinery -------------------------------------------------------
        The cells a multi-cell DEVICE occupies. One material for every device
        type, because the grid only needs to know "something solid and man-made is
@@ -390,6 +414,28 @@ extern u8 g_matOpacity[MAT_COUNT];
    give: as a field it would be the one entry missing from every MATS[] row, which
    trips -Wmissing-field-initializers on all of them under -Wextra. */
 extern u8 g_matPassable[MAT_COUNT];
+
+/* --- what you can climb ----------------------------------------------------
+   True for a cell you can move through in any direction under your own power:
+   gravity stops applying while you are touching one, and up and down become
+   things you simply do rather than things you jump or fall into.
+
+   Rope only, so far. Separate from g_matPassable because the two are genuinely
+   independent -- a torch is passable and not climbable, and a ladder built into
+   a wall would want to be climbable while still stopping sand -- and because
+   the moment they share a table somebody adds a passable material and gets
+   free flight through it. */
+extern u8 g_matClimb[MAT_COUNT];
+
+/* --- what holds you up from above and nowhere else -------------------------
+   A platform: you walk through it sideways, jump up through it, and land on
+   top of it. Holding down drops you through.
+
+   This cannot be a property of the CELL alone, which is why it is a table read
+   by a collision test that also knows which way you are going -- see SolidMode
+   in player.h. Every other material in the game answers "am I solid" with one
+   bit; this one answers "solid to what". */
+extern u8 g_matPlatform[MAT_COUNT];
 
 /* --- what the renderer does not draw ----------------------------------------
    True for a cell whose material is NOT painted: the backdrop is drawn in its

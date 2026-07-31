@@ -499,6 +499,26 @@ struct World {
 
     u8 stamp() const { return (u8)(frame & STAMP_MASK); }
 
+    /* --- seeds that have come to rest -----------------------------------
+       Cells where a tree seed is sitting on wet ground, reported by the
+       simulation and drained by treesTick.
+
+       The simulation is the only thing that knows a powder has SETTLED, and
+       "settled" is the whole of the planting rule -- so the alternative is
+       tree.cpp scanning the world for seeds every frame, which is 12.6 M cells
+       to find at most a handful. This is one push on the rare frame a seed
+       lands, and the World learns nothing about trees beyond "somebody may care
+       about this cell": it does not convert it, and it does not know what
+       happens next.
+
+       A ring rather than a queue, and a small one: if more than 32 seeds land
+       in a single frame the extras are dropped, and the cost of that is one
+       seed you have to nudge. The alternative is an unbounded buffer to serve a
+       case that means somebody emptied a stack of seeds off a cliff. */
+    static const int MAX_SPROUTS = 32;
+    i32 sprout[MAX_SPROUTS];
+    int sproutCount;
+
 private:
     void updateCell(int x, int y);
     void updateClone(int x, int y);

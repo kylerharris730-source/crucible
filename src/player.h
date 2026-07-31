@@ -96,7 +96,24 @@ static const int PLAYER_REACH = 56;
 
 struct PlayerInput {
     bool left, right, jump;
+    /* Down does two jobs and neither of them is "move down" on its own: it
+       climbs down a rope, and it drops you through a platform. Both are
+       requests to go through something you are standing on, which is why one
+       key covers them. */
+    bool down;
 };
+
+/* What a collision test is being ASKED, which is a question every material in
+   this game answers with one bit except the platform.
+
+   SOLID_ANY is "is there anything here at all" and is what a sideways move, a
+   jump, and the buried check want. SOLID_FLOOR is "is there anything here I
+   could stand on", and additionally counts platforms.
+
+   A mode rather than two functions because every caller has to pick one, and a
+   pair of similarly-named functions is how you get a caller quietly using the
+   wrong one for a year. */
+enum SolidMode { SOLID_ANY = 0, SOLID_FLOOR };
 
 /* --- thrust ----------------------------------------------------------------
 
@@ -202,6 +219,21 @@ static const float WATER_DRAG     = 0.86f;  /* per frame, on both axes */
    climb you commit to, not a launch. */
 static const float SWIM_STROKE    = 0.24f;
 static const float SWIM_RISE      = 1.1f;
+
+/* --- rope ------------------------------------------------------------------
+   On a rope there is no gravity and no momentum: you go where you hold, at one
+   speed, and you stop when you let go. That is deliberately unlike both walking
+   and swimming, which both have inertia -- a rope is a thing you are HOLDING
+   ON TO, and drifting off the end of one because you were still carrying speed
+   would be the single most annoying way to die in a shaft.
+
+   1.0 cells a frame is 60 a second, slower than a walk and much faster than
+   swimming up. A rope should be the reliable way out of a hole, not the fast
+   one, or nobody ever builds stairs. */
+static const float CLIMB_SPEED = 1.0f;
+/* Jumping OFF a rope still works, and gets the ordinary jump. Without it the
+   only way off is to walk out sideways, which at zero horizontal momentum
+   means falling straight back down a shaft you just climbed. */
 
 /* Frames of air, and what running out costs. 900 is fifteen seconds, which is
    long enough to cross a lake or dive for something on the bottom and short
@@ -319,6 +351,10 @@ struct Player {
     bool  swimming;
     bool  underwater;
     int   breath;
+    /* Touching a rope. An output, recomputed every frame, so cutting the rope
+       out from under someone takes effect on the next step with nothing to
+       clear. */
+    bool  climbing;
 
     /* Extra ground speed, as a multiplier, published by the host each frame
        from what is worn -- the same arrangement `fly` uses, and for the same
@@ -377,4 +413,8 @@ extern Player g_player;
    sand shifting under you while you dig is a constant low-grade frustration
    with no upside. Liquids and gases never block; wading and swimming come
    later. */
-bool playerSolid(const World& w, int x, int y);
+bool playerSolid(const World& w, int x, int y, int mode = SOLID_ANY);
+
+/* Is any cell of the body touching a climbable one? Published on the Player so
+   the HUD and the tests can see it without repeating the scan. */
+bool playerOnClimb(const World& w, const Player& p);

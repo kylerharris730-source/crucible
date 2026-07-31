@@ -22,11 +22,15 @@ static const float GROUND_DRAG = 0.55f;  /* stop briskly when input released */
 static const float AIR_DRAG    = 0.92f;  /* keep most momentum in the air */
 static const float JUMP_VEL    = 2.6f;
 
-bool playerSolid(const World& w, int x, int y) {
+bool playerSolid(const World& w, int x, int y, int mode) {
     /* Outside the world counts as solid, so the player can never be walked out
        of bounds and no caller has to bounds-check first. */
     if (x < 0 || x >= SIM_W || y < 0 || y >= SIM_H) return true;
     const Cell& c = w.at(x, y);
+    /* The platform, before the kind test, because it is an exception to
+       g_matPassable rather than to anything about kinds: solid when the
+       question is "can I stand here" and thin air otherwise. */
+    if (g_matPlatform[c.mat]) return mode == SOLID_FLOOR;
     const u8 k = MATS[c.mat].kind;
     if (k != KIND_STATIC && k != KIND_POWDER) return false;
     /* Materials you walk through -- the torch, so far. Per-material and
@@ -44,12 +48,21 @@ bool playerSolid(const World& w, int x, int y) {
    Uses the same tapered outline the world is told about, so the player fits
    through exactly the gaps their silhouette suggests -- the pointed shoulders
    let them under an overhang that a full-width head would catch on. */
-static bool boxBlocked(const World& w, int bx, int by) {
+static bool boxBlocked(const World& w, int bx, int by, int mode = SOLID_ANY) {
     for (int yy = 0; yy < PLAYER_H; ++yy) {
         const int inset = playerRowInset(yy);
         for (int xx = inset; xx < PLAYER_W - inset; ++xx)
-            if (playerSolid(w, bx + xx, by + yy)) return true;
+            if (playerSolid(w, bx + xx, by + yy, mode)) return true;
     }
+    return false;
+}
+
+bool playerOnClimb(const World& w, const Player& p) {
+    const int y0 = imax(0, p.top()),  y1 = imin(SIM_H - 1, p.bottom());
+    const int x0 = imax(0, p.left()), x1 = imin(SIM_W - 1, p.right());
+    for (int y = y0; y <= y1; ++y)
+        for (int x = x0; x <= x1; ++x)
+            if (g_matClimb[w.cells[y * SIM_W + x].mat]) return true;
     return false;
 }
 
@@ -80,6 +93,7 @@ void Player::reset(float cx, float cy) {
     lastFall  = 0.0f;
     swimming   = false;
     underwater = false;
+    climbing   = false;
     breath     = BREATH_MAX;
     speedMul   = 1.0f;
 }
@@ -272,7 +286,24 @@ void Player::update(const World& w, const PlayerInput& in) {
     }
 
     /* --- vertical ------------------------------------------------------ */
-    if (swimming) {
+    climbing = playerOnClimb(w, *this);
+    if (climbing && !in.jump) {
+        /* Held, not accelerated: a rope has no inertia. See CLIMB_SPEED.
+           Gravity is not applied at all rather than being cancelled, so hanging
+           still is genuinely still and does not creep.
+
+           `!in.jump` above is what leaves a way OFF: the jump key falls through
+           to the ordinary branch below, where the rope counts as ground for
+           the purpose of pushing off it. Without that the only exit from a
+           rope is to walk sideways with no speed, straight back down the shaft
+           you climbed. */
+        vy = 0.0f;
+        if (in.down) vy =  CLIMB_SPEED;
+        fallFromY = y;      /* a rope cancels a fall, like water does */
+    } else if (climbing && in.jump) {
+        vy = -JUMP_VEL;
+        onGround = false;
+    } else if (swimming) {
         /* No ground needed, and repeatable every frame -- which is what makes
            this a swim rather than a jump you get one of. The stroke is added
            to velocity and capped, rather than assigned like JUMP_VEL, so
@@ -403,11 +434,29 @@ void Player::update(const World& w, const PlayerInput& in) {
         const float target = y + vy;
         const int   end    = (int)target;
         const int   dir    = (vy > 0.0f) ? 1 : -1;
+
+        /* --- when a platform counts ------------------------------------
+           Only on the way DOWN, only when down is not held, and only if the
+           body is not already inside one.
+
+           That last condition is the one that is easy to miss and impossible to
+           live without. Having jumped up through a platform, the box overlaps
+           it for a few frames on the way back down; without the check the very
+           next downward step is blocked, and the player is shoved back up onto
+           a platform they were trying to pass -- so a platform you can jump
+           through becomes one you can never come back down through. Asking
+           "was I already in it before I moved" separates landing ON one from
+           being inside one. */
+        const bool insidePlatform = boxBlocked(w, left(), (int)y, SOLID_FLOOR)
+                                 && !boxBlocked(w, left(), (int)y, SOLID_ANY);
+        const int  mode = (dir > 0 && !in.down && !insidePlatform)
+                        ? SOLID_FLOOR : SOLID_ANY;
+
         int  cur     = (int)y;
         bool blocked = false;
         while (cur != end) {
             const int next = cur + dir;
-            if (boxBlocked(w, left(), next)) { blocked = true; break; }
+            if (boxBlocked(w, left(), next, mode)) { blocked = true; break; }
             cur = next;
         }
         onGround = false;
@@ -421,9 +470,13 @@ void Player::update(const World& w, const PlayerInput& in) {
     }
 
     /* Standing on something is a separate question from having just landed:
-       walking off a ledge has to clear onGround even though nothing was hit. */
+       walking off a ledge has to clear onGround even though nothing was hit.
+
+       SOLID_FLOOR, so a platform is somewhere you can stand -- and NOT while
+       down is held, or holding down on a platform would leave you permanently
+       "on the ground" and unable to fall through it. */
     if (!onGround && vy >= 0.0f)
-        onGround = boxBlocked(w, left(), top() + 1);
+        onGround = boxBlocked(w, left(), top() + 1, in.down ? SOLID_ANY : SOLID_FLOOR);
 
     /* --- the impact ---------------------------------------------------
        Fall damage is applied HERE, on the transition into onGround, and not in

@@ -93,6 +93,7 @@ void World::reset() {
     memset(zone, ZONE_SKY, sizeof(zone));
     memset(keepAlive, 0, sizeof(keepAlive));
     keptChunks = 0;
+    sproutCount = 0;
     frame  = 0;
     activeChunks = 0;
     clearDirty(cur);
@@ -976,6 +977,27 @@ void World::updateCell(int x, int y) {
     c.flags = (u8)((c.flags & F_DIR) | (st << STAMP_SHIFT));
 
     const MatInfo& m = MATS[c.mat];
+
+    /* --- a seed that has come to rest ---------------------------------
+       Reported, not acted on: whether this becomes a tree is tree.cpp's
+       business and depends on a table this file has no reason to know about.
+       See World::sprout.
+
+       The test is deliberately here rather than in the powder rules, because
+       it wants a cell that is being LOOKED AT rather than one that has just
+       moved -- a seed still falling past wet ground should not root in mid-air,
+       and a seed that has settled is exactly a seed whose chunk is still awake
+       from the frame it landed on. */
+    if (c.mat == MAT_TREESEED && sproutCount < MAX_SPROUTS) {
+        const u8 below = (y < PLAY_Y1) ? cells[(y + 1) * SIM_W + x].mat : (u8)MAT_WALL;
+        if (below == MAT_DIRT || below == MAT_GRASS) {
+            sprout[sproutCount++] = i;
+            /* Kept awake until somebody deals with it. Without this a seed that
+               lands while the tree table happens to be full settles for ever
+               and never gets a second look. */
+            dirtyPoint(x, y);
+        }
+    }
 
     /* --- table-driven phase changes ----------------------------------- */
     const int t = temp[i];
