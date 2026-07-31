@@ -187,7 +187,44 @@ static void buildTree(World& w, int bx, int by, u32 salt, int species,
     if (out <= 0.0f) {
         /* Still climbing: cap the stem with a tuft so a half-grown tree looks
            like a young tree rather than an amputated one. Sized with the
-           trunk, so the tuft grows too. */
+           trunk, so the tuft grows too.
+
+           The tuft is the one TRANSIENT thing buildTree draws, and forgetting
+           that is what furred every trunk in the game with leaves. Everything
+           else here is purely additive -- put() never removes -- which is what
+           makes repeated calls with a rising fraction correct. An additive
+           tuft, though, is stamped fresh at the top of a stem that climbs a
+           hundred and fifty times and leaves a copy behind at every height it
+           passed through, so the finished tree wears a sleeve of leaves from
+           root to crown.
+
+           Measured before this: a grown birch carried 42 leaf cells within 12
+           of its stem in the lowest eighth of its height, and 106 in the next,
+           where a birch built in ONE call -- the worldgen path, which never
+           enters this branch at all -- carried none in either. That asymmetry
+           is what named the culprit. It showed worst on birch because a birch
+           stem is four cells wide against a tuft twenty-eight across; oak's
+           fifteen-cell trunk swallowed more of the evidence.
+
+           So the previous tuft is erased before the new one is drawn. Only
+           cells that are this species' leaf, and only inside the disc that
+           tuft occupied, so a neighbour's canopy and anything the player built
+           are both out of reach. The last tuft of all is deliberately left
+           standing: the crown grows over it. */
+        const float upWas    = from < TREE_TRUNK_FRAC ? from / TREE_TRUNK_FRAC : 1.0f;
+        const int   wasGrown = (int)((float)height * upWas);
+        if (wasGrown < grown) {
+            const int wx = bx + trunkLean(k, salt, wasGrown, height);
+            const int wy = by - wasGrown;
+            const int wr = 4 + (int)(10.0f * upWas);
+            for (int dy = -wr; dy <= wr / 2; ++dy)
+                for (int dx = -wr; dx <= wr; ++dx) {
+                    if (dx * dx + dy * dy > wr * wr) continue;
+                    const int px = wx + dx, py = wy + dy;
+                    if (px < PLAY_X0 || px > PLAY_X1 || py < PLAY_Y0 || py > PLAY_Y1) continue;
+                    if (w.at(px, py).mat == k.leaf) w.setCell(px, py, MAT_EMPTY);
+                }
+        }
         const int tx = bx + trunkLean(k, salt, grown, height);
         const int ty = by - grown;
         const int r  = 4 + (int)(10.0f * up);

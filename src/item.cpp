@@ -481,6 +481,17 @@ int Inventory::speedBonus() const {
     return best;
 }
 
+TempSpec Inventory::tempResist() const {
+    TempSpec t; t.heat = t.cold = 0;
+    for (int i = 0; i < EQ_COUNT; ++i) {
+        if (equip[i].empty()) continue;
+        const ItemDef& d = ITEMS[equip[i].item];
+        if (d.heatResist > t.heat) t.heat = d.heatResist;
+        if (d.coldResist > t.cold) t.cold = d.coldResist;
+    }
+    return t;
+}
+
 bool equipFits(ItemId item, int eqSlot) {
     if (item == ITEM_NONE || eqSlot < 0 || eqSlot >= EQ_COUNT) return false;
     const ItemDef& d = ITEMS[item];

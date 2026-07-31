@@ -2422,6 +2422,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
                and the reason player.cpp knows nothing about inventories. */
             g_player.fly = flightSpec(g_inv);
             g_player.speedMul = 1.0f + (float)g_inv.speedBonus() / 100.0f;
+            g_player.resist   = g_inv.tempResist();
             g_player.update(g_world, in);
         }
 

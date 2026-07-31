@@ -163,26 +163,28 @@ static const int PLAYER_HP_MAX = 100;
    jump is 2.6 cells/frame against 0.18 gravity, so its peak is v^2/2g = 18.8
    cells and you land from 19.
 
-   104, doubled twice from the 26 it started at, both times after playing with
-   it rather than after reasoning about it. Worth recording why the first double
-   was not enough, because the arithmetic looked convincing and the game
-   disagreed: a body is 22 cells, so 52 is under two and a half of them, and a
-   drop of two and a half body heights is not a fall anybody expects to be hurt
-   by. Reading the number in cells makes it sound generous; reading it in
-   CHARACTERS makes it sound like tripping over.
+   208, doubled three times from the 26 it started at, every time after playing
+   with it rather than after reasoning about it. Worth recording why each double
+   was not enough, because the arithmetic looked convincing each time and the
+   game disagreed: a body is 22 cells, so 52 is under two and a half of them,
+   and a drop of two and a half body heights is not a fall anybody expects to be
+   hurt by. Reading the number in cells makes it sound generous; reading it in
+   CHARACTERS makes it sound like tripping over. 104 was nearly five body
+   heights and still read as a normal descent, because the shafts and cliffs
+   this world generates are hundreds of cells deep -- the yardstick is not the
+   character, it is the terrain, and the terrain here is tall.
 
-   104 is nearly five body heights, which is the first figure that reads as a
-   height you would think twice about.
+   208 is nine and a half body heights, and more usefully it is a drop that
+   takes three and a half seconds at terminal velocity.
 
-   The rate halved with it, to 0.75 a cell, so a fall is fatal at about 237
-   cells rather than 171. That second half is the other complaint and it is a
-   separate number: doubling only the safe distance would have moved where
-   damage STARTS while leaving the gap between "first scratch" and "dead" the
-   same 67 cells, so a fall that hurt at all would still have been close to one
-   that killed. Both thresholds doubling keeps the ramp in proportion to
-   itself. */
-static const float FALL_SAFE   = 104.0f;
-static const float FALL_DAMAGE = 0.75f;
+   The rate halves with it every time, now 0.375 a cell, so a fall is fatal at
+   about 475 cells rather than 237. That second half is a separate number and it
+   has to move too: doubling only the safe distance would push where damage
+   STARTS while leaving the gap between "first scratch" and "dead" at the same
+   267 cells, so a fall that hurt at all would still be within sight of one that
+   killed. Both doubling keeps the ramp in proportion to itself. */
+static const float FALL_SAFE   = 208.0f;
+static const float FALL_DAMAGE = 0.375f;
 
 /* --- water -----------------------------------------------------------------
 
@@ -253,29 +255,60 @@ static const float DROWN_DAMAGE   = 0.35f;
    So this measures what you are standing in, which is the honest question, and
    it costs one pass over 176 cells a frame.
 
-   55 C is above anything the weather does and below every process temperature
-   in the game, so a furnace room is uncomfortable and a workshop is not. -5 C
-   is below freezing rather than at it, so standing on ice is free and standing
-   in liquid nitrogen is not.
+   70 C is above anything the weather does and below every process temperature
+   in the game, so a furnace room is uncomfortable and a workshop is not. -12 C
+   is well below freezing, so standing on ice is free and standing in liquid
+   nitrogen is not.
 
    The rate is per degree past the line, which makes the ladder come out of the
    material table instead of being a second set of numbers to keep in step: fire
    at 235 C is far worse than steam at 115 C because it is, not because anybody
-   said so. 0.004 puts a character in open flame at about two and a half seconds
-   from full health.
+   said so.
 
    The two rates DIFFER, and the reason is the scale rather than a judgement
    about which is nastier. Temperature is stored in one byte running -40 C to
-   +215 C, so there are 160 degrees of headroom above the heat line and only 35
-   below the cold one. At a shared rate the worst possible cold is a fifth as
-   dangerous as the worst possible heat -- measured, twelve seconds to freeze
-   against two and a half to burn -- which is not a design decision anybody
-   made, it is the byte showing through. 0.018 puts the coldest thing in the
-   game on the same footing as the hottest. */
-static const u8    HEAT_HURT_AT = degC(55);
-static const u8    COLD_HURT_AT = degC(-5);
-static const float HEAT_DAMAGE  = 0.004f;
-static const float COLD_DAMAGE  = 0.018f;
+   +215 C, so there are 145 degrees of headroom above the heat line and only 28
+   below the cold one. At a shared rate the worst possible cold would be a fifth
+   as dangerous as the worst possible heat, which is not a design decision
+   anybody made -- it is the byte showing through. The two figures below are
+   picked so that the coldest thing in the game and the hottest kill at the same
+   speed: about two and a half seconds from full health, immersed.
+
+   Both lines moved outward (from 55 C and -5 C) and both rates were rescaled by
+   exactly the change in headroom, so that FULL IMMERSION in the worst the game
+   has costs precisely what it always did. Resistance is meant to buy you the
+   middle of the range -- the warm room, the drifting steam -- not to make lava
+   survivable. */
+static const u8    HEAT_HURT_AT = degC(70);
+static const u8    COLD_HURT_AT = degC(-12);
+static const float HEAT_DAMAGE  = 0.0044f;
+static const float COLD_DAMAGE  = 0.0225f;
+
+/* --- exposure --------------------------------------------------------------
+   How much of you is in it, not whether any of you is.
+
+   The body spans 176 cells and the old rule took the single hottest of them, so
+   one drifting pixel of steam touching a boot hurt exactly as much as being
+   dropped in a furnace. That is the complaint this answers, and taking the mean
+   excess over the whole body answers it by arithmetic rather than by a special
+   case: one steam cell at 115 C is 45 degrees past the line spread over 176
+   cells, which is a quarter of a degree, which is nothing. Standing waist-deep
+   in lava is half the body at the top of the scale, which is half the rate.
+   Immersion is the full rate, unchanged.
+
+   The extremes are still reported to the HUD -- feltTemp is the WARNING, and a
+   warning should fire on the first cell, not on the hundredth. It is only the
+   damage that is weighted. */
+
+/* Degrees of protection from worn equipment, added to the heat line and
+   subtracted from the cold one. Zero on a bare character: the constants above
+   ARE the bare character, so an unequipped player and a player in gear that
+   happens to protect nothing behave identically without anybody having to
+   remember a baseline. */
+struct TempSpec {
+    int heat;   /* degrees C of extra headroom before heat hurts */
+    int cold;   /* degrees C of extra headroom before cold does */
+};
 
 struct Player {
     /* Top-left of the collision box, in cells, with a fractional part.
@@ -341,6 +374,11 @@ struct Player {
     float fallFromY;
     u8    feltTemp;
 
+    /* Written by the host each frame from what is worn -- the same arrangement
+       `fly` and `speedMul` use, and for the same reason: movement should not
+       have to know an inventory exists. */
+    TempSpec resist;
+
     /* --- water --------------------------------------------------------
        `swimming` is the body test, `underwater` is the head test, and they
        are genuinely different: wading has neither, chest-deep has the first,
@@ -373,8 +411,20 @@ struct Player {
     /* Take damage. Rounds UP through the accumulator rather than truncating, so
        a rate slower than a point a frame still eventually kills -- see `hurt`. */
     void damage(float amount);
-    bool hurtingHot()  const { return feltTemp >= HEAT_HURT_AT; }
-    bool hurtingCold() const { return feltTemp <= COLD_HURT_AT; }
+    /* The lines this character actually burns and freezes at, equipment
+       included. Everything -- the damage, the HUD warning, the tests -- asks
+       these rather than the constants, so a resistance that failed to move one
+       of them would be a visible disagreement rather than a silent one. */
+    u8 heatLine() const {
+        const int v = (int)HEAT_HURT_AT + resist.heat;
+        return (u8)(v > 255 ? 255 : (v < 0 ? 0 : v));
+    }
+    u8 coldLine() const {
+        const int v = (int)COLD_HURT_AT - resist.cold;
+        return (u8)(v > 255 ? 255 : (v < 0 ? 0 : v));
+    }
+    bool hurtingHot()  const { return feltTemp >= heatLine(); }
+    bool hurtingCold() const { return feltTemp <= coldLine(); }
     void animate();          /* called by update(); picks facing and frame */
     /* Draws into the VIEW buffer, so it takes the camera's top-left cell.
        Everything that draws into that buffer now needs it -- see render.h. */

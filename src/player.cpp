@@ -90,6 +90,7 @@ void Player::reset(float cx, float cy) {
     hurtFlash = 0;
     fallFromY = y;
     feltTemp  = (u8)AMBIENT_TEMP;
+    resist.heat = resist.cold = 0;
     lastFall  = 0.0f;
     swimming   = false;
     underwater = false;
@@ -110,19 +111,44 @@ void Player::damage(float amount) {
         hp -= whole;
     }
     /* Flashed on the DAMAGE rather than on the point, so a slow burn still
-       shows something every frame it is happening. */
-    hurtFlash = 8;
+       shows something every frame it is happening -- but only above a floor.
+       Weighting temperature by exposure introduced genuinely negligible rates:
+       a single cell of drifting steam against the body is a thousandth of a
+       point a frame, which costs a point a minute and would otherwise flash the
+       character red continuously. A warning nobody can afford to act on is a
+       warning they learn to ignore.
+
+       0.02 is a point a second, which is the slowest thing worth turning round
+       for. Anything under it still accumulates and still eventually shows up as
+       a number on the HUD; it just does not shout. */
+    static const float FLASH_AT = 0.02f;
+    if (amount >= FLASH_AT || whole > 0) hurtFlash = 8;
     if (hp <= 0) { hp = 0; alive = false; }
 }
 
-/* The hottest and coldest cell the body is standing in. Both ends in one pass,
-   because the body is 176 cells and walking it twice to ask two questions about
-   the same bytes would be silly.
+/* What the body is standing in, thermally: the extremes for the HUD and the
+   MEAN EXCESS past each line for the damage. All of it in one pass, because the
+   body is 176 cells and walking it three times to ask three questions about the
+   same bytes would be silly.
+
+   The two kinds of answer are here together because they are genuinely
+   different questions about the same sample, and the split is the point -- see
+   the exposure note in player.h. A warning fires on the worst cell; damage is
+   paid on how much of you is in it.
+
+   The lines are passed in rather than read from the constants, because
+   equipment moves them.
 
    Reads the grid directly rather than through playerSolid: this is about
    temperature, and the material in a cell has nothing to do with it. */
-static void bodyExtremes(const World& w, const Player& p, u8* hottest, u8* coldest) {
+struct BodyTemp {
+    u8    hottest, coldest;
+    float overMean, underMean;   /* degrees past each line, averaged over the body */
+};
+static void bodyTemp(const World& w, const Player& p, u8 heatLine, u8 coldLine,
+                     BodyTemp* out) {
     u8 hi = 0, lo = 255;
+    long overSum = 0, underSum = 0;
     const int y0 = imax(0, p.top()),  y1 = imin(SIM_H - 1, p.bottom());
     const int x0 = imax(0, p.left()), x1 = imin(SIM_W - 1, p.right());
     for (int y = y0; y <= y1; ++y) {
@@ -131,9 +157,17 @@ static void bodyExtremes(const World& w, const Player& p, u8* hottest, u8* colde
             const u8 t = row[x];
             if (t > hi) hi = t;
             if (t < lo) lo = t;
+            if (t > heatLine) overSum  += (int)t - (int)heatLine;
+            if (t < coldLine) underSum += (int)coldLine - (int)t;
         }
     }
-    *hottest = hi; *coldest = lo;
+    /* Divided by the WHOLE body, not by the cells that were over the line.
+       Dividing by the affected cells would give back the maximum rule with
+       extra steps: one steam cell would be one cell of mean excess. */
+    const float cells = (float)imax(1, (y1 - y0 + 1) * (x1 - x0 + 1));
+    out->hottest = hi; out->coldest = lo;
+    out->overMean  = (float)overSum  / cells;
+    out->underMean = (float)underSum / cells;
 }
 
 /* How much of the body is in liquid, and whether the head is. One pass for both
@@ -213,15 +247,18 @@ void Player::update(const World& w, const PlayerInput& in) {
        feet in something hot and its head in something cold, and taking the
        worse of the two is more honest than picking one to look at. */
     {
-        u8 hot, cold;
-        bodyExtremes(w, *this, &hot, &cold);
-        const int over  = (int)hot  - (int)HEAT_HURT_AT;
-        const int under = (int)COLD_HURT_AT - (int)cold;
+        BodyTemp bt;
+        const u8 hl = heatLine(), cl = coldLine();
+        bodyTemp(w, *this, hl, cl, &bt);
         /* feltTemp reports whichever end is worse, so the HUD has one number
-           to show and it is the one that is about to matter. */
-        feltTemp = (over >= under) ? hot : cold;
-        if (over  > 0) damage((float)over  * HEAT_DAMAGE);
-        if (under > 0) damage((float)under * COLD_DAMAGE);
+           to show and it is the one that is about to matter. Chosen on the
+           EXTREMES, unweighted, because a warning that waited for exposure
+           would arrive after the thing it was warning about. */
+        const int over  = (int)bt.hottest - (int)hl;
+        const int under = (int)cl - (int)bt.coldest;
+        feltTemp = (over >= under) ? bt.hottest : bt.coldest;
+        if (bt.overMean  > 0.0f) damage(bt.overMean  * HEAT_DAMAGE);
+        if (bt.underMean > 0.0f) damage(bt.underMean * COLD_DAMAGE);
         if (!alive) return;
     }
 

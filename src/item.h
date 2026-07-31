@@ -162,6 +162,18 @@ struct ItemDef {
        be retuned every time that changed. */
     i16  speedPct;
 
+    /* Degrees C of heat and cold protection while worn. Zero on everything so
+       far -- there is no armour yet -- and that is deliberate: the columns exist
+       because the damage thresholds became a stat on the Player for exactly this
+       purpose, and a hook with nothing on the other end of it is how you find
+       out at armour time that the wiring never worked.
+
+       Same "largest, never summed" rule as reachBonus, resolved through
+       Inventory::tempResist(). Two separate numbers rather than one, because a
+       diving suit and a firefighter's coat are not the same garment and a single
+       "temperature resistance" would make them one item at two volumes. */
+    i16  heatResist, coldResist;
+
     /* Thrust, for boots and jetpacks. Zero on everything else, and resolved
        through flightSpec() rather than read directly -- see the note there for
        why two pieces of flight gear do not add up either. */
@@ -329,6 +341,10 @@ struct Inventory {
     int  reachBonus() const;
     /* Largest speedPct among everything WORN; 0 with nothing. Same rule. */
     int  speedBonus() const;
+    /* Largest heat and cold protection among everything WORN, each resolved
+       independently so a heatproof helmet and cold boots both count for what
+       they are. Zero on both with nothing worn, which is the bare character. */
+    TempSpec tempResist() const;
 
     /* The first tool in the pack, or -1. The inventory screen shows one tool's
        loadout and this is the one it shows -- with a single multitool in play
