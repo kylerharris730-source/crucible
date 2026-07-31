@@ -94,6 +94,8 @@ void World::reset() {
     memset(keepAlive, 0, sizeof(keepAlive));
     keptChunks = 0;
     sproutCount = 0;
+    felledCount = 0;
+    memset(felledMark, 0, sizeof(felledMark));
     frame  = 0;
     activeChunks = 0;
     clearDirty(cur);
@@ -110,9 +112,23 @@ void World::reset() {
     for (int i = 0; i < SIM_W * SIM_H; ++i) cells[i].tint = (u8)rngBits(8);
 }
 
+/* A wood cell is about to become something else. See World::felled -- this is
+   the only moment a canopy can lose its support, so it is the only moment
+   anything needs to look. Cheap by construction: two table lookups on a write
+   that already happens, and a push on the rare one that matters. */
+void World::reportFelled(int x, int y, u8 was, u8 now) {
+    if (!g_matIsWood[was] || g_matIsWood[now]) return;
+    const int ch = (y >> CHUNK_SHIFT) * CHUNKS_X + (x >> CHUNK_SHIFT);
+    if (felledMark[ch]) return;
+    if (felledCount >= MAX_FELLED) return;
+    felledMark[ch] = 1;
+    felled[felledCount++] = ch;
+}
+
 void World::setCell(int x, int y, u8 mat) {
     const int i = y * SIM_W + x;
     Cell& c = cells[i];
+    reportFelled(x, y, c.mat, mat);
     c.mat      = mat;
     c.moisture = 0;
     c.tint     = (u8)rngBits(8);
@@ -135,6 +151,7 @@ void World::swapMat(int x, int y, u8 mat) {
    next frame to move. */
 void World::convert(int x, int y, u8 mat) {
     Cell& c = cells[y * SIM_W + x];
+    reportFelled(x, y, c.mat, mat);
     c.mat      = mat;
     c.moisture = 0;
     c.tint     = (u8)rngBits(8);
@@ -929,6 +946,22 @@ bool World::airWithin(int x, int y, int r) const {
     return false;
 }
 
+/* One frame of a condemned leaf. Falls at zero: leaves leave nothing behind,
+   and a pod leaves its seed -- the same thing breaking one by hand gives you,
+   because losing a tree's seeds for felling it is exactly the punishment that
+   would make nobody fell trees. The seed is a powder, so it drops out of the
+   dying canopy and lands where you can pick it up. */
+void World::updateLeafFall(int x, int y) {
+    Cell& c = cells[y * SIM_W + x];
+    if (--c.moisture) { dirtyPoint(x, y); return; }
+    const u8 drop = g_matDropsAs[c.mat];
+    setCell(x, y, (drop && drop != c.mat) ? drop : (u8)MAT_EMPTY);
+    /* The neighbourhood, not the cell: the light that was blocked by this leaf
+       now reaches past it, and the cells under a vanishing canopy have to be
+       given a look or the hole stays dark until something else wakes them. */
+    dirtyArea(x - 1, y - 1, x + 1, y + 1);
+}
+
 void World::updateGrass(int x, int y) {
     /* Buried: nothing living survives out of reach of the air. */
     if (!airWithin(x, y, GRASS_DEPTH)) { convert(x, y, MAT_DIRT); return; }
@@ -1094,6 +1127,18 @@ void World::updateCell(int x, int y) {
         convert(x, y, MAT_EMPTY);
         return;
     }
+    /* --- a leaf that has been condemned --------------------------------
+       Only the countdown lives here; the DECISION lives in treeAudit, because
+       "is this still joined to a tree" is a question about a whole canopy and
+       this function only ever sees one cell. See LEAF_FALL_MAX.
+
+       BELOW the phase rules on purpose. A dying canopy is exactly the sort of
+       thing a player sets fire to, and a leaf that had stopped being flammable
+       the moment it was condemned would refuse to burn for the second and a
+       half it takes to fall. Leaves have nothing below this to do anyway --
+       they are static, so the movement rules never applied to them. */
+    if (g_matIsLeaf[c.mat] && c.moisture) { updateLeafFall(x, y); return; }
+
     if (m.quenchedBy) {
         for (int k = 0; k < 4; ++k) {
             const int nx = x + NB_DX[k], ny = y + NB_DY[k];

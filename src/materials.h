@@ -483,6 +483,27 @@ extern u8 g_matSheer[MAT_COUNT];
    learning what a tree is. */
 extern u8 g_matIsSeed[MAT_COUNT];
 
+/* --- what a canopy is made of, and what holds one up -----------------------
+   Leaves die when nothing connects them to wood -- see treeAudit(). These two
+   bits are what the rule is written in terms of, and they are here rather than
+   as names in tree.cpp for the same reason g_matIsSeed is: the simulation has
+   to notice a wood cell going away without knowing what a tree is, and adding
+   a species must not mean finding every place two material names were spelled
+   out.
+
+   Any wood holds up any leaves. That is not sloppiness about species: a
+   birch growing through an oak's canopy really is holding those leaves up, and
+   the alternative -- a support rule that has to agree with itself about which
+   trunk a given leaf belongs to -- needs an ownership model that nothing else
+   here has. It also means a wooden building keeps a canopy alive, which is the
+   same answer Minecraft gives and for the same reason.
+
+   Pods count as leaves. A pod is a leaf with a seed in it, it hangs off the
+   same canopy, and a rule that let pods float where their leaves had gone
+   would leave a felled tree as a constellation of dots. */
+extern u8 g_matIsLeaf[MAT_COUNT];
+extern u8 g_matIsWood[MAT_COUNT];
+
 /* --- what the renderer does not draw ----------------------------------------
    True for a cell whose material is NOT painted: the backdrop is drawn in its
    place, exactly as if the cell were empty.

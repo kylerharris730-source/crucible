@@ -317,7 +317,123 @@ void treeGrowNow(World& w, int x, int y, u32 salt, int species) {
     buildTree(w, x, y, salt, species, 0.0f, 1.0f);
 }
 
+/* --- the audit -------------------------------------------------------------
+   A flood through leaves from where a wood cell just was. It stops the instant
+   it touches any wood, and that early exit is what makes the whole thing
+   affordable: while you are cutting a trunk there is wood a few cells away in
+   every direction, so nearly every audit dies within a dozen visits. Only the
+   swing that removes the LAST wood pays for a full canopy walk, and it pays
+   once, because everything it condemns stops counting as a leaf.
+
+   The visited set is a bitset rather than a flag on the cell, because a Cell
+   has no spare bit -- and it is cleared by walking the queue afterwards rather
+   than by wiping 1.5 MB, so an audit that visits nine cells costs nine. */
+static const int MAX_BLOB = 1 << 17;     /* 131072; an oak canopy is ~28,000 */
+static i32 g_bq[MAX_BLOB];
+static u32 g_seen[(SIM_W * SIM_H + 31) / 32];
+static int g_condemned = 0, g_visited = 0;
+
+int treeAuditCondemned() { return g_condemned; }
+int treeAuditVisited()   { return g_visited; }
+
+static inline bool seen(i32 i)  { return (g_seen[i >> 5] >> (i & 31)) & 1u; }
+static inline void mark(i32 i)  { g_seen[i >> 5] |= 1u << (i & 31); }
+static inline void unmark(i32 i){ g_seen[i >> 5] &= ~(1u << (i & 31)); }
+
+/* A leaf that is already dying is not part of anybody's canopy: it does not
+   conduct support and it must not be condemned twice. That is what stops the
+   second and third report from one swing costing anything. */
+static inline bool liveLeaf(const World& w, i32 i) {
+    return g_matIsLeaf[w.cells[i].mat] && w.cells[i].moisture == 0;
+}
+
+/* Flood the leaf blob containing `from`, appending everything it marks to g_bq
+   at `tail`. Returns the new tail. Marks are LEFT SET: they are cleared once at
+   the end of the pass, so a blob already walked this frame is skipped rather
+   than walked again for every leaf of it a chunk sweep happens to find. */
+static int auditBlob(World& w, i32 from, int tail) {
+    static const int DX[8] = { -1, 1, 0, 0, -1, -1, 1, 1 };
+    static const int DY[8] = { 0, 0, -1, 1, -1, 1, -1, 1 };
+    const int start = tail;
+    mark(from); g_bq[tail++] = from;
+
+    bool supported = false;
+    int head = start;
+    while (head < tail && !supported) {
+        const i32 i = g_bq[head++];
+        const int x = i % SIM_W, y = i / SIM_W;
+        for (int k = 0; k < 8; ++k) {
+            const int nx = x + DX[k], ny = y + DY[k];
+            if (nx < PLAY_X0 || nx > PLAY_X1 || ny < PLAY_Y0 || ny > PLAY_Y1) continue;
+            const i32 ni = ny * SIM_W + nx;
+            if (g_matIsWood[w.cells[ni].mat]) { supported = true; break; }
+            if (!liveLeaf(w, ni) || seen(ni)) continue;
+            if (tail >= MAX_BLOB) { supported = true; break; }  /* see below */
+            mark(ni); g_bq[tail++] = ni;
+        }
+    }
+    g_visited += tail - start;
+
+    /* Running out of queue means a leaf mass bigger than any tree grows -- so
+       somebody built it, and deleting a hundred and thirty thousand cells of
+       somebody's hedge because the audit could not finish measuring it is the
+       worst possible way to be wrong. Bailing counts as supported. */
+    if (supported) return tail;
+
+    /* --- when each one falls ---------------------------------------------
+       Staggered by BFS ORDER, which costs nothing because the queue is already
+       in it: g_bq holds the blob sorted by distance from where the wood went,
+       so spreading the countdown along it makes the canopy come apart from the
+       cut outward, like something letting go.
+
+       This was a hash of the position first, and a picture is what rejected it.
+       A uniform random countdown is not a shower -- every part of the crown
+       thins at the same rate everywhere, so the tree does not fall, it FADES,
+       and it read as the canopy being deleted with a dissolve on it. Nothing in
+       the numbers could have said so: the same cells went in the same total
+       time either way.
+
+       The hash survives as a jitter of a few frames on top, so the wavefront is
+       ragged rather than a line sweeping across the tree. */
+    const int span = tail - start;
+    for (int k = start; k < tail; ++k) {
+        const i32 i = g_bq[k];
+        const int wave = 1 + (int)((long long)(k - start) * (LEAF_FALL_MAX - 8) / imax(1, span));
+        const int jit  = (int)(hash1(i, 0x1EAFu) % 8u);
+        w.cells[i].moisture = (u8)imin(LEAF_FALL_MAX, wave + jit);
+        w.dirtyPoint(i % SIM_W, i / SIM_W);
+    }
+    g_condemned += tail - start;
+    return tail;
+}
+
+void treeAudit(World& w) {
+    g_condemned = g_visited = 0;
+    int tail = 0;
+    for (int k = 0; k < w.felledCount; ++k) {
+        const int ch = w.felled[k];
+        w.felledMark[ch] = 0;
+        /* The chunk plus a one-cell skirt: a leaf touching wood that was in
+           this chunk can itself be in the next one. */
+        const int cx = (ch % CHUNKS_X) << CHUNK_SHIFT;
+        const int cy = (ch / CHUNKS_X) << CHUNK_SHIFT;
+        const int x0 = imax(PLAY_X0, cx - 1), x1 = imin(PLAY_X1, cx + CHUNK);
+        const int y0 = imax(PLAY_Y0, cy - 1), y1 = imin(PLAY_Y1, cy + CHUNK);
+        for (int y = y0; y <= y1; ++y)
+            for (int x = x0; x <= x1; ++x) {
+                const i32 i = y * SIM_W + x;
+                if (!liveLeaf(w, i) || seen(i)) continue;
+                if (tail + 8 >= MAX_BLOB) { y = y1; break; }
+                tail = auditBlob(w, i, tail);
+            }
+    }
+    for (int k = 0; k < tail; ++k) unmark(g_bq[k]);
+    w.felledCount = 0;
+}
+
 void treesTick(World& w) {
+    treeAudit(w);
+
     /* --- root anything that has landed --------------------------------
        The list is whatever the simulation reported this frame; the decision
        about whether each one qualifies is made here, because the moisture rule

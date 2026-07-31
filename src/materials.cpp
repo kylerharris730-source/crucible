@@ -692,6 +692,8 @@ u8  g_matClimb[MAT_COUNT];
 u8  g_matPlatform[MAT_COUNT];
 u8  g_matSheer[MAT_COUNT];
 u8  g_matIsSeed[MAT_COUNT];
+u8  g_matIsLeaf[MAT_COUNT];
+u8  g_matIsWood[MAT_COUNT];
 u8  g_matDropsAs[MAT_COUNT];
 u8  g_matSmeltYield[MAT_COUNT];
 u8  g_matConducts[MAT_COUNT];
@@ -1223,6 +1225,17 @@ static void initSeeds() {
     for (int m = 0; m < MAT_COUNT; ++m) g_matIsSeed[m] = 0;
     g_matIsSeed[MAT_OAK_SEED]   = 1;
     g_matIsSeed[MAT_BIRCH_SEED] = 1;
+
+    for (int m = 0; m < MAT_COUNT; ++m) g_matIsLeaf[m] = g_matIsWood[m] = 0;
+    g_matIsLeaf[MAT_OAK_LEAF]   = 1;
+    g_matIsLeaf[MAT_OAK_POD]    = 1;
+    g_matIsLeaf[MAT_BIRCH_LEAF] = 1;
+    g_matIsLeaf[MAT_BIRCH_POD]  = 1;
+    /* Tree wood only. A platform is milled lumber and a plank floor is not a
+       trunk -- letting it hold a canopy up would mean a walkway built under a
+       tree kept the tree's leaves alive after the tree was gone. */
+    g_matIsWood[MAT_WOOD]       = 1;
+    g_matIsWood[MAT_BIRCH_WOOD] = 1;
 }
 
 static void initSheer() {

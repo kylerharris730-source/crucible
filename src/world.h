@@ -91,6 +91,22 @@ static const int PLAY_Y1 = SIM_H - 2;
    than this. */
 static const int GRASS_DEPTH = 5;
 
+/* ---- leaves that have lost their tree --------------------------------------
+   A condemned leaf does not vanish on the frame it is condemned; it counts
+   down and then falls. The countdown is spread at random across this many
+   frames so a felled oak sheds its canopy as a shower over a second and a half
+   rather than deleting 28,000 cells in one step -- which read as the tree
+   being erased rather than as leaves dying.
+
+   The counter lives in the leaf's MOISTURE byte, which is free: leaves have a
+   capacity of 0, so updateMoisture never runs on them, and their wet and dry
+   colours are identical so the renderer's wetness blend is a no-op. That is
+   the only spare byte a Cell has, and the alternative was a side table keyed
+   by position for something that can span a quarter of a chunk.
+
+   Zero therefore means "healthy", and nothing else may write it. */
+static const int LEAF_FALL_MAX = 90;
+
 /* ---- moisture model -----------------------------------------------------
    Moisture is measured so that one absorbed water cell is worth
    MOISTURE_UNIT. Absorption and dripping both move exactly that amount, so
@@ -477,6 +493,10 @@ struct World {
     /* Grass: spreads across exposed dirt, dies back to dirt when buried.
        Called from updateCell for grass cells only. */
     void updateGrass(int x, int y);
+    /* One frame of a condemned leaf's countdown. Called from updateCell for
+       leaf cells only, and only for ones somebody has condemned -- a healthy
+       leaf carries a zero here and costs one compare. */
+    void updateLeafFall(int x, int y);
     /* Is there open air within `r` cells? r = 1 is the four touching
        neighbours; anything larger is a disc. This is what "exposed" means for
        grass, and it is a RADIUS rather than a yes/no because a turf line one
@@ -519,8 +539,43 @@ struct World {
     i32 sprout[MAX_SPROUTS];
     int sproutCount;
 
+    /* --- wood that stopped being wood -----------------------------------
+       The other half of the same arrangement, for the other direction. Leaves
+       die when nothing joins them to a trunk, and the only moment that can
+       become true is the moment a wood cell goes away -- mined, burned,
+       melted, voided, it does not matter which. So the world reports the
+       position and tree.cpp decides what it means, exactly as with seeds.
+
+       Reporting the EVENT rather than having leaves ask "am I still supported"
+       is what makes this affordable. A canopy is 28,000 cells; a rule they
+       each re-ask would be 28,000 floods a frame for a tree nobody is touching.
+       Wood going away happens when you swing at it.
+
+       Reported per CHUNK rather than per cell, and that is not a size
+       optimisation -- it is what makes the answer right. A canopy is not one
+       blob: measured, an oak's leaves come in two pieces, a 24,058-cell crown
+       and a 1,221-cell branch tuft that touches its own branch and nothing
+       else. Each piece needs the audit to start somewhere inside it, so a
+       per-cell list that drops its overflow leaves whichever piece got dropped
+       hanging in the sky -- which is exactly what happened: felling a tree in
+       one frame left the tuft floating.
+
+       Chunks DEDUPLICATE, which is what fixes it. A trunk three hundred cells
+       tall passes through about ten of them however many times you swing at it,
+       so the list stops growing almost immediately and a whole tree vanishing
+       at once still fits. The audit then sweeps each reported chunk for leaves
+       and floods from every piece it finds. */
+    static const int MAX_FELLED = 256;
+    i32 felled[MAX_FELLED];      /* chunk indices */
+    int felledCount;
+    /* Set for a chunk already on the list, so reporting stays O(1) with three
+       thousand removals in a frame rather than rescanning the list each time.
+       Cleared by walking the list, never by wiping the array. */
+    u8  felledMark[CHUNK_COUNT];
+
 private:
     void updateCell(int x, int y);
+    void reportFelled(int x, int y, u8 was, u8 now);
     void updateClone(int x, int y);
     void updateVoid(int x, int y);
     void spawnCell(int x, int y, u8 mat);

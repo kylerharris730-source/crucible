@@ -111,10 +111,35 @@ bool treeCanRoot(const World& w, int x, int y);
    vanished would be the worst possible failure here. */
 bool treePlant(World& w, int x, int y, int species);
 
-/* One frame: roots any seed that has come to rest on wet soil, and advances
-   every growing tree. Cheap by construction -- the seed scan only looks at
-   cells the simulation has already woken. */
+/* --- leaves without a tree -------------------------------------------------
+   A leaf lives as long as something joins it to wood. Connection is through
+   OTHER LEAVES as well as directly, without any distance limit, and that is
+   the one place this deliberately differs from the game it is borrowed from.
+
+   Minecraft caps the distance at four, which works because a Minecraft crown is
+   about five blocks across. These crowns are two hundred. Measured on grown
+   oaks, the deepest leaf sits 154 cells from the nearest wood, so any cap small
+   enough to be useful would delete most of a healthy tree and any cap large
+   enough to spare one would never fire. The cap is not a design choice being
+   copied, it is a number scaled to a block size this game does not have.
+
+   Unlimited connectivity is also simply the honest rule: a leaf belongs to a
+   tree if you can get from it to the trunk without leaving the tree.
+
+   Triggered by World::felled, never by the leaves. See the note there. */
+void treeAudit(World& w);
+
+/* One frame: roots any seed that has come to rest on wet soil, advances every
+   growing tree, and condemns any canopy that has just lost its last wood.
+   Cheap by construction -- the seed scan only looks at cells the simulation
+   has already woken, and the audit only runs where wood has just gone. */
 void treesTick(World& w);
+
+/* How many leaf cells the last audit condemned, and how many cells it had to
+   visit to decide. Published so a test can measure the cost of the thing that
+   is meant to be cheap rather than assume it. */
+int  treeAuditCondemned();
+int  treeAuditVisited();
 
 /* Grow a full tree at (x, y) immediately, ignoring the timer. Used by worldgen
    to put forests in the world at generation time, and by tests that have no
