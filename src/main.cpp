@@ -285,6 +285,7 @@ static bool g_devPlaced = false;
    devTick can remove a device at any time, and the panel revalidates by index
    every frame it draws. */
 static int  g_devPanel = -1;
+bool g_logisticsUiOpen = false;
 static bool handleDevPanelClick(int mx, int my);
 static bool handleCraftClick(int mx, int my);
 static void layoutCraft();
@@ -383,6 +384,12 @@ static ItemId g_creItem[ITEM_COUNT];     /* which item each rect belongs to */
    whose entire purpose is rearranging things. */
 static RECT g_packRect[INV_SLOTS];
 static ItemStack g_drag = { ITEM_NONE, 0, 0 };
+static int g_chestOpen = -1;
+static ItemStack g_chestStack = { ITEM_NONE, 0, 0 };
+static RECT g_chestPanel, g_chestSlot, g_chestPack[INV_SLOTS], g_chestClose;
+static bool handleChestClick(int mx, int my, bool right);
+static void drawChest(HDC hdc);
+static void closeChest();
 
 /* The tool bench: the carried multitool's own slots, drawn inside the inventory
    screen. It belongs here rather than in a screen of its own because installing
@@ -848,6 +855,66 @@ static void dragStow() {
     }
 }
 
+static void openChest(int index) {
+    if (index < 0 || index >= MAX_DEVICES || !g_devices[index].used) return;
+    Device& d = g_devices[index];
+    g_chestOpen = index; g_devPanel = -1; g_logisticsUiOpen = true;
+    g_chestStack.item = d.count ? (ItemId)d.mat : ITEM_NONE;
+    g_chestStack.count = d.count; g_chestStack.inst = 0;
+    const int x = PANEL_W + (VIEW_W - 560) / 2, y = (VIEW_H - 360) / 2;
+    SetRect(&g_chestPanel, x, y, x + 560, y + 360);
+    SetRect(&g_chestSlot, x + 54, y + 68, x + 106, y + 120);
+    SetRect(&g_chestClose, x + 520, y + 10, x + 544, y + 32);
+    for (int i = 0; i < INV_SLOTS; ++i) {
+        const int c = i % HOTBAR_SLOTS, r = i / HOTBAR_SLOTS;
+        const int rr = r == 0 ? INV_ROWS - 1 : r - 1;
+        SetRect(&g_chestPack[i], x + 54 + c * 46, y + 170 + rr * 42,
+                x + 94 + c * 46, y + 210 + rr * 42);
+    }
+}
+
+static void closeChest() {
+    if (g_chestOpen >= 0 && g_chestOpen < MAX_DEVICES && g_devices[g_chestOpen].used) {
+        Device& d = g_devices[g_chestOpen];
+        d.mat = g_chestStack.empty() ? (u8)MAT_EMPTY : (u8)g_chestStack.item;
+        d.count = (i32)g_chestStack.count;
+    }
+    g_chestOpen = -1; g_logisticsUiOpen = false; dragStow();
+}
+
+static bool handleChestClick(int mx, int my, bool right) {
+    if (g_chestOpen < 0) return false;
+    if (inRect(g_chestClose, mx, my)) { closeChest(); return true; }
+    if (inRect(g_chestSlot, mx, my)) { slotClick(g_chestStack, right); return true; }
+    for (int i = 0; i < INV_SLOTS; ++i)
+        if (inRect(g_chestPack[i], mx, my)) { slotClick(g_inv.slot[i], right); return true; }
+    return true;
+}
+
+static void drawChestStack(HDC hdc, const RECT& r, const ItemStack& st) {
+    FillRect(hdc, &r, inRect(r, g_mx, g_my) ? g_btnBgHot : g_btnBg);
+    FrameRect(hdc, &r, g_borderBrush);
+    if (st.empty()) return;
+    RECT ir = r; ir.left += 3; ir.right -= 3; ir.top += 2; ir.bottom -= 11;
+    drawItemIcon(hdc, ir, st.item);
+    if (st.count > 1) { char s[20]; sprintf(s, "%u", (unsigned)st.count); RECT tr = r; tr.top = r.bottom - 12; tr.right -= 2; SetTextColor(hdc, RGB(210,216,224)); DrawTextA(hdc, s, -1, &tr, DT_RIGHT | DT_TOP | DT_SINGLELINE); }
+}
+
+static void drawChest(HDC hdc) {
+    FillRect(hdc, &g_chestPanel, g_panelBg); FrameRect(hdc, &g_chestPanel, g_accentBrush);
+    SetBkMode(hdc, TRANSPARENT); SetTextColor(hdc, RGB(245,224,150));
+    RECT tr = g_chestPanel; tr.left += 18; tr.top += 12;
+    DrawTextA(hdc, "CHEST", -1, &tr, DT_LEFT | DT_TOP | DT_SINGLELINE);
+    FillRect(hdc, &g_chestClose, inRect(g_chestClose, g_mx, g_my) ? g_btnBgHot : g_btnBg);
+    FrameRect(hdc, &g_chestClose, g_borderBrush);
+    DrawTextA(hdc, "x", -1, &g_chestClose, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    SetTextColor(hdc, RGB(160,168,182)); tr.top = g_chestSlot.top - 20;
+    DrawTextA(hdc, "CHEST STORAGE", -1, &tr, DT_LEFT | DT_TOP | DT_SINGLELINE);
+    drawChestStack(hdc, g_chestSlot, g_chestStack);
+    tr.top = g_chestPack[0].top - 20; DrawTextA(hdc, "YOUR INVENTORY", -1, &tr, DT_LEFT | DT_TOP | DT_SINGLELINE);
+    for (int i = 0; i < INV_SLOTS; ++i) drawChestStack(hdc, g_chestPack[i], g_inv.slot[i]);
+}
+
 /* Returns true if the click was consumed, which while this is open is always:
    it is modal, and letting a click through to the world would paint under it. */
 static bool handleCreativeClick(int mx, int my, bool remove) {
@@ -1060,7 +1127,8 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_LBUTTONDOWN:
         g_mx = (short)LOWORD(lp);
         g_my = (short)HIWORD(lp);
-        if (g_creativeOpen) { handleCreativeClick(g_mx, g_my, false); g_uiCapture = true; }
+        if (g_chestOpen >= 0) { handleChestClick(g_mx, g_my, false); g_uiCapture = true; }
+        else if (g_creativeOpen) { handleCreativeClick(g_mx, g_my, false); g_uiCapture = true; }
         /* The device panel floats over the world, so it has to swallow the click
            before the world does -- otherwise nudging a setpoint also digs a hole
            in whatever is behind the button. */
@@ -1076,7 +1144,8 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_RBUTTONDOWN:
         g_mx = (short)LOWORD(lp);
         g_my = (short)HIWORD(lp);
-        if (g_creativeOpen)       handleCreativeClick(g_mx, g_my, true);
+        if (g_chestOpen >= 0)     handleChestClick(g_mx, g_my, true);
+        else if (g_creativeOpen)  handleCreativeClick(g_mx, g_my, true);
         else if (g_mx >= PANEL_W) {
             /* Right-click INTERACTS with a machine and DIGS everywhere else.
                Ordered this way round rather than needing a modifier because the
@@ -1088,6 +1157,7 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             const Aim a = currentAim();
             Device* d = devAt(a.x, a.y);
             if (d) {
+                if (d->type == DEV_CHEST) { openChest((int)(d - g_devices)); break; }
                 /* Toggle: clicking the same machine again closes it. */
                 const int idx = (int)(d - g_devices);
                 g_devPanel = (g_devPanel == idx) ? -1 : idx;
@@ -1128,7 +1198,7 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
            missing -- so opening it left the playfield's hidden cursor in
            force and there was nothing to click its rows with. */
         if (LOWORD(lp) == HTCLIENT && g_mx >= PANEL_W
-            && !g_menuOpen && !g_creativeOpen && !g_craftOpen) {
+            && !g_menuOpen && !g_creativeOpen && !g_craftOpen && g_chestOpen < 0) {
             SetCursor(NULL);
             return TRUE;
         }
@@ -1249,7 +1319,8 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
            menu -- one key that always means "close the thing in front of me" is
            worth more than a second binding to remember. */
         case VK_ESCAPE:
-            if (g_craftOpen)         g_craftOpen = false;
+            if (g_chestOpen >= 0)    closeChest();
+            else if (g_craftOpen)    g_craftOpen = false;
             else if (g_creativeOpen) { g_creativeOpen = false; dragStow(); }
             else                     g_menuOpen = !g_menuOpen;
             break;
@@ -1563,6 +1634,10 @@ static bool handleDevPanelClick(int mx, int my) {
     if (!PtInRect(&g_devpBox, pt)) return false;
 
     const DeviceInfo& di = DEVS[d.type];
+    if (d.type == DEV_PIPE || d.type == DEV_CROSSOVER) {
+        if (PtInRect(&g_devpClose, pt)) { g_devPanel = -1; return true; }
+        return true; /* status-only: pipes have no settings or inventory action */
+    }
     if (PtInRect(&g_devpDec, pt))        d.value -= di.vStep;
     else if (PtInRect(&g_devpInc, pt))   d.value += di.vStep;
     else if (PtInRect(&g_devpClose, pt)) { g_devPanel = -1; return true; }
@@ -1570,14 +1645,24 @@ static bool handleDevPanelClick(int mx, int my) {
         d.face = (u8)((d.face + 1) & 3);
         return true;
     }
-    else if (PtInRect(&g_devpTake, pt) && d.count > 0) {
+    else if (PtInRect(&g_devpTake, pt) && (d.count > 0 || d.type == DEV_CHEST || d.type == DEV_SPOUT)) {
         /* Empty the machine's buffer into the pack. The counterpart to loading a
            placer by pouring onto it -- a miner fills up with what it has broken
            and this is how you get it out. Moves only what actually fits, so a full
            pack leaves the rest in the machine rather than destroying it. */
-        const int moved = g_inv.add((ItemId)d.mat, (int)d.count);
-        d.count -= moved;
-        if (d.count <= 0) { d.count = 0; d.mat = MAT_EMPTY; }
+        ItemStack& held = g_inv.held();
+        if ((d.type == DEV_CHEST || d.type == DEV_SPOUT) && !held.empty()
+            && ITEMS[held.item].kind == ITEMK_MATERIAL
+            && (d.count == 0 || d.mat == held.item)) {
+            const int cap = d.type == DEV_CHEST ? CHEST_CAP : DEV_CAP;
+            const int moved = imin((int)held.count, cap - (int)d.count);
+            d.mat = (u8)held.item; d.count += moved; held.count -= moved;
+            if (held.count == 0) held = ItemStack();
+        } else if (d.count > 0) {
+            const int moved = g_inv.add((ItemId)d.mat, (int)d.count);
+            d.count -= moved;
+            if (d.count <= 0) { d.count = 0; d.mat = MAT_EMPTY; }
+        }
         return true;
     }
     if (d.value < di.vMin) d.value = di.vMin;
@@ -1606,6 +1691,57 @@ static void drawDevPanel(HDC hdc) {
 
     const DeviceInfo& di = DEVS[d.type];
     const int tx = g_devpBox.left + 10;
+    POINT pt = { g_mx, g_my };
+    if (d.type == DEV_PIPE || d.type == DEV_CROSSOVER) {
+        char pipeBuf[96];
+        sprintf(pipeBuf, "carrying %d %s", (int)d.count,
+                d.count ? MATS[d.mat].name : "items");
+        drawText(hdc, tx, g_devpBox.top + 30, RGB(200, 206, 218), pipeBuf);
+        if (d.type == DEV_CROSSOVER) {
+            sprintf(pipeBuf, "horizontal lane %d %s", (int)d.count2,
+                    d.count2 ? MATS[d.mat2].name : "items");
+            drawText(hdc, tx, g_devpBox.top + 48, RGB(160, 200, 230), pipeBuf);
+        }
+        drawButton(hdc, g_devpClose, "x", 0, false, PtInRect(&g_devpClose, pt) != 0);
+        SelectObject(hdc, oldFont);
+        return;
+    }
+    if (d.type == DEV_SPOUT || d.type == DEV_DRAIN || d.type == DEV_BLOCK_WATCHER) {
+        char flow[112];
+        drawText(hdc, tx, g_devpBox.top + 6, RGB(245, 224, 150), di.name);
+        if (d.type == DEV_BLOCK_WATCHER) {
+            sprintf(flow, "watching  %s", d.value ? MATS[d.value].name : "any block");
+            drawText(hdc, tx, g_devpBox.top + 27, RGB(200, 206, 218), flow);
+            drawText(hdc, tx, g_devpBox.top + 45,
+                     d.reading ? RGB(255, 230, 140) : RGB(160, 168, 182),
+                     d.reading ? "CONTACT  —  signal sent" : "waiting for contact");
+            drawButton(hdc, g_devpDec, "<", 0, false, PtInRect(&g_devpDec, pt) != 0);
+            drawButton(hdc, g_devpInc, ">", 0, false, PtInRect(&g_devpInc, pt) != 0);
+        } else if (d.type == DEV_DRAIN) {
+            sprintf(flow, "collecting  %s", d.value ? MATS[d.value].name : "all materials");
+            drawText(hdc, tx, g_devpBox.top + 27, RGB(200, 206, 218), flow);
+            sprintf(flow, "buffer  %d %s", (int)d.count, d.count ? MATS[d.mat].name : "items");
+            drawText(hdc, tx, g_devpBox.top + 45, RGB(160, 200, 230), flow);
+            drawButton(hdc, g_devpDec, "<", 0, false, PtInRect(&g_devpDec, pt) != 0);
+            drawButton(hdc, g_devpInc, ">", 0, false, PtInRect(&g_devpInc, pt) != 0);
+        } else {
+            sprintf(flow, "emitting  %d cells / tick", (int)d.value);
+            drawText(hdc, tx, g_devpBox.top + 27, RGB(200, 206, 218), flow);
+            sprintf(flow, "buffer  %d %s", (int)d.count, d.count ? MATS[d.mat].name : "items");
+            drawText(hdc, tx, g_devpBox.top + 45, RGB(160, 200, 230), flow);
+            drawButton(hdc, g_devpDec, "-", 0, false, PtInRect(&g_devpDec, pt) != 0);
+            drawButton(hdc, g_devpInc, "+", 0, false, PtInRect(&g_devpInc, pt) != 0);
+        }
+        if (d.type == DEV_SPOUT || d.type == DEV_DRAIN)
+            drawText(hdc, tx + 145, g_devpBox.top + 45,
+                     d.enabled ? RGB(130, 220, 150) : RGB(232, 116, 100),
+                     d.enabled ? "ON" : "OFF");
+        static const char* FACE[4] = { "aim down", "aim up", "aim left", "aim right" };
+        drawButton(hdc, g_devpTurn, FACE[d.face & 3], 0, false, PtInRect(&g_devpTurn, pt) != 0);
+        drawButton(hdc, g_devpClose, "x", 0, false, PtInRect(&g_devpClose, pt) != 0);
+        SelectObject(hdc, oldFont);
+        return;
+    }
     char buf[128];
     drawText(hdc, tx, g_devpBox.top + 6, RGB(245, 224, 150), di.name);
 
@@ -1613,7 +1749,10 @@ static void drawDevPanel(HDC hdc) {
     drawText(hdc, tx, g_devpBox.top + 26, RGB(200, 206, 218), buf);
 
     if (di.vMin != di.vMax) {
-        sprintf(buf, "%s  %d %s", di.valueLabel, (int)d.value, di.valueUnit);
+        if (d.type == DEV_DRAIN)
+            sprintf(buf, "filter  %s", d.value ? MATS[d.value].name : "all materials");
+        else
+            sprintf(buf, "%s  %d %s", di.valueLabel, (int)d.value, di.valueUnit);
         drawText(hdc, tx, g_devpBox.top + 42, RGB(214, 216, 224), buf);
     }
 
@@ -1625,7 +1764,7 @@ static void drawDevPanel(HDC hdc) {
     /* The buffer, for machines that have one. Named rather than shown as a
        swatch: "holds 340 Fe Ore" is what you need to know, and at this size a
        colour chip would be indistinguishable between the two ores. */
-    if (d.type == DEV_PLACER || d.type == DEV_MINER) {
+    if (d.type == DEV_PLACER || d.type == DEV_MINER || d.type == DEV_CHEST || d.type == DEV_SPOUT || d.type == DEV_DRAIN) {
         if (d.count > 0) sprintf(buf, "holds %d %s", (int)d.count, MATS[d.mat].name);
         else             sprintf(buf, "holds nothing");
         drawText(hdc, tx + 96, g_devpBox.top + 58, RGB(214, 216, 224), buf);
@@ -1638,7 +1777,6 @@ static void drawDevPanel(HDC hdc) {
     drawText(hdc, tx + 120, g_devpBox.top + 26,
              d.firing ? RGB(255, 240, 170) : RGB(160, 168, 182), st);
 
-    POINT pt = { g_mx, g_my };
     /* A device with nothing to adjust shows no -/+ rather than two dead buttons. */
     if (di.vMin != di.vMax) {
         drawButton(hdc, g_devpDec, "-", 0, false, PtInRect(&g_devpDec, pt) != 0);
@@ -1649,8 +1787,8 @@ static void drawDevPanel(HDC hdc) {
         drawButton(hdc, g_devpTurn, FACE[d.face & 3], 0, false,
                    PtInRect(&g_devpTurn, pt) != 0);
     }
-    if (d.type == DEV_PLACER || d.type == DEV_MINER)
-        drawButton(hdc, g_devpTake, "take", 0, false, PtInRect(&g_devpTake, pt) != 0);
+    if (d.type == DEV_PLACER || d.type == DEV_MINER || d.type == DEV_CHEST || d.type == DEV_SPOUT || d.type == DEV_DRAIN)
+        drawButton(hdc, g_devpTake, (d.type == DEV_CHEST || d.type == DEV_SPOUT) ? "store/take" : "take", 0, false, PtInRect(&g_devpTake, pt) != 0);
     drawButton(hdc, g_devpClose, "x", 0, false, PtInRect(&g_devpClose, pt) != 0);
     SelectObject(hdc, oldFont);
 }
@@ -2654,7 +2792,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
            instance rather than beside the input handler. */
         for (int i = 1; i < MAX_TOOL_INST; ++i)
             if (g_toolInst[i].used && g_toolInst[i].cooldown > 0) --g_toolInst[i].cooldown;
-        if (!g_menuOpen && !g_creativeOpen && !g_craftOpen) applyBrush();
+        if (!g_menuOpen && !g_creativeOpen && !g_craftOpen && g_chestOpen < 0) applyBrush();
         /* Whether the sim actually advanced this frame, so the character moves
            in lockstep with the world -- including on a single frame-advance. */
         bool steppedThisFrame = false;
@@ -2756,7 +2894,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         projDraw(g_pixels, g_camX, g_camY);
         /* Modals dim the world in the pixel buffer, before it becomes a blit --
            see dimPixels(). Doing it to the window instead cost 500ms a frame. */
-        if (g_menuOpen || g_creativeOpen || g_craftOpen) dimPixels();
+        if (g_menuOpen || g_creativeOpen || g_craftOpen || g_chestOpen >= 0) dimPixels();
 
         /* Compose off-screen: sim into the viewport, then the panel, then out
            to the window in one BitBlt. */
@@ -2765,9 +2903,10 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         drawPanel(g_backDC);
         if (g_survival && g_playerOn) drawHotbar(g_backDC);
         drawDevPanel(g_backDC);
-        if (!g_menuOpen && !g_creativeOpen && !g_craftOpen) drawCursor(g_backDC);
+        if (!g_menuOpen && !g_creativeOpen && !g_craftOpen && g_chestOpen < 0) drawCursor(g_backDC);
         if (g_creativeOpen) drawCreative(g_backDC);
         if (g_craftOpen)    drawCraft(g_backDC);
+        if (g_chestOpen >= 0) drawChest(g_backDC);
         if (g_menuOpen)     drawMenu(g_backDC);
 
         HDC hdc = GetDC(hwnd);

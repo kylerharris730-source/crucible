@@ -44,6 +44,11 @@ enum SpriteId {
     SPR_PLACER,
     SPR_MINER,
     SPR_TORCH,
+    SPR_PIPE,
+    SPR_CROSSOVER,
+    SPR_CHEST,
+    SPR_SPOUT,
+    SPR_DRAIN,
     SPR_COUNT
 };
 

@@ -381,6 +381,14 @@ struct World {
        quietly stop simulating and still pass. */
     i32 liveX0, liveY0, liveX1, liveY1;
 
+    /* The camera window is the guaranteed core.  A second core-sized budget is
+       available as two vertical fingers: activity that reaches an edge grows
+       that edge, while a newly active opposite edge reclaims rows from the
+       longer finger.  This keeps long falls and rising gas alive without
+       paying for a permanently larger square. */
+    i32 fingerTop, fingerBottom;
+    i32 liveCoreCX0, liveCoreCY0, liveCoreCX1, liveCoreCY1;
+
     /* One ZoneId per chunk. See ZoneId above for why this is a label rather
        than a depth test. */
     u8 zone[CHUNK_COUNT];
@@ -418,6 +426,12 @@ struct World {
 
     void setLiveWindow(int x0, int y0, int x1, int y1) {
         liveX0 = x0; liveY0 = y0; liveX1 = x1; liveY1 = y1;
+        const i32 cx0 = imax(0, x0 >> CHUNK_SHIFT), cx1 = imin(CHUNKS_X - 1, x1 >> CHUNK_SHIFT);
+        const i32 cy0 = imax(0, y0 >> CHUNK_SHIFT), cy1 = imin(CHUNKS_Y - 1, y1 >> CHUNK_SHIFT);
+        if (cx0 != liveCoreCX0 || cx1 != liveCoreCX1 || cy0 != liveCoreCY0 || cy1 != liveCoreCY1) {
+            fingerTop = fingerBottom = 0;
+            liveCoreCX0 = cx0; liveCoreCX1 = cx1; liveCoreCY0 = cy0; liveCoreCY1 = cy1;
+        }
     }
     void clearLiveWindow() { setLiveWindow(0, 0, SIM_W - 1, SIM_H - 1); }
 

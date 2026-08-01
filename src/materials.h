@@ -547,6 +547,37 @@ extern u8 g_matIsWood[MAT_COUNT];
    with it. */
 extern u8 g_matIsPlant[MAT_COUNT];
 
+/* --- seeds that do not fall straight ---------------------------------------
+   Chance out of 255 that a powder in FREE FALL steps sideways-and-down instead
+   of straight down. Zero for everything that is not a seed, which is every
+   other powder in the game: sand poured down a shaft should land in a pile
+   under the shaft.
+
+   A seed should not. Six pods off one felled oak dropped six seeds into the
+   footprint of the crown they came from, and what grew back was a clump of
+   trees in the hole where a tree used to be -- which is the opposite of what a
+   seed is for. Wind is what stops that happening to a real tree and this is the
+   cheapest honest version of it.
+
+   The drift is DIAGONAL, so a seed still descends while it wanders and can
+   never hover; the most it can manage is 45 degrees, which over a crown three
+   hundred cells up is three hundred cells of spread. Applied only when the cell
+   below is genuinely open, so this can never turn a seed resting on the ground
+   into one that crawls -- that would be a slide, and a slide is settling rather
+   than falling. See updatePowder.
+
+   --- why it is not one number per material ---
+   Every seed of a species reading the same chance would give every seed the
+   same trajectory, and identical trajectories from one spot is a clump moved
+   sideways rather than a clump broken up. So the table sets the MAXIMUM and
+   each individual seed scales it by a few bits of its own tint -- which is a
+   random byte it already carries, which the swap in tryMove already moves with
+   it, and whose bottom nibble the renderer does not read (it draws from
+   tint >> 4). One seed drifts hard and lands far out, the next barely drifts
+   and lands near the trunk, and a handful of them spread along a line instead
+   of arriving together. */
+extern u8 g_matDrift[MAT_COUNT];
+
 /* --- what the renderer does not draw ----------------------------------------
    True for a cell whose material is NOT painted: the backdrop is drawn in its
    place, exactly as if the cell were empty.

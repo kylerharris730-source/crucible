@@ -565,6 +565,37 @@ static const char* ART_TORCH[SPR_H] = {
     "..............",
 };
 
+/* Logistics parts share a pipe-blue casing.  The crossover's two lanes are
+   separated by a dark bridge, making the non-connection visible instead of a
+   rule the player has to memorize. */
+static const char* ART_PIPE[SPR_H] = {
+    "....llllll....", "....llllll....", "....llDDll....", "....llDEll....",
+    "...llDFFDll...", "...llDFFDll...", "...llDFFDll...", "...llDFFDll...",
+    "...llDFFDll...", "...llDFFDll...", "....llDEll....", "....llDDll....",
+    "....llllll....", "....llllll....",
+};
+static const char* ART_CROSSOVER[SPR_H] = {
+    "....llllll....", "....llllll....", "....llDDll....", "....llDDll....",
+    "llllDDFFDDllll", "llllDDFFDDllll", "llDDDDDDDDDDll", "llDDDDDDDDDDll",
+    "llllDDFFDDllll", "llllDDFFDDllll", "....llDDll....", "....llDDll....",
+    "....llllll....", "....llllll....",
+};
+static const char* ART_CHEST[SPR_H] = {
+    ".DDDDDDDDDDDD.", ".DEEEEEEEEEED.", ".DFFFFFFFFFFD.", ".DFFFFFFFFFFD.", ".DFFFFFFFFFFD.",
+    ".DddddddddddD.", ".DDEEEEEEEEDD.", ".DDEEEEEEEEDD.", ".DDEEEllEEEDD.", ".DDEEEllEEEDD.",
+    ".DDEEEEEEEEDD.", ".DddddddddddD.", ".DDDDDDDDDDDD.", "..............",
+};
+static const char* ART_SPOUT[SPR_H] = {
+    "....DDDDDD....", "...DEEEEEED...", "...DEFFFFED...", "...DEFFFFED...", ".llDEFFFFEDll.",
+    ".llDEFFFFEDll.", "...DEFFFFED...", "...DEFFFFED...", "...DEFFFFED...", "...DEFFFFED...",
+    "...DDEEEEDD...", "....DDEEDD....", ".....llll.....", ".....llll.....",
+};
+static const char* ART_DRAIN[SPR_H] = {
+    ".....llll.....", ".....llll.....", "....DDEEDD....", "...DDEEEEDD...", "...DEFFFFED...",
+    "...DEFFFFED...", "...DEFFFFED...", ".llDEFFFFEDll.", ".llDEFFFFEDll.", "...DEFFFFED...",
+    "...DEFFFFED...", "...DEEEEEED...", "....DDDDDD....", "..............",
+};
+
 void initSprites() {
     memset(g_sprite, 0, sizeof(g_sprite));
     expand(SPR_TOOL1,     ART_TOOL1);
@@ -586,6 +617,11 @@ void initSprites() {
     expand(SPR_PLACER,    ART_PLACER);
     expand(SPR_MINER,     ART_MINER);
     expand(SPR_TORCH,     ART_TORCH);
+    expand(SPR_PIPE,      ART_PIPE);
+    expand(SPR_CROSSOVER, ART_CROSSOVER);
+    expand(SPR_CHEST,     ART_CHEST);
+    expand(SPR_SPOUT,     ART_SPOUT);
+    expand(SPR_DRAIN,     ART_DRAIN);
 
     memset(g_playerSpr, 0, sizeof(g_playerSpr));
     composePlayer(PF_IDLE,  LEG_STAND, false);

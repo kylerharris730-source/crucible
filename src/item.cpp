@@ -392,6 +392,48 @@ void initItems() {
     ITEMS[ITEM_TORCH_DEV].maxStack   = 64;
     ITEMS[ITEM_TORCH_DEV].colour     = 0xFFC46A;
     ITEMS[ITEM_TORCH_DEV].sprite     = SPR_TORCH;
+
+    ITEMS[ITEM_ITEM_PIPE].name       = "Item Pipe";
+    ITEMS[ITEM_ITEM_PIPE].kind       = ITEMK_DEVICE;
+    ITEMS[ITEM_ITEM_PIPE].deviceType = DEV_PIPE;
+    ITEMS[ITEM_ITEM_PIPE].maxStack   = 64;
+    ITEMS[ITEM_ITEM_PIPE].colour     = 0x7AA7B8;
+    ITEMS[ITEM_ITEM_PIPE].sprite     = SPR_PIPE;
+
+    ITEMS[ITEM_PIPE_CROSSOVER].name       = "Pipe Crossover";
+    ITEMS[ITEM_PIPE_CROSSOVER].kind       = ITEMK_DEVICE;
+    ITEMS[ITEM_PIPE_CROSSOVER].deviceType = DEV_CROSSOVER;
+    ITEMS[ITEM_PIPE_CROSSOVER].maxStack   = 64;
+    ITEMS[ITEM_PIPE_CROSSOVER].colour     = 0xA2BCD0;
+    ITEMS[ITEM_PIPE_CROSSOVER].sprite     = SPR_CROSSOVER;
+
+    ITEMS[ITEM_CHEST].name       = "Chest";
+    ITEMS[ITEM_CHEST].kind       = ITEMK_DEVICE;
+    ITEMS[ITEM_CHEST].deviceType = DEV_CHEST;
+    ITEMS[ITEM_CHEST].maxStack   = 64;
+    ITEMS[ITEM_CHEST].colour     = 0xB87842;
+    ITEMS[ITEM_CHEST].sprite     = SPR_CHEST;
+
+    ITEMS[ITEM_SPOUT].name       = "Spout";
+    ITEMS[ITEM_SPOUT].kind       = ITEMK_DEVICE;
+    ITEMS[ITEM_SPOUT].deviceType = DEV_SPOUT;
+    ITEMS[ITEM_SPOUT].maxStack   = 64;
+    ITEMS[ITEM_SPOUT].colour     = 0x62B8E8;
+    ITEMS[ITEM_SPOUT].sprite     = SPR_SPOUT;
+
+    ITEMS[ITEM_DRAIN].name       = "Drain";
+    ITEMS[ITEM_DRAIN].kind       = ITEMK_DEVICE;
+    ITEMS[ITEM_DRAIN].deviceType = DEV_DRAIN;
+    ITEMS[ITEM_DRAIN].maxStack   = 64;
+    ITEMS[ITEM_DRAIN].colour     = 0x6858A4;
+    ITEMS[ITEM_DRAIN].sprite     = SPR_DRAIN;
+
+    ITEMS[ITEM_BLOCK_WATCHER].name       = "Block Watcher";
+    ITEMS[ITEM_BLOCK_WATCHER].kind       = ITEMK_DEVICE;
+    ITEMS[ITEM_BLOCK_WATCHER].deviceType = DEV_BLOCK_WATCHER;
+    ITEMS[ITEM_BLOCK_WATCHER].maxStack   = 64;
+    ITEMS[ITEM_BLOCK_WATCHER].colour     = 0xD8A85A;
+    ITEMS[ITEM_BLOCK_WATCHER].sprite     = SPR_THERMO;
 }
 
 const char* const EQ_NAMES[EQ_COUNT] = { "Feet", "Back", "Trinket", "Trinket" };

@@ -708,6 +708,7 @@ u8  g_matIsSeed[MAT_COUNT];
 u8  g_matIsLeaf[MAT_COUNT];
 u8  g_matIsWood[MAT_COUNT];
 u8  g_matIsPlant[MAT_COUNT];
+u8  g_matDrift[MAT_COUNT];
 u8  g_matDropsAs[MAT_COUNT];
 u8  g_matSmeltYield[MAT_COUNT];
 u8  g_matConducts[MAT_COUNT];
@@ -1362,6 +1363,25 @@ static void initDrops() {
     g_matIsPlant[MAT_WHEAT]     = 1;
     g_matIsPlant[MAT_FLAX]      = 1;
     g_matIsPlant[MAT_COTTON]    = 1;
+
+    /* --- how far a seed wanders on the way down --------------------------
+       Tree seeds nearly always drift, because they have the height to make use
+       of it: a pod broken out of a crown falls three hundred cells, and at 240
+       of 255 the ones that drift hardest cross most of that sideways while the
+       ones that barely drift land near the trunk. That is the spread the
+       clumping complaint was about.
+
+       Crop seeds drift less, and the reason is the same arithmetic read the
+       other way. You sow them by hand from about twenty cells up, so drift can
+       only ever move them a few cells -- which is exactly the spacing a row
+       wants. A tree-sized number here would do nothing at all, since there is
+       no fall to do it in. */
+    for (int m = 0; m < MAT_COUNT; ++m) g_matDrift[m] = 0;
+    g_matDrift[MAT_OAK_SEED]    = 240;
+    g_matDrift[MAT_BIRCH_SEED]  = 240;
+    g_matDrift[MAT_WHEAT_SEED]  = 150;
+    g_matDrift[MAT_FLAX_SEED]   = 150;
+    g_matDrift[MAT_COTTON_SEED] = 150;
 }
 
 static void initUnseen() {

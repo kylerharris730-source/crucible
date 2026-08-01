@@ -87,6 +87,14 @@ enum DeviceType {
        torch was a 2x2 dot on screen -- it lit well and did not look like an object.
        See DeviceInfo::cellMat for how a device gets to be passable. */
     DEV_TORCH,
+    /* Item logistics.  Every part uses the same 14-cell footprint, so pipes
+       meet cleanly at a shared edge and can be laid out as a visible grid. */
+    DEV_PIPE,
+    DEV_CROSSOVER,
+    DEV_CHEST,
+    DEV_SPOUT,
+    DEV_DRAIN,
+    DEV_BLOCK_WATCHER,
     DEV_COUNT
 };
 
@@ -95,6 +103,8 @@ enum DeviceType {
    warehouse -- a machine that could hold 100000 like a player's stack would make
    the whole logistics question disappear. */
 static const int DEV_CAP = 2000;
+/* One chest slot is a normal material stack, matching the inventory UI. */
+static const int CHEST_CAP = 100000;
 
 /* ==========================================================================
    Electricity
@@ -224,6 +234,10 @@ struct Device {
        sparkStep, consumed by devTick in the same frame. */
     bool poked;
     bool latched;
+    /* Spouts and drains retain this state between pulses. A signal toggles it,
+       rather than merely running them for a single frame, so a clock or watcher
+       can genuinely turn a line on and off. */
+    bool enabled;
     /* Running total of sparks that have arrived. Shown on the panel, and it is
        the only way to tell "the wire is not connected" from "the machine is
        ignoring me" -- which is the first question anyone asks of a contraption
@@ -242,6 +256,14 @@ struct Device {
        accept whatever it is first fed. */
     u8   mat;
     i32  count;
+    /* A crossover has two physically isolated lanes: lane 0 is north/south,
+       lane 1 east/west.  Ordinary logistics parts only use lane 0. */
+    u8   mat2;
+    i32  count2;
+    /* The neighbour that last fed this logistics part.  A pipe never offers
+       that same packet straight back, which gives a simple local network a
+       direction without a global graph solve. */
+    i16  pipeFrom;
 
     /* Which way an aimable device acts: 0 down, 1 up, 2 left, 3 right. Down by
        default because that is what a hopper and a drill both want, and because
@@ -254,6 +276,9 @@ struct Device {
 };
 
 extern Device g_devices[MAX_DEVICES];
+/* While a chest inventory is open its stack is being edited by the UI, so pipe
+   transfer pauses rather than racing an invisible second copy of that stack. */
+extern bool g_logisticsUiOpen;
 
 /* Where a footprint lands for a click at (cx, cy): centred on the click, so the
    machine appears under the cursor rather than down and to the right of it. */

@@ -43,6 +43,12 @@ const DeviceInfo DEVS[DEV_COUNT] = {
        rather than offering two dead buttons. Its cells are MAT_TORCH, which is what
        makes it the one device you can walk through. */
     { "Torch", "", "", 0, 0, 0, 0, SPR_TORCH, MAT_TORCH, false },
+    { "Item Pipe", "", "", 0, 0, 0, 0, SPR_PIPE, MAT_DEVICE, false },
+    { "Pipe Crossover", "", "", 0, 0, 0, 0, SPR_CROSSOVER, MAT_DEVICE, false },
+    { "Chest", "", "", 0, 0, 0, 0, SPR_CHEST, MAT_DEVICE, false },
+    { "Spout", "rate", "cells", 1, 14, 1, 4, SPR_SPOUT, MAT_DEVICE, true },
+    { "Drain", "filter", "id", 0, MAT_COUNT - 1, 1, 0, SPR_DRAIN, MAT_DEVICE, true },
+    { "Block Watcher", "filter", "id", 0, MAT_COUNT - 1, 1, 0, SPR_THERMO, MAT_DEVICE, true },
 };
 
 int sparkCount() {
@@ -240,7 +246,14 @@ Device* devAt(int cx, int cy) {
 
 bool devPlace(World& w, u8 type, int cx, int cy) {
     if (type >= DEV_COUNT) return false;
-    const int x0 = devOriginX(cx), y0 = devOriginY(cy);
+    int x0 = devOriginX(cx), y0 = devOriginY(cy);
+    /* Logistics pieces use a coarse, shared lattice.  Their connection rule is
+       literal edge contact, so snapping is what makes a run of pipes a thing
+       you can lay reliably rather than a pixel-perfect placement exercise. */
+    if (type >= DEV_PIPE) {
+        x0 = PLAY_X0 + ((cx - PLAY_X0) / DEV_W) * DEV_W;
+        y0 = PLAY_Y0 + ((cy - PLAY_Y0) / DEV_H) * DEV_H;
+    }
     if (x0 < PLAY_X0 || y0 < PLAY_Y0) return false;
     if (x0 + DEV_W > PLAY_X1 || y0 + DEV_H > PLAY_Y1) return false;
 
@@ -276,11 +289,15 @@ bool devPlace(World& w, u8 type, int cx, int cy) {
     d.firing  = false;
     d.poked   = false;
     d.latched = false;
+    d.enabled = true;
     d.phase   = 0;
     d.reading = 0;
     d.received = 0;
     d.mat     = MAT_EMPTY;
     d.count   = 0;
+    d.mat2    = MAT_EMPTY;
+    d.count2  = 0;
+    d.pipeFrom = -1;
     d.face    = 0;                  /* down */
     d.used    = true;
 
@@ -341,11 +358,104 @@ void devFaceCell(const Device& d, int i, int* ox, int* oy) {
    one material into another inside a machine is the kind of behaviour that makes a
    contraption impossible to trust. */
 static bool devTakeInto(Device& d, u8 mat) {
-    if (d.count >= DEV_CAP) return false;
+    const int cap = d.type == DEV_CHEST ? CHEST_CAP : DEV_CAP;
+    if (d.count >= cap) return false;
     if (d.count > 0 && d.mat != mat) return false;
     d.mat = mat;
     ++d.count;
     return true;
+}
+
+static bool isLogistics(u8 type) {
+    return type == DEV_PIPE || type == DEV_CROSSOVER || type == DEV_CHEST ||
+           type == DEV_SPOUT || type == DEV_DRAIN;
+}
+
+static bool pipeSends(u8 type) {
+    return type == DEV_CHEST || type == DEV_DRAIN || type == DEV_PIPE || type == DEV_CROSSOVER;
+}
+static bool pipeReceives(u8 type) {
+    return type == DEV_PIPE || type == DEV_CROSSOVER || type == DEV_SPOUT;
+}
+
+/* Two footprints are joined only when they share a complete cell edge.  Corner
+   contact deliberately does not count: a pipe network should be drawable and
+   debuggable by eye, not leak through a diagonal kiss. */
+static bool pipeJoined(const Device& a, const Device& b, bool* vertical) {
+    const bool xOverlap = a.x < b.x + DEV_W && b.x < a.x + DEV_W;
+    const bool yOverlap = a.y < b.y + DEV_H && b.y < a.y + DEV_H;
+    if (xOverlap && (a.y + DEV_H == b.y || b.y + DEV_H == a.y)) { *vertical = true; return true; }
+    if (yOverlap && (a.x + DEV_W == b.x || b.x + DEV_W == a.x)) { *vertical = false; return true; }
+    return false;
+}
+
+static void lane(Device& d, bool vertical, u8** mat, i32** count) {
+    if (d.type == DEV_CROSSOVER && !vertical) { *mat = &d.mat2; *count = &d.count2; }
+    else { *mat = &d.mat; *count = &d.count; }
+}
+
+/* A pipe moves four items per frame.  It is intentionally a simple push system:
+   networks do not need a global flood-fill or per-frame graph allocation, and a
+   line of pipes visibly fills from the chest toward the consumer. */
+static void pipeTick() {
+    if (g_logisticsUiOpen) return;
+    static const int PIPE_RATE = 4;
+    for (int i = 0; i < MAX_DEVICES; ++i) {
+        Device& src = g_devices[i];
+        if (!src.used || !pipeSends(src.type)) continue;
+        for (int j = 0; j < MAX_DEVICES; ++j) {
+            if (i == j || j == src.pipeFrom) continue;
+            Device& dst = g_devices[j];
+            if (!dst.used || !pipeReceives(dst.type)) continue;
+            bool vertical = false;
+            if (!pipeJoined(src, dst, &vertical)) continue;
+            u8 *sm, *dm; i32 *sc, *dc;
+            lane(src, vertical, &sm, &sc); lane(dst, vertical, &dm, &dc);
+            const int cap = dst.type == DEV_CHEST ? CHEST_CAP : DEV_CAP;
+            if (*sc <= 0 || (*dc > 0 && *dm != *sm) || *dc >= cap) continue;
+            const int n = imin(PIPE_RATE, imin((int)*sc, cap - (int)*dc));
+            *dm = *sm; *dc += n; *sc -= n;
+            if (*sc == 0) *sm = MAT_EMPTY;
+            dst.pipeFrom = (i16)i;
+            break;
+        }
+    }
+}
+
+static void devDrain(World& w, Device& d) {
+    int taken = 0;
+    for (int i = 0; i < DEV_W && taken < 4; ++i) {
+        int x, y; devFaceCell(d, i, &x, &y);
+        if (x < PLAY_X0 || x > PLAY_X1 || y < PLAY_Y0 || y > PLAY_Y1) continue;
+        const u8 m = w.at(x, y).mat;
+        if (m == MAT_EMPTY || m == MAT_WALL || m == MAT_DEVICE || (d.value && m != d.value)) continue;
+        if (!devTakeInto(d, m)) break;
+        w.setCell(x, y, MAT_EMPTY); ++taken;
+    }
+}
+
+static void devSpout(World& w, Device& d) {
+    int done = 0;
+    for (int i = 0; i < DEV_W && done < d.value && d.count > 0; ++i) {
+        int x, y; devFaceCell(d, i, &x, &y);
+        if (x < PLAY_X0 || x > PLAY_X1 || y < PLAY_Y0 || y > PLAY_Y1 || w.at(x, y).mat != MAT_EMPTY) continue;
+        w.setCell(x, y, d.mat); --d.count; ++done;
+    }
+    if (d.count == 0) d.mat = MAT_EMPTY;
+}
+
+/* Watches the fourteen cells directly in front of its aimed face.  It fires on
+   contact, not every frame of contact: a conveyor arriving at the sensor is one
+   event, while a block parked there is a condition that must clear before it can
+   trigger again. Filter 0 means any non-empty block. */
+static bool devWatch(const World& w, const Device& d) {
+    for (int i = 0; i < DEV_W; ++i) {
+        int x, y; devFaceCell(d, i, &x, &y);
+        if (x < PLAY_X0 || x > PLAY_X1 || y < PLAY_Y0 || y > PLAY_Y1) continue;
+        const u8 m = w.at(x, y).mat;
+        if (m != MAT_EMPTY && (!d.value || m == d.value)) return true;
+    }
+    return false;
 }
 
 /* Cells drawn in per frame while something is piled against a placer. A rate
@@ -434,6 +544,8 @@ void devTick(World& w) {
         if (!devIntact(w, d)) { devRemove(w, &d); continue; }
 
         d.firing = false;
+        if ((d.type == DEV_DRAIN || d.type == DEV_SPOUT) && d.poked)
+            d.enabled = !d.enabled;
         switch (d.type) {
         case DEV_CLOCK: {
             /* Counts frames and fires on the wrap. The phase is kept rather than
@@ -481,6 +593,25 @@ void devTick(World& w) {
             else if (d.latched && t < trip - HYST) { d.latched = false; }
             break;
         }
+        case DEV_DRAIN:
+            if (d.enabled) devDrain(w, d);
+            d.reading = d.count;
+            break;
+        case DEV_SPOUT:
+            if (d.enabled) devSpout(w, d);
+            d.reading = d.count;
+            break;
+        case DEV_BLOCK_WATCHER: {
+            const bool hit = devWatch(w, d);
+            d.reading = hit ? 1 : 0;
+            if (hit && !d.latched) d.firing = true;
+            d.latched = hit;
+            break;
+        }
+        case DEV_CHEST:
+        case DEV_PIPE:
+        case DEV_CROSSOVER:
+            d.reading = d.count + d.count2; break;
         default: break;
         }
 
@@ -495,6 +626,7 @@ void devTick(World& w) {
            with one, so a signal can never accumulate. */
         d.poked = false;
     }
+    pipeTick();
 }
 
 void devDraw(const World& w, u32* px, int camX, int camY, bool lit) {
@@ -509,6 +641,31 @@ void devDraw(const World& w, u32* px, int camX, int camY, bool lit) {
         const int bx = d.x - camX, by = d.y - camY;
         if (bx + DEV_W <= 0 || by + DEV_H <= 0) continue;
         if (bx >= VIEW_CELLS_W || by >= VIEW_CELLS_H) continue;
+
+        /* Pipes are drawn as connections, not as little black boxes.  The
+           underlying footprint remains a solid machine for the simulation;
+           only the visible conduit changes as neighbours are placed. */
+        if (d.type == DEV_PIPE || d.type == DEV_CROSSOVER) {
+            bool up = false, down = false, left = false, right = false;
+            for (int j = 0; j < MAX_DEVICES; ++j) {
+                const Device& o = g_devices[j]; bool vertical = false;
+                if (!o.used || !isLogistics(o.type) || !pipeJoined(d, o, &vertical)) continue;
+                if (vertical) { if (o.y < d.y) up = true; else down = true; }
+                else          { if (o.x < d.x) left = true; else right = true; }
+            }
+            const u32 col = (d.type == DEV_CROSSOVER) ? 0xB8D8E8 : 0x70C8E8;
+            for (int yy = 5; yy <= 8; ++yy) for (int xx = 5; xx <= 8; ++xx) {
+                const int vx = bx + xx, vy = by + yy;
+                if (vx >= 0 && vx < VIEW_CELLS_W && vy >= 0 && vy < VIEW_CELLS_H) px[vy * VIEW_CELLS_W + vx] = col;
+            }
+            for (int k = 0; k < 14; ++k) {
+                if (up || (d.type == DEV_PIPE && !down && !left && !right)) for (int xx = 6; xx <= 7; ++xx) if (bx + xx >= 0 && bx + xx < VIEW_CELLS_W && by + k >= 0 && by + k < VIEW_CELLS_H && k <= 5) px[(by + k) * VIEW_CELLS_W + bx + xx] = col;
+                if (down) for (int xx = 6; xx <= 7; ++xx) if (bx + xx >= 0 && bx + xx < VIEW_CELLS_W && by + k >= 0 && by + k < VIEW_CELLS_H && k >= 8) px[(by + k) * VIEW_CELLS_W + bx + xx] = col;
+                if (left) for (int yy = 6; yy <= 7; ++yy) if (bx + k >= 0 && bx + k < VIEW_CELLS_W && by + yy >= 0 && by + yy < VIEW_CELLS_H && k <= 5) px[(by + yy) * VIEW_CELLS_W + bx + k] = col;
+                if (right) for (int yy = 6; yy <= 7; ++yy) if (bx + k >= 0 && bx + k < VIEW_CELLS_W && by + yy >= 0 && by + yy < VIEW_CELLS_H && k >= 8) px[(by + yy) * VIEW_CELLS_W + bx + k] = col;
+            }
+            continue;
+        }
 
         const u32* art = g_sprite[DEVS[d.type].sprite];
         for (int yy = 0; yy < DEV_H; ++yy) {

@@ -84,6 +84,12 @@ static inline u8 latentDrain(int t) {
 
 void World::reset() {
     clearBlockBox();
+    /* setLiveWindow() compares the chunk-rounded core to decide whether old
+       fingers remain valid, so establish a known sentinel before its first
+       call.  World is also used as an uninitialised stack object by tests. */
+    fingerTop = fingerBottom = 0;
+    liveCoreCX0 = liveCoreCY0 = -1;
+    liveCoreCX1 = liveCoreCY1 = -1;
     clearLiveWindow();
     memset(cells, 0, sizeof(cells));
     memset(temp, AMBIENT_TEMP, sizeof(temp));
@@ -285,6 +291,30 @@ void World::updatePowder(int x, int y) {
        ordinary solid ground. Nothing has to sweep the flag, and a settled pile
        is never revisited to have it cleared -- it was already cleared on the way
        to settling. */
+    /* --- drift -----------------------------------------------------------
+       A seed wanders sideways on its way down instead of dropping in a line.
+       See g_matDrift for why, and for why the strength comes off the cell's own
+       tint rather than out of the table alone.
+
+       Gated on the cell BELOW being open, which is the honest test for "in free
+       fall" and is what keeps this from becoming a slide: a seed sitting on the
+       ground with a hole beside it must settle, not crawl into it. Everything
+       past that gate is genuinely falling, so the diagonal is marked F_FALL for
+       the same reason a straight drop is -- a shower of seed is something you
+       walk through, not a wall.
+
+       If the diagonal is blocked the straight drop below still runs, so a seed
+       drifting into a wall carries on down it rather than stopping dead. */
+    const u8 drift = g_matDrift[c.mat];
+    if (drift && cells[(y + 1) * SIM_W + x].mat == MAT_EMPTY) {
+        const int dir   = (c.tint & 1) ? 1 : -1;
+        const u32 scale = ((c.tint >> 1) & 7) + 1;          /* 1..8 of 8 */
+        if (rngChance((u32)drift * scale / 8) && tryMove(x, y, x + dir, y + 1)) {
+            cells[(y + 1) * SIM_W + x + dir].flags |= F_FALL;
+            return;
+        }
+    }
+
     if (tryMove(x, y, x, y + 1)) {
         cells[(y + 1) * SIM_W + x].flags |= F_FALL;
         return;
@@ -1311,10 +1341,33 @@ void World::step() {
     /* The live window in chunk coordinates, rounded outward so a partly
        visible chunk is fully simulated -- material must not behave differently
        depending on which half of it you can see. */
-    const int liveCX0 = imax(0, liveX0 >> CHUNK_SHIFT);
-    const int liveCY0 = imax(0, liveY0 >> CHUNK_SHIFT);
-    const int liveCX1 = imin(CHUNKS_X - 1, liveX1 >> CHUNK_SHIFT);
-    const int liveCY1 = imin(CHUNKS_Y - 1, liveY1 >> CHUNK_SHIFT);
+    const int coreCX0 = imax(0, liveX0 >> CHUNK_SHIFT);
+    const int coreCY0 = imax(0, liveY0 >> CHUNK_SHIFT);
+    const int coreCX1 = imin(CHUNKS_X - 1, liveX1 >> CHUNK_SHIFT);
+    const int coreCY1 = imin(CHUNKS_Y - 1, liveY1 >> CHUNK_SHIFT);
+    const int reserve = (coreCX1 - coreCX0 + 1) * (coreCY1 - coreCY0 + 1)
+                      / imax(1, coreCX1 - coreCX0 + 1);
+    const int oldTopRow = imax(0, coreCY0 - fingerTop);
+    const int oldBottomRow = imin(CHUNKS_Y - 1, coreCY1 + fingerBottom);
+    bool needsTop = false, needsBottom = false;
+    for (int cx = coreCX0; cx <= coreCX1; ++cx) {
+        if (cur[oldTopRow * CHUNKS_X + cx].minX <= cur[oldTopRow * CHUNKS_X + cx].maxX) needsTop = true;
+        if (cur[oldBottomRow * CHUNKS_X + cx].minX <= cur[oldBottomRow * CHUNKS_X + cx].maxX) needsBottom = true;
+    }
+    /* One row is lent to whichever boundary is trying to leave.  When both
+       boundaries want room, the shorter finger wins; at capacity this naturally
+       moves rows from a long waterfall to an ascending plume. */
+    if (needsTop && (!needsBottom || fingerTop <= fingerBottom)) {
+        if (fingerTop + fingerBottom < reserve && coreCY0 - fingerTop > 0) ++fingerTop;
+        else if (fingerBottom > fingerTop && coreCY0 - fingerTop > 0) { --fingerBottom; ++fingerTop; }
+    } else if (needsBottom) {
+        if (fingerTop + fingerBottom < reserve && coreCY1 + fingerBottom < CHUNKS_Y - 1) ++fingerBottom;
+        else if (fingerTop > fingerBottom && coreCY1 + fingerBottom < CHUNKS_Y - 1) { --fingerTop; ++fingerBottom; }
+    }
+    const int liveCX0 = coreCX0;
+    const int liveCX1 = coreCX1;
+    const int liveCY0 = imax(0, coreCY0 - fingerTop);
+    const int liveCY1 = imin(CHUNKS_Y - 1, coreCY1 + fingerBottom);
 
     for (int cy = CHUNKS_Y - 1; cy >= 0; --cy) {
         for (int ci = 0; ci < CHUNKS_X; ++ci) {
