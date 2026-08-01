@@ -98,6 +98,7 @@ void World::reset() {
        rock it makes; nothing here should assume a surface exists yet. */
     memset(zone, ZONE_SKY, sizeof(zone));
     memset(keepAlive, 0, sizeof(keepAlive));
+    memset(liveGrace, 0, sizeof(liveGrace));
     keptChunks = 0;
     sproutCount = 0;
     felledCount = 0;
@@ -1376,8 +1377,13 @@ void World::step() {
             const Chunk& ch = cur[idx];
             if (ch.minX > ch.maxX) continue;   /* settled: skipped entirely */
 
-            if ((cx < liveCX0 || cx > liveCX1 || cy < liveCY0 || cy > liveCY1)
-                && !keepAlive[idx]) {
+            const bool inLiveWindow = cx >= liveCX0 && cx <= liveCX1 &&
+                                      cy >= liveCY0 && cy <= liveCY1;
+            if (inLiveWindow) liveGrace[idx] = LIVE_GRACE_STEPS;
+            const bool lingering = !inLiveWindow && liveGrace[idx] > 0;
+            if (lingering) --liveGrace[idx];
+
+            if (!inLiveWindow && !lingering && !keepAlive[idx]) {
                 /* Outside the window: FROZEN, not forgotten.
 
                    The pending work has to be carried into next[], because cur

@@ -29,6 +29,10 @@ static const int CHUNK       = 1 << CHUNK_SHIFT;      /* 32 */
 static const int CHUNKS_X    = SIM_W >> CHUNK_SHIFT;
 static const int CHUNKS_Y    = SIM_H >> CHUNK_SHIFT;
 static const int CHUNK_COUNT = CHUNKS_X * CHUNKS_Y;
+/* Five seconds at the normal 60 simulation steps/sec.  This is deliberately a
+   per-chunk countdown rather than a wider permanent window: a waterfall keeps
+   falling after the camera leaves, while settled terrain remains free. */
+static const int LIVE_GRACE_STEPS = 60 * 5;
 
 /* The outer ring of cells is permanent wall. It draws the box you pour into,
    and because no rule ever runs on a wall cell, every neighbour lookup from a
@@ -412,6 +416,7 @@ struct World {
        size and in number (see room.h), and a settled room costs what any
        settled chunk costs, which is nothing. */
     u8 keepAlive[CHUNK_COUNT];
+    u16 liveGrace[CHUNK_COUNT];  /* frames of off-screen simulation remaining */
     int keptChunks;               /* stat, for the HUD */
 
     u8   zoneAt(int x, int y) const {
