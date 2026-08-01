@@ -87,7 +87,7 @@ void World::reset() {
     /* setLiveWindow() compares the chunk-rounded core to decide whether old
        fingers remain valid, so establish a known sentinel before its first
        call.  World is also used as an uninitialised stack object by tests. */
-    fingerTop = fingerBottom = 0;
+    fingerTop = fingerBottom = fingerLeft = fingerRight = 0;
     liveCoreCX0 = liveCoreCY0 = -1;
     liveCoreCX1 = liveCoreCY1 = -1;
     clearLiveWindow();
@@ -186,6 +186,16 @@ void World::paint(int cx, int cy, int r, u8 mat, bool replace) {
             if (!replace && mat != MAT_EMPTY && cells[y * SIM_W + x].mat != MAT_EMPTY) continue;
             setCell(x, y, mat);
         }
+    }
+}
+
+void World::paintBg(int cx, int cy, int r, u8 mat) {
+    const int r2 = r * r;
+    const int x0 = imax(cx - r, PLAY_X0), x1 = imin(cx + r, PLAY_X1);
+    const int y0 = imax(cy - r, PLAY_Y0), y1 = imin(cy + r, PLAY_Y1);
+    for (int y = y0; y <= y1; ++y) for (int x = x0; x <= x1; ++x) {
+        const int dx = x - cx, dy = y - cy;
+        if (dx * dx + dy * dy <= r2) setBg(x, y, mat, true);
     }
 }
 
@@ -1346,8 +1356,8 @@ void World::step() {
     const int coreCY0 = imax(0, liveY0 >> CHUNK_SHIFT);
     const int coreCX1 = imin(CHUNKS_X - 1, liveX1 >> CHUNK_SHIFT);
     const int coreCY1 = imin(CHUNKS_Y - 1, liveY1 >> CHUNK_SHIFT);
-    const int reserve = (coreCX1 - coreCX0 + 1) * (coreCY1 - coreCY0 + 1)
-                      / imax(1, coreCX1 - coreCX0 + 1);
+    const int coreW = coreCX1 - coreCX0 + 1, coreH = coreCY1 - coreCY0 + 1;
+    const int reserve = coreW * coreH;   /* exactly one extra core of budget */
     const int oldTopRow = imax(0, coreCY0 - fingerTop);
     const int oldBottomRow = imin(CHUNKS_Y - 1, coreCY1 + fingerBottom);
     bool needsTop = false, needsBottom = false;
@@ -1355,18 +1365,34 @@ void World::step() {
         if (cur[oldTopRow * CHUNKS_X + cx].minX <= cur[oldTopRow * CHUNKS_X + cx].maxX) needsTop = true;
         if (cur[oldBottomRow * CHUNKS_X + cx].minX <= cur[oldBottomRow * CHUNKS_X + cx].maxX) needsBottom = true;
     }
-    /* One row is lent to whichever boundary is trying to leave.  When both
-       boundaries want room, the shorter finger wins; at capacity this naturally
-       moves rows from a long waterfall to an ascending plume. */
-    if (needsTop && (!needsBottom || fingerTop <= fingerBottom)) {
-        if (fingerTop + fingerBottom < reserve && coreCY0 - fingerTop > 0) ++fingerTop;
-        else if (fingerBottom > fingerTop && coreCY0 - fingerTop > 0) { --fingerBottom; ++fingerTop; }
-    } else if (needsBottom) {
-        if (fingerTop + fingerBottom < reserve && coreCY1 + fingerBottom < CHUNKS_Y - 1) ++fingerBottom;
-        else if (fingerTop > fingerBottom && coreCY1 + fingerBottom < CHUNKS_Y - 1) { --fingerTop; ++fingerBottom; }
+    const int oldLeftCol = imax(0, coreCX0 - fingerLeft);
+    const int oldRightCol = imin(CHUNKS_X - 1, coreCX1 + fingerRight);
+    bool needsLeft = false, needsRight = false;
+    for (int cy = coreCY0; cy <= coreCY1; ++cy) {
+        if (cur[cy * CHUNKS_X + oldLeftCol].minX <= cur[cy * CHUNKS_X + oldLeftCol].maxX) needsLeft = true;
+        if (cur[cy * CHUNKS_X + oldRightCol].minX <= cur[cy * CHUNKS_X + oldRightCol].maxX) needsRight = true;
     }
-    const int liveCX0 = coreCX0;
-    const int liveCX1 = coreCX1;
+    /* The four fingers share one core-sized reserve.  Grow the shortest edge
+       requesting room; at capacity take rows/columns from a longer finger. */
+    i32* fingers[4] = { &fingerTop, &fingerBottom, &fingerLeft, &fingerRight };
+    const bool need[4] = { needsTop, needsBottom, needsLeft, needsRight };
+    const int cost[4] = { coreW, coreW, coreH, coreH };
+    int want = -1;
+    for (int d = 0; d < 4; ++d) if (need[d] && (want < 0 || *fingers[d] < *fingers[want])) want = d;
+    int used = coreW * (fingerTop + fingerBottom) + coreH * (fingerLeft + fingerRight);
+    if (want >= 0) {
+        bool edge = (want == 0) ? coreCY0 - fingerTop > 0 : (want == 1) ? coreCY1 + fingerBottom < CHUNKS_Y - 1 : (want == 2) ? coreCX0 - fingerLeft > 0 : coreCX1 + fingerRight < CHUNKS_X - 1;
+        while (edge && used + cost[want] > reserve) {
+            int donor = -1;
+            for (int d = 0; d < 4; ++d)
+                if (d != want && *fingers[d] > *fingers[want] + 1 && (donor < 0 || *fingers[d] > *fingers[donor])) donor = d;
+            if (donor < 0) break;
+            --*fingers[donor]; used -= cost[donor];
+        }
+        if (edge && used + cost[want] <= reserve) ++*fingers[want];
+    }
+    const int liveCX0 = imax(0, coreCX0 - fingerLeft);
+    const int liveCX1 = imin(CHUNKS_X - 1, coreCX1 + fingerRight);
     const int liveCY0 = imax(0, coreCY0 - fingerTop);
     const int liveCY1 = imin(CHUNKS_Y - 1, coreCY1 + fingerBottom);
 
@@ -1377,8 +1403,10 @@ void World::step() {
             const Chunk& ch = cur[idx];
             if (ch.minX > ch.maxX) continue;   /* settled: skipped entirely */
 
-            const bool inLiveWindow = cx >= liveCX0 && cx <= liveCX1 &&
-                                      cy >= liveCY0 && cy <= liveCY1;
+            /* A plus-shaped live set: the core, plus four independent fingers.
+               Corners are intentionally not paid for, preserving the 2x cap. */
+            const bool inLiveWindow = (cx >= coreCX0 && cx <= coreCX1 && cy >= liveCY0 && cy <= liveCY1)
+                                   || (cy >= coreCY0 && cy <= coreCY1 && cx >= liveCX0 && cx <= liveCX1);
             if (inLiveWindow) liveGrace[idx] = LIVE_GRACE_STEPS;
             const bool lingering = !inLiveWindow && liveGrace[idx] > 0;
             if (lingering) --liveGrace[idx];

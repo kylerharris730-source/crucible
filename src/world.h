@@ -390,7 +390,7 @@ struct World {
        that edge, while a newly active opposite edge reclaims rows from the
        longer finger.  This keeps long falls and rising gas alive without
        paying for a permanently larger square. */
-    i32 fingerTop, fingerBottom;
+    i32 fingerTop, fingerBottom, fingerLeft, fingerRight;
     i32 liveCoreCX0, liveCoreCY0, liveCoreCX1, liveCoreCY1;
 
     /* One ZoneId per chunk. See ZoneId above for why this is a label rather
@@ -434,7 +434,7 @@ struct World {
         const i32 cx0 = imax(0, x0 >> CHUNK_SHIFT), cx1 = imin(CHUNKS_X - 1, x1 >> CHUNK_SHIFT);
         const i32 cy0 = imax(0, y0 >> CHUNK_SHIFT), cy1 = imin(CHUNKS_Y - 1, y1 >> CHUNK_SHIFT);
         if (cx0 != liveCoreCX0 || cx1 != liveCoreCX1 || cy0 != liveCoreCY0 || cy1 != liveCoreCY1) {
-            fingerTop = fingerBottom = 0;
+            fingerTop = fingerBottom = fingerLeft = fingerRight = 0;
             liveCoreCX0 = cx0; liveCoreCX1 = cx1; liveCoreCY0 = cy0; liveCoreCY1 = cy1;
         }
     }
@@ -488,6 +488,7 @@ struct World {
     /* replace=false leaves whatever is already there alone, so you can pour
        into a scene without carving through it. Erasing ignores the flag. */
     void paint(int cx, int cy, int r, u8 mat, bool replace = true);
+    void paintBg(int cx, int cy, int r, u8 mat);
     void heat(int cx, int cy, int r, int delta);
     void setCell(int x, int y, u8 mat);
     /* Change what a cell is MADE OF and nothing else: temperature, moisture and

@@ -1,5 +1,6 @@
 #include "world.h"
 #include "materials.h"
+#include "room.h"
 #include <stdio.h>
 
 /* device.cpp is linked into this headless test because world-facing helpers are
@@ -33,6 +34,16 @@ int main() {
     const int afterFreeze = waterY(w, x, afterTen, afterTen + LIVE_GRACE_STEPS + 8);
     if (beforeFreeze < 0 || afterFreeze != beforeFreeze) {
         fprintf(stderr, "water did not freeze after grace\n"); return 3;
+    }
+    w.reset(); roomsClear(w);
+    /* A backed, sealed 4x4 interior is the smallest deliberate room. */
+    for (int y = 120; y <= 125; ++y) for (int x2 = 120; x2 <= 125; ++x2) {
+        if (x2 == 120 || x2 == 125 || y == 120 || y == 125) w.setCell(x2, y, MAT_STONE);
+        else w.setBg(x2, y, MAT_STONE, true);
+    }
+    roomsNotifyEdit(w, 120, 120);
+    if (roomCount() != 1 || w.keptChunks == 0) {
+        fprintf(stderr, "backed sealed room did not register\n"); return 4;
     }
     puts("live grace test passed");
     return 0;

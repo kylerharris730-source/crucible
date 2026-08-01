@@ -140,12 +140,12 @@ int roomRegister(World& w, int x, int y) {
     /* The centre and its four neighbours. The cell you place to CLOSE a room is
        part of the wall by definition, so a scan that only ever started where
        you clicked would never find the room you just finished. */
-    static const int PX[5] = { 0,  0, 0, -1, 1 };
-    static const int PY[5] = { 0, -1, 1,  0, 0 };
-
-    for (int k = 0; k < 5; ++k) {
+    /* Include diagonal neighbours too. A final corner of a hand-drawn room is
+       diagonally adjacent to its interior, and the old cross-only probe made a
+       perfectly sealed room wait for a later unrelated edit before registering. */
+    for (int oy = -1; oy <= 1; ++oy) for (int ox = -1; ox <= 1; ++ox) {
         Room r;
-        if (!roomScan(w, x + PX[k], y + PY[k], &r)) continue;
+        if (!roomScan(w, x + ox, y + oy, &r)) continue;
 
         /* Already known? Two seeds inside the same enclosure describe the same
            room, so match on containment rather than on the seed being equal --

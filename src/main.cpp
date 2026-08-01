@@ -361,8 +361,12 @@ static int g_creRowCount = 0;    /* total rows, for clamping and the bar */
 static RECT g_creTrack, g_creThumb;
 static RECT g_creRect[ITEM_COUNT];
 static RECT g_crePanel, g_creClear;
+static RECT g_creSearchBox;
 static int  g_creCount = 0;              /* entries actually laid out */
 static ItemId g_creItem[ITEM_COUNT];     /* which item each rect belongs to */
+static char g_creSearch[32] = "";
+static bool g_creSearchFocus = false;
+static int  g_filterDevice = -1;         /* drain/watcher material picker */
 
 /* --- the pack, and the thing on the cursor ---------------------------------
    The player's own forty slots, drawn under the creative palette, with the
@@ -647,6 +651,18 @@ static void layoutCreative() {
     g_creCount = 0;
     for (int i = 0; i < ITEM_COUNT; ++i) {
         if (ITEMS[i].maxStack == 0) continue;   /* air, and anything unfinished */
+        bool match = true;
+        for (int a = 0; g_creSearch[a]; ++a) {
+            bool found = false;
+            for (int b = 0; ITEMS[i].name[b]; ++b) {
+                char x = ITEMS[i].name[b], q = g_creSearch[a];
+                if (x >= 'A' && x <= 'Z') x = (char)(x + ('a' - 'A'));
+                if (q >= 'A' && q <= 'Z') q = (char)(q + ('a' - 'A'));
+                if (x == q) { found = true; break; }
+            }
+            if (!found) { match = false; break; }
+        }
+        if (!match) continue;
         g_creItem[g_creCount++] = (ItemId)i;
     }
     /* The bench only appears when there is a tool to show, and its height is
@@ -681,12 +697,13 @@ static void layoutCreative() {
     const int packH    = 22 + INV_ROWS * (ps + pgap) + 10;
     const int barW     = 10;
     const int w = pad * 2 + CRE_COLS * cw + (CRE_COLS - 1) * gap + barW + 6;
-    const int h = pad + 26 + paletteH + 10 + packH + equipH + benchH + 38;
+    const int h = pad + 56 + paletteH + 10 + packH + equipH + benchH + 38;
     const int cx = PANEL_W + VIEW_W / 2, cy = VIEW_H / 2;
     const int x0 = cx - w / 2, y0 = cy - h / 2;
     SetRect(&g_crePanel, x0, y0, x0 + w, y0 + h);
 
-    const int listTop = y0 + pad + 26;
+    const int listTop = y0 + pad + 56;
+    SetRect(&g_creSearchBox, x0 + pad, y0 + pad + 24, x0 + w - pad - 18, y0 + pad + 46);
     for (int i = 0; i < g_creCount; ++i) {
         const int c = i % CRE_COLS, r = i / CRE_COLS - g_creScroll;
         if (r < 0 || r >= visRows) { SetRectEmpty(&g_creRect[i]); continue; }
@@ -918,7 +935,13 @@ static void drawChest(HDC hdc) {
 /* Returns true if the click was consumed, which while this is open is always:
    it is modal, and letting a click through to the world would paint under it. */
 static bool handleCreativeClick(int mx, int my, bool remove) {
+    if (inRect(g_creSearchBox, mx, my)) { g_creSearchFocus = true; return true; }
     if (inRect(g_creClear, mx, my)) {
+        if (g_filterDevice >= 0) {
+            g_devices[g_filterDevice].value = 0;
+            g_filterDevice = -1; g_creativeOpen = false; g_creSearchFocus = false;
+            return true;
+        }
         g_inv.clear();
         g_drag.item = ITEM_NONE; g_drag.count = 0; g_drag.inst = 0;
         layoutCreative();
@@ -957,6 +980,11 @@ static bool handleCreativeClick(int mx, int my, bool remove) {
     for (int i = 0; i < g_creCount; ++i) {
         if (!inRect(g_creRect[i], mx, my)) continue;
         const ItemId it = g_creItem[i];
+        if (g_filterDevice >= 0) {
+            if (it < MAT_COUNT) g_devices[g_filterDevice].value = it;
+            g_filterDevice = -1; g_creativeOpen = false; g_creSearchFocus = false;
+            return true;
+        }
         if (remove) {
             /* Take everything, not one: the point of the right-click is to
                clear a slot out, and holding the button down to drain a hundred
@@ -1123,6 +1151,19 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         g_mx = (short)LOWORD(lp);
         g_my = (short)HIWORD(lp);
         return 0;
+
+    case WM_CHAR:
+        if (g_creativeOpen && g_creSearchFocus) {
+            const char ch = (char)wp;
+            int n = (int)strlen(g_creSearch);
+            if (ch == '\b' && n > 0) g_creSearch[n - 1] = 0;
+            else if (ch >= 32 && ch < 127 && n < (int)sizeof(g_creSearch) - 1) {
+                g_creSearch[n] = ch; g_creSearch[n + 1] = 0;
+            }
+            g_creScroll = 0; layoutCreative();
+            return 0;
+        }
+        break;
 
     case WM_LBUTTONDOWN:
         g_mx = (short)LOWORD(lp);
@@ -1312,8 +1353,8 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case VK_OEM_6: changeSize(+1); break;  /* ] */
         case VK_TAB:
             g_creativeOpen = !g_creativeOpen;
-            if (g_creativeOpen) { layoutCreative(); g_lmb = g_rmb = false; }
-            else                dragStow();
+            if (g_creativeOpen) { g_creSearchFocus = true; layoutCreative(); g_lmb = g_rmb = false; }
+            else { g_filterDevice = -1; g_creSearchFocus = false; dragStow(); }
             break;
         /* Escape backs out of the creative grid before it reaches the pause
            menu -- one key that always means "close the thing in front of me" is
@@ -1321,7 +1362,7 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case VK_ESCAPE:
             if (g_chestOpen >= 0)    closeChest();
             else if (g_craftOpen)    g_craftOpen = false;
-            else if (g_creativeOpen) { g_creativeOpen = false; dragStow(); }
+            else if (g_creativeOpen) { g_creativeOpen = false; g_filterDevice = -1; g_creSearchFocus = false; dragStow(); }
             else                     g_menuOpen = !g_menuOpen;
             break;
         }
@@ -1540,6 +1581,7 @@ static void applyBrush() {
         } else {
             if (sel == TOOL_HEAT)      g_world.heat(px, py, g_brushRadius,  HEAT_STEP);
             else if (sel == TOOL_COOL) g_world.heat(px, py, g_brushRadius, -HEAT_STEP);
+            else if (g_bgLayer)        g_world.paintBg(px, py, g_brushRadius, (u8)sel);
             else                       g_world.paint(px, py, g_brushRadius, (u8)sel, g_overwrite);
         }
         if (!steps) break;
@@ -1645,6 +1687,11 @@ static bool handleDevPanelClick(int mx, int my) {
         d.face = (u8)((d.face + 1) & 3);
         return true;
     }
+    else if (d.type == DEV_DRAIN && PtInRect(&g_devpTake, pt)) {
+        g_filterDevice = g_devPanel; g_creativeOpen = true; g_creSearch[0] = 0;
+        g_creScroll = 0; g_creSearchFocus = true; layoutCreative();
+        return true;
+    }
     else if (PtInRect(&g_devpTake, pt) && (d.count > 0 || d.type == DEV_CHEST || d.type == DEV_SPOUT)) {
         /* Empty the machine's buffer into the pack. The counterpart to loading a
            placer by pouring onto it -- a miner fills up with what it has broken
@@ -1717,6 +1764,7 @@ static void drawDevPanel(HDC hdc) {
                      d.reading ? "CONTACT  —  signal sent" : "waiting for contact");
             drawButton(hdc, g_devpDec, "<", 0, false, PtInRect(&g_devpDec, pt) != 0);
             drawButton(hdc, g_devpInc, ">", 0, false, PtInRect(&g_devpInc, pt) != 0);
+            drawButton(hdc, g_devpTake, "pick filter", 0, false, PtInRect(&g_devpTake, pt) != 0);
         } else if (d.type == DEV_DRAIN) {
             sprintf(flow, "collecting  %s", d.value ? MATS[d.value].name : "all materials");
             drawText(hdc, tx, g_devpBox.top + 27, RGB(200, 206, 218), flow);
@@ -2191,8 +2239,14 @@ static void drawCreative(HDC hdc) {
     RECT title = g_crePanel;
     title.top += 10; title.left += 14;
     SetTextColor(hdc, RGB(226, 190, 90));
-    DrawTextA(hdc, "CREATIVE  --  click a swatch to fill the cursor; click a slot to drop it, right-click for half", -1, &title,
+    DrawTextA(hdc, g_filterDevice >= 0 ? "SELECT DRAIN FILTER  --  click a material, or clear for all" : "CREATIVE  --  click a swatch to fill the cursor; click a slot to drop it, right-click for half", -1, &title,
               DT_LEFT | DT_TOP | DT_SINGLELINE);
+
+    FillRect(hdc, &g_creSearchBox, g_btnBg);
+    FrameRect(hdc, &g_creSearchBox, g_creSearchFocus ? g_accentBrush : g_borderBrush);
+    char searchLabel[64]; sprintf(searchLabel, "search: %s", g_creSearch[0] ? g_creSearch : "");
+    SetTextColor(hdc, RGB(200, 206, 218));
+    DrawTextA(hdc, searchLabel, -1, &g_creSearchBox, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
     for (int i = 0; i < g_creCount; ++i) {
         const ItemId it = g_creItem[i];
@@ -2362,7 +2416,7 @@ static void drawCreative(HDC hdc) {
         }
     }
 
-    drawButton(hdc, g_creClear, "Empty pack", NULL, false, inRect(g_creClear, g_mx, g_my));
+    drawButton(hdc, g_creClear, g_filterDevice >= 0 ? "All materials" : "Empty pack", NULL, false, inRect(g_creClear, g_mx, g_my));
     {
         RECT hint = g_crePanel;
         hint.left = g_creClear.right + 12; hint.top = g_creClear.top + 4;
