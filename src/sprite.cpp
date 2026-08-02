@@ -353,6 +353,10 @@ static void expand(int id, const char* const* art) {
    swung. A rig has no such dodge available, so the body grew until the angles
    were real. See PLAYER_W. */
 u32 g_playerSpr[PF_COUNT][PSPR_W * PSPR_H];
+/* A second, independently baked skeleton at (PSPR_W, CROUCH_H) -- see the note
+   on g_playerCrouchSpr in sprite.h for why this is not the standing rig
+   squashed into a shorter canvas. */
+u32 g_playerCrouchSpr[PCF_COUNT][CSPR_W * CSPR_H];
 
 static void buildPlayerFrames() {
     static Bone bone[RB_COUNT];
@@ -362,6 +366,11 @@ static void buildPlayerFrames() {
     armBake(&rig, &RIG_WALK, g_playerSpr[PF_WALK0]);
     armBake(&rig, &RIG_JUMP, g_playerSpr[PF_JUMP]);
     armBake(&rig, &RIG_FALL, g_playerSpr[PF_FALL]);
+
+    static Bone crouchBone[RB_COUNT];
+    RigDef crouchRig;
+    rigHumanoid(crouchBone, &crouchRig, "player-crouch", CSPR_W, CSPR_H, RIG_SUIT);
+    armBake(&crouchRig, &RIG_CROUCH, g_playerCrouchSpr[PCF_CROUCH]);
 }
 
 /* The thermocouple: a boxed gauge with a dial face and a needle, and a terminal

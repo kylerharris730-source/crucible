@@ -104,4 +104,23 @@ static const int PF_WALK_FRAMES = 8;
 
 extern u32 g_playerSpr[PF_COUNT][PSPR_W * PSPR_H];
 
+/* --- crouching ---------------------------------------------------------
+   A second, SMALLER canvas rather than the standing one squashed at draw
+   time. Squashing would draw whatever it drew standing, at three-quarters
+   height -- proportions crushed rather than a person who ducked. Baking a
+   fresh rig at (PLAYER_W, CROUCH_H) instead gets a figure whose limb lengths
+   are honestly shorter, and gets it for the cost of one more rigHumanoid call
+   -- see buildPlayerFrames().
+
+   One pose, moving or not, the same choice already made for jump and fall:
+   both of those are a single unanimated frame too, not a cycle. A crouch-walk
+   shuffle is a reasonable thing to want later; it was left out here because
+   nothing asked for it yet and RIG_CROUCH already reuses the walk/idle
+   precedent of "start with the pose that has to exist, add motion if the
+   static one reads as flat". */
+static const int CSPR_W = PLAYER_W;
+static const int CSPR_H = CROUCH_H;
+enum PlayerCrouchFrame { PCF_CROUCH = 0, PCF_COUNT };
+extern u32 g_playerCrouchSpr[PCF_COUNT][CSPR_W * CSPR_H];
+
 void initSprites();

@@ -107,6 +107,19 @@ static inline int playerRowInset(int rowFromTop) {
     return inset > 0 ? inset : 0;
 }
 
+/* --- crouching ---------------------------------------------------------
+   A second, shorter box rather than a scaled one: width is unchanged, only
+   height shrinks, the same way a real crouch works. 20 of 30 -- two thirds --
+   which is roughly what bending the knees costs a real body, and comfortably
+   clear of PLAYER_TAPER so the pointed-shoulder outline still means something
+   on the smaller box.
+
+   The box shrinks from the TOP; the feet do not move. That is what makes
+   entering a crouch a duck rather than a step, and it is also why the sprite
+   for it is a second, independently baked canvas rather than the standing one
+   squashed at draw time -- see g_playerCrouchSpr in sprite.h. */
+static const int CROUCH_H = 20;
+
 /* How far from the character the tool can reach, in cells. Roughly three and a
    half body heights, which is far enough to dig a tunnel comfortably and short
    enough that you have to walk somewhere to work on it.
@@ -404,8 +417,12 @@ struct Player {
        animate(). */
     int   facing;
     float walkPhase;
-    int   frame;       /* a PlayerFrame */
+    int   frame;       /* a PlayerFrame, or a PlayerCrouchFrame while crouching */
     int   airFrames;
+    /* Whether the box is currently the short one. An output of update(), not
+       an input -- see the crouch block there for how `down` earns this job
+       only when it is not already spoken for by a rope or a platform. */
+    bool  crouching;
 
     /* --- flight -------------------------------------------------------
        `fly` is what is equipped and is written by the host every frame, so
@@ -509,17 +526,22 @@ struct Player {
        in mid-air after they walk away, because nothing woke its chunk. */
     void occupy(World& w) const;
 
+    /* The box's current height in cells -- PLAYER_H, or CROUCH_H while
+       crouching. Everything that measures the body reads this rather than
+       PLAYER_H directly, or a ducked head would still count as standing. */
+    int height() const { return crouching ? CROUCH_H : PLAYER_H; }
+
     /* Centre of the body, which is what reach is measured from -- measuring
        from the feet or a corner makes the reachable area lopsided in a way you
        can feel without being able to name. */
     float centreX() const { return x + PLAYER_W * 0.5f; }
-    float centreY() const { return y + PLAYER_H * 0.5f; }
+    float centreY() const { return y + height() * 0.5f; }
 
     /* Cell bounds of the collision box at the current position. */
     int left()   const { return (int)x; }
     int top()    const { return (int)y; }
     int right()  const { return (int)x + PLAYER_W - 1; }
-    int bottom() const { return (int)y + PLAYER_H - 1; }
+    int bottom() const { return (int)y + height() - 1; }
 };
 
 extern Player g_player;

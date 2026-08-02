@@ -221,7 +221,7 @@ static void fillLake(World& w) {
    cell -- 7.6M of them.
 
    --- the number that decides everything ---
-   CAVE_MIN_R. The character is PLAYER_H = 22 cells tall, so a tunnel narrower
+   CAVE_MIN_R. The character is PLAYER_H = 30 cells tall, so a tunnel narrower
    than that in its tight dimension is not a cave, it is a wall you are allowed
    to look at. This is the trap in porting cave-generation intuition from games
    whose player is two tiles tall: radius 5 sounds like a generous tunnel and is
@@ -234,18 +234,27 @@ static void fillLake(World& w) {
    Generation must not depend on how many random numbers were drawn before it, or
    the world would change shape according to what the player did last session. */
 
-/* Radius floor, in cells. With CAVE_TALL below this gives a 30x42 bore against a
-   22-cell body: enough headroom to jump inside a tunnel rather than merely fit in
-   one, which is the difference between a cave you traverse and a cave you occupy. */
+/* Radius floor, in cells. With CAVE_TALL below this gives a 30x51 bore against
+   the current 11x30 body: enough headroom to jump inside a tunnel rather than
+   merely fit in one, which is the difference between a cave you traverse and a
+   cave you occupy. */
 static const int   CAVE_MIN_R    = 15;
 /* Caves are ELLIPSES, taller than they are wide, by this factor. "Taller" is the
    thing you actually want more of underground -- headroom to jump, room to drop
    down a chamber without it feeling like a corridor -- and simply raising the
    radius buys height at the cost of hollowing the map out sideways, since area
-   goes as the square. Stretching only the vertical axis gives a 30x42 bore
-   against a body 8 wide and 22 tall: two body-heights of headroom, and no wider
-   than the round version was. */
-static const float CAVE_TALL     = 1.4f;
+   goes as the square.
+
+   1.4 -> 1.7. The character grew from 22 to 30 cells tall when it became a rig
+   (see PLAYER_H), and this number did not move with it: the minimum bore held
+   at 42 cells, which had been "two body-heights of headroom" against the old
+   body and quietly became 1.4 against the new one -- the caves did not get
+   smaller, the character got bigger under them. 1.7 puts a floor of 51 cells
+   under a 30-tall body, which is most of the way back to the original two
+   body-heights without changing the width at all: CAVE_MIN_R stretches only
+   the vertical axis, so the 30-cell bore width -- already 2.7 bodies across --
+   is untouched. */
+static const float CAVE_TALL     = 1.7f;
 /* How much the radius noise is allowed to swell a tunnel. Chambers are the same
    worm running fat for a while, not a separate feature -- which is why the
    variation is noise along arc length rather than an event. */

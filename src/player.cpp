@@ -12,6 +12,8 @@ Player g_player;
    shoulders stops making sense, so it is worth failing the build over. */
 static_assert(PSPR_W == PLAYER_W && PSPR_H == PLAYER_H,
               "the character sprite must be exactly the size of the collision box");
+static_assert(CSPR_W == PLAYER_W && CSPR_H == CROUCH_H,
+              "the crouch sprite must be exactly the size of the crouched box");
 
 /* Tuning, in cells and frames at the fixed 60Hz step. Written as the numbers
    they are rather than derived, but the jump is worth showing the working for:
@@ -78,6 +80,11 @@ static const int   IDLE_HOLD   = 40;
 static const int   AIR_GRACE     = 8;      /* frames, ~0.13 s */
 static const float GRACE_FALL_V  = 1.45f;  /* cells/frame */
 
+/* Half speed while crouched. Slow enough that crouching under something reads
+   as a deliberate, careful move rather than the normal walk with a shorter
+   box, which is what it would feel like at anything close to MAX_SPEED. */
+static const float CROUCH_SPEED_MUL = 0.5f;
+
 bool playerSolid(const World& w, int x, int y, int mode) {
     /* Outside the world counts as solid, so the player can never be walked out
        of bounds and no caller has to bounds-check first. */
@@ -110,9 +117,18 @@ bool playerSolid(const World& w, int x, int y, int mode) {
 /* Is the collision shape blocked with its bounding box's top-left at (bx, by)?
    Uses the same tapered outline the world is told about, so the player fits
    through exactly the gaps their silhouette suggests -- the pointed shoulders
-   let them under an overhang that a full-width head would catch on. */
-static bool boxBlocked(const World& w, int bx, int by, int mode = SOLID_ANY) {
-    for (int yy = 0; yy < PLAYER_H; ++yy) {
+   let them under an overhang that a full-width head would catch on.
+
+   `h` defaults to the standing height rather than reading g_player.height(),
+   because most callers below want exactly that default: they are testing
+   "would the CURRENT box fit here" and pass g_player's own height explicitly,
+   while the one caller asking "is there room to stand up" wants the standing
+   answer regardless of what shape the box happens to be right now. Two
+   different questions, and a default that silently tracked crouch state would
+   quietly answer the wrong one. */
+static bool boxBlocked(const World& w, int bx, int by, int mode = SOLID_ANY,
+                       int h = PLAYER_H) {
+    for (int yy = 0; yy < h; ++yy) {
         const int inset = playerRowInset(yy);
         for (int xx = inset; xx < PLAYER_W - inset; ++xx)
             if (playerSolid(w, bx + xx, by + yy, mode)) return true;
@@ -140,6 +156,7 @@ void Player::reset(float cx, float cy) {
     walkPhase = 0.0f;
     frame     = PF_IDLE;
     airFrames = 0;
+    crouching = false;
     /* Equipment is the host's to publish; a fresh player has none, which is
        what every headless harness wants and what respawning should do to a
        half-empty tank. */
@@ -281,7 +298,7 @@ static void bodyTemp(const World& w, const Player& p, u8 heatLine, u8 coldLine,
         }
     }
     const int footY = p.bottom() + 1;
-    const int footInset = playerRowInset(PLAYER_H - 1);
+    const int footInset = playerRowInset(p.height() - 1);
     const int footX0 = imax(0, p.left() + footInset);
     const int footX1 = imin(SIM_W - 1, p.right() - footInset);
     if (footY >= 0 && footY < SIM_H) {
@@ -340,6 +357,15 @@ static void bodyInLiquid(const World& w, const Player& p, float* frac, bool* hea
 void Player::animate() {
     if (vx > 0.05f)       facing = 1;
     else if (vx < -0.05f) facing = -1;
+
+    if (crouching) {
+        /* One static pose covers the whole crouch, moving or not -- the same
+           choice this rig already made for jump and fall, which are also a
+           single unanimated pose rather than a cycle. draw() reads `crouching`
+           itself to pick g_playerCrouchSpr, so `frame` only has to index it. */
+        frame = PCF_CROUCH;
+        return;
+    }
 
     const float speed = (vx > 0.0f) ? vx : -vx;
 
@@ -436,6 +462,48 @@ void Player::update(const World& w, const PlayerInput& in) {
         if (!alive) return;
     }
 
+    /* --- crouch ---------------------------------------------------------
+       `down` already does two other jobs -- climbs a rope, drops through a
+       platform -- so crouch only claims it where neither applies. Standing on
+       ordinary ground, holding down used to do nothing at all; that is what
+       makes it the natural third job rather than a new key.
+
+       Decided here, before the box is used for anything else this frame, so
+       every boxBlocked() call below tests the shape the player will actually
+       have for the rest of the frame rather than last frame's.
+
+       Shrinking always succeeds -- removing rows from the top of the box
+       cannot newly collide with anything -- so entering a crouch is
+       unconditional. Growing back is not: standing up under a ledge you just
+       ducked to get under has to fail quietly and leave you crouched, the same
+       as every game that has ever put a ceiling over a crouch, so that check
+       runs first and only takes effect if the standing box is actually clear.
+
+       Both moves keep the FEET fixed and move the box from the top, which is
+       what makes entering a crouch a duck rather than a step down. */
+    {
+        const int feetY = bottom();     /* stable across the transition below */
+        bool onPlatform = false;
+        if (onGround && feetY + 1 < SIM_H) {
+            const int fx0 = imax(0, left()), fx1 = imin(SIM_W - 1, right());
+            for (int x = fx0; x <= fx1 && !onPlatform; ++x)
+                if (g_matPlatform[w.at(x, feetY + 1).mat]) onPlatform = true;
+        }
+        const bool want = in.down && onGround && !onPlatform;
+        if (want && !crouching) {
+            crouching = true;
+            y = (float)(feetY - CROUCH_H + 1);
+        } else if (!want && crouching) {
+            const float standY = (float)(feetY - PLAYER_H + 1);
+            if (!boxBlocked(w, left(), (int)standY)) {
+                crouching = false;
+                y = standY;
+            }
+            /* else stays crouched -- there is a ceiling over the standing box. */
+        }
+    }
+    const int H = height();
+
     /* --- unstick ------------------------------------------------------
        Terrain closing over the player is not an edge case here, it is Tuesday:
        sand falls, lava flows, a wall is drawn straight onto you. So before
@@ -448,10 +516,10 @@ void Player::update(const World& w, const PlayerInput& in) {
        genuinely entombed, and teleporting them somewhere distant would be far
        more confusing than telling them they are stuck. */
     buried = false;
-    if (boxBlocked(w, left(), top())) {
+    if (boxBlocked(w, left(), top(), SOLID_ANY, H)) {
         bool freed = false;
         for (int lift = 1; lift <= PLAYER_H + 4; ++lift) {
-            if (!boxBlocked(w, left(), top() - lift)) {
+            if (!boxBlocked(w, left(), top() - lift, SOLID_ANY, H)) {
                 y -= (float)lift;
                 vy = 0.0f;
                 freed = true;
@@ -467,9 +535,10 @@ void Player::update(const World& w, const PlayerInput& in) {
        which reads as the boots making the character HEAVIER for the first
        second -- the opposite of what they are for. */
     const float want = (in.right ? 1.0f : 0.0f) - (in.left ? 1.0f : 0.0f);
-    const float topSpeed = MAX_SPEED * speedMul;
+    const float moveMul = speedMul * (crouching ? CROUCH_SPEED_MUL : 1.0f);
+    const float topSpeed = MAX_SPEED * moveMul;
     if (want != 0.0f) {
-        vx += want * MOVE_ACCEL * speedMul;
+        vx += want * MOVE_ACCEL * moveMul;
         if (vx >  topSpeed) vx =  topSpeed;
         if (vx < -topSpeed) vx = -topSpeed;
     } else {
@@ -590,13 +659,13 @@ void Player::update(const World& w, const PlayerInput& in) {
         bool blocked = false;
         while (cur != end) {
             const int next = cur + dir;
-            if (boxBlocked(w, next, top())) {
+            if (boxBlocked(w, next, top(), SOLID_ANY, H)) {
                 /* Try to walk up over it before giving up -- but only from the
                    ground, or the player can climb a sheer wall in mid-air. */
                 bool stepped = false;
                 if (onGround) {
                     for (int up = 1; up <= PLAYER_STEP_UP; ++up) {
-                        if (!boxBlocked(w, next, top() - up)) {
+                        if (!boxBlocked(w, next, top() - up, SOLID_ANY, H)) {
                             y -= (float)up;
                             stepped = true;
                             break;
@@ -639,8 +708,8 @@ void Player::update(const World& w, const PlayerInput& in) {
            through becomes one you can never come back down through. Asking
            "was I already in it before I moved" separates landing ON one from
            being inside one. */
-        const bool insidePlatform = boxBlocked(w, left(), (int)y, SOLID_FLOOR)
-                                 && !boxBlocked(w, left(), (int)y, SOLID_ANY);
+        const bool insidePlatform = boxBlocked(w, left(), (int)y, SOLID_FLOOR, H)
+                                 && !boxBlocked(w, left(), (int)y, SOLID_ANY, H);
         const int  mode = (dir > 0 && !in.down && !insidePlatform)
                         ? SOLID_FLOOR : SOLID_ANY;
 
@@ -648,7 +717,7 @@ void Player::update(const World& w, const PlayerInput& in) {
         bool blocked = false;
         while (cur != end) {
             const int next = cur + dir;
-            if (boxBlocked(w, left(), next, mode)) { blocked = true; break; }
+            if (boxBlocked(w, left(), next, mode, H)) { blocked = true; break; }
             cur = next;
         }
         onGround = false;
@@ -668,7 +737,8 @@ void Player::update(const World& w, const PlayerInput& in) {
        down is held, or holding down on a platform would leave you permanently
        "on the ground" and unable to fall through it. */
     if (!onGround && vy >= 0.0f)
-        onGround = boxBlocked(w, left(), top() + 1, in.down ? SOLID_ANY : SOLID_FLOOR);
+        onGround = boxBlocked(w, left(), top() + 1,
+                              in.down ? SOLID_ANY : SOLID_FLOOR, H);
 
     /* --- the impact ---------------------------------------------------
        Fall damage is applied HERE, on the transition into onGround, and not in
@@ -738,18 +808,26 @@ void Player::occupy(World& w) const {
 void Player::draw(u32* px, int camX, int camY, bool lit) const {
     if (!alive) return;
 
-    const u32* spr = g_playerSpr[(frame >= 0 && frame < PF_COUNT) ? frame : PF_IDLE];
+    /* Two independent canvases, not one canvas with the crouch frame
+       squashed into it -- see the note on g_playerCrouchSpr in sprite.h.
+       Everything below already reads its bounds from the array it picked, so
+       there is nothing further to key off `crouching`. */
+    const u32* spr = crouching
+        ? g_playerCrouchSpr[(frame >= 0 && frame < PCF_COUNT) ? frame : PCF_CROUCH]
+        : g_playerSpr[(frame >= 0 && frame < PF_COUNT) ? frame : PF_IDLE];
+    const int sprW = crouching ? CSPR_W : PSPR_W;
+    const int sprH = crouching ? CSPR_H : PSPR_H;
     /* World cell -> view cell. Everything below works in view space. */
     const int bx = left() - camX, by = top() - camY;
 
-    for (int yy = 0; yy < PSPR_H; ++yy) {
+    for (int yy = 0; yy < sprH; ++yy) {
         const int wy = by + yy;
         if (wy < 0 || wy >= VIEW_CELLS_H) continue;
-        for (int xx = 0; xx < PSPR_W; ++xx) {
+        for (int xx = 0; xx < sprW; ++xx) {
             /* Mirrored by reading the source row backwards, rather than by
                keeping a second set of frames. Free, and the two directions can
                never disagree. */
-            const u32 c = spr[yy * PSPR_W + (facing < 0 ? PSPR_W - 1 - xx : xx)];
+            const u32 c = spr[yy * sprW + (facing < 0 ? sprW - 1 - xx : xx)];
             if (c == 0) continue;
             const int wx = bx + xx;
             if (wx < 0 || wx >= VIEW_CELLS_W) continue;
@@ -786,10 +864,11 @@ void Player::draw(u32* px, int camX, int camY, bool lit) const {
         const int phase = (int)(fuel * 3.0f) & 3;
         /* Two jets, under the heels, where the nozzles are on every sprite. */
         const int jetX[2] = { 1, PLAYER_W - 3 };
+        const int feetY = by + height();
         for (int j = 0; j < 2; ++j) {
             const int len = 3 + ((phase + j) & 1) + (fly.riseCap > 1.0f ? 2 : 0);
             for (int t = 0; t < len; ++t) {
-                const int wy = by + PLAYER_H + t;
+                const int wy = feetY + t;
                 if (wy < 0 || wy >= VIEW_CELLS_H) continue;
                 /* Tapers to one cell: a plume of constant width reads as a
                    rectangle hanging off the boots. */
@@ -810,7 +889,7 @@ void Player::draw(u32* px, int camX, int camY, bool lit) const {
        mid-air while falling. */
     const u32 EDGE = 0x10141C;
     for (int xx = 0; xx < PLAYER_W; ++xx) {
-        const int wx = bx + xx, wy = by + PLAYER_H;
+        const int wx = bx + xx, wy = by + height();
         if (wx < 0 || wx >= VIEW_CELLS_W || wy < 0 || wy >= VIEW_CELLS_H) continue;
         /* Solidity is a question about the WORLD, so it is asked in world
            coordinates even though the pixel is written in view coordinates. */

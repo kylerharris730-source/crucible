@@ -47,3 +47,9 @@ extern const Clip RIG_WALK;   /* 8 keys, the classic contact/down/passing/up */
 extern const Clip RIG_IDLE;
 extern const Clip RIG_JUMP;
 extern const Clip RIG_FALL;
+/* One static pose, the same as RIG_JUMP/RIG_FALL -- bent knees, hips low,
+   torso leaning forward over them. Meant to be baked onto a SHORTER canvas
+   (see CROUCH_H) rather than posed on the standing one, so the bend is on top
+   of bone lengths that are already proportionally shorter, not a tall
+   skeleton squashed into a small box. */
+extern const Clip RIG_CROUCH;

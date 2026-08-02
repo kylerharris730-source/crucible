@@ -169,6 +169,7 @@ static PoseKey g_walkKeys[8];
 static PoseKey g_idleKeys[2];
 static PoseKey g_jumpKeys[1];
 static PoseKey g_fallKeys[1];
+static PoseKey g_crouchKeys[1];
 static bool g_clipsReady = false;
 
 static void buildClips() {
@@ -208,6 +209,21 @@ static void buildClips() {
     key(g_jumpKeys[0], 0, 8, -6,  -46, -28,  26, -54,  16,   -38, -34, -10, -30,  22);
     /* Descending: legs reaching for the ground, arms out for balance. */
     key(g_fallKeys[0], 2, -4, 4,   38, -24,  18, -14, -10,    30, -20, -16, -10,  -8);
+
+    /* Crouching: knees folded hard, hips low, torso pitched forward over them
+       for balance -- the shape a squat actually makes, not a shorter idle.
+       Baked onto the CROUCH_H canvas (see buildPlayerFrames), where the bone
+       lengths are already proportionally shorter, so this bend is on top of
+       that rather than trying to make a standing-height skeleton fit a small
+       box by folding harder than a knee does.
+
+       head=0 against spine=25 leaves the encoded head angle at -25 -- the
+       same counter-rotation convention as every other key -- so the face
+       still looks level rather than down at the floor. Thighs and shins are
+       given a slightly different bend far vs near (20/-65 against 22/-68)
+       for the same reason the walk keys are never quite mirrored: a
+       perfectly symmetric silhouette reads as a mannequin. */
+    key(g_crouchKeys[0], 4, 8, 0,   15, -25,  20, -65,  15,   -15, -22,  22, -68,  14);
 }
 
 /* The clips. `frames` is how many are baked: eight for the walk because that is
@@ -219,11 +235,16 @@ static const Clip IDLE = { "idle", g_idleKeys, 2, 2, true,  true  };
    bottom of its box would be a character bobbing on the spot. */
 static const Clip JUMP = { "jump", g_jumpKeys, 1, 1, false, false };
 static const Clip FALL = { "fall", g_fallKeys, 1, 1, false, false };
+/* Grounded, unlike jump and fall, so it floor-snaps -- a crouch with its feet
+   not on the bottom row would be a character crouching an inch above the
+   floor. */
+static const Clip CROUCH = { "crouch", g_crouchKeys, 1, 1, false, true };
 
-const Clip RIG_WALK = WALK;
-const Clip RIG_IDLE = IDLE;
-const Clip RIG_JUMP = JUMP;
-const Clip RIG_FALL = FALL;
+const Clip RIG_WALK   = WALK;
+const Clip RIG_IDLE   = IDLE;
+const Clip RIG_JUMP   = JUMP;
+const Clip RIG_FALL   = FALL;
+const Clip RIG_CROUCH = CROUCH;
 
 /* Built on first use rather than from a constructor: static initialisation
    order across translation units is not something to bet a character on. */
