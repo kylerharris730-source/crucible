@@ -108,17 +108,22 @@ static inline int playerRowInset(int rowFromTop) {
 }
 
 /* --- crouching ---------------------------------------------------------
-   A second, shorter box rather than a scaled one: width is unchanged, only
-   height shrinks, the same way a real crouch works. 20 of 30 -- two thirds --
-   which is roughly what bending the knees costs a real body, and comfortably
-   clear of PLAYER_TAPER so the pointed-shoulder outline still means something
-   on the smaller box.
+   A second, shorter box: width unchanged, only height shrinks, the same way a
+   real crouch works. The box shrinks from the TOP and the feet do not move,
+   which is what makes entering a crouch a duck rather than a step down.
 
-   The box shrinks from the TOP; the feet do not move. That is what makes
-   entering a crouch a duck rather than a step, and it is also why the sprite
-   for it is a second, independently baked canvas rather than the standing one
-   squashed at draw time -- see g_playerCrouchSpr in sprite.h. */
-static const int CROUCH_H = 20;
+   24 of 30 -- four fifths -- and the number came down from the body rather
+   than from the gap it has to fit through. This is a HUNCH: the spine pitches
+   forward over bent knees, the way you actually move through a low passage,
+   not the deep folded squat 20 asked for. The first attempt at 20 also had to
+   shrink the skeleton to fit, and a skeleton with every limb two thirds as
+   long is a child standing up, not an adult crouching -- which is exactly what
+   it looked like. At 24 the SAME skeleton bends into the box with its real
+   limb lengths, and the pose does the work instead of the scale.
+
+   Six cells of clearance is still the whole point of the feature, and it is
+   what a hunch buys in reality too. */
+static const int CROUCH_H = 24;
 
 /* How far from the character the tool can reach, in cells. Roughly three and a
    half body heights, which is far enough to dig a tunnel comfortably and short

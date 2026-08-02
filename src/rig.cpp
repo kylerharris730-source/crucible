@@ -210,20 +210,57 @@ static void buildClips() {
     /* Descending: legs reaching for the ground, arms out for balance. */
     key(g_fallKeys[0], 2, -4, 4,   38, -24,  18, -14, -10,    30, -20, -16, -10,  -8);
 
-    /* Crouching: knees folded hard, hips low, torso pitched forward over them
-       for balance -- the shape a squat actually makes, not a shorter idle.
-       Baked onto the CROUCH_H canvas (see buildPlayerFrames), where the bone
-       lengths are already proportionally shorter, so this bend is on top of
-       that rather than trying to make a standing-height skeleton fit a small
-       box by folding harder than a knee does.
+    /* Crouching: a HUNCH. Spine pitched forward over bent knees, not a folded
+       squat -- see CROUCH_H for why the box is four fifths of standing rather
+       than two thirds.
 
-       head=0 against spine=25 leaves the encoded head angle at -25 -- the
-       same counter-rotation convention as every other key -- so the face
-       still looks level rather than down at the floor. Thighs and shins are
-       given a slightly different bend far vs near (20/-65 against 22/-68)
-       for the same reason the walk keys are never quite mirrored: a
-       perfectly symmetric silhouette reads as a mannequin. */
-    key(g_crouchKeys[0], 4, 8, 0,   15, -25,  20, -65,  15,   -15, -22,  22, -68,  14);
+       The SPINE SIGN IS INVERTED against every other bone here, and it is the
+       one thing to get right before touching these numbers. Angles are degrees
+       from a bone's rest direction with 0 pointing DOWN, so on a limb hanging
+       downward positive swings the tip forward. The spine's rest is 180 -- it
+       points UP -- so positive swings its tip BACKWARD. The first version of
+       this pose used +25 meaning "lean forward" and produced a figure arched
+       over backwards with its helmet outside the collision box on the wrong
+       side. Forward is negative. Arms inherit the spine's frame, which is why
+       theirs are large and positive: they are cancelling the lean to hang
+       somewhere near vertical.
+
+       The head does NOT inherit it. Its encoded angle is (head - spine), so
+       the absolute head direction works out to 180 + 3*head/2 regardless of
+       how far the torso tips -- the counter-rotation the key() helper exists
+       for. head = -10 is therefore an absolute forward tilt of the face, not a
+       tilt relative to the chest: hunched over, still looking where they are
+       going.
+
+       rootDX pulls the hips BACK, which is the counterweight a real hunch
+       uses and here also does a mechanical job: without it the leaning helmet
+       hangs past the pointed shoulders of the collision outline, and the
+       crouch is exactly the pose that must not do that, since ducking under an
+       overhang is the whole reason to be in it.
+
+       The SHIN swings back further than the thigh swings forward, and by a
+       derived amount rather than a chosen one. A thigh at 56 degrees throws
+       the knee forward by thighL*sin(56); the shin has to undo all of that or
+       the ankle ends up ahead of the hip and the figure sits back on its heels
+       with its feet out in front, which is what the first several attempts
+       did. -124 puts the ankle under the hip, and the foot then levels against
+       the shin so the sole stays flat.
+
+       Far and near legs differ slightly, as in the walk keys, so the
+       silhouette is a person rather than a mannequin.
+
+       These five numbers were swept rather than eyeballed -- spine, thigh,
+       ankle offset and rootDX against fit, taper and lean together -- because
+       they are not independent: leaning further forward is free until the
+       helmet crosses the collision outline, and stops being free abruptly. */
+    key(g_crouchKeys[0], 0, -22, -10,   48, -14,  56, -124,  68,   52, -18,  51, -118,  67);
+    /* Not a key() parameter because this is the only pose that needs it.
+       Twelve subsamples is three cells, and it is very nearly exactly the
+       distance the lean throws the shoulders forward -- so the helmet ends up
+       back over the middle of the box while the body still reads as pitched
+       over. Without it the whole figure slides off the right of the canvas and
+       stamp() quietly clips it. */
+    g_crouchKeys[0].rootDX = -12;
 }
 
 /* The clips. `frames` is how many are baked: eight for the walk because that is

@@ -367,10 +367,28 @@ static void buildPlayerFrames() {
     armBake(&rig, &RIG_JUMP, g_playerSpr[PF_JUMP]);
     armBake(&rig, &RIG_FALL, g_playerSpr[PF_FALL]);
 
-    static Bone crouchBone[RB_COUNT];
-    RigDef crouchRig;
-    rigHumanoid(crouchBone, &crouchRig, "player-crouch", CSPR_W, CSPR_H, RIG_SUIT);
-    armBake(&crouchRig, &RIG_CROUCH, g_playerCrouchSpr[PCF_CROUCH]);
+    /* The crouch is the same skeleton, posed and then CROPPED -- see the note
+       on g_playerCrouchSpr. Floor-snapped by the clip, so the figure is
+       already sitting on the bottom row of the full canvas and the bottom
+       CSPR_H rows are exactly the crouched body. */
+    static u32 full[PSPR_W * PSPR_H];
+    armBake(&rig, &RIG_CROUCH, full);
+    const int cut = PSPR_H - CSPR_H;
+    /* The hunch has to FIT. A pose that stands taller than the crouch box
+       would lose its head to the crop and nothing downstream could tell --
+       the sprite would simply be a decapitated figure that still passed every
+       size assertion. Checked the same way expand() checks hand-edited art,
+       and fatal for the same reason: it is a fact about the art, so it either
+       always holds or never does. */
+    for (int y = 0; y < cut; ++y)
+        for (int x = 0; x < PSPR_W; ++x)
+            if (full[y * PSPR_W + x]) {
+                fprintf(stderr, "crouch pose is taller than CROUCH_H: lit pixel "
+                                "at row %d, %d rows above the crop\n", y, cut - y);
+                abort();
+            }
+    memcpy(g_playerCrouchSpr[PCF_CROUCH], full + (size_t)cut * PSPR_W,
+           sizeof(u32) * PSPR_W * CSPR_H);
 }
 
 /* The thermocouple: a boxed gauge with a dial face and a needle, and a terminal
