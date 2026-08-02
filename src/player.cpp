@@ -30,6 +30,54 @@ static const float JUMP_VEL    = 2.6f;
    rather than as a twitch. */
 static const int   IDLE_HOLD   = 40;
 
+/* --- coyote time, for the ANIMATION ----------------------------------------
+   Terrain here is a grid, so a slope is a staircase and walking down one means
+   genuinely leaving the ground every step -- there is no step-DOWN to match
+   PLAYER_STEP_UP, and adding one would snap the body to terrain it has not
+   reached yet. The physics is right. What was wrong was showing it.
+
+   Measured on a descending staircase at full walking speed, before this: one
+   cell down per four across put the character airborne for 48% of frames and
+   flipped between the walk cycle and the fall pose 35.7 times a SECOND. The
+   trace read wwFFFwwFFFwwFFF -- two frames of walking, three of falling, over
+   and over. The worst case is a SHALLOW slope, which is the counter-intuitive
+   part and the reason a frame count alone was never going to be the whole
+   answer: on a steep one you really are falling most of the time and it reads
+   as one continuous thing, while on a gentle one the two states are evenly
+   matched and it strobes.
+
+   So a short grace: keep playing the walk while briefly airborne. Two gates,
+   and measuring them separately is what sorted out which does what -- swept
+   against slopes from 1-in-1 to 1-in-12, they turn out to bind in completely
+   different places.
+
+   AIR_GRACE bounds how long the walk can run over thin air, and every SLOPE
+   fits inside it comfortably. The longest unbroken airborne stretch is 6 frames
+   at 1-in-2, 4 at 1-in-3, 2 at 1-in-4 -- so 8 covers the lot with room, and
+   raising it further changes no slope at all. What it does buy is the cost on
+   the other side: this is also the cliff window, and the descent off a jump.
+   Measured, 8 and 12 both leave the jump reading correctly and 20 puts six
+   walk frames after the apex.
+
+   GRACE_FALL_V is the honest one. It is the ONLY thing that fires on a true
+   45-degree face, where the surface drops 1.2 cells a frame and gravity cannot
+   keep the feet on it -- the character is off the ground 11 frames in 13 there,
+   long enough to reach 2.16 cells/frame, and no grace should hide that. It also
+   means the fall pose arrives on its own off a cliff, without anything having
+   to decide that a particular drop was "real". No height test, no ground probe.
+
+   1.45 rather than 1.1 for margin rather than for effect: 1-in-2 tops out at
+   1.08, and a threshold sitting two hundredths above the case it must not cut
+   is a number waiting to be wrong the next time gravity or the walk speed
+   moves.
+
+   Both require you to be MOVING. Having the floor mined out from under you
+   while standing still has to look like falling immediately -- see the note on
+   animate(), which is the whole reason the frame is picked from the body rather
+   than from the keys. */
+static const int   AIR_GRACE     = 8;      /* frames, ~0.13 s */
+static const float GRACE_FALL_V  = 1.45f;  /* cells/frame */
+
 bool playerSolid(const World& w, int x, int y, int mode) {
     /* Outside the world counts as solid, so the player can never be walked out
        of bounds and no caller has to bounds-check first. */
@@ -91,6 +139,7 @@ void Player::reset(float cx, float cy) {
     facing    = 1;
     walkPhase = 0.0f;
     frame     = PF_IDLE;
+    airFrames = 0;
     /* Equipment is the host's to publish; a fresh player has none, which is
        what every headless harness wants and what respawning should do to a
        half-empty tank. */
@@ -295,8 +344,20 @@ void Player::animate() {
     const float speed = (vx > 0.0f) ? vx : -vx;
 
     if (!onGround) {
-        frame = (vy < 0.0f) ? PF_JUMP : PF_FALL;
-        return;
+        ++airFrames;
+        /* Rising is never graced -- vy < 0 only happens because you jumped or
+           were thrown, and both should read instantly. */
+        const bool grace = vy >= 0.0f && vy < GRACE_FALL_V
+                        && airFrames <= AIR_GRACE && speed > 0.05f;
+        if (!grace) {
+            frame = (vy < 0.0f) ? PF_JUMP : PF_FALL;
+            return;
+        }
+        /* Fall through to the walk cycle below, and let walkPhase keep
+           advancing: the stride is driven by distance travelled, so a step
+           taken across a gap is still a step and the feet stay in time. */
+    } else {
+        airFrames = 0;
     }
     if (speed <= 0.05f) {
         /* Standing still still breathes -- two frames, a second apart. A figure

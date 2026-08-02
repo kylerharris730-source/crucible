@@ -397,10 +397,15 @@ struct Player {
        walkPhase accumulates distance travelled, not frames elapsed. Driving
        the cycle off a timer makes the feet skate whenever speed changes --
        accelerating from a standstill would show a full-speed gait at walking
-       pace. Off distance, the legs are tied to the ground by construction. */
+       pace. Off distance, the legs are tied to the ground by construction.
+
+       airFrames counts how long we have been off the ground, and exists for
+       the walk cycle rather than for the physics -- see the coyote note in
+       animate(). */
     int   facing;
     float walkPhase;
     int   frame;       /* a PlayerFrame */
+    int   airFrames;
 
     /* --- flight -------------------------------------------------------
        `fly` is what is equipped and is written by the host every frame, so

@@ -39,18 +39,37 @@ void rigHumanoid(Bone* b, RigDef* rig, const char* name,
        fills its box exactly -- which matters more here than in most games,
        because the sprite IS the collision box and a gap would show as material
        resting inside the character. */
-    const int headL = 18 * H / 100, neckL =  4 * H / 100, spineL = 28 * H / 100;
+    /* The head grows in WIDTH, not in length, and the distinction is not
+       cosmetic -- it is what a capsule does at the ends. A bone of length L
+       with half-width w draws L + w of material, because the cap is a disc
+       centred on the tip. The head's caps are the biggest on the figure, so
+       length and width both push the crown up and the two compound: raising
+       headL to 22% at the same time as the width made an eleven-row head on a
+       thirty-row body, which is a beehive rather than a helmet.
+
+       Width alone is also the right lever for the stated problem. At four cells
+       across the head is eight screen pixels at SCALE 2 -- enough for a shape,
+       not enough for a face -- and the visor, which is the only feature on the
+       figure and the only thing that says which way it is looking, has two
+       cells to live in. Wider fixes that. Taller does not.
+
+       The NECK moves with it, and has to. The head's base cap is a disc of
+       radius headW, so widening the head extends it DOWNWARD as well, and at
+       25% it reached past a 4% neck and sat straight on the shoulders again --
+       the merged head-and-torso this rig had to fix once already. 7% keeps the
+       pinch visible under a wider helmet. */
+    const int headL = 17 * H / 100, neckL =  7 * H / 100, spineL = 26 * H / 100;
     const int thighL = 24 * H / 100, shinL = 21 * H / 100;
     const int footL  =  9 * H / 100;
     const int upperL = 19 * H / 100, foreL = 17 * H / 100;
-    const int visorL =  8 * H / 100, packL = 15 * H / 100;
+    const int visorL = 10 * H / 100, packL = 15 * H / 100;
 
     /* Widths as a fraction of width, and these are HALF-widths. */
     const int hipW  = 15 * W / 100, shdW  = 22 * W / 100;
-    const int neckW =  7 * W / 100, headW = 20 * W / 100;
+    const int neckW =  7 * W / 100, headW = 25 * W / 100;
     const int thighW = 11 * W / 100, shinW = 9 * W / 100;
     const int armW   =  9 * W / 100, foreW = 7 * W / 100, footW = 7 * W / 100;
-    const int visorW =  9 * W / 100, packW = 11 * W / 100, beltL = 8 * W / 100;
+    const int visorW = 12 * W / 100, packW = 11 * W / 100, beltL = 8 * W / 100;
 
     /*                parent, rest, len, wBase, wTip, shade, layer, socket */
     b[RB_PELVIS] = mk(-1, 0, 0, 0, 0, 1, 1, 255);
@@ -65,7 +84,19 @@ void rigHumanoid(Bone* b, RigDef* rig, const char* name,
        cells wide and it is the whole difference between a character and a
        domino. */
     b[RB_NECK]   = mk(RB_SPINE, 0, neckL, neckW, neckW, 1, 4, 255);
-    b[RB_HEAD]   = mk(RB_NECK,  0, headL, headW, headW * 7 / 10, 3, 5, 255);
+    /* 8/10 rather than 7/10: a sharper taper on a head this wide comes to a
+       point and reads as a hood. This is a helmet, so the crown stays broad.
+
+       That crown is now wider than the collision outline's apex, which is
+       PLAYER_W - 2*PLAYER_TAPER = 3 cells, and in the two LEANING poses -- jump
+       and fall -- one or two helmet pixels fall outside it. Measured, and
+       accepted rather than missed: swept from 22% up, every width that reads as
+       a face at this scale overflows, because a 3-cell apex cannot hold a
+       readable helmet at all. What the taper is for is ducking under an
+       overhang while walking, and every grounded frame is clean; the cost is a
+       pixel of helmet drawn over a block for the few frames of a jump. Narrowing
+       the head to fit would undo the readability this change exists for. */
+    b[RB_HEAD]   = mk(RB_NECK,  0, headL, headW, headW * 8 / 10, 3, 5, 255);
     /* The visor is socketed part way UP the head rather than at its tip, and
        that is what Bone::at exists for: at the tip it sits on the crown, which
        is a hat. The face is a third of the way down. It is also the only thing
