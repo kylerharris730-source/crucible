@@ -1,5 +1,6 @@
 #pragma once
 #include "common.h"
+#include "player.h"   /* PLAYER_W/H: the sprite canvas IS the collision box */
 
 /* --- item sprites ----------------------------------------------------------
 
@@ -77,23 +78,29 @@ extern u32 g_sprite[SPR_COUNT][SPR_W * SPR_H];
    in sand, and if the sprite were bigger than the hitbox (as it is in most
    platformers) material would visibly rest partway inside the character and the
    whole "stuff rolls off the pointed shoulders" behaviour would read as broken.
-   The art therefore respects the same taper -- see playerRowInset() in player.h.
 
-   Frames are composed at startup from ONE shared body and a set of leg
-   stances, rather than being seven independently drawn figures. Seven hand-
-   drawn frames drift: a pixel of helmet moves between two of them and the
-   character's head twitches every time you take a step. With a shared body
-   only the legs can differ, so only the legs do. */
-static const int PSPR_W = 8;
-static const int PSPR_H = 22;
+   The frames are POSED, not drawn: see rig.h. What used to be seven pictures
+   sharing one hand-drawn body is now one skeleton and a list of joint angles,
+   baked into these buffers at startup. The renderer cannot tell the difference
+   and does not need to -- it still indexes a frame -- but adding a pose is now
+   a row of numbers rather than a picture, and adding a CREATURE is a rig.
+
+   Eight walk frames rather than four, because interpolating between key poses
+   costs nothing at bake time and four frames of a stride at this size reads as
+   a stutter. */
+static const int PSPR_W = PLAYER_W;
+static const int PSPR_H = PLAYER_H;
 
 enum PlayerFrame {
     PF_IDLE = 0,
-    PF_WALK0, PF_WALK1, PF_WALK2, PF_WALK3,   /* stride, pass, stride, pass */
+    PF_IDLE2,
+    PF_WALK0, PF_WALK1, PF_WALK2, PF_WALK3,
+    PF_WALK4, PF_WALK5, PF_WALK6, PF_WALK7,
     PF_JUMP,                                  /* rising */
     PF_FALL,                                  /* descending */
     PF_COUNT
 };
+static const int PF_WALK_FRAMES = 8;
 
 extern u32 g_playerSpr[PF_COUNT][PSPR_W * PSPR_H];
 

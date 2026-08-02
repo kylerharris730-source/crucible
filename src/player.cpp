@@ -1,4 +1,7 @@
 #include "player.h"
+#include "device.h"
+#include "sprite.h"   /* the posed frames; player.h no longer pulls it in, since
+                        sprite.h now needs PLAYER_W to size its canvas */
 #include "light.h"    /* VIEW_CELLS_W/H, and shading the figure by the field */
 #include <math.h>
 
@@ -22,6 +25,10 @@ static const float MAX_SPEED   = 1.2f;   /* ~72 cells/second */
 static const float GROUND_DRAG = 0.55f;  /* stop briskly when input released */
 static const float AIR_DRAG    = 0.92f;  /* keep most momentum in the air */
 static const float JUMP_VEL    = 2.6f;
+/* Frames each idle pose is held. 40 is two thirds of a second, so the breath is
+   about a second and a third end to end -- slow enough to read as breathing
+   rather than as a twitch. */
+static const int   IDLE_HOLD   = 40;
 
 bool playerSolid(const World& w, int x, int y, int mode) {
     /* Outside the world counts as solid, so the player can never be walked out
@@ -32,6 +39,13 @@ bool playerSolid(const World& w, int x, int y, int mode) {
        g_matPassable rather than to anything about kinds: solid when the
        question is "can I stand here" and thin air otherwise. */
     if (g_matPlatform[c.mat]) return mode == SOLID_FLOOR;
+    /* Pipes are equipment you walk through, not waist-high walls. Their shared
+       MAT_DEVICE footprint still blocks sand and seals rooms; this is only the
+       player's collision exception, kept beside the question it answers. */
+    if (c.mat == MAT_DEVICE) {
+        const Device* d = devAt(x, y);
+        if (d && (d->type == DEV_PIPE || d->type == DEV_CROSSOVER)) return false;
+    }
     const u8 k = MATS[c.mat].kind;
     if (k != KIND_STATIC && k != KIND_POWDER) return false;
     /* Materials you walk through -- the torch, so far. Per-material and
@@ -285,21 +299,30 @@ void Player::animate() {
         return;
     }
     if (speed <= 0.05f) {
-        frame = PF_IDLE;
-        /* Reset so the next step always starts from a full stride rather than
-           wherever the last one happened to stop. */
-        walkPhase = 0.0f;
+        /* Standing still still breathes -- two frames, a second apart. A figure
+           frozen solid while every grain around it simulates reads as a paused
+           game. walkPhase carries the timer, since it is idle anyway. */
+        walkPhase += 1.0f;
+        if (walkPhase >= 2.0f * IDLE_HOLD) walkPhase = 0.0f;
+        frame = (walkPhase < IDLE_HOLD) ? PF_IDLE : PF_IDLE2;
         return;
     }
 
-    /* One full four-frame cycle per STRIDE_CELLS travelled. At MAX_SPEED that
-       is a step roughly every 7 frames, which is about where a walk stops
-       looking like a shuffle and starts looking like walking. */
-    const float STRIDE_CELLS = 3.4f;
+    /* One full cycle -- two steps -- per STRIDE_CELLS * PF_WALK_FRAMES
+       travelled, so the feet are tied to the ground by construction rather than
+       by a timer: accelerating from a standstill shows a slow gait, not a
+       full-speed one played early.
+    
+       The stride LENGTH scales with the body, which it has to: the same 3.4
+       cells that read as a walk on a 22-cell figure is a shuffle on a 30-cell
+       one, because the legs are half again as long and cover that distance in
+       half the swing. */
+    const float STRIDE_CELLS = 3.4f * (float)PLAYER_H / 22.0f;
+    const float cycle = STRIDE_CELLS * (float)PF_WALK_FRAMES;
     walkPhase += speed;
-    if (walkPhase > 4.0f * STRIDE_CELLS) walkPhase -= 4.0f * STRIDE_CELLS;
-    const int step = (int)(walkPhase / STRIDE_CELLS) & 3;
-    frame = PF_WALK0 + step;
+    while (walkPhase >= cycle) walkPhase -= cycle;
+    const int step = (int)(walkPhase / STRIDE_CELLS);
+    frame = PF_WALK0 + (step < PF_WALK_FRAMES ? step : PF_WALK_FRAMES - 1);
 }
 
 void Player::update(const World& w, const PlayerInput& in) {

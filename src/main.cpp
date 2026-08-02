@@ -364,9 +364,6 @@ static int  g_wireX = 0, g_wireY = 0;
 static bool g_circuitWireMode = false;
 static int  g_circuitWireFrom = -1;
 static int  g_circuitWireFromPort = 0;
-/* One device per press, not per frame. Cleared on button-up -- see the placement
-   branch in applyBrush for why holding must not repeat. */
-static bool g_devPlaced = false;
 /* Which device's panel is open, or -1. An index rather than a pointer so that a
    device being dug out from under an open panel cannot leave a dangling one --
    devTick can remove a device at any time, and the panel revalidates by index
@@ -1423,7 +1420,7 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_LBUTTONUP:
         commitWire();       /* before the button clears -- see commitLine */
         commitLine();
-        g_lmb = false; g_devPlaced = false; g_uiCapture = false; ReleaseCapture(); return 0;
+        g_lmb = false; g_uiCapture = false; ReleaseCapture(); return 0;
     case WM_RBUTTONDOWN:
         g_mx = (short)LOWORD(lp);
         g_my = (short)HIWORD(lp);
@@ -1766,6 +1763,22 @@ static void fireTool(const Aim& aim) {
               s.power, s.pierce, 90, s.colour, s.blast);
 }
 
+/* Devices are discrete, but a drag is still a useful way to lay out a run. Walk
+   every crossed cell so a fast pipe stroke cannot skip a lattice slot. devPlace
+   rejects overlapping footprints; charging only on success makes that rejection
+   free and lets a stroke safely pass across devices already in place. */
+static void placeDeviceStroke(u8 type, bool consume, const Aim& aim) {
+    const int x0 = g_pmx, y0 = g_pmy;
+    const int steps = imax(abs(aim.x - x0), abs(aim.y - y0));
+    for (int s = 0; s <= steps; ++s) {
+        const int x = steps ? x0 + (aim.x - x0) * s / steps : aim.x;
+        const int y = steps ? y0 + (aim.y - y0) * s / steps : aim.y;
+        if (devPlace(g_world, type, x, y) && consume) g_inv.take(g_inv.held().item, 1);
+        if (consume && g_inv.held().empty()) break;
+    }
+    g_pmx = aim.x; g_pmy = aim.y;
+}
+
 static void applyBrush() {
     if (g_uiCapture || (!g_lmb && !g_rmb)) { g_pmx = -1; return; }
 
@@ -1798,35 +1811,20 @@ static void applyBrush() {
         return;
     }
 
-    /* Character-off mode is the freeform builder.  A device selected from the
-       left catalog is placed directly here, once per click just like an
-       inventory-held device, but without inventing a hidden infinite hotbar.
-       The explicit !g_playerOn guard keeps the survival economy authoritative
-       whenever the player is active. */
+    /* Character-off mode is the freeform builder. A device selected from the
+       left catalog follows a click or drag directly, without inventing a hidden
+       infinite hotbar. The explicit !g_playerOn guard keeps the survival economy
+       authoritative whenever the player is active. */
     if (!g_playerOn && g_paletteDevice >= 0 && g_lmb && !g_rmb && !g_bgLayer) {
-        if (!g_devPlaced) {
-            devPlace(g_world, (u8)g_paletteDevice, aim.x, aim.y);
-            g_devPlaced = true;
-        }
-        g_pmx = aim.x; g_pmy = aim.y;
+        placeDeviceStroke((u8)g_paletteDevice, false, aim);
         return;
     }
 
-    /* Machines place a RECTANGLE, snapped to a lattice, so they get their own
-       branch for the same reason seeds do: nothing about it is a brush stroke.
-       Deliberately one per click rather than per frame held -- a device is a
-       discrete object and a held button should not carpet the world with them,
-       which is what stroking would do at 60 a second. */
+    /* Machines place rectangles, but are deliberately strokeable: a click makes
+       one and a drag lays a contiguous run. Failed placements cost nothing. */
     if (g_survival && g_playerOn && g_lmb && !g_rmb && !g_bgLayer
         && !g_inv.held().empty() && ITEMS[g_inv.held().item].kind == ITEMK_DEVICE) {
-        if (!g_devPlaced) {
-            const u8 dt = ITEMS[g_inv.held().item].deviceType;
-            /* Charged only if it actually went down -- inv.take() is the same
-               door seeds use, so a refused placement costs nothing. */
-            if (devPlace(g_world, dt, aim.x, aim.y)) g_inv.take(g_inv.held().item, 1);
-            g_devPlaced = true;
-        }
-        g_pmx = aim.x; g_pmy = aim.y;
+        placeDeviceStroke(ITEMS[g_inv.held().item].deviceType, true, aim);
         return;
     }
 

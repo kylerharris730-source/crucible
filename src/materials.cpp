@@ -1164,20 +1164,21 @@ static void initBgRetain() {
        point (185 C), so rock inside one turns to lava by itself and stays that way.
        See g_bgHeat in materials.h.
 
-       194 is the balance number, and it was swept rather than picked. A hotspot
+       188 is the balance number, and it was swept rather than picked. A hotspot
        delivers into a charge about 12 C below whatever it is pinned at:
 
          pinned 188 -> delivers 176, iron 0%
          pinned 194 -> delivers 182, iron 0%
          pinned 200 -> delivers 188, iron 33%
 
-       Copper ore needs 165 and iron 190, so 194 puts a hotspot firmly on COPPER's
+       Copper ore needs 165 and iron 190, so 188 puts a hotspot firmly on COPPER's
        rung -- a free, permanent, supply-free furnace that is genuinely worth
-       building a settlement around, and still a dead end for iron. That keeps fuel
-       the only route to the top of the ladder, which is the whole reason fuel
-       exists. It also has to stay above stone's 185 or the pocket never melts
-       itself in the first place, so the usable window is narrow: 186..199. */
-    g_bgHeat[MAT_LAVA]   = degC(194);
+       building a settlement around, and still a dead end for iron even when ore
+       falls directly through its molten cells. That keeps fuel the only route to
+       the top of the ladder, which is the whole reason fuel exists. It also has to
+       stay above stone's 185 or the pocket never melts itself in the first place,
+       so the usable window is narrow: 186..189. */
+    g_bgHeat[MAT_LAVA]   = degC(188);
     g_bgRetain[MAT_LAVA] = 200;
     g_bgRetain[MAT_CERAMIC] = 220;
     g_bgRetain[MAT_RUBBER]  = 200;

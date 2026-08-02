@@ -20,6 +20,12 @@ static int waterY(const World& w, int x, int y0, int y1) {
 int main() {
     initMaterials();
     initItems();       /* explosion discs used by the electrical overload test */
+    /* A lava backdrop is useful as a free copper furnace, but ore falling through
+       its molten cells must not instantly skip iron's fuel-gated smelting step. */
+    if (g_bgHeat[MAT_LAVA] >= MATS[MAT_IRON_ORE].boilTemp ||
+        g_bgHeat[MAT_LAVA] <= MATS[MAT_STONE].boilTemp) {
+        fprintf(stderr, "lava hotspot crosses the iron or stone heat threshold\n"); return 23;
+    }
     /* Virtual circuit channels are proper sprite assets, not a UI-only text
        convention. Check one lit segment on the first and last numbered chips
        so a future sprite-table edit cannot silently turn them transparent. */
@@ -37,6 +43,11 @@ int main() {
     }
     static World w;  /* World is deliberately large; keep this off the stack. */
     w.reset();
+    if (!devPlace(w, DEV_PIPE, 140, 140) || playerSolid(w, 140, 140) ||
+        playerSolid(w, 140, 140, SOLID_FLOOR)) {
+        fprintf(stderr, "item pipe blocks player movement\n"); return 24;
+    }
+    devClear(); w.reset();
     const int x = 64, startY = 80;
     w.setLiveWindow(32, 32, 95, 95);
     w.setCell(x, startY, MAT_WATER);

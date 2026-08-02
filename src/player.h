@@ -1,6 +1,5 @@
 #pragma once
 #include "world.h"
-#include "sprite.h"
 
 /* The player is an ENTITY, not a cell. It has no id in MatId, never occupies a
    slot in the grid, and the simulation neither knows nor cares that it exists --
@@ -13,8 +12,27 @@
    head would swap you downward. As an overlay none of that can arise, and the
    cost is a handful of grid reads per frame. */
 
-static const int PLAYER_W = 8;   /* cells; 16 screen pixels at SCALE 2 */
-static const int PLAYER_H = 22;  /* 44 screen pixels. Grown from 6x16 to leave
+/* --- how big the character is ----------------------------------------------
+   11 x 30 cells, up from 8 x 22, and the reason is the animation rather than
+   the look. A limb of length L swung by theta moves its tip L*sin(theta); at
+   eight cells across a leg is eight long, so a seven-degree swing moves the
+   foot less than a pixel and there are about six distinguishable angles in the
+   whole usable range. The hand-drawn frames this replaces said as much in a
+   comment -- "there is no room to draw a leg at an angle" -- and worked around
+   it by carrying the gait in which foot was LIFTED rather than in how the legs
+   swung. A rig cannot use that dodge; it needs the reach to be real.
+
+   11 rather than 12 for one measured reason: a hand-dug tunnel is 13 cells
+   across (dig radius 6), so 11 leaves a cell of clearance either side and 12
+   leaves half of one. And 30 rather than more because the generator's caves
+   only just stop caring -- measured over three worlds, a 22-tall body stands up
+   in 99.3% of underground spans and a 30-tall body in 98.8%, where 38 costs
+   1.2 points.
+
+   Odd width is deliberate too: an odd canvas has a true centre column, so the
+   figure and its rig root sit on a cell rather than between two. */
+static const int PLAYER_W = 11;  /* cells; 22 screen pixels at SCALE 2 */
+static const int PLAYER_H = 30;  /* 44 screen pixels. Grown from 6x16 to leave
                                     room for a figure with readable parts -- a
                                     helmet, a pack, a belt, two legs. At 6x16
                                     the legs were two cells each and a walk
@@ -35,8 +53,9 @@ static const int PLAYER_H = 22;  /* 44 screen pixels. Grown from 6x16 to leave
    using their hands, and it wants to stay proportional -- when the character
    doubled in height this went 3 -> 4 for exactly that reason. Absolute step
    height held constant against a taller body reads as tripping over things.
-   3 -> 4 when the character doubled in height, 4 -> 5 when it grew again. */
-static const int PLAYER_STEP_UP = 5;
+   3 -> 4 when the character doubled in height, 4 -> 5 when it grew again,
+   5 -> 7 when the rig made it 30 cells tall. */
+static const int PLAYER_STEP_UP = 7;
 
 /* --- the pointed head -------------------------------------------------
    The collision shape is not a rectangle. The top PLAYER_TAPER rows are inset
@@ -77,7 +96,10 @@ static const int PLAYER_STEP_UP = 5;
    PLAYER_W - 2*PLAYER_TAPER. At 6 wide with taper 2 the peak was 2 cells. Widening
    the body to 8 and leaving the taper alone made the peak 4 cells -- a flat roof
    again -- and 3 puts the apex back to 2. */
-static const int PLAYER_TAPER = 3;
+/* 4 at the new size, which puts the apex at PLAYER_W - 2*PLAYER_TAPER = 3
+   cells -- the same fraction of the body 2-of-8 was, and still narrow enough
+   to be the pointed part that sheds sand. */
+static const int PLAYER_TAPER = 4;
 
 /* Cells to inset each side on a given row measured from the top of the box. */
 static inline int playerRowInset(int rowFromTop) {
@@ -324,7 +346,21 @@ static const float COLD_DAMAGE  = 0.020f;
    The extremes are still reported to the HUD -- feltTemp is the WARNING, and a
    warning should fire on the first cell, not on the hundredth. It is only the
    damage that is weighted. */
-static const float CONTACT_FULL = 0.5f;   /* body fraction that costs the full rate */
+/* The body fraction that costs the full rate.
+   
+   0.36 rather than 0.5, and the number moved because the BODY did. This is a
+   fraction of the whole box, so what counts as "a wall of it against your side"
+   depends on how wide you are: at 8 cells across, three columns of hazard was
+   37% of the character; at 11 across the same three columns are 27%. Nothing
+   about the hazard changed and the character became half as sensitive to it --
+   measured, the cooler that used to freeze you in three seconds could not kill
+   in sixty.
+   
+   Rescaled so side contact scores what it always did. Anything that changes the
+   body's proportions again has to come back here, which is the cost of
+   measuring exposure against the whole box; the alternative is measuring it
+   against a surface area nothing else in the game has a use for. */
+static const float CONTACT_FULL = 0.36f;
 
 /* Degrees of protection from worn equipment, added to the heat line and
    subtracted from the cold one. Zero on a bare character: the constants above

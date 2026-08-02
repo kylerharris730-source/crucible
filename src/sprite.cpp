@@ -1,4 +1,5 @@
 #include "sprite.h"
+#include "rig.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -340,96 +341,27 @@ static void expand(int id, const char* const* art) {
 
 /* --- the character ---------------------------------------------------------
 
-   Drawn facing RIGHT: the visor is toward the right of the helmet and the
-   life-support pack sits on the left, so the silhouette says which way it is
-   looking before you can make out a face. Facing left is the same art
-   mirrored at draw time, which flips the pack to the correct side for free.
+   Posed rather than drawn. The seven hand-drawn frames that used to live here
+   -- one body plus a set of leg stances, mirrored -- are gone; what replaces
+   them is one skeleton (rig.h) and a list of joint angles per pose, baked into
+   the same buffers at startup.
 
-   Rows 0 and 1 are inset by 2 and 1 to match the collision taper. That is not
-   decoration -- the helmet HAS to be the pointed part, because the taper is
-   what sheds falling sand, and a square-topped helmet drawn over a pointed
-   hitbox would show sand rolling off thin air. */
-static const int PBODY_ROWS = 14;
-
-static const char* ART_BODY[PBODY_ROWS] = {
-    "...WW...",   /* inset 3: the tapered crown, 2 cells wide at the peak */
-    "..WWWW..",   /* inset 2 */
-    ".WWWWWW.",   /* inset 1 */
-    "WWWVVVVw",
-    "WWWVVVVw",
-    "WWWVVVvw",
-    ".wWWWWw.",   /* neck ring */
-    "PPUUUUUU",
-    "PPUOOUUu",
-    "PPUOOUUu",
-    ".PUUUUUu",
-    ".uUUUUUu",
-    ".uUUUUUg",   /* the leading hand */
-    ".OUUUUO.",   /* belt */
-};
-
-static const int PLEG_ROWS = PSPR_H - PBODY_ROWS;   /* 8 */
-
-/* --- stances ---------------------------------------------------------------
-
-   Every leg here is VERTICAL and stays inside the stance width. That is the
-   whole lesson of the first attempt, which drew the stride as both legs
-   fanning outward from the hips down to boots at the very edges of the sprite.
-   On paper that is "one leg forward, one leg back" in side view. On screen it
-   is a pair of brackets, and a bracket-shaped leg reads as a knee bending the
-   wrong way -- the figure looked bowlegged and its stride looked reversed.
-
-   At eight pixels across there is no room to draw a leg at an angle: a
-   two-cell-wide limb displaced by one cell per row is a 45-degree line, and a
-   human leg is nowhere near 45 degrees off vertical even at a full sprint. So
-   the gait is carried by which foot is LIFTED rather than by how far the legs
-   splay, which is legible at any size and cannot be misread as anatomy. */
-static const char* LEG_STAND[PLEG_ROWS] = {
-    ".uUUUUu.", ".UUUUUU.", ".UU..UU.", ".UU..UU.",
-    ".UU..UU.", ".UU..UU.", ".gg..gg.", "ggg..ggg",
-};
-/* One leg planted and vertical, the other swung forward with its boot two rows
-   clear of the ground. ASYMMETRIC on purpose: a symmetric stride, with both
-   legs fanning out to boots at opposite edges, is the shape that reads as bowed
-   -- and it is not avoidable by tweaking, it is what a symmetric stride
-   geometrically IS at this width. Only one leg ever leaves vertical, and the
-   mirror supplies the other half of the cycle. */
-static const char* LEG_STEP[PLEG_ROWS] = {
-    ".uUUUUu.", ".UUUUUU.", ".UU.UU..", ".UU.UU..",
-    ".UU..UU.", ".UU..ggg", ".UU.....", ".ggg....",
-};
-/* Both feet down and together, the moment the legs pass each other. */
-static const char* LEG_PASS[PLEG_ROWS] = {
-    ".uUUUUu.", ".UUUUUU.", "..UUUU..", "..UUUU..",
-    "..UUUU..", "..UUUU..", "..UUUU..", ".gggggg.",
-};
-/* Toes pointed: legs together and tapering. Reads as a launch, and is the one
-   pose that cannot be confused with any of the walking frames. */
-static const char* LEG_JUMP[PLEG_ROWS] = {
-    ".uUUUUu.", ".UUUUUU.", "..UUUU..", "..UUUU..",
-    "..UUUU..", "...UU...", "...UU...", "..gggg..",
-};
-/* Straight and vertical, reaching for the ground. */
-static const char* LEG_FALL[PLEG_ROWS] = {
-    ".uUUUUu.", ".UUUUUU.", ".UU..UU.", ".UU..UU.",
-    ".UU..UU.", ".UU..UU.", ".UU..UU.", ".gg..gg.",
-};
-
+   The comment they left behind is worth keeping, because it is the reason the
+   character is now 11 cells wide instead of 8: "at eight pixels across there is
+   no room to draw a leg at an angle". That was true, and the old frames dodged
+   it by carrying the gait in which foot was lifted rather than in how the legs
+   swung. A rig has no such dodge available, so the body grew until the angles
+   were real. See PLAYER_W. */
 u32 g_playerSpr[PF_COUNT][PSPR_W * PSPR_H];
 
-static void composePlayer(int frame, const char* const* legs, bool mirrorLegs) {
-    u32* out = g_playerSpr[frame];
-    for (int y = 0; y < PSPR_H; ++y) {
-        const char* row = (y < PBODY_ROWS) ? ART_BODY[y] : legs[y - PBODY_ROWS];
-        const bool mirror = mirrorLegs && y >= PBODY_ROWS;
-        if ((int)strlen(row) != PSPR_W) {
-            fprintf(stderr, "player frame %d row %d is %d chars, expected %d\n",
-                    frame, y, (int)strlen(row), PSPR_W);
-            abort();
-        }
-        for (int x = 0; x < PSPR_W; ++x)
-            out[y * PSPR_W + x] = paletteOf(row[mirror ? PSPR_W - 1 - x : x]);
-    }
+static void buildPlayerFrames() {
+    static Bone bone[RB_COUNT];
+    RigDef rig;
+    rigHumanoid(bone, &rig, "player", PSPR_W, PSPR_H, RIG_SUIT);
+    armBake(&rig, &RIG_IDLE, g_playerSpr[PF_IDLE]);
+    armBake(&rig, &RIG_WALK, g_playerSpr[PF_WALK0]);
+    armBake(&rig, &RIG_JUMP, g_playerSpr[PF_JUMP]);
+    armBake(&rig, &RIG_FALL, g_playerSpr[PF_FALL]);
 }
 
 /* The thermocouple: a boxed gauge with a dial face and a needle, and a terminal
@@ -680,13 +612,5 @@ void initSprites() {
     expand(SPR_CIRCUIT_DECIDER,  ART_CIRCUIT_DECIDER);
     for (int digit = 1; digit <= 9; ++digit) makeSignalSprite(SPR_SIGNAL1 + digit - 1, digit);
 
-    memset(g_playerSpr, 0, sizeof(g_playerSpr));
-    composePlayer(PF_IDLE,  LEG_STAND, false);
-    /* lift the leading foot, pass, lift the trailing foot, pass */
-    composePlayer(PF_WALK0, LEG_STEP,  false);
-    composePlayer(PF_WALK1, LEG_PASS,  false);
-    composePlayer(PF_WALK2, LEG_STEP,  true);
-    composePlayer(PF_WALK3, LEG_PASS,  false);
-    composePlayer(PF_JUMP,  LEG_JUMP,  false);
-    composePlayer(PF_FALL,  LEG_FALL,  false);
+    buildPlayerFrames();
 }
