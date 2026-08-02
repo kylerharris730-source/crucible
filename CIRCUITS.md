@@ -15,6 +15,11 @@ device and left-click another. The purple line is the connection. Repeating the
 same two clicks removes that wire. Clicking empty space cancels a half-finished
 link.
 
+Circuit Wire mode uses a violet cable-end cursor. After the first endpoint is
+selected, a dotted preview cable follows the cursor until the second endpoint
+is chosen or the link is cancelled. The preview is only guidance: it does not
+place a physical wire or cost an item.
+
 Arithmetic and Decider Combinators have two terminals: violet on the **left**
 is input; gold on the **right** is output. Click the matching half of the device
 when wiring. Their sides are separate networks, so output only feeds input when

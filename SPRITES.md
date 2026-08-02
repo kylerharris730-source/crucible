@@ -33,3 +33,10 @@ the same constraints: readable silhouette first, one or two identity colours
 second, texture last. Rigged 2D parts are a good next step for characters:
 they keep a stable body design while posing limbs procedurally, without the
 visual noise or runtime cost of full 3D rendering.
+
+## Circuit signals
+
+Virtual circuit signals `1` through `9` use violet seven-segment chips with a
+dark casing. A signal shown in a picker, control, or network readout therefore
+has the same icon-and-name treatment as a material signal. Material signals
+reuse their regular item art rather than inventing a separate circuit version.

@@ -13,3 +13,8 @@ build/
 *.swp
 Thumbs.db
 desktop.ini
+
+# Local cross-agent implementation journal. It is intentionally untracked:
+# public mechanics belong in the repository docs, while this holds the current
+# work state and handoff notes for the people/agents working in this checkout.
+HANDOFF.md
