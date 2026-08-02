@@ -140,8 +140,8 @@ void Player::damage(float amount) {
    The lines are passed in rather than read from the constants, because
    equipment moves them.
 
-   Reads the grid directly rather than through playerSolid: this is about
-   temperature, and the material in a cell has nothing to do with it. */
+   Reads the grid directly rather than through playerSolid: temperature sets the
+   hazard and thermal conductivity weights hot contact; solidity is irrelevant. */
 /* How much a given fraction of the body being in it counts for. SQUARED, and
    that is what makes the ladder in player.h come out: linear in the fraction,
    a stray cell of steam still costs a point a second, because heating four
@@ -159,6 +159,43 @@ static float exposure(float frac) {
     return f >= 1.0f ? 1.0f : f * f;
 }
 
+/* Heat needs a stronger early ramp than cold: fire and steam are visually loud,
+   and a BURNING warning that costs a fraction of a point per second feels like
+   a broken warning.  At full contact this is exactly 1.0, preserving the old
+   maximum; at 10% of full contact it is about five times the old square. */
+static float heatExposure(float frac) {
+    const float f = frac / CONTACT_FULL;
+    if (f >= 1.0f) return 1.0f;
+    static const float EARLY = 0.45f;
+    return f * (EARLY + (1.0f - EARLY) * f);
+}
+
+/* Body heat is not only about temperature and area: a boot on hot copper takes
+   heat much faster than the same patch of hot air. Keep air at the old weight,
+   then let a material's existing thermal-conductivity value contribute up to a
+   threefold contact weight for metals. This affects uptake only; it does not
+   change material-to-material heat simulation or the damage ceiling. */
+static float heatCoupling(u8 mat) {
+    if (mat == MAT_EMPTY) return 1.0f;
+    return 1.0f + 2.0f * (float)MATS[mat].heatCond / 255.0f;
+}
+
+/* The collision box stops immediately ABOVE a floor cell, so the body scan
+   cannot see the thing the player is standing on. A sole has a small but direct
+   contact area; count that row at double weight, then let copper's material
+   coupling make standing on hot metal a serious hazard. */
+static const float FOOT_HEAT_CONTACT = 2.0f;
+
+/* Temperatures above 100 C are a different class of hazard from an overheated
+   workshop. Add a convex tail only there: lava and fire become decisively
+   lethal, while the early heat ramp keeps the tuning established above. */
+static float heatSeverity(int degreesOver) {
+    static const int SCALDING = 55;  /* 45 C line + 55 = 100 C */
+    if (degreesOver <= SCALDING) return (float)degreesOver;
+    const float excess = (float)(degreesOver - SCALDING);
+    return (float)degreesOver + excess * excess / 72.0f;
+}
+
 struct BodyTemp {
     u8    hottest, coldest;
     float hotSeverity, coldSeverity;   /* degrees past each line, after exposure */
@@ -166,7 +203,8 @@ struct BodyTemp {
 static void bodyTemp(const World& w, const Player& p, u8 heatLine, u8 coldLine,
                      BodyTemp* out) {
     u8 hi = 0, lo = 255;
-    int nOver = 0, nUnder = 0;
+    float hotContact = 0.0f;
+    int nUnder = 0;
     const int y0 = imax(0, p.top()),  y1 = imin(SIM_H - 1, p.bottom());
     const int x0 = imax(0, p.left()), x1 = imin(SIM_W - 1, p.right());
     for (int y = y0; y <= y1; ++y) {
@@ -175,8 +213,21 @@ static void bodyTemp(const World& w, const Player& p, u8 heatLine, u8 coldLine,
             const u8 t = row[x];
             if (t > hi) hi = t;
             if (t < lo) lo = t;
-            if (t > heatLine) ++nOver;
+            if (t > heatLine) hotContact += heatCoupling(w.at(x, y).mat);
             if (t < coldLine) ++nUnder;
+        }
+    }
+    const int footY = p.bottom() + 1;
+    const int footInset = playerRowInset(PLAYER_H - 1);
+    const int footX0 = imax(0, p.left() + footInset);
+    const int footX1 = imin(SIM_W - 1, p.right() - footInset);
+    if (footY >= 0 && footY < SIM_H) {
+        const u8* row = w.temp + footY * SIM_W;
+        for (int x = footX0; x <= footX1; ++x) {
+            if (!playerSolid(w, x, footY)) continue;
+            const u8 t = row[x];
+            if (t > hi) hi = t;
+            if (t > heatLine) hotContact += FOOT_HEAT_CONTACT * heatCoupling(w.at(x, footY).mat);
         }
     }
     const float cells = (float)imax(1, (y1 - y0 + 1) * (x1 - x0 + 1));
@@ -185,7 +236,7 @@ static void bodyTemp(const World& w, const Player& p, u8 heatLine, u8 coldLine,
        with extra steps: one hot cell would be a body entirely in contact. */
     out->hottest = hi; out->coldest = lo;
     out->hotSeverity  = (hi > heatLine)
-        ? (float)((int)hi - (int)heatLine) * exposure((float)nOver  / cells) : 0.0f;
+        ? heatSeverity((int)hi - (int)heatLine) * heatExposure(hotContact / cells) : 0.0f;
     out->coldSeverity = (lo < coldLine)
         ? (float)((int)coldLine - (int)lo) * exposure((float)nUnder / cells) : 0.0f;
 }
@@ -277,7 +328,7 @@ void Player::update(const World& w, const PlayerInput& in) {
         const int over  = (int)bt.hottest - (int)hl;
         const int under = (int)cl - (int)bt.coldest;
         feltTemp = (over >= under) ? bt.hottest : bt.coldest;
-        if (bt.hotSeverity  > 0.0f) damage(bt.hotSeverity  * HEAT_DAMAGE);
+        if (bt.hotSeverity  > 0.0f) damage(bt.hotSeverity * HEAT_DAMAGE);
         if (bt.coldSeverity > 0.0f) damage(bt.coldSeverity * COLD_DAMAGE);
         if (!alive) return;
     }

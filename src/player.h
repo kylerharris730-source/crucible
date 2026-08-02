@@ -260,8 +260,8 @@ static const float DROWN_DAMAGE   = 0.35f;
    So this measures what you are standing in, which is the honest question, and
    it costs one pass over 176 cells a frame.
 
-   60 C is above anything the weather does and below every process temperature
-   in the game, so a furnace room is uncomfortable and a workshop is not. -8 C
+   45 C is above ordinary ambient warmth but below every process temperature in
+   the game, so a furnace room is actively hazardous while a workshop is not. -8 C
    is below freezing rather than at it, so standing on ice is free and standing
    in liquid nitrogen is not.
 
@@ -278,7 +278,7 @@ static const float DROWN_DAMAGE   = 0.35f;
    anybody made -- it is the byte showing through. The two figures below are
    picked so that the coldest thing in the game and the hottest kill at the same
    speed: about two and a half seconds from full health, immersed. */
-static const u8    HEAT_HURT_AT = degC(60);
+static const u8    HEAT_HURT_AT = degC(45);
 static const u8    COLD_HURT_AT = degC(-8);
 static const float HEAT_DAMAGE  = 0.0041f;
 static const float COLD_DAMAGE  = 0.020f;
@@ -292,9 +292,9 @@ static const float COLD_DAMAGE  = 0.020f;
    because the pool only ever gets a tenth of you warm.
 
    So: severity is the WORST cell's excess, scaled by how much of the body is
-   over the line. That scale is SQUARED and it SATURATES -- half of you against
-   something is full exposure, because you do not have to be immersed to be in
-   serious trouble, and past that the fraction stops telling you anything.
+   over the line. Cold uses a square, while heat blends some linear exposure
+   into its lower half so a visibly burning body starts paying promptly. Above
+   100 C heat severity also bends upward, making lava a distinct lethal tier.
 
    The ladder it produces, all measured:
 

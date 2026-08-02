@@ -95,7 +95,58 @@ enum DeviceType {
     DEV_SPOUT,
     DEV_DRAIN,
     DEV_BLOCK_WATCHER,
+    DEV_PULSE_BUTTON,
+    /* Circuit devices are deliberately separate from spark electricity: they
+       transform named values on a wire network, never heat metal or emit a
+       physical pulse. Appending preserves numeric ids in existing saves. */
+    DEV_CONSTANT_COMBINATOR,
+    DEV_ARITHMETIC_COMBINATOR,
+    DEV_DECIDER_COMBINATOR,
     DEV_COUNT
+};
+
+/* Circuit signals use material ids directly, so an item sensor can say
+   "Copper: 40" without a second translation table. The nine generic channels
+   live immediately after materials and are for temperatures, counters, and
+   other numbers that are not items. */
+enum CircuitSignal {
+    CIR_SIG_1 = MAT_COUNT,
+    CIR_SIG_2,
+    CIR_SIG_3,
+    CIR_SIG_4,
+    CIR_SIG_5,
+    CIR_SIG_6,
+    CIR_SIG_7,
+    CIR_SIG_8,
+    CIR_SIG_9,
+    CIRCUIT_SIGNAL_COUNT
+};
+
+enum CircuitOp {
+    CIR_OP_ADD = 0,
+    CIR_OP_SUBTRACT,
+    CIR_OP_MULTIPLY,
+    CIR_OP_DIVIDE,
+    CIR_OP_MODULO,
+    CIR_OP_GREATER,
+    CIR_OP_LESS,
+    CIR_OP_EQUAL,
+    CIR_OP_GREATER_EQUAL,
+    CIR_OP_LESS_EQUAL,
+    CIR_OP_NOT_EQUAL,
+    CIR_OP_COUNT
+};
+
+/* A wire is pure topology. It has endpoints but no cell footprint, material
+   cost, or simulation work while nothing is reading it. */
+static const int MAX_CIRCUIT_WIRES = 256;
+static const int CIRCUIT_PORTS = 2;
+/* 0 = input/ordinary terminal, 1 = combinator output terminal. */
+struct CircuitWire { u8 a, b, portA, portB; bool used; };
+struct CircuitDeviceConfig {
+    u8 signal;       /* source/constant output; thermocouple defaults to 1 */
+    u8 signalA, signalB, signalOut;
+    u8 op;
 };
 
 /* How much either machine can hold. Generous enough that a placer does not need
@@ -132,32 +183,30 @@ static const int CHEST_CAP = 100000;
    converted back, and a live circuit costs nothing in the simulation. The whole
    system is a few hundred integers.
 
-   --- no branching ---
-   A spark takes ONE path. It prefers to carry straight on, and turns only when it
-   must. A junction does not split it.
+   --- one pulse, many fronts ---
+   A spark is one visible front of a PULSE. At a junction the front carries on and
+   also sends a front down every perpendicular branch, so a wire network behaves
+   like a short travelling wave rather than a single marble choosing a route.
 
-   That is a deliberate restriction and the reason is containment: splitting inside
-   a solid slab of metal doubles the spark count per cell crossed, and since there
-   is no cell state to mark a conductor as already-sparked there is nothing to stop
-   it. One path per spark means a wire behaves exactly as drawn, and a player who
-   wants two things to happen runs two wires -- which is legible, where a slab
-   full of exponentially multiplying sparks is not.
-
-   Even so a spark could circle a loop of wire forever, so every one carries a
-   lifetime. Between that and the array cap the worst case is bounded by
-   construction rather than by hope. */
+   Every conductor cell keeps the id of the last pulse that reached it. A pulse
+   may enter a cell once, never twice. That gives forks their expected behaviour
+   while making rings harmless: when fronts meet on the far side of a loop, the
+   second one simply stops. The mark is outside Cell on purpose, so electricity
+   still never dirties the material simulation. The fixed front array remains the
+   backstop for a very large, wildly branching circuit. */
 
 /* Cells a spark advances per frame. One, so a circuit is something you can watch
    work -- at 60 Hz a 100-cell run of wire takes under two seconds, which is fast
    enough to feel immediate and slow enough to debug by eye. */
 static const int SPARK_SPEED = 1;
 
-/* Frames before a spark gives up. The backstop against a loop of wire: with no
-   cell state marking where it has been, a ring circuit would carry one round for
-   ever. 600 is ten seconds, far longer than any sane run of wire. */
-static const int SPARK_LIFE = 600;
-
-static const int MAX_SPARKS = 512;
+/* The cap contains pathological, repeatedly-pulsed metal blobs. 2048 leaves
+   room for a dramatic overload to resolve itself thermally while still giving
+   the per-frame device pass a fixed, small upper bound. */
+static const int MAX_SPARKS = 2048;
+/* A front which fails to leave a small local area for this many frames is a
+   circulating remnant, not useful signal propagation. */
+static const int SPARK_CYCLE_STEPS = 120;
 
 struct Spark {
     i32 x, y;
@@ -166,7 +215,15 @@ struct Spark {
        that is forbidden. Without that a spark oscillates between two adjacent
        conductor cells and never gets anywhere. */
     i16 dx, dy;
-    i16 life;
+    /* Shared by every front created when this pulse splits. */
+    u16 pulse;
+    /* A newly created branch waits until next frame, so each front always moves
+       exactly SPARK_SPEED cells per simulation frame. */
+    u32 stepped;
+    /* Progress watchdog anchor. Normal wire travel moves away and resets it;
+       a tiny post-explosion loop accumulates frames and fizzles. */
+    i16 cycleX, cycleY;
+    u8  cycleSteps;
     bool used;
 };
 
@@ -276,6 +333,8 @@ struct Device {
 };
 
 extern Device g_devices[MAX_DEVICES];
+extern CircuitWire g_circuitWires[MAX_CIRCUIT_WIRES];
+extern CircuitDeviceConfig g_circuitConfig[MAX_DEVICES];
 /* While a chest inventory is open its stack is being edited by the UI, so pipe
    transfer pauses rather than racing an invisible second copy of that stack. */
 extern bool g_logisticsUiOpen;
@@ -312,3 +371,24 @@ void devTick(World& w);
 /* Draw every device that falls in the view, over the top of the world. `lit`
    shades them by the light field, on the same contract as Player::draw. */
 void devDraw(const World& w, u32* px, int camX, int camY, bool lit);
+
+/* --- circuit network ------------------------------------------------------ */
+void circuitClear();
+void circuitRemoveDevice(int index);
+/* Adds or removes a visible wire. Returns false for invalid/self links. */
+bool circuitToggleWire(int a, int b);
+bool circuitToggleWirePorts(int a, int portA, int b, int portB);
+bool circuitHasWire(int a, int b);
+bool circuitIsCombinator(u8 type);
+bool circuitHasSeparatePorts(u8 type);
+int  circuitWireCount();
+const char* circuitSignalName(int signal);
+const char* circuitOpName(int op);
+int  circuitInput(int deviceIndex, int signal);
+int  circuitInputPort(int deviceIndex, int port, int signal);
+void circuitSetOutput(int deviceIndex, int signal, int value);
+void circuitPrepareInputs();
+void circuitDraw(u32* px, int camX, int camY, bool lit, int selectedDevice, int selectedPort);
+void circuitRemapMaterials(const u8* remap);
+/* Applies sensible defaults to machines loaded from a pre-circuit save. */
+void circuitInitMissingConfigs();

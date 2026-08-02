@@ -95,6 +95,7 @@ static const BrushDef BRUSHES[] = {
        they are states you put a material into, not things you build with. */
     { MAT_CLAY,    "Clay"   },
     { MAT_CERAMIC, "Ceramic"},
+    { MAT_ALUMINUM_NITRIDE, "AlN" },
     { MAT_COAL,    "Coal"   },
     { MAT_FUEL,    "Fuel"   },
     { MAT_GRAPHENE,"Graphene"},
@@ -142,7 +143,7 @@ static const BrushDef BRUSHES[] = {
 };
 static const int N_BRUSH = (int)(sizeof(BRUSHES) / sizeof(BRUSHES[0]));
 
-enum ActionId { ACT_OVERWRITE, ACT_LAYER, ACT_VIEW, ACT_LIGHT, ACT_PLAYER, ACT_PAUSE, ACT_CLEAR, N_ACT };
+enum ActionId { ACT_OVERWRITE, ACT_LAYER, ACT_WIRE, ACT_CIRCUIT, ACT_VIEW, ACT_LIGHT, ACT_PLAYER, ACT_PAUSE, ACT_CLEAR, N_ACT };
 
 /* --- simulation speed ----------------------------------------------------
    A multiplier on how many sim steps run per displayed frame, NOT a change to
@@ -158,8 +159,13 @@ enum ActionId { ACT_OVERWRITE, ACT_LAYER, ACT_VIEW, ACT_LIGHT, ACT_PLAYER, ACT_P
 static const int SPEEDS[]  = { 1, 2, 4 };
 static const int N_SPEED   = (int)(sizeof(SPEEDS) / sizeof(SPEEDS[0]));
 
-/* Layout rects, filled once by layoutPanel(). */
-static RECT g_brushRect[N_BRUSH];
+/* Layout rects, filled once by layoutPanel().  The palette combines ordinary
+   brushes and machines: sandbox play should not require turning the character
+   on just to get an item into a hotbar before it can be placed. */
+static const int N_PALETTE = N_BRUSH + DEV_COUNT;
+static const int PALETTE_VISIBLE_ROWS = 14;
+static RECT g_paletteRect[N_PALETTE];
+static RECT g_paletteArea, g_paletteScrollTrack, g_paletteScrollThumb;
 static RECT g_actRect[N_ACT];
 static RECT g_sizeDec, g_sizeInc, g_sizeBox;
 static RECT g_speedRect[N_SPEED];
@@ -183,6 +189,40 @@ static const int ICON_SCALE = 2;                  /* 14x14 art -> 28x28 icon */
 static const int ICON_PX    = SPR_W * ICON_SCALE;
 static HDC     g_iconDC;
 static HBITMAP g_iconBmp[SPR_COUNT];
+static HBITMAP g_matIconBmp[MAT_COUNT];
+static ItemId  g_hoverItem = ITEM_NONE;
+static RECT    g_hoverRect;
+static int     g_mx = 0, g_my = 0;
+static bool inRect(const RECT& r, int x, int y);
+
+static u32 iconLight(u32 c, int add) {
+    int r = ((c >> 16) & 255) + add, g = ((c >> 8) & 255) + add, b = (c & 255) + add;
+    return ((u32)imin(255, imax(0, r)) << 16) | ((u32)imin(255, imax(0, g)) << 8) | (u32)imin(255, imax(0, b));
+}
+
+static void buildMaterialIcons(HDC screen) {
+    for (int m = 1; m < MAT_COUNT; ++m) {
+        g_matIconBmp[m] = CreateCompatibleBitmap(screen, ICON_PX, ICON_PX);
+        HGDIOBJ old = SelectObject(g_iconDC, g_matIconBmp[m]);
+        RECT all = { 0, 0, ICON_PX, ICON_PX }; HBRUSH key = CreateSolidBrush(ICON_KEY);
+        FillRect(g_iconDC, &all, key); DeleteObject(key);
+        const u32 base = MATS[m].dryA, hi = iconLight(base, 42), lo = iconLight(base, -38);
+        const bool molten = m == MAT_LAVA || m == MAT_IRON_MELT || m == MAT_COPPER_MELT || m == MAT_RUBBER_MELT || m == MAT_SLAG_MELT;
+        for (int y = 0; y < SPR_H; ++y) for (int x = 0; x < SPR_W; ++x) {
+            bool on = false;
+            if (MATS[m].kind == KIND_POWDER) on = y >= 6 + abs(x - 6) / 2;
+            else if (MATS[m].kind == KIND_LIQUID) on = y >= 7 + ((x + m) % 3 == 0 ? 1 : 0);
+            else if (MATS[m].kind == KIND_GAS) { const int dx = x - 6, dy = y - 7; on = dx*dx + dy*dy < 30 || ((x-3)*(x-3)+(y-5)*(y-5)<12); }
+            else on = x >= 2 && x <= 11 && y >= 2 && y <= 11;
+            if (!on) continue;
+            u32 c = ((x * 13 + y * 7 + m * 11) % 9 == 0) ? hi : (((x + y + m) % 11 == 0) ? lo : base);
+            if (molten && ((x + y * 3 + m) % 5 == 0)) c = 0xFFD45A;
+            RECT p = { x * ICON_SCALE, y * ICON_SCALE, (x + 1) * ICON_SCALE, (y + 1) * ICON_SCALE };
+            HBRUSH b = CreateSolidBrush(RGB((c>>16)&255, (c>>8)&255, c&255)); FillRect(g_iconDC, &p, b); DeleteObject(b);
+        }
+        SelectObject(g_iconDC, old);
+    }
+}
 
 static void buildIcons() {
     HDC screen = GetDC(NULL);
@@ -206,12 +246,20 @@ static void buildIcons() {
             }
         SelectObject(g_iconDC, old);
     }
+    buildMaterialIcons(screen);
     ReleaseDC(NULL, screen);
 }
 
 /* Centres an item's icon in a rect, or falls back to a colour swatch for
    everything without one -- which is every material, deliberately. */
 static void drawItemIcon(HDC hdc, const RECT& r, ItemId item) {
+    if (inRect(r, g_mx, g_my)) { g_hoverItem = item; g_hoverRect = r; }
+    if (item < MAT_COUNT && g_matIconBmp[item]) {
+        const int side = imin(imin(r.right-r.left-2, r.bottom-r.top-2), ICON_PX);
+        if (side > 0) { const int x = r.left + (r.right-r.left-side)/2, y = r.top + (r.bottom-r.top-side)/2;
+            HGDIOBJ old = SelectObject(g_iconDC, g_matIconBmp[item]); TransparentBlt(hdc,x,y,side,side,g_iconDC,0,0,ICON_PX,ICON_PX,ICON_KEY); SelectObject(g_iconDC,old); }
+        return;
+    }
     const int s = ITEMS[item].sprite;
     if (s > SPR_NONE && s < SPR_COUNT && g_iconBmp[s]) {
         /* Square, and centred. Stretching to fill the rect would squash every
@@ -236,6 +284,33 @@ static void drawItemIcon(HDC hdc, const RECT& r, ItemId item) {
     RECT rr = r;
     FillRect(hdc, &rr, b);
     DeleteObject(b);
+}
+
+/* Circuit signals use the same icon slot as items. Materials reuse their item
+   art; virtual 1-9 channels have dedicated sprite chips, so a wire readout is
+   not visually demoted to plain text just because it carries a number. */
+static void drawCircuitSignalIcon(HDC hdc, const RECT& r, int signal) {
+    if (signal > MAT_EMPTY && signal < MAT_COUNT) { drawItemIcon(hdc, r, (ItemId)signal); return; }
+    if (signal < CIR_SIG_1 || signal > CIR_SIG_9) return;
+    const int sprite = SPR_SIGNAL1 + signal - CIR_SIG_1;
+    const int side = imin(imin(r.right - r.left - 2, r.bottom - r.top - 2), ICON_PX);
+    if (side <= 0 || !g_iconBmp[sprite]) return;
+    const int x = r.left + (r.right - r.left - side) / 2;
+    const int y = r.top + (r.bottom - r.top - side) / 2;
+    HGDIOBJ old = SelectObject(g_iconDC, g_iconBmp[sprite]);
+    TransparentBlt(hdc, x, y, side, side, g_iconDC, 0, 0, ICON_PX, ICON_PX, ICON_KEY);
+    SelectObject(g_iconDC, old);
+}
+
+static void drawItemTooltip(HDC hdc) {
+    if (g_hoverItem == ITEM_NONE || g_hoverItem >= ITEM_COUNT) return;
+    const char* name = ITEMS[g_hoverItem].name;
+    if (!name || !name[0]) return;
+    RECT r = { g_hoverRect.left, g_hoverRect.top - 22, g_hoverRect.left + 150, g_hoverRect.top - 4 };
+    if (r.top < 2) { r.top = g_hoverRect.bottom + 4; r.bottom = r.top + 18; }
+    FillRect(hdc, &r, g_panelBg); FrameRect(hdc, &r, g_accentBrush);
+    SetBkMode(hdc, TRANSPARENT); SetTextColor(hdc, RGB(245,224,150));
+    DrawTextA(hdc, name, -1, &r, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 }
 
 /* UI/input state */
@@ -277,6 +352,18 @@ static bool g_lineKey  = false;   /* R is down */
 static bool g_lineOn   = false;   /* ...and a drag is in progress */
 static bool g_lineDrew = false;   /* this hold of R drew something */
 static int  g_lineX = 0, g_lineY = 0;
+/* Wire mode is deliberately separate from R's general-purpose line modifier:
+   it always places one-cell copper, regardless of the selected brush or held
+   hotbar item. It is the quick way to make a circuit after placing machines. */
+static bool g_wireMode = false;
+static bool g_wireOn   = false;
+static int  g_wireX = 0, g_wireY = 0;
+/* Circuit wire is an information link, not copper. Click one device then a
+   second: the visible cable joins their signal networks (or removes that same
+   cable if it already exists). */
+static bool g_circuitWireMode = false;
+static int  g_circuitWireFrom = -1;
+static int  g_circuitWireFromPort = 0;
 /* One device per press, not per frame. Cleared on button-up -- see the placement
    branch in applyBrush for why holding must not repeat. */
 static bool g_devPlaced = false;
@@ -291,9 +378,14 @@ static bool handleCraftClick(int mx, int my);
 static void layoutCraft();
 extern bool g_craftOpen;
 static void drawDevPanel(HDC hdc);
-static int  g_mx = 0, g_my = 0;      /* current mouse, window pixels */
 static int  g_pmx = -1, g_pmy = -1;  /* previous aim point, in cells */
 static int  g_brushMat = MAT_SAND;
+/* -1 means a material/tool brush is selected.  Device buttons only become a
+   free placement source while the character is off; survival inventory
+   placement remains exactly as before. */
+static int  g_paletteDevice = -1;
+static int  g_paletteScroll = 0;
+static int  g_paletteMaxScroll = 0;
 static int  g_brushRadius = 6;
 static bool g_paused = false;
 static bool g_stepOnce = false;
@@ -356,17 +448,21 @@ static const int CRE_COLS = 4;
    squares and the only way to tell them apart was to point at each one. A list
    you can read is worth more than a list that fits. */
 static const int CRE_VIS_ROWS = 10;
+static const int CRE_MAX_ENTRIES = ITEM_COUNT + 9;
 static int g_creScroll = 0;      /* first visible row */
 static int g_creRowCount = 0;    /* total rows, for clamping and the bar */
 static RECT g_creTrack, g_creThumb;
-static RECT g_creRect[ITEM_COUNT];
+static RECT g_creRect[CRE_MAX_ENTRIES];
 static RECT g_crePanel, g_creClear;
 static RECT g_creSearchBox;
 static int  g_creCount = 0;              /* entries actually laid out */
-static ItemId g_creItem[ITEM_COUNT];     /* which item each rect belongs to */
+static int g_creItem[CRE_MAX_ENTRIES];    /* item id or CircuitSignal in picker mode */
 static char g_creSearch[32] = "";
 static bool g_creSearchFocus = false;
 static int  g_filterDevice = -1;         /* drain/watcher material picker */
+enum CircuitPickField { CIR_PICK_NONE = -1, CIR_PICK_SIGNAL, CIR_PICK_A, CIR_PICK_B, CIR_PICK_OUT };
+static int  g_signalPickerDevice = -1;
+static int  g_signalPickerField = CIR_PICK_NONE;
 
 /* --- the pack, and the thing on the cursor ---------------------------------
    The player's own forty slots, drawn under the creative palette, with the
@@ -439,7 +535,9 @@ struct Aim {
     bool clamped;
 };
 static Aim currentAim();
+static Aim currentWireAim();
 static void applyBrush();
+static void circuitWireClick();
 
 /* Lay down the line and end the drag. g_pmx/g_pmy still hold the press point,
    which is the whole trick -- applyBrush interpolates from there to the current
@@ -464,6 +562,50 @@ static void commitLine() {
     g_lineDrew = true;      /* so releasing R does not also respawn */
     applyBrush();
     g_pmx = -1;
+}
+
+static void startWire() {
+    if (!g_wireMode || g_uiCapture || g_mx < PANEL_W) return;
+    const Aim a = currentWireAim();
+    g_wireX = a.x; g_wireY = a.y;
+    g_wireOn = true;
+}
+
+/* Place an intentionally narrow, 4-connected copper route. A normal pixel
+   line can advance diagonally from (x,y) to (x+1,y+1); pixels then touch only
+   at a corner, which electrical conduction correctly treats as disconnected.
+   The bridge cell on every diagonal advance makes the raster route continuous
+   without ever painting a brush-sized blob or overwriting existing work. */
+static void wireCell(int x, int y) {
+    if (x < PLAY_X0 || x > PLAY_X1 || y < PLAY_Y0 || y > PLAY_Y1) return;
+    const u8 old = g_world.at(x, y).mat;
+    if (old == MAT_COPPER) return;
+    if (old != MAT_EMPTY) return;
+    if (g_survival && g_playerOn && !g_inv.take(MAT_COPPER, 1)) return;
+    g_world.setCell(x, y, MAT_COPPER);
+}
+
+static void commitWire() {
+    if (!g_wireOn) return;
+    g_wireOn = false;
+    const Aim a = currentWireAim();
+    int x = g_wireX, y = g_wireY;
+    const int dx = abs(a.x - x), sx = x < a.x ? 1 : -1;
+    const int dy = abs(a.y - y), sy = y < a.y ? 1 : -1;
+    int err = dx - dy;
+    for (;;) {
+        wireCell(x, y);
+        if (x == a.x && y == a.y) break;
+        const int twice = err * 2;
+        const bool moveX = twice > -dy;
+        const bool moveY = twice < dx;
+        int nx = x, ny = y;
+        if (moveX) { err -= dy; nx += sx; }
+        if (moveY) { err += dx; ny += sy; }
+        if (moveX && moveY) wireCell(nx, y);  /* cardinal bridge at a diagonal */
+        x = nx; y = ny;
+    }
+    roomsNotifyEdit(g_world, a.x, a.y);
 }
 
 /* Base reach plus whatever the pack is carrying. Reading it through a function
@@ -549,11 +691,10 @@ static void layoutPanel() {
     const int statsTop = STATS_TOP;  /* keep clear of the stats block */
     const int sepTotal = 12;         /* the two 6px group separators below */
 
-    /* Materials go in TWO columns, everything below them stays full width. The
-       split is what buys the height: 25 buttons in one column forced a 20px
-       pitch, 13 rows of two leaves room for 30. */
-    const int brushRows = (N_BRUSH + 1) / 2;
-    const int rowCount  = brushRows + 2 + N_ACT;   /* +2: size row, speed row */
+    /* The scrollable two-column catalog deliberately has a fixed visible
+       height.  Materials and devices therefore compete for neither panel
+       height nor readability as the catalog grows. */
+    const int rowCount  = PALETTE_VISIBLE_ROWS + 2 + N_ACT; /* + size, speed */
 
     int pitch = (statsTop - top - sepTotal) / rowCount;
     if (pitch > 30) pitch = 30;
@@ -564,20 +705,40 @@ static void layoutPanel() {
     const int h = pitch - gap;
     int y = top;
 
-    /* Column-major, so the palette's grouping survives the split: the first
-       half of BRUSHES fills the left column top to bottom and the second half
-       the right, keeping related materials next to each other vertically
-       rather than interleaving them across the two columns. */
+    /* The catalog is row-major: scrolling through it reads in the same order
+       as its definitions, first all materials then all devices. */
     {
-        const int colGap = 8;
-        const int colW   = (w - colGap) / 2;
-        for (int i = 0; i < N_BRUSH; ++i) {
-            const int col = i / brushRows;
-            const int row = i % brushRows;
-            const int x0  = pad + col * (colW + colGap);
-            SetRect(&g_brushRect[i], x0, top + row * pitch, x0 + colW, top + row * pitch + h);
+        const int colGap = 6;
+        const int railW = 10;
+        const int catalogW = w - railW - 4;
+        const int colW   = (catalogW - colGap) / 2;
+        const int totalRows = (N_PALETTE + 1) / 2;
+        g_paletteMaxScroll = imax(0, totalRows - PALETTE_VISIBLE_ROWS);
+        g_paletteScroll = imax(0, imin(g_paletteScroll, g_paletteMaxScroll));
+        SetRect(&g_paletteArea, pad, top, pad + catalogW, top + PALETTE_VISIBLE_ROWS * pitch - gap);
+        SetRect(&g_paletteScrollTrack, pad + catalogW + 4, top,
+                pad + catalogW + 4 + railW, top + PALETTE_VISIBLE_ROWS * pitch - gap);
+        if (g_paletteMaxScroll > 0) {
+            const int trackH = g_paletteScrollTrack.bottom - g_paletteScrollTrack.top;
+            const int thumbH = imax(20, trackH * PALETTE_VISIBLE_ROWS / totalRows);
+            const int travel = trackH - thumbH;
+            const int thumbY = g_paletteScrollTrack.top + travel * g_paletteScroll / g_paletteMaxScroll;
+            SetRect(&g_paletteScrollThumb, g_paletteScrollTrack.left, thumbY,
+                    g_paletteScrollTrack.right, thumbY + thumbH);
+        } else {
+            SetRectEmpty(&g_paletteScrollThumb);
         }
-        y = top + brushRows * pitch;
+        for (int i = 0; i < N_PALETTE; ++i) {
+            const int col = i & 1;
+            const int row = i / 2 - g_paletteScroll;
+            if (row < 0 || row >= PALETTE_VISIBLE_ROWS) {
+                SetRectEmpty(&g_paletteRect[i]);
+                continue;
+            }
+            const int x0  = pad + col * (colW + colGap);
+            SetRect(&g_paletteRect[i], x0, top + row * pitch, x0 + colW, top + row * pitch + h);
+        }
+        y = top + PALETTE_VISIBLE_ROWS * pitch;
     }
 
     y += 6;
@@ -618,6 +779,8 @@ struct KeyHint { const char* key; const char* what; };
 static const KeyHint KEY_HINTS[] = {
     { "WASD / arrows", "move, and jump" },
     { "hold R + drag", "draw a straight line" },
+    { "F",             "toggle one-cell wire mode" },
+    { "X",             "toggle circuit-wire linking" },
     { "tap R",         "respawn at the cursor" },
     { "left / right",  "build / dig" },
     { "right-click",   "open a machine, or a door" },
@@ -647,28 +810,38 @@ static void layoutMenu() {
    centred on the viewport and nothing else depends on where it lands. The row
    count is derived from how many items there are, so the panel grows with the
    material table instead of clipping it. */
+static bool creativeMatches(const char* name) {
+    for (int a = 0; g_creSearch[a]; ++a) {
+        bool found = false;
+        for (int b = 0; name[b]; ++b) {
+            char x = name[b], q = g_creSearch[a];
+            if (x >= 'A' && x <= 'Z') x = (char)(x + ('a' - 'A'));
+            if (q >= 'A' && q <= 'Z') q = (char)(q + ('a' - 'A'));
+            if (x == q) { found = true; break; }
+        }
+        if (!found) return false;
+    }
+    return true;
+}
+
 static void layoutCreative() {
     g_creCount = 0;
-    for (int i = 0; i < ITEM_COUNT; ++i) {
-        if (ITEMS[i].maxStack == 0) continue;   /* air, and anything unfinished */
-        bool match = true;
-        for (int a = 0; g_creSearch[a]; ++a) {
-            bool found = false;
-            for (int b = 0; ITEMS[i].name[b]; ++b) {
-                char x = ITEMS[i].name[b], q = g_creSearch[a];
-                if (x >= 'A' && x <= 'Z') x = (char)(x + ('a' - 'A'));
-                if (q >= 'A' && q <= 'Z') q = (char)(q + ('a' - 'A'));
-                if (x == q) { found = true; break; }
-            }
-            if (!found) { match = false; break; }
+    const bool signalPicker = g_signalPickerDevice >= 0;
+    if (signalPicker) {
+        for (int signal = CIR_SIG_1; signal < CIRCUIT_SIGNAL_COUNT; ++signal)
+            if (creativeMatches(circuitSignalName(signal))) g_creItem[g_creCount++] = signal;
+        for (int material = 1; material < MAT_COUNT; ++material) {
+            if (material == MAT_DEVICE) continue;
+            if (creativeMatches(circuitSignalName(material))) g_creItem[g_creCount++] = material;
         }
-        if (!match) continue;
-        g_creItem[g_creCount++] = (ItemId)i;
+    } else for (int i = 0; i < ITEM_COUNT; ++i) {
+        if (ITEMS[i].maxStack == 0 || !creativeMatches(ITEMS[i].name)) continue;
+        g_creItem[g_creCount++] = i;
     }
     /* The bench only appears when there is a tool to show, and its height is
        part of the panel's height rather than an overlay -- so picking up a
        multitool makes the window taller instead of pushing the grid under it. */
-    g_toolPackSlot   = g_inv.firstToolSlot();
+    g_toolPackSlot   = signalPicker ? -1 : g_inv.firstToolSlot();
     g_toolSlotCount  = 0;
     if (g_toolPackSlot >= 0)
         g_toolSlotCount = imin(ITEMS[g_inv.slot[g_toolPackSlot].item].toolSlots, TOOL_SLOTS_MAX);
@@ -692,9 +865,9 @@ static void layoutCreative() {
     if (g_creScroll < 0) g_creScroll = 0;
 
     const int benchH = g_toolSlotCount ? 62 : 0;
-    const int equipH = 62;
+    const int equipH = signalPicker ? 0 : 62;
     const int paletteH = visRows * (ch + gap);
-    const int packH    = 22 + INV_ROWS * (ps + pgap) + 10;
+    const int packH    = signalPicker ? 0 : 22 + INV_ROWS * (ps + pgap) + 10;
     const int barW     = 10;
     const int w = pad * 2 + CRE_COLS * cw + (CRE_COLS - 1) * gap + barW + 6;
     const int h = pad + 56 + paletteH + 10 + packH + equipH + benchH + 38;
@@ -727,7 +900,13 @@ static void layoutCreative() {
 
     /* The pack, then equipment, then the tool bench. */
     const int packY = listTop + paletteH + 10 + 22;
+    if (signalPicker) {
+        for (int i = 0; i < INV_SLOTS; ++i) SetRectEmpty(&g_packRect[i]);
+        for (int i = 0; i < EQ_COUNT; ++i) SetRectEmpty(&g_eqRect[i]);
+        for (int i = 0; i < TOOL_SLOTS_MAX; ++i) SetRectEmpty(&g_toolSlotRect[i]);
+    }
     for (int i = 0; i < INV_SLOTS; ++i) {
+        if (signalPicker) break;
         const int c = i % HOTBAR_SLOTS, r = i / HOTBAR_SLOTS;
         /* The HOTBAR row drawn LAST, at the bottom, the way it sits on screen.
            Slots 0..9 are the hotbar and they belong under the rest of the pack,
@@ -739,14 +918,14 @@ static void layoutCreative() {
     }
 
     const int eqY = packY + packH;
-    for (int i = 0; i < EQ_COUNT; ++i)
+    if (!signalPicker) for (int i = 0; i < EQ_COUNT; ++i)
         SetRect(&g_eqRect[i], x0 + pad + i * 40, eqY, x0 + pad + i * 40 + 34, eqY + 34);
 
     /* Module slots: square, and noticeably bigger than a grid row, because they
        are the one place on this screen where the arrangement carries meaning
        (slot order decides which module is the shot). */
     const int by2 = eqY + equipH;
-    for (int i = 0; i < g_toolSlotCount; ++i) {
+    for (int i = 0; !signalPicker && i < g_toolSlotCount; ++i) {
         const int bx = x0 + pad + i * 40;
         SetRect(&g_toolSlotRect[i], bx, by2, bx + 34, by2 + 34);
     }
@@ -934,9 +1113,32 @@ static void drawChest(HDC hdc) {
 
 /* Returns true if the click was consumed, which while this is open is always:
    it is modal, and letting a click through to the world would paint under it. */
+static void closeSignalPicker() {
+    g_signalPickerDevice = -1;
+    g_signalPickerField = CIR_PICK_NONE;
+    g_creativeOpen = false;
+    g_creSearchFocus = false;
+}
+
+/* Signal choice is a real selection task now, not an overloaded little cycle
+   button. Reuse the creative browser because it already has the two things a
+   material-rich circuit needs: every possible signal and a forgiving search. */
+static void openCircuitSignalPicker(int device, CircuitPickField field) {
+    if (device < 0 || device >= MAX_DEVICES || !g_devices[device].used) return;
+    g_filterDevice = -1;
+    g_signalPickerDevice = device;
+    g_signalPickerField = field;
+    g_creativeOpen = true;
+    g_creSearch[0] = 0;
+    g_creScroll = 0;
+    g_creSearchFocus = true;
+    layoutCreative();
+}
+
 static bool handleCreativeClick(int mx, int my, bool remove) {
     if (inRect(g_creSearchBox, mx, my)) { g_creSearchFocus = true; return true; }
     if (inRect(g_creClear, mx, my)) {
+        if (g_signalPickerDevice >= 0) { closeSignalPicker(); return true; }
         if (g_filterDevice >= 0) {
             g_devices[g_filterDevice].value = 0;
             g_filterDevice = -1; g_creativeOpen = false; g_creSearchFocus = false;
@@ -959,7 +1161,7 @@ static bool handleCreativeClick(int mx, int my, bool remove) {
         return true;
     }
 
-    for (int i = 0; i < INV_SLOTS; ++i)
+    if (g_signalPickerDevice < 0) for (int i = 0; i < INV_SLOTS; ++i)
         if (inRect(g_packRect[i], mx, my)) {
             slotClick(g_inv.slot[i], remove);
             /* Picking a tool up or putting one down changes whether the bench
@@ -968,10 +1170,10 @@ static bool handleCreativeClick(int mx, int my, bool remove) {
             return true;
         }
 
-    for (int i = 0; i < EQ_COUNT; ++i)
+    if (g_signalPickerDevice < 0) for (int i = 0; i < EQ_COUNT; ++i)
         if (inRect(g_eqRect[i], mx, my)) { equipClick(i, remove); layoutCreative(); return true; }
 
-    if (g_toolPackSlot >= 0 && g_inv.slot[g_toolPackSlot].inst) {
+    if (g_signalPickerDevice < 0 && g_toolPackSlot >= 0 && g_inv.slot[g_toolPackSlot].inst) {
         ToolInst& ti = g_toolInst[g_inv.slot[g_toolPackSlot].inst];
         for (int i = 0; i < g_toolSlotCount; ++i)
             if (inRect(g_toolSlotRect[i], mx, my)) { moduleClick(ti.slot[i], remove); return true; }
@@ -979,7 +1181,18 @@ static bool handleCreativeClick(int mx, int my, bool remove) {
 
     for (int i = 0; i < g_creCount; ++i) {
         if (!inRect(g_creRect[i], mx, my)) continue;
-        const ItemId it = g_creItem[i];
+        const int it = g_creItem[i];
+        if (g_signalPickerDevice >= 0) {
+            if (g_signalPickerDevice < MAX_DEVICES && g_devices[g_signalPickerDevice].used) {
+                CircuitDeviceConfig& cc = g_circuitConfig[g_signalPickerDevice];
+                if      (g_signalPickerField == CIR_PICK_SIGNAL) cc.signal = (u8)it;
+                else if (g_signalPickerField == CIR_PICK_A)      cc.signalA = (u8)it;
+                else if (g_signalPickerField == CIR_PICK_B)      cc.signalB = (u8)it;
+                else if (g_signalPickerField == CIR_PICK_OUT)    cc.signalOut = (u8)it;
+            }
+            closeSignalPicker();
+            return true;
+        }
         if (g_filterDevice >= 0) {
             if (it < MAT_COUNT) g_devices[g_filterDevice].value = it;
             g_filterDevice = -1; g_creativeOpen = false; g_creSearchFocus = false;
@@ -1107,8 +1320,25 @@ static bool handlePanelClick(int mx, int my) {
         for (int i = 0; i < HOTBAR_SLOTS; ++i)
             if (inRect(g_hotRect[i], mx, my)) { g_inv.selected = i; return true; }
     }
-    for (int i = 0; i < N_BRUSH; ++i) {
-        if (inRect(g_brushRect[i], mx, my)) { g_brushMat = BRUSHES[i].brush; return true; }
+    for (int i = 0; i < N_PALETTE; ++i) {
+        if (!inRect(g_paletteRect[i], mx, my)) continue;
+        if (i < N_BRUSH) {
+            g_brushMat = BRUSHES[i].brush;
+            g_paletteDevice = -1;
+        } else {
+            g_paletteDevice = i - N_BRUSH;
+        }
+        return true;
+    }
+    if (inRect(g_paletteScrollTrack, mx, my) && g_paletteMaxScroll > 0) {
+        const int trackH = g_paletteScrollTrack.bottom - g_paletteScrollTrack.top;
+        const int thumbH = g_paletteScrollThumb.bottom - g_paletteScrollThumb.top;
+        const int travel = imax(1, trackH - thumbH);
+        int at = my - g_paletteScrollTrack.top - thumbH / 2;
+        at = imax(0, imin(at, travel));
+        g_paletteScroll = (at * g_paletteMaxScroll + travel / 2) / travel;
+        layoutPanel();
+        return true;
     }
     for (int i = 0; i < N_SPEED; ++i) {
         if (inRect(g_speedRect[i], mx, my)) { g_speedIdx = i; return true; }
@@ -1117,6 +1347,12 @@ static bool handlePanelClick(int mx, int my) {
     if (inRect(g_sizeInc, mx, my)) { changeSize(+1); return true; }
     if (inRect(g_actRect[ACT_OVERWRITE], mx, my)) { g_overwrite = !g_overwrite; return true; }
     if (inRect(g_actRect[ACT_LAYER],     mx, my)) { g_bgLayer   = !g_bgLayer;   return true; }
+    if (inRect(g_actRect[ACT_WIRE],      mx, my)) { g_wireMode  = !g_wireMode;  return true; }
+    if (inRect(g_actRect[ACT_CIRCUIT],   mx, my)) {
+        g_circuitWireMode = !g_circuitWireMode;
+        g_circuitWireFrom = -1; g_circuitWireFromPort = 0;
+        return true;
+    }
     if (inRect(g_actRect[ACT_VIEW],      mx, my)) { cycleView();                return true; }
     if (inRect(g_actRect[ACT_LIGHT],     mx, my)) { g_lightOn  = !g_lightOn;    return true; }
     if (inRect(g_actRect[ACT_PLAYER],    mx, my)) {
@@ -1176,11 +1412,18 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         else if (handleCraftClick(g_mx, g_my)) g_uiCapture = true;
         else if (handleDevPanelClick(g_mx, g_my)) g_uiCapture = true;
         else if (handlePanelClick(g_mx, g_my)) g_uiCapture = true;
-        else                                   { g_lmb = true; startLine(); }
+        else if (g_circuitWireMode) {
+            circuitWireClick();
+            g_uiCapture = true;
+        } else {
+            g_lmb = true;
+            if (g_wireMode) startWire(); else startLine();
+        }
         SetCapture(hwnd);
         return 0;
     case WM_LBUTTONUP:
-        commitLine();       /* before the button clears -- see commitLine */
+        commitWire();       /* before the button clears -- see commitLine */
+        commitLine();
         g_lmb = false; g_devPlaced = false; g_uiCapture = false; ReleaseCapture(); return 0;
     case WM_RBUTTONDOWN:
         g_mx = (short)LOWORD(lp);
@@ -1199,6 +1442,7 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             Device* d = devAt(a.x, a.y);
             if (d) {
                 if (d->type == DEV_CHEST) { openChest((int)(d - g_devices)); break; }
+                if (d->type == DEV_PULSE_BUTTON) { d->poked = true; break; }
                 /* Toggle: clicking the same machine again closes it. */
                 const int idx = (int)(d - g_devices);
                 g_devPanel = (g_devPanel == idx) ? -1 : idx;
@@ -1257,6 +1501,14 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             layoutCreative();
             return 0;
         }
+        /* The left catalog owns the wheel while the pointer is over it.  This
+           keeps browsing devices from quietly changing a hotbar slot or brush
+           size, and matches the creative inventory's three-row stride. */
+        if (inRect(g_paletteArea, g_mx, g_my) || inRect(g_paletteScrollTrack, g_mx, g_my)) {
+            g_paletteScroll = imax(0, imin(g_paletteMaxScroll, g_paletteScroll - dir * 3));
+            layoutPanel();
+            return 0;
+        }
         /* The wheel picks what you are holding, which is what it does in every
            game with a hotbar, and Q turns it into a size dial. Sizing is the
            rarer action once you are playing rather than drawing, so it is the
@@ -1273,6 +1525,18 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     }
 
     case WM_KEYDOWN:
+        /* Inventory screens own the keyboard. This matters particularly for
+           search: typing "iron" used to send I through to the gameplay toggle
+           and silently hide the survival hotbar underneath the open inventory. */
+        if (g_creativeOpen || g_chestOpen >= 0) {
+            if (wp == VK_ESCAPE) {
+                if (g_chestOpen >= 0) closeChest();
+                else { g_creativeOpen = false; g_filterDevice = -1; g_signalPickerDevice = -1; g_signalPickerField = CIR_PICK_NONE; g_creSearchFocus = false; dragStow(); }
+            } else if (wp == VK_TAB && g_creativeOpen) {
+                g_creativeOpen = false; g_filterDevice = -1; g_signalPickerDevice = -1; g_signalPickerField = CIR_PICK_NONE; g_creSearchFocus = false; dragStow();
+            }
+            return 0;
+        }
         /* Shortcuts still work -- they are just no longer the only way in. */
         switch (wp) {
         /* The number row now selects hotbar slots rather than materials. The
@@ -1283,13 +1547,15 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             g_inv.selected = (int)(wp - '1');
             break;
         case '0': g_inv.selected = 9; break;
-        case 'M': g_brushMat = MAT_COPPER;   break;   /* M for metal */
-        case 'G': g_brushMat = MAT_GRAPHENE; break;
-        case 'B': g_brushMat = MAT_WALL;  break;
-        case 'E': g_brushMat = MAT_EMPTY; break;
+        case 'M': g_brushMat = MAT_COPPER;   g_paletteDevice = -1; break;   /* M for metal */
+        case 'F': g_wireMode = !g_wireMode;   break;   /* F for wire feed */
+        case 'X': g_circuitWireMode = !g_circuitWireMode; g_circuitWireFrom = -1; g_circuitWireFromPort = 0; break;
+        case 'G': g_brushMat = MAT_GRAPHENE; g_paletteDevice = -1; break;
+        case 'B': g_brushMat = MAT_WALL;     g_paletteDevice = -1; break;
+        case 'E': g_brushMat = MAT_EMPTY;    g_paletteDevice = -1; break;
         case 'I': g_survival = !g_survival; break;
-        case 'H': g_brushMat = TOOL_HEAT; break;
-        case 'J': g_brushMat = TOOL_COOL; break;
+        case 'H': g_brushMat = TOOL_HEAT; g_paletteDevice = -1; break;
+        case 'J': g_brushMat = TOOL_COOL; g_paletteDevice = -1; break;
         /* C crafts. Regenerating the world moved to N, which it should
            arguably always have been -- C for "clear" was a sandbox verb from
            before there was a game to be in the middle of, and losing your world
@@ -1354,7 +1620,7 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case VK_TAB:
             g_creativeOpen = !g_creativeOpen;
             if (g_creativeOpen) { g_creSearchFocus = true; layoutCreative(); g_lmb = g_rmb = false; }
-            else { g_filterDevice = -1; g_creSearchFocus = false; dragStow(); }
+            else { g_filterDevice = -1; g_signalPickerDevice = -1; g_signalPickerField = CIR_PICK_NONE; g_creSearchFocus = false; dragStow(); }
             break;
         /* Escape backs out of the creative grid before it reaches the pause
            menu -- one key that always means "close the thing in front of me" is
@@ -1362,7 +1628,7 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case VK_ESCAPE:
             if (g_chestOpen >= 0)    closeChest();
             else if (g_craftOpen)    g_craftOpen = false;
-            else if (g_creativeOpen) { g_creativeOpen = false; g_filterDevice = -1; g_creSearchFocus = false; dragStow(); }
+            else if (g_creativeOpen) { g_creativeOpen = false; g_filterDevice = -1; g_signalPickerDevice = -1; g_signalPickerField = CIR_PICK_NONE; g_creSearchFocus = false; dragStow(); }
             else                     g_menuOpen = !g_menuOpen;
             break;
         }
@@ -1432,6 +1698,37 @@ static Aim currentAim() {
     return a;
 }
 
+/* Wiring is normally aiming for an existing terminal or wire, not the empty
+   cell beside it. Within four cells, choose the nearest conductive cell as the
+   actual endpoint. The tight radius makes it a deliberate finishing assist,
+   rather than a general magnet that pulls a long wire toward a metal wall. */
+static Aim currentWireAim() {
+    Aim a = currentAim();
+    static const int SNAP = 4;
+    int bestD2 = SNAP * SNAP + 1;
+    int bestX = a.x, bestY = a.y;
+    for (int y = imax(PLAY_Y0, a.y - SNAP); y <= imin(PLAY_Y1, a.y + SNAP); ++y) {
+        for (int x = imax(PLAY_X0, a.x - SNAP); x <= imin(PLAY_X1, a.x + SNAP); ++x) {
+            const int dx = x - a.x, dy = y - a.y, d2 = dx * dx + dy * dy;
+            if (d2 >= bestD2 || !g_matConducts[g_world.at(x, y).mat]) continue;
+            bestD2 = d2; bestX = x; bestY = y;
+        }
+    }
+    a.x = bestX; a.y = bestY;
+    return a;
+}
+
+static void circuitWireClick() {
+    const Aim a = currentAim();
+    Device* d = devAt(a.x, a.y);
+    if (!d) { g_circuitWireFrom = -1; g_circuitWireFromPort = 0; return; }
+    const int index = (int)(d - g_devices);
+    const int port = circuitHasSeparatePorts(d->type) && a.x >= d->x + DEV_W / 2 ? 1 : 0;
+    if (g_circuitWireFrom < 0) { g_circuitWireFrom = index; g_circuitWireFromPort = port; return; }
+    circuitToggleWirePorts(g_circuitWireFrom, g_circuitWireFromPort, index, port);
+    g_circuitWireFrom = -1; g_circuitWireFromPort = 0;
+}
+
 /* Frames until the hands can take another bite. Counted down every frame
    whether or not you are digging, so the first click after a pause acts
    immediately rather than waiting out a stale cooldown. */
@@ -1477,7 +1774,7 @@ static void applyBrush() {
        in g_pmx/g_pmy (set on the press), and leaving it there is what makes the
        committing call draw a straight line rather than the path the mouse
        wandered along. */
-    if (g_lineOn) return;
+    if (g_lineOn || g_wireOn) return;
 
     /* Stroke interpolation runs between successive CLAMPED points, not raw
        mouse positions. Interpolating the raw ones and clamping afterwards would
@@ -1498,6 +1795,20 @@ static void applyBrush() {
     if (g_survival && g_playerOn && g_lmb && !g_rmb
         && !g_inv.held().empty() && ITEMS[g_inv.held().item].kind == ITEMK_TOOL) {
         fireTool(aim);
+        g_pmx = aim.x; g_pmy = aim.y;
+        return;
+    }
+
+    /* Character-off mode is the freeform builder.  A device selected from the
+       left catalog is placed directly here, once per click just like an
+       inventory-held device, but without inventing a hidden infinite hotbar.
+       The explicit !g_playerOn guard keeps the survival economy authoritative
+       whenever the player is active. */
+    if (!g_playerOn && g_paletteDevice >= 0 && g_lmb && !g_rmb && !g_bgLayer) {
+        if (!g_devPlaced) {
+            devPlace(g_world, (u8)g_paletteDevice, aim.x, aim.y);
+            g_devPlaced = true;
+        }
         g_pmx = aim.x; g_pmy = aim.y;
         return;
     }
@@ -1628,6 +1939,18 @@ static void drawButton(HDC hdc, const RECT& r, const char* label,
     DrawTextA(hdc, label, -1, &t, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 }
 
+/* A signal button reserves an explicit icon well. This is the visual cue that
+   "Copper" is a named circuit signal here, not merely decorative text. */
+static void drawCircuitSignalButton(HDC hdc, const RECT& r, const char* prefix,
+                                    int signal, bool hot) {
+    char label[80];
+    sprintf(label, "%s %s", prefix, circuitSignalName(signal));
+    drawButton(hdc, r, label, g_panelBg, false, hot);
+    RECT icon = { r.left + 4, r.top + 2, r.left + 22, r.bottom - 2 };
+    FillRect(hdc, &icon, g_panelBg);
+    drawCircuitSignalIcon(hdc, icon, signal);
+}
+
 
 /* --- the device panel ------------------------------------------------------
    What right-clicking a machine gets you: its name, what it is sensing, and the
@@ -1643,24 +1966,27 @@ static void drawButton(HDC hdc, const RECT& r, const char* label,
    ONE adjustable number, deliberately. See the note on DeviceInfo::valueLabel --
    a machine with six settings is a machine nobody can understand by looking at
    it, and the whole interaction should be "read it, nudge it, get on with it". */
-static const int DEVP_W = 260, DEVP_H = 96;
+/* Circuit controls name their selected signal and show an icon, so they need
+   enough width for a material name rather than the old tiny cycle buttons. */
+static const int DEVP_W = 420, DEVP_H = 96, DEVP_CIRCUIT_H = 218;
 static RECT g_devpBox, g_devpDec, g_devpInc, g_devpTake, g_devpTurn, g_devpClose;
 
 static void layoutDevPanel(const Device& d) {
     /* Sit it just above and right of the machine, in screen pixels. */
+    const int h = circuitIsCombinator(d.type) ? DEVP_CIRCUIT_H : DEVP_H;
     int px = PANEL_W + (d.x + DEV_W - g_camX) * SCALE + 8;
-    int py = (d.y - g_camY) * SCALE - DEVP_H - 6;
+    int py = (d.y - g_camY) * SCALE - h - 6;
     if (px + DEVP_W > WIN_W - 6) px = PANEL_W + (d.x - g_camX) * SCALE - DEVP_W - 8;
     if (px < PANEL_W + 6)        px = PANEL_W + 6;
     if (py < 6)                  py = (d.y + DEV_H - g_camY) * SCALE + 6;
-    if (py + DEVP_H > WIN_H - 6) py = WIN_H - 6 - DEVP_H;
+    if (py + h > WIN_H - 6) py = WIN_H - 6 - h;
 
-    SetRect(&g_devpBox, px, py, px + DEVP_W, py + DEVP_H);
-    const int by = py + DEVP_H - 30;
-    SetRect(&g_devpDec,   px + 10,  by, px + 40,  by + 22);
-    SetRect(&g_devpInc,   px + 44,  by, px + 74,  by + 22);
-    SetRect(&g_devpTake,  px + 82,  by, px + 142, by + 22);
-    SetRect(&g_devpTurn,  px + 146, by, px + 200, by + 22);
+    SetRect(&g_devpBox, px, py, px + DEVP_W, py + h);
+    const int by = py + h - 30;
+    SetRect(&g_devpDec,   px + 10,  by, px + 118, by + 22);
+    SetRect(&g_devpInc,   px + 122, by, px + 230, by + 22);
+    SetRect(&g_devpTake,  px + 234, by, px + 342, by + 22);
+    SetRect(&g_devpTurn,  px + 346, by, px + 374, by + 22);
     SetRect(&g_devpClose, px + DEVP_W - 40, by, px + DEVP_W - 10, by + 22);
 }
 
@@ -1676,20 +2002,51 @@ static bool handleDevPanelClick(int mx, int my) {
     if (!PtInRect(&g_devpBox, pt)) return false;
 
     const DeviceInfo& di = DEVS[d.type];
+    const int index = g_devPanel;
+    CircuitDeviceConfig& cc = g_circuitConfig[index];
+    /* Combinators own their whole bottom row. Signal buttons open the same
+       searchable inventory browser as filters; cycling was too easy to mistake
+       for a numeric adjustment and became miserable once material signals
+       joined the virtual 1-9 channels. */
+    if (d.type == DEV_CONSTANT_COMBINATOR || d.type == DEV_ARITHMETIC_COMBINATOR ||
+        d.type == DEV_DECIDER_COMBINATOR) {
+        if (PtInRect(&g_devpClose, pt)) { g_devPanel = -1; return true; }
+        if (d.type == DEV_CONSTANT_COMBINATOR) {
+            if (PtInRect(&g_devpDec, pt)) d.value -= 1;
+            else if (PtInRect(&g_devpInc, pt)) d.value += 1;
+            else if (PtInRect(&g_devpTake, pt)) { openCircuitSignalPicker(index, CIR_PICK_SIGNAL); return true; }
+            if (d.value < di.vMin) d.value = di.vMin;
+            if (d.value > di.vMax) d.value = di.vMax;
+        } else {
+            if (PtInRect(&g_devpDec, pt)) { openCircuitSignalPicker(index, CIR_PICK_A); return true; }
+            else if (PtInRect(&g_devpInc, pt)) { openCircuitSignalPicker(index, CIR_PICK_B); return true; }
+            else if (PtInRect(&g_devpTake, pt)) { openCircuitSignalPicker(index, CIR_PICK_OUT); return true; }
+            else if (PtInRect(&g_devpTurn, pt)) {
+                const int first = d.type == DEV_DECIDER_COMBINATOR ? CIR_OP_GREATER : CIR_OP_ADD;
+                const int last  = d.type == DEV_DECIDER_COMBINATOR ? CIR_OP_NOT_EQUAL : CIR_OP_MODULO;
+                cc.op = (u8)(cc.op < first || cc.op >= last ? first : cc.op + 1);
+            }
+        }
+        return true;
+    }
     if (d.type == DEV_PIPE || d.type == DEV_CROSSOVER) {
         if (PtInRect(&g_devpClose, pt)) { g_devPanel = -1; return true; }
         return true; /* status-only: pipes have no settings or inventory action */
+    }
+    if (d.type == DEV_DRAIN && PtInRect(&g_devpTake, pt)) {
+        g_filterDevice = g_devPanel; g_creativeOpen = true; g_creSearch[0] = 0;
+        g_creScroll = 0; g_creSearchFocus = true; layoutCreative();
+        return true;
+    }
+    if (d.type == DEV_THERMOCOUPLE && PtInRect(&g_devpTake, pt)) {
+        openCircuitSignalPicker(index, CIR_PICK_SIGNAL);
+        return true;
     }
     if (PtInRect(&g_devpDec, pt))        d.value -= di.vStep;
     else if (PtInRect(&g_devpInc, pt))   d.value += di.vStep;
     else if (PtInRect(&g_devpClose, pt)) { g_devPanel = -1; return true; }
     else if (PtInRect(&g_devpTurn, pt) && di.aimable) {
         d.face = (u8)((d.face + 1) & 3);
-        return true;
-    }
-    else if (d.type == DEV_DRAIN && PtInRect(&g_devpTake, pt)) {
-        g_filterDevice = g_devPanel; g_creativeOpen = true; g_creSearch[0] = 0;
-        g_creScroll = 0; g_creSearchFocus = true; layoutCreative();
         return true;
     }
     else if (PtInRect(&g_devpTake, pt) && (d.count > 0 || d.type == DEV_CHEST || d.type == DEV_SPOUT)) {
@@ -1722,6 +2079,21 @@ static bool handleDevPanelClick(int mx, int my) {
     return true;
 }
 
+static void drawCircuitPortSignals(HDC hdc, int device, int port, int x, int y) {
+    int shown = 0;
+    char row[72];
+    for (int s = 1; s < CIRCUIT_SIGNAL_COUNT && shown < 3; ++s) {
+        const int value = circuitInputPort(device, port, s);
+        if (!value) continue;
+        sprintf(row, "%s = %d", circuitSignalName(s), value);
+        RECT icon = { x, y + shown * 15, x + 14, y + shown * 15 + 14 };
+        drawCircuitSignalIcon(hdc, icon, s);
+        drawText(hdc, x + 18, y + shown * 15, RGB(174, 190, 214), row);
+        ++shown;
+    }
+    if (!shown) drawText(hdc, x, y, RGB(112, 122, 138), "(no signals)");
+}
+
 static void drawDevPanel(HDC hdc) {
     if (g_devPanel < 0) return;
     /* Revalidated every frame by index, because devTick can delete a device out
@@ -1739,6 +2111,50 @@ static void drawDevPanel(HDC hdc) {
     const DeviceInfo& di = DEVS[d.type];
     const int tx = g_devpBox.left + 10;
     POINT pt = { g_mx, g_my };
+    if (d.type == DEV_CONSTANT_COMBINATOR || d.type == DEV_ARITHMETIC_COMBINATOR ||
+        d.type == DEV_DECIDER_COMBINATOR) {
+        const CircuitDeviceConfig& cc = g_circuitConfig[g_devPanel];
+        char circuitBuf[96], a[24], b[24], op[24];
+        drawText(hdc, tx, g_devpBox.top + 6, RGB(218, 180, 250), di.name);
+        if (d.type == DEV_CONSTANT_COMBINATOR) {
+            sprintf(circuitBuf, "emit  %s = %d", circuitSignalName(cc.signal), (int)d.value);
+            drawText(hdc, tx, g_devpBox.top + 28, RGB(200, 206, 218), circuitBuf);
+            sprintf(a, "- %d", (int)d.value); sprintf(b, "+ %d", (int)d.value);
+            drawButton(hdc, g_devpDec, a, 0, false, PtInRect(&g_devpDec, pt) != 0);
+            drawButton(hdc, g_devpInc, b, 0, false, PtInRect(&g_devpInc, pt) != 0);
+            drawCircuitSignalButton(hdc, g_devpTake, "out", cc.signal,
+                                    PtInRect(&g_devpTake, pt) != 0);
+        } else {
+            sprintf(circuitBuf, "%s %s %s  ->  %s", circuitSignalName(cc.signalA), circuitOpName(cc.op),
+                    circuitSignalName(cc.signalB), circuitSignalName(cc.signalOut));
+            drawText(hdc, tx, g_devpBox.top + 28, RGB(200, 206, 218), circuitBuf);
+            sprintf(circuitBuf, "result  %d", (int)d.reading);
+            drawText(hdc, tx, g_devpBox.top + 46, RGB(160, 200, 230), circuitBuf);
+            sprintf(op, "%s", circuitOpName(cc.op));
+            drawCircuitSignalButton(hdc, g_devpDec, "A", cc.signalA,
+                                    PtInRect(&g_devpDec, pt) != 0);
+            drawCircuitSignalButton(hdc, g_devpInc, "B", cc.signalB,
+                                    PtInRect(&g_devpInc, pt) != 0);
+            drawCircuitSignalButton(hdc, g_devpTake, "out", cc.signalOut,
+                                    PtInRect(&g_devpTake, pt) != 0);
+            drawButton(hdc, g_devpTurn, op, 0, false, PtInRect(&g_devpTurn, pt) != 0);
+        }
+        if (d.type == DEV_CONSTANT_COMBINATOR) {
+            drawText(hdc, tx, g_devpBox.top + 68, RGB(184, 140, 232), "NETWORK");
+            drawCircuitPortSignals(hdc, g_devPanel, 0, tx + 8, g_devpBox.top + 84);
+        } else {
+            /* Factorio's most useful combinator affordance is being able to
+               inspect both sides while configuring it. These are separate
+               graphs here too: left reads inputs, right receives results. */
+            drawText(hdc, tx, g_devpBox.top + 68, RGB(184, 140, 232), "INPUT NETWORK  (left terminal)");
+            drawCircuitPortSignals(hdc, g_devPanel, 0, tx + 8, g_devpBox.top + 84);
+            drawText(hdc, tx, g_devpBox.top + 132, RGB(240, 202, 112), "OUTPUT NETWORK  (right terminal)");
+            drawCircuitPortSignals(hdc, g_devPanel, 1, tx + 8, g_devpBox.top + 148);
+        }
+        drawButton(hdc, g_devpClose, "x", 0, false, PtInRect(&g_devpClose, pt) != 0);
+        SelectObject(hdc, oldFont);
+        return;
+    }
     if (d.type == DEV_PIPE || d.type == DEV_CROSSOVER) {
         char pipeBuf[96];
         sprintf(pipeBuf, "carrying %d %s", (int)d.count,
@@ -1764,14 +2180,18 @@ static void drawDevPanel(HDC hdc) {
                      d.reading ? "CONTACT  —  signal sent" : "waiting for contact");
             drawButton(hdc, g_devpDec, "<", 0, false, PtInRect(&g_devpDec, pt) != 0);
             drawButton(hdc, g_devpInc, ">", 0, false, PtInRect(&g_devpInc, pt) != 0);
-            drawButton(hdc, g_devpTake, "pick filter", 0, false, PtInRect(&g_devpTake, pt) != 0);
         } else if (d.type == DEV_DRAIN) {
-            sprintf(flow, "collecting  %s", d.value ? MATS[d.value].name : "all materials");
+            int circuitFilter = MAT_EMPTY, best = 0;
+            for (int m = 1; m < MAT_COUNT; ++m) {
+                const int v = circuitInput(g_devPanel, m);
+                if (v > best) { best = v; circuitFilter = m; }
+            }
+            sprintf(flow, "collecting  %s", circuitFilter ? MATS[circuitFilter].name :
+                    (d.value ? MATS[d.value].name : "all materials"));
             drawText(hdc, tx, g_devpBox.top + 27, RGB(200, 206, 218), flow);
             sprintf(flow, "buffer  %d %s", (int)d.count, d.count ? MATS[d.mat].name : "items");
             drawText(hdc, tx, g_devpBox.top + 45, RGB(160, 200, 230), flow);
-            drawButton(hdc, g_devpDec, "<", 0, false, PtInRect(&g_devpDec, pt) != 0);
-            drawButton(hdc, g_devpInc, ">", 0, false, PtInRect(&g_devpInc, pt) != 0);
+            drawButton(hdc, g_devpTake, "pick filter", 0, false, PtInRect(&g_devpTake, pt) != 0);
         } else {
             sprintf(flow, "emitting  %d cells / tick", (int)d.value);
             drawText(hdc, tx, g_devpBox.top + 27, RGB(200, 206, 218), flow);
@@ -1834,6 +2254,10 @@ static void drawDevPanel(HDC hdc) {
         static const char* FACE[4] = { "aim down", "aim up", "aim left", "aim right" };
         drawButton(hdc, g_devpTurn, FACE[d.face & 3], 0, false,
                    PtInRect(&g_devpTurn, pt) != 0);
+    }
+    if (d.type == DEV_THERMOCOUPLE) {
+        drawCircuitSignalButton(hdc, g_devpTake, "signal", g_circuitConfig[g_devPanel].signal,
+                                PtInRect(&g_devpTake, pt) != 0);
     }
     if (d.type == DEV_PLACER || d.type == DEV_MINER || d.type == DEV_CHEST || d.type == DEV_SPOUT || d.type == DEV_DRAIN)
         drawButton(hdc, g_devpTake, (d.type == DEV_CHEST || d.type == DEV_SPOUT) ? "store/take" : "take", 0, false, PtInRect(&g_devpTake, pt) != 0);
@@ -2147,10 +2571,46 @@ static void drawCross(HDC hdc, int sx, int sy, COLORREF c, int gap, int arm) {
     DeleteObject(b);
 }
 
+/* Circuit wiring needs a reticle that cannot be mistaken for the ordinary
+   painting cross. The violet ring says "information link", while the two
+   horizontal terminals make the cursor read as a cable end instead of a
+   brush. */
+static void drawCircuitReticle(HDC hdc, int x, int y, bool pending) {
+    const COLORREF col = pending ? RGB(255, 220, 120) : RGB(202, 140, 255);
+    HPEN edge = CreatePen(PS_SOLID, 3, RGB(0, 0, 0));
+    HGDIOBJ oldPen = SelectObject(hdc, edge);
+    HGDIOBJ oldBrush = SelectObject(hdc, GetStockObject(HOLLOW_BRUSH));
+    Ellipse(hdc, x - 9, y - 9, x + 10, y + 10);
+    SelectObject(hdc, oldPen); DeleteObject(edge);
+
+    HPEN ring = CreatePen(PS_SOLID, 1, col);
+    oldPen = SelectObject(hdc, ring);
+    Ellipse(hdc, x - 8, y - 8, x + 9, y + 9);
+    MoveToEx(hdc, x - 14, y, NULL); LineTo(hdc, x - 8, y);
+    MoveToEx(hdc, x + 9, y, NULL);  LineTo(hdc, x + 15, y);
+    MoveToEx(hdc, x, y - 3, NULL);  LineTo(hdc, x, y + 4);
+    SelectObject(hdc, oldPen); DeleteObject(ring);
+    SelectObject(hdc, oldBrush);
+}
+
+/* A radius in cells is drawn to the outside of its affected cells, not merely
+   to their centres. That half-cell matters at small sizes: a size-one brush is
+   visibly a three-cell disc, and the outline should promise exactly that. */
+static void drawBrushOutline(HDC hdc, int x, int y, int radius) {
+    const int r = radius * SCALE + SCALE / 2;
+    HPEN pen = CreatePen(PS_DOT, 1, RGB(114, 156, 196));
+    HGDIOBJ oldPen = SelectObject(hdc, pen);
+    HGDIOBJ oldBrush = SelectObject(hdc, GetStockObject(HOLLOW_BRUSH));
+    Ellipse(hdc, x - r, y - r, x + r + 1, y + r + 1);
+    SelectObject(hdc, oldBrush);
+    SelectObject(hdc, oldPen);
+    DeleteObject(pen);
+}
+
 static void drawCursor(HDC hdc) {
     if (g_mx < PANEL_W) return;                 /* over the panel: system cursor */
 
-    const Aim aim = currentAim();
+    const Aim aim = g_wireMode ? currentWireAim() : currentAim();
     /* Where the tool acts -- inside the reach limit. */
     const int ax = PANEL_W + (aim.x - g_camX) * SCALE + SCALE / 2;
     const int ay = (aim.y - g_camY) * SCALE + SCALE / 2;
@@ -2158,7 +2618,38 @@ static void drawCursor(HDC hdc) {
     const int gx = PANEL_W + (aim.ghostX - g_camX) * SCALE + SCALE / 2;
     const int gy = (aim.ghostY - g_camY) * SCALE + SCALE / 2;
 
-    if (aim.clamped) {
+    /* Q is already the size modifier. Holding it also reveals the exact disc
+       the next brush action will affect, which makes large heat/terrain edits
+       deliberate instead of a guess from a number in the sidebar. */
+    if ((GetAsyncKeyState('Q') & 0x8000) && !g_wireMode && !g_circuitWireMode) {
+        const bool digging = g_survival && g_playerOn && (GetAsyncKeyState(VK_RBUTTON) & 0x8000);
+        drawBrushOutline(hdc, ax, ay, digging ? digRadius() : buildRadius());
+    }
+
+    /* Once the first endpoint is selected, keep a faint cable attached to the
+       live reticle. It is intentionally a preview in screen space rather than
+       a world wire: it must follow the mouse smoothly and cost no simulation. */
+    if (g_circuitWireMode && g_circuitWireFrom >= 0 &&
+        g_circuitWireFrom < MAX_DEVICES && g_devices[g_circuitWireFrom].used) {
+        const Device& from = g_devices[g_circuitWireFrom];
+        const int tx = from.x + (circuitHasSeparatePorts(from.type) && g_circuitWireFromPort ? DEV_W - 2 : 1);
+        const int ty = from.y + DEV_H / 2;
+        const int fx = PANEL_W + (tx - g_camX) * SCALE + SCALE / 2;
+        const int fy = (ty - g_camY) * SCALE + SCALE / 2;
+
+        HPEN edge = CreatePen(PS_SOLID, 3, RGB(0, 0, 0));
+        HGDIOBJ oldPen = SelectObject(hdc, edge);
+        MoveToEx(hdc, fx, fy, NULL); LineTo(hdc, gx, gy);
+        SelectObject(hdc, oldPen); DeleteObject(edge);
+        HPEN cable = CreatePen(PS_DOT, 1, RGB(202, 140, 255));
+        oldPen = SelectObject(hdc, cable);
+        MoveToEx(hdc, fx, fy, NULL); LineTo(hdc, gx, gy);
+        SelectObject(hdc, oldPen); DeleteObject(cable);
+        drawCross(hdc, fx, fy, RGB(255, 220, 120), 1, 3);
+    }
+
+    const bool snapped = g_wireMode && (aim.x != aim.ghostX || aim.y != aim.ghostY);
+    if (aim.clamped || snapped) {
         /* The BRIGHT crosshair follows the mouse and the ghost is left behind
            at the reach limit -- the reverse of how this started.
 
@@ -2179,9 +2670,10 @@ static void drawCursor(HDC hdc) {
         SelectObject(hdc, oldPen);
         DeleteObject(pen);
 
-        drawCross(hdc, ax, ay, RGB(150, 158, 174), 3, 4);
+        drawCross(hdc, ax, ay, snapped ? RGB(232, 151, 72) : RGB(150, 158, 174), 3, 4);
     }
-    drawCross(hdc, gx, gy, RGB(236, 240, 248), 3, 5);
+    if (g_circuitWireMode) drawCircuitReticle(hdc, gx, gy, g_circuitWireFrom >= 0);
+    else                   drawCross(hdc, gx, gy, RGB(236, 240, 248), 3, 5);
 
     /* The line preview. Solid rather than dotted, and drawn on top of the
        tether, because the tether means "you cannot reach that" and this means
@@ -2203,6 +2695,20 @@ static void drawCursor(HDC hdc) {
         SelectObject(hdc, o); DeleteObject(pen);
 
         drawCross(hdc, lx, ly, RGB(255, 214, 120), 2, 3);
+    }
+
+    if (g_wireOn) {
+        const int wx = PANEL_W + (g_wireX - g_camX) * SCALE + SCALE / 2;
+        const int wy = (g_wireY - g_camY) * SCALE + SCALE / 2;
+        HPEN edge = CreatePen(PS_SOLID, 3, RGB(0, 0, 0));
+        HGDIOBJ o = SelectObject(hdc, edge);
+        MoveToEx(hdc, wx, wy, NULL); LineTo(hdc, ax, ay);
+        SelectObject(hdc, o); DeleteObject(edge);
+        HPEN pen = CreatePen(PS_SOLID, 1, RGB(232, 151, 72));
+        o = SelectObject(hdc, pen);
+        MoveToEx(hdc, wx, wy, NULL); LineTo(hdc, ax, ay);
+        SelectObject(hdc, o); DeleteObject(pen);
+        drawCross(hdc, wx, wy, RGB(232, 151, 72), 2, 3);
     }
 }
 
@@ -2235,11 +2741,12 @@ static void drawCreative(HDC hdc) {
 
     HGDIOBJ oldFont = SelectObject(hdc, g_font);
     SetBkMode(hdc, TRANSPARENT);
+    const bool signalPicker = g_signalPickerDevice >= 0;
 
     RECT title = g_crePanel;
     title.top += 10; title.left += 14;
     SetTextColor(hdc, RGB(226, 190, 90));
-    DrawTextA(hdc, g_filterDevice >= 0 ? "SELECT DRAIN FILTER  --  click a material, or clear for all" : "CREATIVE  --  click a swatch to fill the cursor; click a slot to drop it, right-click for half", -1, &title,
+    DrawTextA(hdc, signalPicker ? "SELECT CIRCUIT SIGNAL  --  search or choose" : (g_filterDevice >= 0 ? "SELECT DRAIN FILTER  --  click a material, or clear for all" : "CREATIVE  --  click a swatch to fill the cursor; click a slot to drop it, right-click for half"), -1, &title,
               DT_LEFT | DT_TOP | DT_SINGLELINE);
 
     FillRect(hdc, &g_creSearchBox, g_btnBg);
@@ -2249,35 +2756,29 @@ static void drawCreative(HDC hdc) {
     DrawTextA(hdc, searchLabel, -1, &g_creSearchBox, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
     for (int i = 0; i < g_creCount; ++i) {
-        const ItemId it = g_creItem[i];
+        const int it = g_creItem[i];
         const RECT& r = g_creRect[i];
         /* Scrolled out of the window: layoutCreative left the rect empty, and
            an empty rect must not be painted or it lands as a stripe at the
            panel's top-left corner. */
         if (IsRectEmpty(&r)) continue;
-        const int have = g_inv.countOf(it);
+        const int have = signalPicker ? 0 : g_inv.countOf((ItemId)it);
 
         /* Swatches are made and destroyed per frame here rather than cached,
            unlike the palette's. This is a modal screen that is open for a
            second at a time, and 40 brush creations once in a while is nothing
            next to keeping a second parallel array in step with ITEMS[]. */
-        /* Materials keep their colour swatch here; tools and modules get their
-           sprite drawn over the top of it, in the same place, so the row layout
-           does not change between the two kinds. */
-        HBRUSH sw = CreateSolidBrush(RGB((ITEMS[it].colour >> 16) & 0xFF,
-                                         (ITEMS[it].colour >> 8) & 0xFF,
-                                          ITEMS[it].colour & 0xFF));
-        /* The swatch brush is passed either way so drawButton reserves the same
-           box and indents the label identically; the icon is then painted over
-           that box. Passing NULL for icon rows instead would left-align their
-           labels and the column of names would zig-zag. */
-        drawButton(hdc, r, ITEMS[it].name, sw, have > 0, inRect(r, g_mx, g_my));
-        DeleteObject(sw);
-        if (ITEMS[it].sprite > SPR_NONE) {
-            RECT ir = { r.left + 4, r.top + 1, r.left + 22, r.bottom - 1 };
-            FillRect(hdc, &ir, g_panelBg);
-            drawItemIcon(hdc, ir, it);
-        }
+        /* Every entry reserves the same icon box. Materials now use their
+           generated 14px sprites here too, so the creative list no longer
+           falls back to anonymous colour swatches. */
+        HBRUSH iconSpace = CreateSolidBrush(RGB(36, 40, 49));
+        drawButton(hdc, r, signalPicker ? circuitSignalName(it) : ITEMS[it].name,
+                   iconSpace, have > 0, inRect(r, g_mx, g_my));
+        DeleteObject(iconSpace);
+        RECT ir = { r.left + 4, r.top + 1, r.left + 22, r.bottom - 1 };
+        FillRect(hdc, &ir, g_panelBg);
+        if (signalPicker) drawCircuitSignalIcon(hdc, ir, it);
+        else              drawItemIcon(hdc, ir, (ItemId)it);
 
         /* What you are already carrying, right-aligned, so the grid doubles as
            a readout of the pack -- otherwise you cannot tell a click landed. */
@@ -2308,7 +2809,7 @@ static void drawCreative(HDC hdc) {
        Forty squares in the same grid the hotbar is the bottom row of. Drawn
        with the hotbar row highlighted and the held slot ringed, so the screen
        answers "which of these am I actually swinging" without being asked. */
-    {
+    if (!signalPicker) {
         RECT lr = g_crePanel;
         lr.left = g_packRect[0].left;
         lr.top  = g_packRect[HOTBAR_SLOTS].top - 18;
@@ -2342,7 +2843,7 @@ static void drawCreative(HDC hdc) {
     }
 
     /* --- equipment --- */
-    {
+    if (!signalPicker) {
         const FlightSpec fly = flightSpec(g_inv);
         RECT lr = g_crePanel;
         lr.left = g_eqRect[0].left;
@@ -2382,7 +2883,7 @@ static void drawCreative(HDC hdc) {
     }
 
     /* --- the tool bench --- */
-    if (g_toolSlotCount > 0 && g_toolPackSlot >= 0) {
+    if (!signalPicker && g_toolSlotCount > 0 && g_toolPackSlot >= 0) {
         const ItemStack& ts = g_inv.slot[g_toolPackSlot];
         const ToolShot sh = toolResolve(ts);
 
@@ -2416,7 +2917,8 @@ static void drawCreative(HDC hdc) {
         }
     }
 
-    drawButton(hdc, g_creClear, g_filterDevice >= 0 ? "All materials" : "Empty pack", NULL, false, inRect(g_creClear, g_mx, g_my));
+    drawButton(hdc, g_creClear, signalPicker ? "Cancel" : (g_filterDevice >= 0 ? "All materials" : "Empty pack"),
+               NULL, false, inRect(g_creClear, g_mx, g_my));
     {
         RECT hint = g_crePanel;
         hint.left = g_creClear.right + 12; hint.top = g_creClear.top + 4;
@@ -2432,7 +2934,7 @@ static void drawCreative(HDC hdc) {
        Offset down and right by a few pixels so the system arrow is still
        readable on top of it -- a stack drawn centred on the hotspot swallows
        the pointer and you lose track of where you are actually clicking. */
-    if (!g_drag.empty()) {
+    if (!signalPicker && !g_drag.empty()) {
         RECT r = { g_mx + 8, g_my + 8, g_mx + 8 + 30, g_my + 8 + 30 };
         FillRect(hdc, &r, g_btnBgSel);
         FrameRect(hdc, &r, g_accentBrush);
@@ -2623,11 +3125,27 @@ static void drawPanel(HDC hdc) {
     HGDIOBJ oldFont = SelectObject(hdc, g_font);
     SetBkMode(hdc, TRANSPARENT);
     drawText(hdc, 10, 9, RGB(240, 240, 246), "CRUCIBLE");
+    drawText(hdc, 94, 9, RGB(144, 154, 172), "catalog (wheel)");
 
-    for (int i = 0; i < N_BRUSH; ++i) {
-        bool sel = (BRUSHES[i].brush == g_brushMat);
-        bool hot = inRect(g_brushRect[i], g_mx, g_my);
-        drawButton(hdc, g_brushRect[i], BRUSHES[i].label, g_swatchBrush[i], sel, hot);
+    for (int i = 0; i < N_PALETTE; ++i) {
+        if (g_paletteRect[i].right <= g_paletteRect[i].left) continue;
+        const bool hot = inRect(g_paletteRect[i], g_mx, g_my);
+        if (i < N_BRUSH) {
+            const bool sel = g_paletteDevice < 0 && BRUSHES[i].brush == g_brushMat;
+            drawButton(hdc, g_paletteRect[i], BRUSHES[i].label, g_swatchBrush[i], sel, hot);
+        } else {
+            const int type = i - N_BRUSH;
+            drawButton(hdc, g_paletteRect[i], DEVS[type].name, NULL,
+                       g_paletteDevice == type, hot);
+        }
+    }
+    if (g_paletteMaxScroll > 0) {
+        RECT rail = g_paletteScrollTrack;
+        FillRect(hdc, &rail, g_btnBg);
+        FrameRect(hdc, &rail, g_borderBrush);
+        RECT thumb = g_paletteScrollThumb;
+        FillRect(hdc, &thumb, g_btnBgHot);
+        FrameRect(hdc, &thumb, g_accentBrush);
     }
 
     /* brush size row */
@@ -2669,6 +3187,15 @@ static void drawPanel(HDC hdc) {
     drawButton(hdc, g_actRect[ACT_OVERWRITE], lbl, NULL, !g_overwrite, inRect(g_actRect[ACT_OVERWRITE], g_mx, g_my));
     drawButton(hdc, g_actRect[ACT_LAYER], g_bgLayer ? "Layer: Background" : "Layer: Foreground",
                NULL, g_bgLayer, inRect(g_actRect[ACT_LAYER], g_mx, g_my));
+    drawButton(hdc, g_actRect[ACT_WIRE], g_wireMode ? "Wire: Copper (F)" : "Wire: Off (F)",
+               NULL, g_wireMode, inRect(g_actRect[ACT_WIRE], g_mx, g_my));
+    {
+        char circuitLabel[48];
+        if (g_circuitWireMode && g_circuitWireFrom >= 0) sprintf(circuitLabel, "Circuit: choose device");
+        else sprintf(circuitLabel, g_circuitWireMode ? "Circuit Wire: On (X)" : "Circuit Wire: Off (X)");
+        drawButton(hdc, g_actRect[ACT_CIRCUIT], circuitLabel, NULL, g_circuitWireMode,
+                   inRect(g_actRect[ACT_CIRCUIT], g_mx, g_my));
+    }
     const char* vn = g_view == VIEW_NORMAL ? "View: Glow" :
                      g_view == VIEW_MATERIAL ? "View: Material" : "View: Heat";
     drawButton(hdc, g_actRect[ACT_VIEW], vn, NULL, g_view != VIEW_NORMAL, inRect(g_actRect[ACT_VIEW], g_mx, g_my));
@@ -2889,7 +3416,8 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
            let you walk around a frozen world, which reads as a bug. Input is
            polled rather than event-driven because held keys are the whole
            interface here, and WM_KEYDOWN repeat rates are a user setting. */
-        if (g_playerOn && !g_menuOpen && (!g_paused || steppedThisFrame)) {
+        if (g_playerOn && !g_menuOpen && !g_creativeOpen && !g_craftOpen && g_chestOpen < 0
+            && (!g_paused || steppedThisFrame)) {
             PlayerInput in;
             in.left  = (GetAsyncKeyState('A') & 0x8000) || (GetAsyncKeyState(VK_LEFT)  & 0x8000);
             in.right = (GetAsyncKeyState('D') & 0x8000) || (GetAsyncKeyState(VK_RIGHT) & 0x8000);
@@ -2910,7 +3438,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         /* After the character has moved, so the camera never lags a frame
            behind what it is following. With the character off, the arrow keys
            drive the camera instead. */
-        if (!g_playerOn && !g_menuOpen && !g_creativeOpen) {
+        if (!g_playerOn && !g_menuOpen && !g_creativeOpen && !g_craftOpen && g_chestOpen < 0) {
             const float PAN = 6.0f;
             float px = 0.0f, py = 0.0f;
             if ((GetAsyncKeyState('A') & 0x8000) || (GetAsyncKeyState(VK_LEFT)  & 0x8000)) px -= PAN;
@@ -2939,6 +3467,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
            of the world, not part of the player, and the sandbox half of this
            program is exactly where you want to inspect a contraption. Before the
            character, so walking in front of one puts you in front of it. */
+        circuitDraw(g_pixels, g_camX, g_camY, g_lightOn, g_circuitWireFrom, g_circuitWireFromPort);
         devDraw(g_world, g_pixels, g_camX, g_camY, g_lightOn);
         if (g_playerOn) {
             g_player.draw(g_pixels, g_camX, g_camY, g_lightOn);
@@ -2954,6 +3483,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
            to the window in one BitBlt. */
         StretchDIBits(g_backDC, PANEL_W, 0, VIEW_W, VIEW_H, 0, 0, VIEW_CELLS_W, VIEW_CELLS_H,
                       g_pixels, &g_bmi, DIB_RGB_COLORS, SRCCOPY);
+        g_hoverItem = ITEM_NONE;
         drawPanel(g_backDC);
         if (g_survival && g_playerOn) drawHotbar(g_backDC);
         drawDevPanel(g_backDC);
@@ -2962,6 +3492,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         if (g_craftOpen)    drawCraft(g_backDC);
         if (g_chestOpen >= 0) drawChest(g_backDC);
         if (g_menuOpen)     drawMenu(g_backDC);
+        drawItemTooltip(g_backDC);
 
         HDC hdc = GetDC(hwnd);
         BitBlt(hdc, 0, 0, WIN_W, WIN_H, g_backDC, 0, 0, SRCCOPY);

@@ -273,6 +273,15 @@ bool saveWrite(const char* path, const World& w) {
         s.end();
     }
     {
+        /* Circuit topology is its own additive section rather than extra bytes
+           in Device. Older saves can still load their machine structs exactly;
+           they simply arrive with no wires and default signal settings. */
+        SectionWriter s; s.begin(f, "CIRC", "circuit wires");
+        fwrite(g_circuitConfig, sizeof(CircuitDeviceConfig), MAX_DEVICES, f);
+        fwrite(g_circuitWires, sizeof(CircuitWire), MAX_CIRCUIT_WIRES, f);
+        s.end();
+    }
+    {
         SectionWriter s; s.begin(f, "ROOM", "rooms");
         fwrite(g_rooms, sizeof(Room), MAX_ROOMS, f);
         s.end();
@@ -431,6 +440,32 @@ bool saveRead(const char* path, World& w) {
                     if (g_devices[i].used) g_devices[i].mat = g_remap[g_devices[i].mat];
             }
             statAdd("machines", len + 12);
+        } else if (tag == fourcc("CIRC")) {
+            if (len == sizeof(CircuitDeviceConfig) * MAX_DEVICES +
+                       sizeof(CircuitWire) * MAX_CIRCUIT_WIRES) {
+                fread(g_circuitConfig, sizeof(CircuitDeviceConfig), MAX_DEVICES, f);
+                fread(g_circuitWires, sizeof(CircuitWire), MAX_CIRCUIT_WIRES, f);
+                circuitRemapMaterials(g_remap);
+            } else {
+                /* The first circuit build had endpoint-only wires. Upgrade
+                   them to port 0 links so a save made yesterday keeps every
+                   network; only newly placed arithmetic/decider cables can
+                   choose the new right-side output terminal. */
+                struct OldCircuitWire { u8 a, b; bool used; };
+                if (len == sizeof(CircuitDeviceConfig) * MAX_DEVICES +
+                           sizeof(OldCircuitWire) * MAX_CIRCUIT_WIRES) {
+                    OldCircuitWire old[MAX_CIRCUIT_WIRES];
+                    fread(g_circuitConfig, sizeof(CircuitDeviceConfig), MAX_DEVICES, f);
+                    fread(old, sizeof(OldCircuitWire), MAX_CIRCUIT_WIRES, f);
+                    memset(g_circuitWires, 0, sizeof(g_circuitWires));
+                    for (int i = 0; i < MAX_CIRCUIT_WIRES; ++i) {
+                        g_circuitWires[i].a = old[i].a; g_circuitWires[i].b = old[i].b;
+                        g_circuitWires[i].used = old[i].used;
+                    }
+                    circuitRemapMaterials(g_remap);
+                }
+            }
+            statAdd("circuit wires", len + 12);
         } else if (tag == fourcc("ROOM")) {
             if (len == sizeof(Room) * MAX_ROOMS) fread(g_rooms, sizeof(Room), MAX_ROOMS, f);
             statAdd("rooms", len + 12);
@@ -447,6 +482,7 @@ bool saveRead(const char* path, World& w) {
     }
 
     fclose(f);
+    circuitInitMissingConfigs();
 
     /* Everything must be simulated once, and the room flags rebuilt from the
        rooms that were loaded. Dirtying the whole world is a one-off cost on

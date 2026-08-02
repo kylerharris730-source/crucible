@@ -49,6 +49,21 @@ enum SpriteId {
     SPR_CHEST,
     SPR_SPOUT,
     SPR_DRAIN,
+    SPR_BUTTON,
+    SPR_CIRCUIT_CONSTANT,
+    SPR_CIRCUIT_ARITH,
+    SPR_CIRCUIT_DECIDER,
+    /* Virtual circuit signals. They are sprites rather than bare text so a
+       numbered channel has the same visual weight as a material signal. */
+    SPR_SIGNAL1,
+    SPR_SIGNAL2,
+    SPR_SIGNAL3,
+    SPR_SIGNAL4,
+    SPR_SIGNAL5,
+    SPR_SIGNAL6,
+    SPR_SIGNAL7,
+    SPR_SIGNAL8,
+    SPR_SIGNAL9,
     SPR_COUNT
 };
 

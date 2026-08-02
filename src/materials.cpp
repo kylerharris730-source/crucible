@@ -691,6 +691,13 @@ MatInfo MATS[MAT_COUNT] = {
   { "Cotton Seed",KIND_POWDER,110,70, 35,   0,   0,   0,  0,   10,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY, degC(90), MAT_FIRE,   0,  0x6A5A48, 0x4E4234, 0x6A5A48, 0x4E4234, 0 },
   { "Cotton", KIND_STATIC,255,   0,    0,   0,   0,   0,  0,   10,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY, degC(60), MAT_FIRE,   0,  0xF0EEE6, 0xCCC8BC, 0xF0EEE6, 0xCCC8BC, 0 },
   { "Device",KIND_STATIC, 255,   0,    0,   0,   0,   0,  0,  200,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0x2A2F3A, 0x2A2F3A, 0x2A2F3A, 0x2A2F3A, 0 },
+  /* Aluminum nitride is the thermal bus. It keeps the maximum pairwise heat
+     transfer and a longer reach than copper, yet is a ceramic: it neither
+     melts in this temperature range nor appears in initConducts(). That lets a
+     player carry furnace heat to a remote exchanger without turning the run
+     into an electric wire. The pale blue-grey also keeps it visually separate
+     from white ceramic and the blue copper it might otherwise be mistaken for. */
+  { "Aluminum Nitride",KIND_STATIC,255,0,  0,   0,   0,   0,  0,  255,  1,   8,   0,  0, MAT_EMPTY,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0xA8C4CC, 0x7898A4, 0xA8C4CC, 0x7898A4, 0 },
 };
 
 u32 g_colorLut[MAT_COUNT * 256];
@@ -803,6 +810,7 @@ static void initStrength() {
        apart with the starting tool would not be worth firing the clay for. Clay
        and coal are loose ground you dig with anything. */
     g_matStrength[MAT_CERAMIC]     = STR_ROCK;
+    g_matStrength[MAT_ALUMINUM_NITRIDE] = STR_HARD;
     g_matStrength[MAT_CLAY]        = STR_LOOSE;
     g_matStrength[MAT_COAL]        = STR_LOOSE;
     /* Fuel is deliberately NOT listed. It is a liquid now, and the by-kind loop
@@ -1129,7 +1137,11 @@ static void initSmelting() {
 static void initConducts() {
     for (int m = 0; m < MAT_COUNT; ++m) g_matConducts[m] = 0;
     g_matConducts[MAT_IRON]     = 1;
+    g_matConducts[MAT_IRON_MELT] = 1;
     g_matConducts[MAT_COPPER]   = 1;
+    g_matConducts[MAT_COPPER_MELT] = 1;
+    g_matConducts[MAT_MERCURY]  = 1;
+    g_matConducts[MAT_MERCURY_ICE] = 1;
     g_matConducts[MAT_GRAPHENE] = 1;
 }
 

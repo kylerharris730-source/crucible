@@ -595,6 +595,58 @@ static const char* ART_DRAIN[SPR_H] = {
     "...DEFFFFED...", "...DEFFFFED...", ".llDEFFFFEDll.", ".llDEFFFFEDll.", "...DEFFFFED...",
     "...DEFFFFED...", "...DEEEEEED...", "....DDDDDD....", "..............",
 };
+static const char* ART_BUTTON[SPR_H] = {
+    "..............", "....EEEEEE....", "...EiiiiiiE...", "..EiiiiiiiiE..",
+    "..EiiiiiiiiE..", "..EiiiiiiiiE..", "...EiiiiiiE...", "....EEEEEE....",
+    "....DddddD....", "....DddddD....", "....DDDDDD....", "..............",
+    "..............", "..............",
+};
+/* Circuit machines keep the shared casing, but their faces are deliberately
+   symbolic: a dot is a constant source, a plus is arithmetic, and a split
+   needle is a decision. The violet terminals distinguish information wires
+   from the pale-blue terminals used by physical spark machinery. */
+static const char* ART_CIRCUIT_CONSTANT[SPR_H] = {
+    "..DDDDDDDDDD..", ".DEEEEEEEEEED.", ".DEFFFFFFFFED.", "lDEFFFFFFFFEDl",
+    "lDEFFFiFFFFEDl", "lDEFFFiFFFFEDl", ".DEFFFFFFFFED.", ".DEFFFFFFFFED.",
+    ".DEFFFFFFFFED.", ".DEEEEEEEEEED.", ".DddddddddddD.", ".DdEEEEEEEEdD.",
+    ".DddddddddddD.", "..DDDDDDDDDD..",
+};
+static const char* ART_CIRCUIT_ARITH[SPR_H] = {
+    "..DDDDDDDDDD..", ".DEEEEEEEEEED.", ".DEFFFFFFFFED.", "lDEFFFFiFFFEDl",
+    "lDEFFFFiFFFEDl", "lDEFFiiiiiFEDl", ".DEFFFFiFFFED.", ".DEFFFFiFFFED.",
+    ".DEFFFFFFFFED.", ".DEEEEEEEEEED.", ".DddddddddddD.", ".DdEEEEEEEEdD.",
+    ".DddddddddddD.", "..DDDDDDDDDD..",
+};
+static const char* ART_CIRCUIT_DECIDER[SPR_H] = {
+    "..DDDDDDDDDD..", ".DEEEEEEEEEED.", ".DEFFFFFFFFED.", "lDEFFiFFFFFEDl",
+    "lDEFFiiFFFFEDl", "lDEFFFiFFFFEDl", ".DEFFFFiFFFED.", ".DEFFFFFFFFED.",
+    ".DEFFFFFFFFED.", ".DEEEEEEEEEED.", ".DddddddddddD.", ".DdEEEEEEEEdD.",
+    ".DddddddddddD.", "..DDDDDDDDDD..",
+};
+
+/* The nine virtual signals are compact violet seven-segment chips. Generated
+   from masks rather than nine copied arrays so their casing, scale and terminal
+   language cannot drift apart. */
+static void makeSignalSprite(int sprite, int digit) {
+    static const unsigned char MASK[10] = {
+        0x3F, 0x06, 0x5B, 0x4F, 0x66, 0x6D, 0x7D, 0x07, 0x7F, 0x6F
+    };
+    u32* out = g_sprite[sprite];
+    const u32 rim = 0x4A5262, face = 0x252838, on = 0xD8A8FF, off = 0x5C506C;
+    for (int y = 2; y <= 11; ++y) for (int x = 2; x <= 11; ++x)
+        out[y * SPR_W + x] = (x == 2 || x == 11 || y == 2 || y == 11) ? rim : face;
+    const unsigned char mask = MASK[digit];
+    /* a,b,c,d,e,f,g in seven-segment order. */
+    const int seg[7][4] = {
+        { 5, 3, 8, 3 }, { 9, 4, 9, 6 }, { 9, 8, 9,10 }, { 5,10, 8,10 },
+        { 4, 8, 4,10 }, { 4, 4, 4, 6 }, { 5, 7, 8, 7 }
+    };
+    for (int s = 0; s < 7; ++s) {
+        const u32 c = (mask & (1 << s)) ? on : off;
+        const int x0 = seg[s][0], y0 = seg[s][1], x1 = seg[s][2], y1 = seg[s][3];
+        for (int y = y0; y <= y1; ++y) for (int x = x0; x <= x1; ++x) out[y * SPR_W + x] = c;
+    }
+}
 
 void initSprites() {
     memset(g_sprite, 0, sizeof(g_sprite));
@@ -622,6 +674,11 @@ void initSprites() {
     expand(SPR_CHEST,     ART_CHEST);
     expand(SPR_SPOUT,     ART_SPOUT);
     expand(SPR_DRAIN,     ART_DRAIN);
+    expand(SPR_BUTTON,    ART_BUTTON);
+    expand(SPR_CIRCUIT_CONSTANT, ART_CIRCUIT_CONSTANT);
+    expand(SPR_CIRCUIT_ARITH,    ART_CIRCUIT_ARITH);
+    expand(SPR_CIRCUIT_DECIDER,  ART_CIRCUIT_DECIDER);
+    for (int digit = 1; digit <= 9; ++digit) makeSignalSprite(SPR_SIGNAL1 + digit - 1, digit);
 
     memset(g_playerSpr, 0, sizeof(g_playerSpr));
     composePlayer(PF_IDLE,  LEG_STAND, false);

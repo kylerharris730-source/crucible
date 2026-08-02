@@ -195,6 +195,10 @@ enum MatId {
        learning about machines it has no business knowing about, and there is
        nowhere in a 4-byte Cell to keep a setpoint anyway. */
     MAT_DEVICE,
+    /* Appended rather than inserted among the heat materials so existing save
+       files keep every older numeric material id. AlN is a ceramic thermal bus:
+       excellent for moving heat, deliberately useless for wiring. */
+    MAT_ALUMINUM_NITRIDE,
     MAT_COUNT
 };
 
@@ -655,21 +659,19 @@ extern u8 g_matSmeltYield[MAT_COUNT];
    True for a material electricity travels through. See the electricity note in
    device.h for the model.
 
-   SOLID metals only. Molten iron and molten copper are better conductors in real
-   life and are deliberately excluded, because a wire that FLOWS is not a wire --
-   a circuit drawn in a liquid would rearrange itself between one spark and the
-   next, and "my machine stopped working because the wiring ran downhill" is a
-   failure nobody could diagnose. Mercury is out for the same reason.
+   Metallic phases conduct: iron, copper and mercury remain conductive when
+   molten or frozen. A liquid-metal circuit is deliberately unstable -- it can
+   flow between fronts, form a bad short, then overheat and rupture -- which is
+   now a useful simulation outcome rather than an invisible exception.
 
    Graphene is in, and it is the interesting one: it is already the material with
    no melting point, so it is the only wire that survives being run through a
    furnace. That is a real reason to want the expensive conductor rather than a
    bigger number on a stat sheet.
 
-   Deliberately NOT derived from heatCond, even though the same three materials
-   top both lists. They are different physical properties that happen to correlate,
-   and tying them together would mean a future insulator that conducts
-   electricity, or a heat sink that shorts a circuit, could not be expressed. */
+   Deliberately NOT derived from heatCond: aluminum nitride has metal-grade
+   thermal conduction and no electrical conduction. They are different physical
+   properties, so a heat sink does not have to short a circuit. */
 extern u8 g_matConducts[MAT_COUNT];
 
 /* --- slaking ---------------------------------------------------------------
