@@ -699,6 +699,14 @@ static bool pipeJoined(const Device& a, const Device& b, bool* vertical) {
     return false;
 }
 
+/* Defined HERE rather than in main.cpp, where it started. device.cpp reads it
+   and main.cpp only writes it, so putting the storage in the UI made the
+   SIMULATION unlinkable without the Win32 half of the program -- which broke
+   every headless harness in one go: 29 of 34 died on one undefined symbol while
+   build.bat, which links main.cpp, stayed perfectly happy. The direction of the
+   dependency is the whole point; a flag the sim consults belongs to the sim. */
+bool g_logisticsUiOpen = false;
+
 static void lane(Device& d, bool vertical, u8** mat, i32** count) {
     if (d.type == DEV_CROSSOVER && !vertical) { *mat = &d.mat2; *count = &d.count2; }
     else { *mat = &d.mat; *count = &d.count; }

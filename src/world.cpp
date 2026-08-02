@@ -249,18 +249,32 @@ bool World::tryMove(int sx, int sy, int tx, int ty) {
 
     if (t.mat != MAT_EMPTY) {
         const MatInfo& tm = MATS[t.mat];
-        /* A seed falls through foliage, and this is the one exception to
-           "powders do not enter solids". Without it the whole harvest is
-           stuck: a pod broken high in a crown leaves its seed resting on the
-           first leaf under it, three hundred cells up and out of reach, which
-           is not a seed you can pick up or water -- it is a seed you can look
-           at.
+        /* A seed falls through anything that GREW, and this is the one
+           exception to "powders do not enter solids". Without it the whole
+           harvest is stuck: a pod broken high in a crown leaves its seed
+           resting three hundred cells up and out of reach, which is not a seed
+           you can pick up or water -- it is a seed you can look at.
+
+           Leaves alone was the first version and it was not enough once seeds
+           began to DRIFT sideways on the way down. Drifting sweeps a seed
+           across the branches instead of dropping past them, and measured, ten
+           of twenty seeds released in a live crown were still sitting on wood
+           two and a half minutes later -- collected in the crotch of a branch
+           with no open cell to either side, so nothing could shift them. A roll
+           rule was tried first and moved them along the branch into exactly
+           that pocket, which is where looking at the cells rather than guessing
+           corrected the design: the fix is not to help a seed off a branch, it
+           is that a branch does not hold one.
+
+           Seeds are excluded from the set they pass through, or a stack of them
+           would swap places with each other for ever instead of piling.
 
            A swap rather than a hole, like every other move here. Traced
            through, a seed falling past a column of leaves leaves them each one
            cell higher and one empty cell where it came out, so a crown it
-           passes through keeps its shape and its leaf count. */
-        const bool throughFoliage = g_matIsSeed[s.mat] && g_matIsLeaf[t.mat];
+           passes through keeps its shape and its cell count. */
+        const bool throughFoliage = g_matIsSeed[s.mat]
+                                 && g_matIsPlant[t.mat] && !g_matIsSeed[t.mat];
         if (!throughFoliage) {
         if (tm.kind != KIND_LIQUID && tm.kind != KIND_GAS) return false;
         const MatInfo& sm = MATS[s.mat];

@@ -296,20 +296,30 @@ static const float COLD_DAMAGE  = 0.020f;
    into its lower half so a visibly burning body starts paying promptly. Above
    100 C heat severity also bends upward, making lava a distinct lethal tier.
 
-   The ladder it produces, all measured:
+   The ladder it produces, re-measured after the heat curve was reworked --
+   the figures below are what hurt.cpp and expose.cpp print today, not what an
+   earlier shape of the rule produced:
 
-     one cell of steam held on you    4 cells of 176   0 health in ten seconds
-     touching a 32-cell lava pool    50 cells of 176   37 health in five
-     engulfed in 115 C steam         the whole body    dead in seven
-     standing in a lava pool         the whole body,   dead in under three
-                                     and much hotter
+     one cell of steam held on you    2-4 health in ten seconds
+     touching a 32-cell lava pool     dead in about three seconds
+     engulfed in 115 C steam          dead in about six
+     standing in a lava pool          dead in about one
 
-   Neither simpler rule reaches that shape. The worst cell alone makes the first
-   line as bad as the last. A plain mean over the body makes the second line
-   harmless, because beside a pool the mean excess is 1.4 degrees against a
-   steam cell's 0.26 -- a factor of five, where the game needs a factor of a
-   hundred. What separates them is the COUNT: 50 cells against 4. Squaring the
-   fraction turns that 12x into 150x, which is the gap the ladder needs.
+   Those numbers moved a long way when the line came down from 60 C to 45 C and
+   heat stopped using the plain square, and the block that used to be here was
+   left quoting the old ones under the words "all measured". That is worse than
+   no note at all: the whole value of writing a measurement down is that it can
+   be trusted without re-running it. If the curve is changed again, re-run
+   expose.cpp and edit this list, or delete it.
+
+   The reason the shape is not simply "worst cell x fraction" survives all of
+   it. The worst cell ALONE makes a single pixel of steam as bad as a furnace.
+   A plain mean over the body makes standing against a lava pool harmless,
+   because a pool only ever gets about a tenth of you warm -- the mean excess
+   beside one is 1.4 degrees against a steam cell's 0.26, a factor of five where
+   the game needs a factor of a hundred. What separates them is the COUNT of
+   cells over the line, 50 against 4, and bending the exposure curve is what
+   turns that 12x into something big enough to matter.
 
    The extremes are still reported to the HUD -- feltTemp is the WARNING, and a
    warning should fire on the first cell, not on the hundredth. It is only the

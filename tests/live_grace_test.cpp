@@ -6,9 +6,11 @@
 #include "sprite.h"
 #include <stdio.h>
 
-/* device.cpp is linked into this headless test because world-facing helpers are
-   shared across the game. The UI normally owns this flag. */
-bool g_logisticsUiOpen = false;
+/* This used to define g_logisticsUiOpen itself, because device.cpp read a flag
+   that main.cpp owned and the simulation would not otherwise link without the
+   Win32 half of the program. Defining it here fixed this one test and left
+   every other headless harness broken -- 29 of them. The storage now lives in
+   device.cpp beside the code that reads it, so nothing has to declare it. */
 
 static int waterY(const World& w, int x, int y0, int y1) {
     for (int y = y0; y <= y1; ++y) if (w.at(x, y).mat == MAT_WATER) return y;

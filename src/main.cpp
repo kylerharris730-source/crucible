@@ -372,7 +372,6 @@ static bool g_devPlaced = false;
    devTick can remove a device at any time, and the panel revalidates by index
    every frame it draws. */
 static int  g_devPanel = -1;
-bool g_logisticsUiOpen = false;
 static bool handleDevPanelClick(int mx, int my);
 static bool handleCraftClick(int mx, int my);
 static void layoutCraft();
