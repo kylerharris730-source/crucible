@@ -373,6 +373,7 @@ static bool handleDevPanelClick(int mx, int my);
 static bool handleCraftClick(int mx, int my);
 static void layoutCraft();
 extern bool g_craftOpen;
+extern int  g_craftScroll;
 static void drawDevPanel(HDC hdc);
 static int  g_pmx = -1, g_pmy = -1;  /* previous aim point, in cells */
 static int  g_brushMat = MAT_SAND;
@@ -493,6 +494,11 @@ static void closeChest();
    once is what makes that legible without a drag-and-drop system. */
 static RECT g_toolSlotRect[TOOL_SLOTS_MAX];
 static int  g_toolSlotCount = 0;
+/* The payload slot: one more square past the last module, holding an actual
+   ItemStack (ammunition) rather than a bare module id -- see ToolInst::
+   payload in item.h. Drawn and clicked with the exact same slotClick()
+   gesture the pack already uses, since it is a genuine ItemStack. */
+static RECT g_toolPayloadRect;
 static int  g_toolPackSlot  = -1;   /* which inventory slot the bench is showing */
 
 /* Equipment slots, on the same screen and for the same reason as the tool
@@ -925,6 +931,15 @@ static void layoutCreative() {
         const int bx = x0 + pad + i * 40;
         SetRect(&g_toolSlotRect[i], bx, by2, bx + 34, by2 + 34);
     }
+    /* One slot further along than the last module -- a visible gap would
+       misread as "another module slot the tool does not have", so it sits
+       flush against them and earns its own label in drawCreative() instead. */
+    if (!signalPicker && g_toolPackSlot >= 0) {
+        const int bx = x0 + pad + g_toolSlotCount * 40;
+        SetRect(&g_toolPayloadRect, bx, by2, bx + 34, by2 + 34);
+    } else {
+        SetRectEmpty(&g_toolPayloadRect);
+    }
 
     SetRect(&g_creClear, x0 + pad, y0 + h - 32, x0 + pad + 120, y0 + h - 8);
 }
@@ -1173,6 +1188,18 @@ static bool handleCreativeClick(int mx, int my, bool remove) {
         ToolInst& ti = g_toolInst[g_inv.slot[g_toolPackSlot].inst];
         for (int i = 0; i < g_toolSlotCount; ++i)
             if (inRect(g_toolSlotRect[i], mx, my)) { moduleClick(ti.slot[i], remove); return true; }
+        /* The payload slot is a genuine ItemStack, so it speaks slotClick's
+           ordinary lift/drop/merge/split language rather than moduleClick's
+           unique-item swap -- loading ammunition is a pack interaction, not
+           an installation. Only a MATERIAL may go here: dropping a tool or
+           a module into your own ammunition slot is not a thing to allow
+           quietly, so a non-material is simply refused rather than
+           accepted and then doing something nobody asked for. */
+        if (inRect(g_toolPayloadRect, mx, my)) {
+            if (!g_drag.empty() && ITEMS[g_drag.item].kind != ITEMK_MATERIAL) return true;
+            slotClick(ti.payload, remove);
+            return true;
+        }
     }
 
     for (int i = 0; i < g_creCount; ++i) {
@@ -1497,6 +1524,14 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             layoutCreative();
             return 0;
         }
+        /* Same three-row stride as the creative palette, and for the same
+           reason: one row a notch is a long way from the torch recipe to
+           the last combinator now that there are seventy of them. */
+        if (g_craftOpen) {
+            g_craftScroll -= dir * 3;
+            layoutCraft();
+            return 0;
+        }
         /* The left catalog owns the wheel while the pointer is over it.  This
            keeps browsing devices from quietly changing a hotbar slot or brush
            size, and matches the creative inventory's three-row stride. */
@@ -1759,8 +1794,19 @@ static void fireTool(const Aim& aim) {
        would spend the whole shot on the cells around your own legs. */
     const float MUZZLE = PLAYER_H * 0.5f + 2.0f;
     const float SPEED  = 3.5f;
+    /* The payload is consumed HERE, on firing, not on impact -- a shot that
+       missed everything and fizzled out over open sky still cost its LN2,
+       the same way a mining tool spends bites whether or not it hit
+       anything worth digging. Confirmed against the pack's actual count
+       rather than trusted from the resolved ToolShot, which only reports
+       there being SOME payload loaded, not how much. */
+    int payload = MAT_EMPTY;
+    if (s.payloadMat != MAT_EMPTY && ti.payload.count > 0) {
+        payload = s.payloadMat;
+        if (--ti.payload.count == 0) { ti.payload.item = ITEM_NONE; ti.payload.inst = 0; }
+    }
     projSpawn(pcx + dx * MUZZLE, pcy + dy * MUZZLE, dx * SPEED, dy * SPEED,
-              s.power, s.pierce, 90, s.colour, s.blast);
+              s.power, s.pierce, 90, s.colour, s.blast, payload);
 }
 
 /* Devices are discrete, but a drag is still a useful way to lay out a run. Walk
@@ -2842,21 +2888,27 @@ static void drawCreative(HDC hdc) {
     /* --- equipment --- */
     if (!signalPicker) {
         const FlightSpec fly = flightSpec(g_inv);
+        const TempSpec temp = g_inv.tempResist();
         RECT lr = g_crePanel;
         lr.left = g_eqRect[0].left;
         lr.top  = g_eqRect[0].top - 20;
-        char s[160];
+        char s[200];
         /* The RESOLVED numbers, not an item's own, for the same reason the tool
            bench states its resolved delay: two pieces of flight gear do not add
            up (see flightSpec), so the only figure worth reading is the one you
-           will actually fly at. */
+           will actually fly at. tempResist() is resolved the same way -- a
+           helmet and a suit do not stack -- so this is the number that
+           actually moves heatLine()/coldLine(), not either item's own stat. */
+        char tempPart[64] = "";
+        if (temp.heat || temp.cold)
+            sprintf(tempPart, ", %d/%d heat/cold resist", temp.heat, temp.cold);
         if (fly.any())
-            sprintf(s, "EQUIPPED  --  climb %.1f cells/s, %.1fs of fuel, reach +%d, speed +%d%%",
+            sprintf(s, "EQUIPPED  --  climb %.1f cells/s, %.1fs of fuel, reach +%d, speed +%d%%%s",
                     fly.riseCap * 60.0f, (float)fly.fuel / 60.0f,
-                    g_inv.reachBonus(), g_inv.speedBonus());
+                    g_inv.reachBonus(), g_inv.speedBonus(), tempPart);
         else
-            sprintf(s, "EQUIPPED  --  nothing to fly with, reach +%d, speed +%d%%",
-                    g_inv.reachBonus(), g_inv.speedBonus());
+            sprintf(s, "EQUIPPED  --  nothing to fly with, reach +%d, speed +%d%%%s",
+                    g_inv.reachBonus(), g_inv.speedBonus(), tempPart);
         SetTextColor(hdc, fly.any() ? RGB(226, 190, 90) : RGB(150, 156, 168));
         DrawTextA(hdc, s, -1, &lr, DT_LEFT | DT_TOP | DT_SINGLELINE);
 
@@ -2912,6 +2964,31 @@ static void drawCreative(HDC hdc) {
                 drawItemIcon(hdc, sw, m);
             }
         }
+
+        /* The payload slot: ammunition, not a module, so it gets its own
+           colour (the orange the blast module's shot already uses, since
+           both read as "this changes what leaves the muzzle") and shows a
+           COUNT the way module slots never need to -- see ToolInst::payload. */
+        if (ts.inst) {
+            RECT r = g_toolPayloadRect;
+            const ItemStack& pl = g_toolInst[ts.inst].payload;
+            const bool hot = inRect(r, g_mx, g_my);
+            FillRect(hdc, &r, hot ? g_btnBgHot : g_btnBg);
+            FrameRect(hdc, &r, pl.empty() ? g_borderBrush : g_accentBrush);
+            if (!pl.empty()) {
+                RECT sw = r;
+                sw.left += 2; sw.right -= 2; sw.top += 2; sw.bottom -= 2;
+                drawItemIcon(hdc, sw, pl.item);
+                char cnt[16]; sprintf(cnt, "%u", pl.count);
+                SetTextColor(hdc, RGB(20, 22, 28));
+                RECT ct = r; ct.left += 2; ct.top = r.bottom - 13;
+                DrawTextA(hdc, cnt, -1, &ct, DT_LEFT | DT_BOTTOM | DT_SINGLELINE);
+            } else {
+                SetTextColor(hdc, RGB(110, 116, 128));
+                RECT tr = r; tr.top += 10;
+                DrawTextA(hdc, "ammo", -1, &tr, DT_CENTER | DT_TOP | DT_SINGLELINE);
+            }
+        }
     }
 
     drawButton(hdc, g_creClear, signalPicker ? "Cancel" : (g_filterDevice >= 0 ? "All materials" : "Empty pack"),
@@ -2963,23 +3040,79 @@ static void drawCreative(HDC hdc) {
    moment you already had wood, and by then you have probably built a staircase.
    Greyed-out rows are a shopping list. */
 static RECT g_craftPanel;
-static RECT g_craftRow[64];
+static RECT g_craftRow[128];
 bool g_craftOpen = false;
 
+/* A fixed window of rows with the rest scrolled past, exactly the shape the
+   creative palette already uses -- see g_paletteScroll's own note for why
+   this matters more every time the list grows: it went from 8 recipes to
+   over 70 in one pass, and a panel sized to hold every row unconditionally
+   would now run well past the bottom of the window. */
+static const int CRAFT_VIS_ROWS = 14;
+int  g_craftScroll = 0;
+static RECT g_craftTrack, g_craftThumb;
+
 static void layoutCraft() {
-    const int w = 260;
-    const int h = 46 + N_RECIPES * 30 + 12;
+    /* Stations are read fresh here rather than in craftCan() itself --
+       see the note on craftScanStations() in craft.h for why this has to
+       be a per-frame call rather than something craftCan() triggers on its
+       own, and layoutCraft() already runs once a frame for exactly as long
+       as the panel is open (drawCraft() calls it at its own top). */
+    craftScanStations(g_world, g_player);
+
+    /* 430, up from the 260 this panel had when every recipe took one or two
+       ingredients. Three-part recipes arrived with the station ladder, and a
+       cost line like "0/2 Gold  0/2 Steel  1/1 Glass" is most of a row on its
+       own -- at the old width the label beside it ellipsised down to "A...".
+       The viewport is 1024 wide, so the room was there for the asking. */
+    const int w = 430;
+    const int visRows = imin(CRAFT_VIS_ROWS, N_RECIPES);
+    const int maxScroll = imax(0, N_RECIPES - CRAFT_VIS_ROWS);
+    g_craftScroll = imax(0, imin(g_craftScroll, maxScroll));
+
+    const int h = 46 + visRows * 30 + 12;
     const int cx = PANEL_W + VIEW_W / 2, cy = VIEW_H / 2;
     SetRect(&g_craftPanel, cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2);
-    for (int i = 0; i < N_RECIPES && i < 64; ++i)
-        SetRect(&g_craftRow[i], g_craftPanel.left + 12, g_craftPanel.top + 40 + i * 30,
-                g_craftPanel.right - 12, g_craftPanel.top + 40 + i * 30 + 26);
+
+    const int barW = 10;
+    /* Rects for rows scrolled out of the visible window are set EMPTY, not
+       merely skipped when drawing -- inRect() then fails on them for free,
+       so a click cannot land on a row that is not on screen. Same
+       reasoning as the creative palette's own g_creRect. */
+    for (int i = 0; i < N_RECIPES && i < 128; ++i) {
+        const int row = i - g_craftScroll;
+        if (row < 0 || row >= visRows) { SetRectEmpty(&g_craftRow[i]); continue; }
+        SetRect(&g_craftRow[i], g_craftPanel.left + 12, g_craftPanel.top + 40 + row * 30,
+                g_craftPanel.right - 12 - barW - 4, g_craftPanel.top + 40 + row * 30 + 26);
+    }
+
+    const int trackX = g_craftPanel.right - 12 - barW;
+    const int trackY0 = g_craftPanel.top + 40, trackY1 = trackY0 + visRows * 30 - 4;
+    SetRect(&g_craftTrack, trackX, trackY0, trackX + barW, trackY1);
+    if (maxScroll > 0) {
+        const int trackH = trackY1 - trackY0;
+        const int thumbH = imax(20, trackH * visRows / N_RECIPES);
+        const int travel  = trackH - thumbH;
+        const int thumbY  = trackY0 + travel * g_craftScroll / maxScroll;
+        SetRect(&g_craftThumb, trackX, thumbY, trackX + barW, thumbY + thumbH);
+    } else {
+        g_craftThumb = g_craftTrack;
+    }
 }
 
 static bool handleCraftClick(int mx, int my) {
     if (!g_craftOpen) return false;
-    for (int i = 0; i < N_RECIPES && i < 64; ++i)
+    for (int i = 0; i < N_RECIPES && i < 128; ++i)
         if (inRect(g_craftRow[i], mx, my)) { craftMake(g_inv, i); return true; }
+    /* Clicking the track pages toward the click -- the same gesture every
+       scrollbar supports, and it needs no drag handling to be useful since
+       the wheel already covers fine scrolling. */
+    if (inRect(g_craftTrack, mx, my)) {
+        const int maxScroll = imax(0, N_RECIPES - CRAFT_VIS_ROWS);
+        if (maxScroll > 0)
+            g_craftScroll += (my < g_craftThumb.top) ? -CRAFT_VIS_ROWS : CRAFT_VIS_ROWS;
+        return true;
+    }
     /* Anywhere else inside the panel is swallowed, so a miss does not dig a
        hole in the world behind it. */
     return inRect(g_craftPanel, mx, my);
@@ -2997,12 +3130,25 @@ static void drawCraft(HDC hdc) {
     SetTextColor(hdc, RGB(226, 190, 90));
     DrawTextA(hdc, "CRAFTING", -1, &title, DT_CENTER | DT_TOP | DT_SINGLELINE);
 
-    for (int i = 0; i < N_RECIPES && i < 64; ++i) {
-        const Recipe& rc = RECIPES[i];
-        const bool can = craftCan(g_inv, i);
-        const bool hot = can && inRect(g_craftRow[i], g_mx, g_my);
-
+    for (int i = 0; i < N_RECIPES && i < 128; ++i) {
         RECT r = g_craftRow[i];
+        if (r.right <= r.left) continue;   /* scrolled out of the window */
+        const Recipe& rc = RECIPES[i];
+        /* Missing the station specifically, as against missing an ingredient
+           -- the row greys out either way, but the READER needs to know which
+           one to go fix, and "go build an anvil" and "go find more copper"
+           are different errands.
+
+           craftHasStation() rather than deriving it from craftCan(), which
+           cannot answer this: craftCan folds both failures into one false, so
+           the first version of this line worked out to "!can && hasStation"
+           and told you to go build an anvil whenever you were STANDING at one
+           and merely short of copper -- hiding the ingredient shortfall on
+           every gated row, which is the whole point of the greyed-out list. */
+        const bool stationMissing = !craftHasStation(i);
+        const bool can = craftCan(g_inv, i);
+        const bool hot = can && inRect(r, g_mx, g_my);
+
         FillRect(hdc, &r, hot ? g_btnBgHot : g_btnBg);
         FrameRect(hdc, &r, can ? g_borderBrush : g_panelBg);
 
@@ -3011,27 +3157,57 @@ static void drawCraft(HDC hdc) {
         RECT sw = { r.left + 5, r.top + 4, r.left + 21, r.bottom - 4 };
         drawItemIcon(hdc, sw, rc.out);
 
+        /* The RIGHT-HAND text is measured and laid out FIRST, so the label can
+           be told where to stop. Both are drawn into the same row rect --
+           label left, cost right -- which was fine while no recipe had more
+           than two ingredients, and stopped being fine the moment three-part
+           recipes arrived: "Assembly Table" against "0/2 Gold  0/2 Steel
+           1/1 Glass" drew the two strings straight through each other. */
+        char right[128]; right[0] = 0;
+        if (stationMissing) {
+            /* The station name stands in for the cost line when the station
+               itself is what is missing -- ingredients do not matter yet if
+               there is nowhere to work them, so showing both would say two
+               things at once and the station is the more useful one. */
+            sprintf(right, "need: %s", STATION_NAMES[rc.station]);
+        } else {
+            /* What it costs, coloured per ingredient so a row you cannot
+               afford says WHICH part you are short of rather than just being
+               dim. That is the difference between a locked door and a sign. */
+            for (int k = 0; k < CRAFT_MAX_IN; ++k) {
+                if (rc.in[k].item == ITEM_NONE || rc.in[k].count <= 0) continue;
+                char one[48];
+                const int have = g_inv.countOf(rc.in[k].item);
+                sprintf(one, "%s%d/%d %s", right[0] ? "  " : "",
+                        have > rc.in[k].count ? rc.in[k].count : have,
+                        rc.in[k].count, ITEMS[rc.in[k].item].name);
+                if (strlen(right) + strlen(one) < sizeof(right) - 1) strcat(right, one);
+            }
+        }
+        RECT meas = { 0, 0, 0, 0 };
+        DrawTextA(hdc, right, -1, &meas, DT_CALCRECT | DT_SINGLELINE);
+        const int rightW = meas.right - meas.left;
+
         SetTextColor(hdc, can ? RGB(226, 232, 244) : RGB(104, 110, 122));
         RECT t = r; t.left = sw.right + 8;
-        DrawTextA(hdc, rc.label, -1, &t, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        /* Ellipsised rather than simply clipped, so a truncated name reads as
+           truncated instead of as a different item. */
+        t.right = imax(t.left, r.right - 8 - rightW - 8);
+        DrawTextA(hdc, rc.label, -1, &t, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 
-        /* What it costs, right-aligned, and coloured per ingredient so a row
-           you cannot afford says WHICH part you are short of rather than just
-           being dim. That is the difference between a locked door and a sign. */
-        char cost[128]; cost[0] = 0;
-        for (int k = 0; k < CRAFT_MAX_IN; ++k) {
-            if (rc.in[k].item == ITEM_NONE || rc.in[k].count <= 0) continue;
-            char one[48];
-            const int have = g_inv.countOf(rc.in[k].item);
-            sprintf(one, "%s%d/%d %s", cost[0] ? "  " : "",
-                    have > rc.in[k].count ? rc.in[k].count : have,
-                    rc.in[k].count, ITEMS[rc.in[k].item].name);
-            if (strlen(cost) + strlen(one) < sizeof(cost) - 1) strcat(cost, one);
-        }
-        SetTextColor(hdc, can ? RGB(150, 190, 140) : RGB(190, 120, 110));
+        SetTextColor(hdc, stationMissing ? RGB(190, 150, 110)
+                                         : (can ? RGB(150, 190, 140) : RGB(190, 120, 110)));
         RECT ct = r; ct.right -= 8;
-        DrawTextA(hdc, cost, -1, &ct, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+        DrawTextA(hdc, right, -1, &ct, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+
     }
+
+    /* The scrollbar, same track-plus-thumb the creative palette draws --
+       when nothing needs scrolling g_craftThumb equals g_craftTrack (set in
+       layoutCraft()), so this just paints one full bar rather than needing
+       a separate "hide it" case. */
+    FillRect(hdc, &g_craftTrack, g_btnBg);
+    FillRect(hdc, &g_craftThumb, g_borderBrush);
 
     RECT hint = g_craftPanel;
     hint.top = g_craftPanel.bottom - 20;

@@ -1156,6 +1156,24 @@ void World::updateCell(int x, int y) {
         }
     }
 
+    /* --- alloying -------------------------------------------------------
+       Same shape as the slaking check just above -- a cell converts on
+       contact with a specific neighbour -- but the neighbour SURVIVES. See
+       the note on g_matAlloyWith in materials.h for why this could not just
+       be another g_matWetInto row: bronze's whole point is that neither
+       ingredient is spent, and wetInto always destroys the thing it
+       touched. Both directions are registered (copper melt reacts to tin
+       melt and tin melt reacts to copper melt), so this fires and converts
+       the cell being updated regardless of which of the pair it is. */
+    if (g_matAlloyWith[c.mat]) {
+        for (int k = 0; k < 4; ++k) {
+            const int nx = x + NB_DX[k], ny = y + NB_DY[k];
+            if (cells[ny * SIM_W + nx].mat != g_matAlloyWith[c.mat]) continue;
+            convert(x, y, g_matAlloysTo[c.mat]);
+            return;
+        }
+    }
+
     if (m.igniteTemp) {
         /* A flammable cell catches two ways: heated past its ignition point by
            anything (lava, the heat tool, a nearby blaze), or simply by
@@ -1226,6 +1244,78 @@ void World::updateCell(int x, int y) {
             dirtyPoint(nx, ny);
             return;
         }
+    }
+
+    /* --- acid ---------------------------------------------------------
+       Checked from the ACID side (c.mat == MAT_ACID, looking outward at a
+       neighbour), not from the victim's -- a cell touching a specific
+       neighbour is destroyed, GATED by ACID_DISSOLVE_CHANCE rather than
+       unconditional the way quenchedBy is, because corrosion eating an
+       entire wall in the one frame it first touched a pool would read as a
+       bug, not a hazard.
+
+       That side-swap is the second correction this rule needed, and it is
+       the more important one. The first version checked from the VICTIM's
+       side (stone asking "am I touching acid"), and it was wrong for a
+       reason that has nothing to do with the reaction's direction: a
+       settled stone cell with nothing left to dissolve has no other reason
+       to be examined at all, and this engine's entire performance model is
+       that a chunk nothing is happening in goes to sleep and costs zero.
+       Stone next to acid dissolved for a frame or two after being placed
+       and then simply STOPPED, because the stone's own chunk went quiet
+       and updateCell() was never called on it again to re-roll the chance
+       -- measured, stone sitting beside acid for 600 frames lost exactly
+       nothing after the first couple.
+
+       Checking from acid's side fixes it because acid can keep ITSELF
+       awake: `moreToDo`, exactly the pattern updateGrass uses for the same
+       reason ("only stay awake while there is still somewhere to go") --
+       while a dissolvable neighbour remains, this cell re-dirties its own
+       position every frame, which keeps the whole chunk (acid AND the
+       stone touching it) awake for another attempt. Once nothing
+       dissolvable is left touching it, it stops dirtying itself and the
+       pool settles down and sleeps like any other liquid -- an idle acid
+       pool costs the same as an idle pool of anything else. */
+    if (c.mat == MAT_ACID) {
+        bool moreToDo = false;
+        for (int k = 0; k < 4; ++k) {
+            const int nx = x + NB_DX[k], ny = y + NB_DY[k];
+            const u8 nm = cells[ny * SIM_W + nx].mat;
+            if (g_matDissolvedBy[nm] != MAT_ACID) continue;
+            moreToDo = true;
+            if (!rngChance(ACID_DISSOLVE_CHANCE)) continue;
+            /* BOTH cells go: the wall is eaten and the acid that ate it is
+               SPENT. That second half is what bounds the whole mechanism,
+               and it is not optional.
+
+               An earlier version converted the victim into MORE ACID, on the
+               reasoning that a reaction should conserve mass and that fresh
+               acid in the cavity keeps the front propagating without relying
+               on liquid flow. Both of those are true and it is still wrong,
+               because acid is generated INSIDE STONE (see
+               generateAcidPockets) -- so every pocket starts with its entire
+               rim in contact with something dissolvable, and "eat a cell,
+               become two cells of acid" is a chain reaction with nothing on
+               the other side of it. Measured on a real generated world:
+               16,823 acid cells became 551,506 in 3,000 frames, still
+               accelerating, with the chunks holding it permanently awake
+               because acid re-dirties itself while it has anything left to
+               eat. Left alone it converts the map to acid and takes the
+               engine's whole sleep-when-settled performance model with it.
+
+               Spending the acid makes a pocket a FINITE resource: N cells of
+               acid dissolve at most N cells of wall, which is both the
+               honest chemistry (acid is neutralised by what it dissolves)
+               and the thing that makes it worth carrying rather than worth
+               fleeing. The pair of empty cells left behind lets the acid
+               above flow down into the void on the next tick by ordinary
+               liquid movement -- no special case needed, because convert()
+               dirties both cells and that is what wakes the pool. */
+            convert(nx, ny, MAT_EMPTY);
+            convert(x, y, MAT_EMPTY);
+            return;
+        }
+        if (moreToDo) dirtyPoint(x, y);
     }
 
     /* Machines act on their neighbours and never move; nothing below applies. */

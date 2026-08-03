@@ -199,6 +199,99 @@ enum MatId {
        files keep every older numeric material id. AlN is a ceramic thermal bus:
        excellent for moving heat, deliberately useless for wiring. */
     MAT_ALUMINUM_NITRIDE,
+
+    /* --- crafting stations -------------------------------------------------
+       Placed material, not a device: a station has no state, no update tick,
+       no signals, no facing -- it only ever has to answer "is one of these
+       within reach", which is a world-cell scan, not an entity. See
+       g_matStation and craft.h's CraftStation. Ordered HAND-up-to-ASSEMBLY so
+       the enum value already IS the tier for anything that wants to compare. */
+    MAT_STATION_BENCH,
+    MAT_STATION_ANVIL,
+    MAT_STATION_CHEM,
+    MAT_STATION_ASSEMBLY,
+
+    /* --- glass --------------------------------------------------------------
+       Sand melted and cooled. Its whole reason for existing is one property:
+       opacity 0 while KIND_STATIC -- see g_matOpacity -- which makes it the
+       first solid the light field passes through. That is a vessel wall you
+       can watch a reaction behind, and it is the reason glass comes before
+       acid rather than after it: acid needs somewhere to be CONTAINED. */
+    MAT_GLASS_MELT,
+    MAT_GLASS,
+
+    /* --- tin and bronze ------------------------------------------------------
+       Tin exists to be alloyed and for almost nothing else -- shallow, low
+       melting point, structurally unremarkable on its own. Bronze is the
+       first alloy and the tutorial for the mechanism every deeper metal reuses:
+       two molten metals that happen to touch become a third, table-driven,
+       through g_matWetInto/g_matWetBy exactly the way coal becomes fuel. No
+       new engine code, just two more rows in an existing table. */
+    MAT_TIN_ORE,
+    MAT_TIN,
+    MAT_TIN_MELT,
+    MAT_BRONZE_MELT,
+    MAT_BRONZE,
+
+    /* --- steel ----------------------------------------------------------------
+       Molten iron plus carbon -- coal, touching -- becomes molten steel, the
+       same contact-reaction mechanism bronze uses. Stronger than iron, and it
+       wants its own strength constant between STR_METAL and STR_HARD; see
+       MatStrength. */
+    MAT_STEEL_MELT,
+    MAT_STEEL,
+
+    /* --- acid -------------------------------------------------------------
+       A liquid found in deep, sealed pockets the same way lava hotspots are
+       placed -- see generateAcidPockets. It dissolves what heat cannot touch:
+       soil, stone, wood, anything loose-or-softer, through g_matDissolvedBy, a
+       new table shaped exactly like quenchedBy but GRADUAL (gated by
+       ACID_DISSOLVE_CHANCE) rather than instant, because a whole wall of stone
+       vanishing in the one frame it first touched acid would read as a glitch,
+       not corrosion. Metal is untouched -- acid is the CHEMICAL route past
+       materials the thermal route cannot reach, not a second way to cut metal
+       -- and glass, gold and ceramic are deliberately left off the dissolvable
+       list, which is the entire "acid-proof container" mechanic and costs
+       nothing extra to express. */
+    MAT_ACID,
+
+    /* --- gold ---------------------------------------------------------------
+       The best conductor in the game and immune to acid, which is the point:
+       gold is not "better copper", it is the contact material for anything
+       that has to keep working somewhere corrosive. Deliberately soft and
+       low-melting -- it is not meant to compete with steel structurally.
+       Rare, small pockets rather than veins. */
+    MAT_GOLD_ORE,
+    MAT_GOLD,
+    MAT_GOLD_MELT,
+
+    /* --- titanium -------------------------------------------------------------
+       Light, STR_HARD, corrosion-proof (left off g_matDissolvedBy, same as
+       gold), and the first metal whose smelting point genuinely requires a
+       good furnace rather than a working one. See the note on its MATS row
+       for how that gate is expressed given the temperature byte's own ceiling. */
+    MAT_TITANIUM_ORE,
+    MAT_TITANIUM,      /* STR_ALLOY, same tier as steel -- see MatStrength */
+    MAT_TITANIUM_MELT,
+
+    /* --- tungsten -------------------------------------------------------------
+       The highest melting point in the game, deliberately sitting at the very
+       top of what the temperature byte can express -- see the note on its row.
+       What you build a crucible's hottest lining out of, which is the whole
+       reason the game is called that. */
+    MAT_TUNGSTEN_ORE,
+    MAT_TUNGSTEN,
+    MAT_TUNGSTEN_MELT,
+
+    /* --- refractory -----------------------------------------------------------
+       The high-temperature insulator DESIGN.md deliberately withheld, and
+       deliberately NOT a new phase change: it is fabricated from ceramic and
+       graphene at a station, because "a manufactured composite lining" is the
+       honest description of what it is, and the simulation has nothing left to
+       teach about a material that is mostly "ceramic, but better". See
+       craft.cpp. */
+    MAT_REFRACTORY,
+
     MAT_COUNT
 };
 
@@ -413,8 +506,13 @@ enum MatStrength {
     STR_LOOSE   = 10,    /* sand, dirt: what the starting shot is meant to clear */
     STR_SOFT    = 40,    /* ice, wood, rubber */
     STR_ROCK    = 90,    /* stone */
-    STR_METAL   = 150,   /* iron, copper, frozen mercury */
-    STR_HARD    = 210,   /* graphene */
+    STR_METAL   = 150,   /* iron, copper, frozen mercury, bronze */
+    /* Steel and titanium: stronger than an ordinary metal, short of graphene's
+       tier. Named rather than a bare number between 150 and 210 for the same
+       reason every other rung here is named -- so the next thing that goes
+       between two tiers has somewhere to look for the convention. */
+    STR_ALLOY   = 180,   /* steel, titanium */
+    STR_HARD    = 210,   /* graphene, tungsten */
     STR_ABSOLUTE = 255   /* wall, and the machines: nothing breaks these */
 };
 
@@ -655,6 +753,37 @@ extern u8 g_matDropsAs[MAT_COUNT];
    than a chore you do because the game insists. */
 extern u8 g_matSmeltYield[MAT_COUNT];
 
+/* --- crafting stations -------------------------------------------------
+   0 for everything except the four station materials, where it holds the
+   CraftStation tier that material IS (see craft.h). A placed cell of
+   MAT_STATION_ANVIL answers "what station is this" with one table read,
+   which is what lets craftCan() scan the world around the player for a
+   tier without knowing the first thing about crafting -- it only ever
+   asks "is there a material near me whose g_matStation equals N". */
+extern u8 g_matStation[MAT_COUNT];
+
+/* --- what acid dissolves ------------------------------------------------
+   0 for immune; otherwise the MatId of the acid that dissolves this
+   material on contact. Shaped exactly like `quenchedBy` above -- a
+   material touching its listed reagent is destroyed -- and deliberately a
+   SEPARATE column rather than reusing quenchedBy, for the same reason
+   g_matWetInto is not folded into quenchedBy either: quenchedBy is an
+   instant, unconditional heat-extinguish (fire touching water dies THAT
+   frame, every time, which is correct for fire), and reusing it here would
+   make a whole wall of stone vanish in the single frame it first touched a
+   pool of acid. Corrosion is not supposed to look like that.
+
+   See ACID_DISSOLVE_CHANCE in world.h for the probability gate that keeps
+   this gradual instead of instant, and g_matDropsAs for why dissolving
+   destroys the cell outright rather than banking anything -- acid is not a
+   mining tool, it is a way past terrain nothing else gets past.
+
+   Deliberately absent from glass, gold and ceramic even though some of them
+   share a strength tier with materials that ARE dissolvable -- that
+   omission, and nothing else, is the entire "acid-proof container"
+   mechanic. */
+extern u8 g_matDissolvedBy[MAT_COUNT];
+
 /* --- what carries a spark --------------------------------------------------
    True for a material electricity travels through. See the electricity note in
    device.h for the model.
@@ -689,6 +818,27 @@ extern u8 g_matConducts[MAT_COUNT];
    it out, while slaking is a cold process on cold coal. One column doing both
    would need a flag to say which. */
 extern u8 g_matWetInto[MAT_COUNT];
+
+/* --- alloying -------------------------------------------------------------
+   What this material becomes when it touches g_matAlloyWith[m], and the
+   material it becomes into g_matAlloysTo[m]. Shaped like g_matWetInto just
+   above, and deliberately a SEPARATE mechanism rather than the same one,
+   because the two reactions are opposite in the one way that matters: wetInto
+   CONSUMES its neighbour (the steam that slakes coal is spent, and that is the
+   entire cost of fuel), while alloying must not -- two ingots of a precious
+   metal poured together should not make one vanish. Both sides of an alloy
+   pair get their own row (copper melt reacts to tin melt and tin melt reacts
+   to copper melt), so as a mixed pool churns, every cell of EITHER metal that
+   ever touches the other converts, and nothing is destroyed in the process.
+
+   Steel is deliberately NOT built this way -- see g_matWetInto[MAT_IRON_MELT]
+   in initMaterials() -- because carbon really is consumed into the melt
+   rather than surviving alongside it, which is exactly what wetInto already
+   expresses. Bronze is the one alloy in the game where BOTH ingredients are
+   metals worth keeping, which is the whole reason this table exists rather
+   than reusing wetInto for it too. */
+extern u8 g_matAlloyWith[MAT_COUNT];
+extern u8 g_matAlloysTo[MAT_COUNT];
 
 /* What it has to TOUCH for that to happen. Coal wants STEAM, not water: standing
    in a puddle is not a process, and requiring steam means a boiler -- water, a

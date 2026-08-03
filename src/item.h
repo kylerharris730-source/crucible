@@ -79,6 +79,14 @@ enum {
     ITEM_CONSTANT_COMBINATOR,
     ITEM_ARITHMETIC_COMBINATOR,
     ITEM_DECIDER_COMBINATOR,
+    /* Armour: the equipment category ItemDef predicted before it existed --
+       see heatResist/coldResist below, which have been sitting unused on
+       every item until now. Two tiers, each a helmet and a suit sharing a
+       slot with nothing else. */
+    ITEM_STEEL_HELMET,
+    ITEM_STEEL_SUIT,
+    ITEM_TITANIUM_HELMET,
+    ITEM_TITANIUM_SUIT,
     ITEM_COUNT
 };
 
@@ -295,10 +303,30 @@ static const int INV_SLOTS    = HOTBAR_SLOTS * INV_ROWS;
 static const int TOOL_SLOTS_MAX = 6;   /* the largest tier; not every tool uses all */
 static const int MAX_TOOL_INST  = 32;
 
+/* Moved ahead of ToolInst, which now holds one of these directly for its
+   payload -- see the note there. */
+struct ItemStack {
+    ItemId item;
+    u32    count;   /* see ItemDef::maxStack for why this is not a u16 */
+    u16    inst;    /* tool instance handle, 0 for everything else */
+    bool empty() const { return item == ITEM_NONE || count == 0; }
+};
+
 struct ToolInst {
     ItemId slot[TOOL_SLOTS_MAX];
     int    cooldown;   /* frames until it can fire again */
     bool   used;
+    /* --- payload ---------------------------------------------------------
+       A real ItemStack, not a bare ItemId, and that is the whole design: a
+       module slot only ever needs to remember WHICH unique item is
+       installed (see `slot` above), but a payload is ammunition and needs a
+       COUNT that goes down as it fires. Being a genuine ItemStack means the
+       exact same universal slotClick() gesture the pack and equipment
+       screens already use -- lift, drop, merge, split-half -- works on this
+       for free; nothing new had to be taught to load one. See DESIGN.md
+       section 2, "weapons fire materials". Empty (ITEM_NONE, count 0) means
+       an ordinary shot with no payload. */
+    ItemStack payload;
 };
 
 extern ToolInst g_toolInst[MAX_TOOL_INST];
@@ -307,13 +335,6 @@ extern ToolInst g_toolInst[MAX_TOOL_INST];
    full. Index 0 is deliberately never handed out so that 0 can mean "none". */
 u16  toolInstNew();
 void toolInstFree(u16 inst);
-
-struct ItemStack {
-    ItemId item;
-    u32    count;   /* see ItemDef::maxStack for why this is not a u16 */
-    u16    inst;    /* tool instance handle, 0 for everything else */
-    bool empty() const { return item == ITEM_NONE || count == 0; }
-};
 
 /* --- equipment slots -------------------------------------------------------
    Named by where they go on the body, not numbered, because the whole value of
@@ -330,6 +351,15 @@ enum EquipSlot {
     EQ_BACK,
     EQ_TRINKET_A,
     EQ_TRINKET_B,
+    /* Appended rather than inserted -- see the note on MAT_ALUMINUM_NITRIDE
+       in materials.h for why append-only matters here too: Inventory is
+       saved as one raw sized blob (see save.cpp), so widening EQ_COUNT
+       changes sizeof(Inventory) and an older save's equipment section is
+       skipped rather than misread, exactly the way an outgrown pack already
+       is. Inserting these before the trinket slots would silently reassign
+       what index 2 and 3 mean in every existing save. */
+    EQ_HEAD,
+    EQ_BODY,
     EQ_COUNT
 };
 
@@ -406,6 +436,12 @@ struct ToolShot {
     int    pierce;
     int    blast;
     u32    colour;
+    /* A MatId loaded in the tool's payload slot, or MAT_EMPTY. Read from the
+       ToolInst directly (see ToolInst::payload) rather than being a module's
+       own stat -- this is "whatever you loaded it with", not a fixed part of
+       the shot. Count is NOT checked here; the caller decrements it and
+       must confirm there was actually something to spend before firing. */
+    u8     payloadMat;
 };
 ToolShot toolResolve(const ItemStack& st);
 

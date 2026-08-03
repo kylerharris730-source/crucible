@@ -85,6 +85,11 @@ static const float R_LAKE_HALF = 0.048f;   /* half-width */
 static const int   LAKE_DEPTH  = 120;      /* cells the bowl drops at its middle */
 static const int   LAKE_FREEBOARD = 8;     /* cells of dry rim above the water */
 static const int   CLAY_DEPTH  = 26;       /* clay under the lake bed */
+/* Sand on the dry shore, over the clay. The world's only source of glass --
+   see the note in fillLake for why that matters more than a beach normally
+   would. Shallow, because it is a skin over the clay rather than a deposit
+   of its own, and the clay under it must stay reachable. */
+static const int   SHORE_SAND_DEPTH = 2;
 
 static const int MOUNTAIN_HEIGHT = 780;   /* cells above the plains */
 static const int SOIL_PLAINS     = 46;    /* dirt depth before stone */
@@ -193,13 +198,37 @@ static void fillLake(World& w) {
     }
 
     /* A band of clay along the shore just above the waterline too, so you can
-       find it without swimming for it. */
+       find it without swimming for it -- under a skin of SAND, which is the
+       beach this function's own opening comment has always promised and never
+       actually laid.
+
+       That omission stopped being cosmetic when glass arrived. Sand is the
+       only source of glass, glass is an ingredient of both the Chemistry
+       Bench and the Assembly Table, and those two gate the entire upper half
+       of the crafting ladder -- so with no sand anywhere in the world, a
+       survival game could reach bronze and steel and then stop dead. Measured
+       before this: a generated world contained seventeen distinct materials
+       and sand was not among them.
+
+       Two cells deep and above the waterline only. Deep enough to be worth
+       digging and shallow enough to leave the clay beneath reachable, and dry
+       so the beach reads as a beach rather than as a silted lake bed -- the
+       clay in the basin proper is untouched, so nothing about the existing
+       clay supply moves. */
     for (int x = x0 - 24; x <= x1 + 24; ++x) {
         if (x < PLAY_X0 || x > PLAY_X1) continue;
         const int bed = g_surfaceY[x];
         if (bed > waterY + 40 || bed < waterY - 40) continue;
         const int clayTo = imin(bed + 10, g_stoneY[x]);
         for (int y = bed; y < clayTo; ++y) w.setCell(x, y, MAT_CLAY);
+        /* Capped at the soil line for the same reason the clay is: sand is a
+           POWDER, and a powder seam laid inside solid rock collapses the
+           moment the world is first simulated. */
+        const int sandTo = imin(bed + SHORE_SAND_DEPTH, g_stoneY[x]);
+        for (int y = bed; y < sandTo; ++y) {
+            w.setCell(x, y, MAT_SAND);
+            w.setBg(x, y, MAT_SAND, false);
+        }
     }
 }
 
@@ -556,6 +585,25 @@ static void generateOre(World& w) {
            the iron it is meant to smelt would defeat the point of the ladder.
            Fatter veins too: coal comes in seams. */
         { MAT_COAL,      110,   60, 1200, 6.0f, 0x5E7Du },
+        /* Tin sits right beside copper, shallower than iron -- it exists to be
+           alloyed into bronze and the whole point is that both halves of that
+           alloy should be reachable at the same time you first go looking for
+           metal at all. Nearly as plentiful as copper for the same reason. */
+        { MAT_TIN_ORE,    80,   30,  900, 4.4f, 0x2A6Fu },
+        /* Gold: rare and in SMALL pockets rather than long veins -- a lower
+           radius, not just fewer of them, so finding one reads as a nugget
+           rather than a thin smear of ordinary ore. Deeper than either early
+           metal, because it answers "copper corrodes here, now what" and that
+           question should not arrive before the corrosion does. */
+        { MAT_GOLD_ORE,   22,  700, 1600, 3.0f, 0x77E1u },
+        /* Titanium: past iron, sharing the depth band tungsten and the
+           hotspots start in -- the smelting note on its MATS row explains why
+           that overlap is deliberate rather than incidental. */
+        { MAT_TITANIUM_ORE, 42, 1000, 1750, 4.0f, 0xB4A2u },
+        /* Tungsten: the deepest ore in the game and sparse to match, sitting
+           right where HOT_MIN_DEP begins -- see the note on its MATS row for
+           why that proximity to the hotspots is the point, not a coincidence. */
+        { MAT_TUNGSTEN_ORE, 18, 1250, 1900, 3.4f, 0xF00Du },
     };
     for (int b = 0; b < (int)(sizeof(BANDS) / sizeof(BANDS[0])); ++b) {
         const OreBand& ob = BANDS[b];
@@ -651,6 +699,62 @@ static void generateHotspots(World& w) {
     }
 }
 
+/* ==========================================================================
+   Acid pockets
+   ==========================================================================
+
+   The same blob-carving geometry as generateHotspots just above, reused
+   rather than copied by eye -- irregular radius wobble, "only where there is
+   rock" so a pocket cannot breach into a cave or the soil, everything except
+   what actually fills the cell.
+
+   A hotspot PINS a backdrop hot; a pocket REPLACES stone with a real,
+   foreground liquid, because acid is something you mine and carry, not a
+   temperature a wall holds. That is the one genuine difference and it is
+   why this is its own function rather than a flag on the one above.
+
+   Deep and sparse for the same reason hotspots are: found, not tripped over,
+   and the chemical route past terrain should cost a real trip to reach.
+   Shallower than the hotspot floor, though -- acid does not need to sit next
+   to the deepest heat the way tungsten does, and gold, its first real payoff
+   material, lives well above HOT_MIN_DEP too. */
+static const int ACID_COUNT = 10;
+static const int ACID_MIN_DEP = 700;
+static const int ACID_R = 24;
+
+static void generateAcidPockets(World& w) {
+    for (int i = 0; i < ACID_COUNT; ++i) {
+        const float fx = ((float)i + 0.5f) / (float)ACID_COUNT * (float)SIM_W
+                       + (float)(int)(hash1(i, 0xACDCu) % 300u) - 150.0f;
+        const int cx = imin(PLAY_X1 - ACID_R - 4, imax(PLAY_X0 + ACID_R + 4, (int)fx));
+        const int top = g_stoneY[cx] + ACID_MIN_DEP;
+        const int span = imax(1, (PLAY_Y1 - 80) - top);
+        int cy = top + (int)(hash1(i, 0x1ACDu) % (u32)span);
+        if (cy > PLAY_Y1 - ACID_R - 20) cy = PLAY_Y1 - ACID_R - 20;
+        if (cy < top) continue;
+
+        const int r2max = (ACID_R * 3 / 2) * (ACID_R * 3 / 2);
+        for (int y = cy - ACID_R * 3 / 2; y <= cy + ACID_R * 3 / 2; ++y) {
+            if (y < PLAY_Y0 || y > PLAY_Y1) continue;
+            for (int x = cx - ACID_R * 3 / 2; x <= cx + ACID_R * 3 / 2; ++x) {
+                if (x < PLAY_X0 || x > PLAY_X1) continue;
+                const int dx = x - cx, dy = y - cy;
+                const int d2 = dx * dx + dy * dy;
+                if (d2 > r2max) continue;
+                const float wob = 1.0f + fbm((float)(dx + dy) / 14.0f, 0xACE5u + (u32)i, 3) * 0.35f;
+                const float rr = (float)ACID_R * wob;
+                if ((float)d2 > rr * rr) continue;
+                /* Stone only -- same reason a vein and a hotspot both insist
+                   on it: keeps acid out of caves and out of soil, and what
+                   is left showing in a cave wall it happens to cross is
+                   exactly how a player should find one. */
+                if (w.at(x, y).mat != MAT_STONE) continue;
+                w.setCell(x, y, MAT_ACID);
+            }
+        }
+    }
+}
+
 void generateWorld(World& w) {
     w.reset();
 
@@ -709,9 +813,10 @@ void generateWorld(World& w) {
        would carve the ore back out again and nothing would ever be visible from
        inside one. */
     generateOre(w);
-    /* Hotspots last, so they can test for stone and skip anything caves or veins
-       already claimed. */
+    /* Hotspots and acid pockets last, so they can test for stone and skip
+       anything caves or veins already claimed. */
     generateHotspots(w);
+    generateAcidPockets(w);
 
     generateTrees(w);
 

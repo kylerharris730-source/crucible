@@ -215,6 +215,14 @@ static const int LATENT_HEAT    = 30;  /* a phase change costs this much
 static const int FIRE_SPREAD    = 34;  /* chance/255 per frame that a flammable
                                           cell catches from each touching flame;
                                           higher = fire races through wood */
+/* Chance/255 per frame that a dissolvable cell touching acid is consumed --
+   see g_matDissolvedBy. Below FIRE_SPREAD on purpose: fire racing through a
+   plank is meant to feel urgent, acid eating a wall is meant to feel like it
+   is working on it, and the difference between "a hazard" and "a tool you
+   wait on" is exactly this number. At 20, a single contacting face clears
+   in a little over two seconds on average -- long enough to watch it happen,
+   short enough that acid is worth carrying. */
+static const int ACID_DISSOLVE_CHANCE = 20;
 
 /* Heater and cooler setpoints. These are the extremes of the u8 scale on
    purpose: the heater sits above stone's melting point (220) and so above

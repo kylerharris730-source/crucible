@@ -1,5 +1,9 @@
 #include "craft.h"
 
+const char* const STATION_NAMES[STATION_COUNT] = {
+    "Hand", "Bench", "Anvil", "Chemistry Bench", "Assembly Table"
+};
+
 /* One cell of world is one unit of item (see MATERIAL_STACK), so a recipe's
    numbers are in CELLS. That is what makes these figures readable: four wood
    makes four platform because a platform is a cell of floor and a log is a cell
@@ -11,22 +15,22 @@
 const Recipe RECIPES[] = {
     /* Light, and the first reason to want coal for something other than heat. */
     { { { (ItemId)MAT_WOOD, 4 }, { (ItemId)MAT_COAL, 1 }, { ITEM_NONE, 0 } },
-      ITEM_TORCH_DEV, 4, "4 Torches" },
+      ITEM_TORCH_DEV, 4, "4 Torches", STATION_HAND },
 
     /* Floor you can pass through. Cheap on purpose -- a platform is scaffolding
        and scaffolding you have to ration is scaffolding you do not build. */
     { { { (ItemId)MAT_WOOD, 1 }, { ITEM_NONE, 0 }, { ITEM_NONE, 0 } },
-      (ItemId)MAT_PLATFORM, 2, "2 Platform" },
+      (ItemId)MAT_PLATFORM, 2, "2 Platform", STATION_HAND },
 
     /* Rope, on the same reasoning and the same price. */
     { { { (ItemId)MAT_WOOD, 1 }, { ITEM_NONE, 0 }, { ITEM_NONE, 0 } },
-      (ItemId)MAT_ROPE, 2, "2 Rope" },
+      (ItemId)MAT_ROPE, 2, "2 Rope", STATION_HAND },
 
     /* A door is a wall you built twice, so it costs more per cell than either
        of the above -- and you need a lot of cells to fill a doorway, which is
        what stops doors being the default way to close a room. */
     { { { (ItemId)MAT_WOOD, 2 }, { ITEM_NONE, 0 }, { ITEM_NONE, 0 } },
-      (ItemId)MAT_DOOR, 1, "Door" },
+      (ItemId)MAT_DOOR, 1, "Door", STATION_HAND },
 
     /* --- birch --------------------------------------------------------------
        One recipe, not a second copy of all four. Birch logs convert to ordinary
@@ -40,7 +44,7 @@ const Recipe RECIPES[] = {
        and it leaves room for birch to be worth something specific later
        without unpicking anything. */
     { { { (ItemId)MAT_BIRCH_WOOD, 1 }, { ITEM_NONE, 0 }, { ITEM_NONE, 0 } },
-      (ItemId)MAT_WOOD, 1, "Wood from Birch" },
+      (ItemId)MAT_WOOD, 1, "Wood from Birch", STATION_HAND },
 
     /* --- sowing again ---------------------------------------------------
        A crop drops its head and nothing else, so replanting has to come from
@@ -59,18 +63,220 @@ const Recipe RECIPES[] = {
        species' seed and two thirds of every harvest would come back wrong.
        That is the same reason each tree has its own pod. */
     { { { (ItemId)MAT_WHEAT, 1 }, { ITEM_NONE, 0 }, { ITEM_NONE, 0 } },
-      (ItemId)MAT_WHEAT_SEED, 2, "2 Wheat Seed" },
+      (ItemId)MAT_WHEAT_SEED, 2, "2 Wheat Seed", STATION_HAND },
     { { { (ItemId)MAT_FLAX, 1 }, { ITEM_NONE, 0 }, { ITEM_NONE, 0 } },
-      (ItemId)MAT_FLAX_SEED, 2, "2 Flax Seed" },
+      (ItemId)MAT_FLAX_SEED, 2, "2 Flax Seed", STATION_HAND },
     { { { (ItemId)MAT_COTTON, 1 }, { ITEM_NONE, 0 }, { ITEM_NONE, 0 } },
-      (ItemId)MAT_COTTON_SEED, 2, "2 Cotton Seed" },
+      (ItemId)MAT_COTTON_SEED, 2, "2 Cotton Seed", STATION_HAND },
+
+    /* Grass had no way back into a bag at all -- cutting a lawn gives you
+       grass (which dies back to dirt the moment it is buried, so banking it
+       is pointless) rather than something you can sow elsewhere. One grass
+       makes two seed, the same "half the harvest replants" ratio the three
+       crops already use. */
+    { { { (ItemId)MAT_GRASS, 1 }, { ITEM_NONE, 0 }, { ITEM_NONE, 0 } },
+      ITEM_GRASS_SEED, 2, "2 Grass Seed", STATION_HAND },
+
+    /* --- stations -------------------------------------------------------
+       HAND -> BENCH -> {ANVIL, CHEM} -> ASSEMBLY. Each station is craftable
+       at the tier below it, which is what makes the ladder a ladder rather
+       than four unlocks that happen to exist: you build the bench with your
+       hands, then build the anvil AT the bench because a woodworking surface
+       is a reasonable place to fit metal parts together, and so on up. */
+    { { { (ItemId)MAT_WOOD, 4 }, { (ItemId)MAT_STONE, 2 }, { ITEM_NONE, 0 } },
+      (ItemId)MAT_STATION_BENCH, 1, "Workbench", STATION_HAND },
+    { { { (ItemId)MAT_COPPER, 3 }, { (ItemId)MAT_WOOD, 2 }, { ITEM_NONE, 0 } },
+      (ItemId)MAT_STATION_ANVIL, 1, "Anvil", STATION_BENCH },
+    { { { (ItemId)MAT_GLASS, 3 }, { (ItemId)MAT_STONE, 2 }, { ITEM_NONE, 0 } },
+      (ItemId)MAT_STATION_CHEM, 1, "Chemistry Bench", STATION_BENCH },
+    { { { (ItemId)MAT_GOLD, 2 }, { (ItemId)MAT_STEEL, 2 }, { (ItemId)MAT_GLASS, 1 } },
+      (ItemId)MAT_STATION_ASSEMBLY, 1, "Assembly Table", STATION_ANVIL },
+
+    /* --- the bench --------------------------------------------------------
+       Wood, stone and the earliest metal: everything a workbench can put
+       together with hand tools. This is also where the mining ladder's
+       first rung and the multitool's first tier live, because both are
+       meant to be the thing that gets you off bare hands quickly. */
+    { { { (ItemId)MAT_COPPER, 4 }, { (ItemId)MAT_WOOD, 2 }, { ITEM_NONE, 0 } },
+      ITEM_MULTITOOL, 1, "Multitool Mk I", STATION_BENCH },
+    { { { (ItemId)MAT_COPPER, 2 }, { (ItemId)MAT_WOOD, 1 }, { ITEM_NONE, 0 } },
+      ITEM_MOD_SHOT, 1, "Shot Module", STATION_BENCH },
+    { { { (ItemId)MAT_COPPER, 3 }, { (ItemId)MAT_WOOD, 2 }, { ITEM_NONE, 0 } },
+      ITEM_DRILL, 1, "Hand Drill", STATION_BENCH },
+    /* The sickle deliberately does NOT want iron -- see ItemDef::minePlantsOnly
+       in item.h: it is not a tier, it is a restriction, and gating a
+       restriction behind a harder metal than the tool it is meant to replace
+       would make careful harvesting the EXPENSIVE option. */
+    { { { (ItemId)MAT_COPPER, 3 }, { (ItemId)MAT_WOOD, 2 }, { ITEM_NONE, 0 } },
+      ITEM_SICKLE, 1, "Harvesting Sickle", STATION_BENCH },
+    { { { (ItemId)MAT_COPPER, 2 }, { ITEM_NONE, 0 }, { ITEM_NONE, 0 } },
+      ITEM_ITEM_PIPE, 3, "3 Item Pipe", STATION_BENCH },
+    { { { (ItemId)MAT_COPPER, 3 }, { ITEM_NONE, 0 }, { ITEM_NONE, 0 } },
+      ITEM_PIPE_CROSSOVER, 1, "Pipe Crossover", STATION_BENCH },
+    { { { (ItemId)MAT_WOOD, 4 }, { (ItemId)MAT_IRON, 2 }, { ITEM_NONE, 0 } },
+      ITEM_CHEST, 1, "Chest", STATION_BENCH },
+    { { { (ItemId)MAT_COPPER, 2 }, { (ItemId)MAT_WOOD, 1 }, { ITEM_NONE, 0 } },
+      ITEM_PULSE_BUTTON, 1, "Pulse Button", STATION_BENCH },
+
+    /* --- rubber -----------------------------------------------------------
+       Rubber had NO source at all: not generated anywhere in the world, not
+       a phase change of anything, not craftable -- while six recipes needed
+       it (rocket boots, all three jetpacks, and both suits). Every one of
+       those was permanently uncraftable in a survival game, and the
+       "every recipe can be made" check in build.cpp could not see it,
+       because that test hands itself the ingredients rather than asking
+       whether a player could ever hold them.
+
+       Latex boiled out of timber and cured with coal, which is close enough
+       to how rubber is actually got to be worth saying in one line. At the
+       BENCH rather than the chemistry bench on purpose: rocket boots and the
+       Mk I jetpack are anvil-tier, and the chemistry bench needs glass, so
+       putting rubber behind glass would gate the early flight items on a
+       material two tiers above them. */
+    { { { (ItemId)MAT_WOOD, 3 }, { (ItemId)MAT_COAL, 1 }, { ITEM_NONE, 0 } },
+      (ItemId)MAT_RUBBER, 2, "2 Rubber", STATION_BENCH },
+
+    /* --- the anvil, bronze tier ---------------------------------------------
+       The mining ladder's second rung, and the first machines: sensing and
+       automation, which is what a placer/miner/clock/thermocouple pair is
+       for. All of them want iron rather than bronze specifically -- they are
+       precision parts, and bronze's whole pitch is toughness and heat, not
+       fine work. */
+    { { { (ItemId)MAT_BRONZE, 4 }, { (ItemId)MAT_WOOD, 2 }, { ITEM_NONE, 0 } },
+      ITEM_AUGER, 1, "Rock Auger", STATION_ANVIL },
+    { { { (ItemId)MAT_IRON, 3 }, { (ItemId)MAT_COAL, 1 }, { ITEM_NONE, 0 } },
+      ITEM_MOD_BLAST, 1, "Blast Module", STATION_ANVIL },
+    { { { (ItemId)MAT_COPPER, 2 }, { (ItemId)MAT_IRON, 1 }, { ITEM_NONE, 0 } },
+      ITEM_THERMOCOUPLE, 1, "Thermocouple", STATION_ANVIL },
+    { { { (ItemId)MAT_COPPER, 2 }, { (ItemId)MAT_IRON, 1 }, { ITEM_NONE, 0 } },
+      ITEM_CLOCK, 1, "Clock", STATION_ANVIL },
+    { { { (ItemId)MAT_IRON, 3 }, { (ItemId)MAT_COPPER, 1 }, { ITEM_NONE, 0 } },
+      ITEM_PLACER, 1, "Placer", STATION_ANVIL },
+    { { { (ItemId)MAT_IRON, 3 }, { (ItemId)MAT_COPPER, 1 }, { ITEM_NONE, 0 } },
+      ITEM_MINER, 1, "Miner", STATION_ANVIL },
+    { { { (ItemId)MAT_COPPER, 2 }, { (ItemId)MAT_IRON, 1 }, { ITEM_NONE, 0 } },
+      ITEM_SPOUT, 1, "Spout", STATION_ANVIL },
+    { { { (ItemId)MAT_COPPER, 2 }, { (ItemId)MAT_IRON, 1 }, { ITEM_NONE, 0 } },
+      ITEM_DRAIN, 1, "Drain", STATION_ANVIL },
+    { { { (ItemId)MAT_COPPER, 2 }, { (ItemId)MAT_IRON, 1 }, { ITEM_NONE, 0 } },
+      ITEM_BLOCK_WATCHER, 1, "Block Watcher", STATION_ANVIL },
+    { { { (ItemId)MAT_IRON, 3 }, { (ItemId)MAT_RUBBER, 2 }, { ITEM_NONE, 0 } },
+      ITEM_ROCKET_BOOTS, 1, "Rocket Boots", STATION_ANVIL },
+    { { { (ItemId)MAT_BRONZE, 3 }, { (ItemId)MAT_GOLD, 1 }, { ITEM_NONE, 0 } },
+      ITEM_HERMES, 1, "Hermes Boots", STATION_ANVIL },
+    { { { (ItemId)MAT_IRON, 4 }, { (ItemId)MAT_RUBBER, 2 }, { (ItemId)MAT_FUEL, 1 } },
+      ITEM_JETPACK1, 1, "Jetpack Mk I", STATION_ANVIL },
+
+    /* --- the anvil, steel tier -----------------------------------------
+       Steel exists, so the lance -- the mining tool one rung above the
+       auger -- and the jetpack's second tier both ask for it rather than
+       for iron a second time. */
+    { { { (ItemId)MAT_STEEL, 4 }, { (ItemId)MAT_COPPER, 2 }, { ITEM_NONE, 0 } },
+      ITEM_LANCE, 1, "Thermal Lance", STATION_ANVIL },
+    { { { (ItemId)MAT_STEEL, 4 }, { (ItemId)MAT_RUBBER, 2 }, { (ItemId)MAT_FUEL, 2 } },
+      ITEM_JETPACK2, 1, "Jetpack Mk II", STATION_ANVIL },
+    { { { (ItemId)MAT_STEEL, 4 }, { ITEM_NONE, 0 }, { ITEM_NONE, 0 } },
+      ITEM_STEEL_HELMET, 1, "Steel Helmet", STATION_ANVIL },
+    { { { (ItemId)MAT_STEEL, 8 }, { (ItemId)MAT_RUBBER, 2 }, { ITEM_NONE, 0 } },
+      ITEM_STEEL_SUIT, 1, "Steel Suit", STATION_ANVIL },
+
+    /* --- the chemistry bench -----------------------------------------------
+       Glass work: optics, a bulb, and the two materials this whole plan
+       exists to unlock a source for. Refractory earns its "fabricated, not
+       melted" framing here literally -- see the note on MAT_REFRACTORY in
+       materials.h. */
+    { { { (ItemId)MAT_GLASS, 2 }, { (ItemId)MAT_COPPER, 1 }, { ITEM_NONE, 0 } },
+      ITEM_LENS, 1, "Focusing Lens", STATION_CHEM },
+    { { { (ItemId)MAT_GLASS, 2 }, { (ItemId)MAT_COPPER, 1 }, { ITEM_NONE, 0 } },
+      (ItemId)MAT_LAMP, 2, "2 Lamp", STATION_CHEM },
+    { { { (ItemId)MAT_CERAMIC, 2 }, { (ItemId)MAT_TIN, 1 }, { ITEM_NONE, 0 } },
+      (ItemId)MAT_ALUMINUM_NITRIDE, 1, "Aluminum Nitride", STATION_CHEM },
+    { { { (ItemId)MAT_CERAMIC, 2 }, { (ItemId)MAT_GRAPHENE, 1 }, { ITEM_NONE, 0 } },
+      (ItemId)MAT_REFRACTORY, 1, "Refractory Lining", STATION_CHEM },
+
+    /* --- the assembly table -------------------------------------------
+       Gold and precision: the second multitool tier, reach, the signal
+       hardware, and the last two jetpacks. Titanium is what makes the
+       Mk III and the disruptor the true top of their ladders. */
+    { { { (ItemId)MAT_STEEL, 4 }, { (ItemId)MAT_GOLD, 2 }, { ITEM_NONE, 0 } },
+      ITEM_MULTITOOL2, 1, "Multitool Mk II", STATION_ASSEMBLY },
+    { { { (ItemId)MAT_TITANIUM, 3 }, { (ItemId)MAT_GOLD, 2 }, { ITEM_NONE, 0 } },
+      ITEM_DISRUPTOR, 1, "Disruptor", STATION_ASSEMBLY },
+    { { { (ItemId)MAT_GLASS, 2 }, { (ItemId)MAT_GOLD, 2 }, { ITEM_NONE, 0 } },
+      ITEM_RELAY, 1, "Field Relay", STATION_ASSEMBLY },
+    { { { (ItemId)MAT_TITANIUM, 4 }, { (ItemId)MAT_RUBBER, 3 }, { (ItemId)MAT_FUEL, 3 } },
+      ITEM_JETPACK3, 1, "Jetpack Mk III", STATION_ASSEMBLY },
+    { { { (ItemId)MAT_TITANIUM, 4 }, { (ItemId)MAT_GOLD, 1 }, { ITEM_NONE, 0 } },
+      ITEM_TITANIUM_HELMET, 1, "Titanium Helmet", STATION_ASSEMBLY },
+    { { { (ItemId)MAT_TITANIUM, 8 }, { (ItemId)MAT_RUBBER, 2 }, { (ItemId)MAT_GOLD, 2 } },
+      ITEM_TITANIUM_SUIT, 1, "Titanium Suit", STATION_ASSEMBLY },
+    { { { (ItemId)MAT_COPPER, 2 }, { (ItemId)MAT_GOLD, 1 }, { ITEM_NONE, 0 } },
+      ITEM_CONSTANT_COMBINATOR, 1, "Constant Combinator", STATION_ASSEMBLY },
+    { { { (ItemId)MAT_COPPER, 2 }, { (ItemId)MAT_GOLD, 2 }, { ITEM_NONE, 0 } },
+      ITEM_ARITHMETIC_COMBINATOR, 1, "Arithmetic Combinator", STATION_ASSEMBLY },
+    { { { (ItemId)MAT_COPPER, 2 }, { (ItemId)MAT_GOLD, 2 }, { ITEM_NONE, 0 } },
+      ITEM_DECIDER_COMBINATOR, 1, "Decider Combinator", STATION_ASSEMBLY },
 };
 
 const int N_RECIPES = (int)(sizeof(RECIPES) / sizeof(RECIPES[0]));
 
+/* How far from the player a placed station still counts. Bigger than
+   PLAYER_REACH on purpose -- a bench is furniture you stand NEAR, not a
+   block you are mid-swing at, and a radius tied to reach would make
+   stepping back to admire your workshop lock you out of your own anvil. */
+static const int STATION_RANGE = 10;
+
+/* True for every station tier currently within STATION_RANGE, plus
+   STATION_HAND which is always true since it means "no station needed".
+   Filled by craftScanStations(), read by craftCan().
+
+   Rescanned unconditionally on every call rather than cached against the
+   player's last position -- a position cache was the first version of
+   this, and it was wrong in a way only a placed-while-standing-still
+   station reveals: build a bench and reach for the anvil recipe WITHOUT
+   moving, and a cache keyed on position alone still reports the world as
+   it was before the bench existed. The world can change under a player who
+   has not, so position was never the right key. What actually bounds the
+   cost is that this runs once a frame while the menu is open (see the call
+   in layoutCraft()), not once per recipe -- a few hundred cell reads a
+   frame is nothing, and it is what the caching comment in craft.h always
+   meant by "once a frame", not "once per player step". */
+static bool g_nearStation[STATION_COUNT];
+
+void craftScanStations(const World& w, const Player& p) {
+    for (int s = 0; s < STATION_COUNT; ++s) g_nearStation[s] = (s == STATION_HAND);
+    const int x0 = imax(0, p.left()   - STATION_RANGE);
+    const int x1 = imin(SIM_W - 1, p.right()  + STATION_RANGE);
+    const int y0 = imax(0, p.top()    - STATION_RANGE);
+    const int y1 = imin(SIM_H - 1, p.bottom() + STATION_RANGE);
+    for (int y = y0; y <= y1; ++y)
+        for (int x = x0; x <= x1; ++x) {
+            const u8 s = g_matStation[w.at(x, y).mat];
+            if (s) g_nearStation[s] = true;
+        }
+}
+
+bool craftHasStation(int r) {
+    if (r < 0 || r >= N_RECIPES) return false;
+    const u8 st = RECIPES[r].station;
+    /* STATION_HAND never consults the cache -- see the note in craftCan. */
+    if (st == STATION_HAND) return true;
+    return st < STATION_COUNT && g_nearStation[st];
+}
+
 bool craftCan(const Inventory& inv, int r) {
     if (r < 0 || r >= N_RECIPES) return false;
     const Recipe& rc = RECIPES[r];
+    /* STATION_HAND never consults the cache at all, rather than relying on
+       craftScanStations() having populated g_nearStation[STATION_HAND] as
+       true. That distinction is not pedantry: g_nearStation is a static
+       array with no constructor, so a caller that never scans -- every
+       headless test, and any tool that links craft.cpp without the game
+       loop around it -- finds it zero-initialised, and a hand recipe would
+       silently fail alongside every gated one. "Craftable anywhere" should
+       not be able to depend on a scan having run first. */
+    if (rc.station != STATION_HAND
+        && (rc.station >= STATION_COUNT || !g_nearStation[rc.station])) return false;
     for (int i = 0; i < CRAFT_MAX_IN; ++i) {
         if (rc.in[i].item == ITEM_NONE || rc.in[i].count <= 0) continue;
         if (inv.countOf(rc.in[i].item) < rc.in[i].count) return false;

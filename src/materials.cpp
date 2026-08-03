@@ -78,7 +78,11 @@ MatInfo MATS[MAT_COUNT] = {
   { "Empty", KIND_EMPTY,    0,   0,    0,   0,   0,   0,  0,    6,  0,   0,  0,    0,  MAT_EMPTY,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0x0E0E12, 0x0E0E12, 0x0E0E12, 0x0E0E12, 0 },
   { "Wall",  KIND_STATIC, 255,   0,    0,   0,   0,   0,  0,   30,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0x4C5158, 0x353A41, 0x4C5158, 0x353A41, 0 },
   { "Stone", KIND_STATIC, 255,   0,    0,   0,   0,   0,  0,   85,  0,   0,   0,    0,  MAT_EMPTY, degC(185), MAT_LAVA, 0, MAT_EMPTY,   0,  0x6E747C, 0x50555C, 0x6E747C, 0x50555C, 0 },
-  { "Sand",  KIND_POWDER, 150, 235,   60,   0,   0, 128,  1,   90,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0xE2CC86, 0xC7A85E, 0x8F7038, 0x6E5528, 0 },
+  /* Sand melts into glass at 170 -- above copper's 165 so a copper furnace is
+     already most of the way there, below iron's 190 so glass stays an early
+     material rather than something that waits on the fuel step. See
+     MAT_GLASS_MELT. */
+  { "Sand",  KIND_POWDER, 150, 235,   60,   0,   0, 128,  1,   90,  0,   0,   0,    0,  MAT_EMPTY, degC(170), MAT_GLASS_MELT, 0, MAT_EMPTY,      0,  0xE2CC86, 0xC7A85E, 0x8F7038, 0x6E5528, 0 },
   { "Dirt",  KIND_POWDER, 140, 150,   12,   0,   0, 192,  2,   80,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0x8C6B45, 0x6B4F33, 0x4A3524, 0x33241A, 0 },
   /* Grass is dirt that something is growing on, so every physical column here
      is dirt's. It falls, piles and wets identically; only the colour and the
@@ -606,7 +610,13 @@ MatInfo MATS[MAT_COUNT] = {
      shifted down by its mass -- so at shift 4 an ember gives away sixteen units of
      heat for every one it loses. That is what lets a finite firebox hold a charge
      near temperature instead of levelling with it and stopping. */
-  { "Ember", KIND_STATIC, 255,   0,    0,   0,   0,   0,  0,  220,  4,   0, degC(185), degC(70), MAT_EMPTY, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, 0x8A2A10, 0x5A1808, 0x8A2A10, 0x5A1808, 0 },
+  /* Graphene's long-promised source: burning coal, driven past 213 C by
+     sustained contact with something hotter still -- lava, or a fuelfire.
+     "Pressure" from the design note is expressed as heat this close to the
+     byte's own ceiling (215) rather than as a separate mechanic this engine
+     has no field for; reaching it at all already requires building your
+     furnace where the deep heat is, which is the real gate. */
+  { "Ember", KIND_STATIC, 255,   0,    0,   0,   0,   0,  0,  220,  4,   0, degC(185), degC(70), MAT_EMPTY, degC(213), MAT_GRAPHENE, 0, MAT_EMPTY, 0, 0x8A2A10, 0x5A1808, 0x8A2A10, 0x5A1808, 0 },
   /* Coal slaked in STEAM. A heavy LIQUID -- density 160 against water's 100 -- so
      it pools under water rather than floating on it, which is what makes storing
      it a question: a fuel that floated would simply run off the top of any pool it
@@ -698,6 +708,90 @@ MatInfo MATS[MAT_COUNT] = {
      into an electric wire. The pale blue-grey also keeps it visually separate
      from white ceramic and the blue copper it might otherwise be mistaken for. */
   { "Aluminum Nitride",KIND_STATIC,255,0,  0,   0,   0,   0,  0,  255,  1,   8,   0,  0, MAT_EMPTY,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0xA8C4CC, 0x7898A4, 0xA8C4CC, 0x7898A4, 0 },
+
+  /* --- crafting stations -------------------------------------------------
+     Placed objects with no phase changes and no absorbency at all -- see
+     the enum comment in materials.h for why these are materials rather
+     than devices. Colours match the tier: timber, worked metal, glass
+     vessel, gilded precision. */
+  { "Bench",   KIND_STATIC, 255,   0,    0,   0,   0,   0,  0,   60,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0x9A7548, 0x76582E, 0x9A7548, 0x76582E, 0 },
+  { "Anvil",   KIND_STATIC, 255,   0,    0,   0,   0,   0,  0,  200,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0x6E747C, 0x50555C, 0x6E747C, 0x50555C, 0 },
+  { "ChemStn", KIND_STATIC, 255,   0,    0,   0,   0,   0,  0,   40,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0x6E8898, 0x4E6472, 0x6E8898, 0x4E6472, 0 },
+  { "Assembly",KIND_STATIC, 255,   0,    0,   0,   0,   0,  0,  100,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0xC8B070, 0xA08E52, 0xC8B070, 0xA08E52, 0 },
+
+  /* --- glass ---------------------------------------------------------------
+     GlasMelt has no boilTemp of its own -- nothing melts it further -- and
+     coolTemp/coolsTo take it back to solid glass. See the note on Sand's
+     row above for the melt trigger. */
+  { "GlasMelt",KIND_LIQUID, 190,   0,    0,   3,   0,   0,  0,   80,  1,   0, degC(170), degC(130), MAT_GLASS,   0, MAT_EMPTY,   0, MAT_EMPTY,   0, 0xB8D4E0, 0x8CB4C8, 0xB8D4E0, 0x8CB4C8, 0 },
+  /* Strength is set to STR_SOFT in initMaterials(), same tier as ice and
+     wood -- a pane is not meant to stop a mining tool the way stone does.
+     Its whole point is g_matOpacity, not toughness. */
+  { "Glass",   KIND_STATIC, 255,   0,    0,   0,   0,   0,  0,   30,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0xCDE6EE, 0xA8CCD8, 0xCDE6EE, 0xA8CCD8, 0 },
+
+  /* --- tin and bronze -------------------------------------------------------
+     Tin smelts and melts easier than either copper or iron -- it exists to
+     be alloyed, not to be a destination on its own. Bronze melts HOTTER
+     than copper alone (185 against 175), which is the honest answer to
+     "why bother alloying": it is both stronger and less heat-fragile. */
+  { "TinOre",  KIND_POWDER, 165,  90,   40,   0,   0,   0,  0,  100,  1,   0,   0,    0,  MAT_EMPTY, degC(120), MAT_TIN_MELT,   0, MAT_EMPTY,      0,  0x7A7268, 0xACA294, 0x7A7268, 0xACA294, 0 },
+  { "Tin",     KIND_STATIC, 210,   0,    0,   0,   0,   0,  0,  230,  0,   1,   0,    0,  MAT_EMPTY, degC(130), MAT_TIN_MELT,   0, MAT_EMPTY,      0,  0xB8BCC0, 0xB8BCC0, 0xB8BCC0, 0xB8BCC0, 0 },
+  { "TinMelt", KIND_LIQUID, 205,   0,    0,   5,   0,   0,  0,  230,  1,   0, degC(130), degC(105), MAT_TIN,     0, MAT_EMPTY,   0, MAT_EMPTY,   0,  0xE0E4E8, 0xC4CAD0, 0xE0E4E8, 0xC4CAD0, 0 },
+  /* BrnzMelt is produced by contact -- copper melt touching tin melt --
+     never by an ore boiling. See g_matWetInto/g_matWetBy in initMaterials(). */
+  { "BrnzMelt",KIND_LIQUID, 222,   0,    0,   4,   0,   0,  0,  255,  1,   0, degC(185), degC(150), MAT_BRONZE,  0, MAT_EMPTY,   0, MAT_EMPTY,   0,  0xE8A050, 0xC87830, 0xE8A050, 0xC87830, 0 },
+  { "Bronze",  KIND_STATIC, 226,   0,    0,   0,   0,   0,  0,  255,  0,   4,   0,    0,  MAT_EMPTY, degC(185), MAT_BRONZE_MELT, 0, MAT_EMPTY, 0,  0xB8823C, 0xB8823C, 0xB8823C, 0xB8823C, 0 },
+
+  /* --- steel ------------------------------------------------------------
+     Also a contact product, iron melt touching coal, and it melts ten
+     degrees hotter than plain iron -- the structural upgrade the mid game
+     is built around. */
+  { "SteelMlt",KIND_LIQUID, 230,   0,    0,   4,   0,   0,  0,  255,  1,   0, degC(210), degC(170), MAT_STEEL,   0, MAT_EMPTY,   0, MAT_EMPTY,   0,  0xD8D8DC, 0xB0B0B6, 0xD8D8DC, 0xB0B0B6, 0 },
+  { "Steel",   KIND_STATIC, 235,   0,    0,   0,   0,   0,  0,  255,  0,   3,   0,    0,  MAT_EMPTY, degC(210), MAT_STEEL_MELT,  0, MAT_EMPTY, 0,  0x9CA0A6, 0x9CA0A6, 0x9CA0A6, 0x9CA0A6, 0 },
+
+  /* --- acid ---------------------------------------------------------------
+     No phase changes at all -- it does not boil, melt or freeze in this
+     range, it just sits there and dissolves what g_matDissolvedBy says it
+     dissolves. See ACID_DISSOLVE_CHANCE in world.h. */
+  { "Acid",    KIND_LIQUID,  95,   0,    0,   6,   0,   0,  0,   40,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0x9ADC3C, 0x6CA820, 0x9ADC3C, 0x6CA820, 0 },
+
+  /* --- gold -----------------------------------------------------------------
+     Soft and low-melting on purpose -- it is not meant to compete with
+     steel structurally. What it is for is g_matConducts and being absent
+     from g_matDissolvedBy. */
+  { "GoldOre", KIND_POWDER, 175,  90,   40,   0,   0,   0,  0,  100,  1,   0,   0,    0,  MAT_EMPTY, degC(160), MAT_GOLD_MELT,  0, MAT_EMPTY,      0,  0x8A7C4A, 0xC0A840, 0x8A7C4A, 0xC0A840, 0 },
+  { "Gold",    KIND_STATIC, 240,   0,    0,   0,   0,   0,  0,  255,  0,   2,   0,    0,  MAT_EMPTY, degC(150), MAT_GOLD_MELT,  0, MAT_EMPTY,      0,  0xE8C838, 0xE8C838, 0xE8C838, 0xE8C838, 0 },
+  { "GoldMelt",KIND_LIQUID, 236,   0,    0,   4,   0,   0,  0,  255,  1,   0, degC(150), degC(120), MAT_GOLD,    0, MAT_EMPTY,   0, MAT_EMPTY,   0,  0xFFE060, 0xE8C838, 0xFFE060, 0xE8C838, 0 },
+
+  /* --- titanium -------------------------------------------------------------
+     205 to melt -- above iron's 200, below the byte's own ceiling -- so a
+     wood or coal fire genuinely cannot reach it and a fuelfire barely can.
+     That is "you physically cannot build a furnace hot enough" expressed
+     honestly against a temperature scale that tops out at 215, rather than
+     invented as a number the byte cannot hold. */
+  { "TiOre",   KIND_POWDER, 180,  90,   40,   0,   0,   0,  0,  110,  1,   0,   0,    0,  MAT_EMPTY, degC(200), MAT_TITANIUM_MELT, 0, MAT_EMPTY,    0,  0x6C7078, 0x9098A4, 0x6C7078, 0x9098A4, 0 },
+  { "Titanium",KIND_STATIC, 215,   0,    0,   0,   0,   0,  0,  150,  0,   2,   0,    0,  MAT_EMPTY, degC(205), MAT_TITANIUM_MELT, 0, MAT_EMPTY,    0,  0xC8CCD2, 0xC8CCD2, 0xC8CCD2, 0xC8CCD2, 0 },
+  { "TiMelt",  KIND_LIQUID, 210,   0,    0,   3,   0,   0,  0,  150,  1,   0, degC(205), degC(175), MAT_TITANIUM, 0, MAT_EMPTY,  0, MAT_EMPTY,   0,  0xE8ECF0, 0xC8CCD2, 0xE8ECF0, 0xC8CCD2, 0 },
+
+  /* --- tungsten ---------------------------------------------------------
+     213 to melt: two below the absolute ceiling of the temperature byte,
+     which lava and a fuelfire both sit AT (215). Nothing else in the game
+     is hot enough to smelt this except direct, sustained contact with the
+     hottest things there are -- so tungsten is not gated by a number that
+     does not exist, it is gated by needing to build next to the lava
+     itself. The molten band is narrow (18 degrees) for the same reason
+     lava's is: there simply is not much headroom left above it. */
+  { "WOre",    KIND_POWDER, 195,  90,   40,   0,   0,   0,  0,  120,  1,   0,   0,    0,  MAT_EMPTY, degC(211), MAT_TUNGSTEN_MELT, 0, MAT_EMPTY,    0,  0x565A62, 0x767C86, 0x565A62, 0x767C86, 0 },
+  { "Tungsten",KIND_STATIC, 255,   0,    0,   0,   0,   0,  0,  200,  0,   2,   0,    0,  MAT_EMPTY, degC(213), MAT_TUNGSTEN_MELT, 0, MAT_EMPTY,    0,  0x6E727A, 0x6E727A, 0x6E727A, 0x6E727A, 0 },
+  { "WMelt",   KIND_LIQUID, 250,   0,    0,   2,   0,   0,  0,  200,  1,   0, degC(213), degC(195), MAT_TUNGSTEN, 0, MAT_EMPTY,  0, MAT_EMPTY,   0,  0xB0803C, 0x8C6428, 0xB0803C, 0x8C6428, 0 },
+
+  /* --- refractory ---------------------------------------------------------
+     No phase change at all, matching graphene's own row -- see the note on
+     MAT_REFRACTORY in materials.h for why this is fabricated rather than
+     melted. heatCond 4 against rubber's 12 is the actual gap DESIGN.md left
+     open: something that insulates better than rubber AND does not have a
+     failure temperature. */
+  { "Refract", KIND_STATIC, 240,   0,    0,   0,   0,   0,  0,    4,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0xD8D0C4, 0xB8B0A4, 0xD8D0C4, 0xB8B0A4, 0 },
 };
 
 u32 g_colorLut[MAT_COUNT * 256];
@@ -718,9 +812,13 @@ u8  g_matIsPlant[MAT_COUNT];
 u8  g_matDrift[MAT_COUNT];
 u8  g_matDropsAs[MAT_COUNT];
 u8  g_matSmeltYield[MAT_COUNT];
+u8  g_matStation[MAT_COUNT];
+u8  g_matDissolvedBy[MAT_COUNT];
 u8  g_matConducts[MAT_COUNT];
 u8  g_matWetInto[MAT_COUNT];
 u8  g_matWetBy[MAT_COUNT];
+u8  g_matAlloyWith[MAT_COUNT];
+u8  g_matAlloysTo[MAT_COUNT];
 u8  g_bgHeat[MAT_COUNT];
 u8  g_bgRetain[MAT_COUNT];
 u8  g_matDrive[MAT_COUNT];
@@ -845,6 +943,45 @@ static void initStrength() {
     g_matStrength[MAT_VOID]        = STR_ABSOLUTE;
     g_matStrength[MAT_HEATER]      = STR_ABSOLUTE;
     g_matStrength[MAT_COOLER]      = STR_ABSOLUTE;
+
+    /* Stations: built of what they are made of, so a bench falls to the same
+       tool that clears wood and an anvil needs a real one, same as any other
+       metal object in the world. */
+    g_matStrength[MAT_STATION_BENCH]    = STR_SOFT;
+    g_matStrength[MAT_STATION_ANVIL]    = STR_METAL;
+    g_matStrength[MAT_STATION_CHEM]     = STR_SOFT;
+    g_matStrength[MAT_STATION_ASSEMBLY] = STR_METAL;
+
+    /* Glass is a pane, not a wall -- its whole point is opacity 0, not
+       toughness, so it sits with ice and wood rather than with stone. */
+    g_matStrength[MAT_GLASS]       = STR_SOFT;
+
+    g_matStrength[MAT_TIN_ORE]     = STR_ROCK;
+    g_matStrength[MAT_TIN]         = STR_METAL;
+    g_matStrength[MAT_BRONZE]      = STR_METAL;
+
+    /* Steel and titanium sit ABOVE ordinary metal and below graphene/tungsten
+       -- the structural upgrade the mid-and-late game are built around. */
+    g_matStrength[MAT_STEEL]       = STR_ALLOY;
+    g_matStrength[MAT_TITANIUM]    = STR_ALLOY;
+
+    g_matStrength[MAT_GOLD_ORE]    = STR_ROCK;
+    /* Deliberately soft -- see the note on MAT_GOLD. It is not meant to
+       compete with steel, only to keep working where steel would corrode. */
+    g_matStrength[MAT_GOLD]        = STR_SOFT;
+
+    g_matStrength[MAT_TITANIUM_ORE] = STR_ROCK;
+
+    g_matStrength[MAT_TUNGSTEN_ORE] = STR_ROCK;
+    /* The hardest metal in the game, matching graphene's own tier. */
+    g_matStrength[MAT_TUNGSTEN]     = STR_HARD;
+
+    /* As tough as the ceramic it is built from. */
+    g_matStrength[MAT_REFRACTORY]   = STR_ROCK;
+
+    /* Note what is DELIBERATELY absent: MAT_ACID is KIND_LIQUID, so the
+       by-kind loop at the top of this function already gave it STR_FLUID --
+       an explicit entry here would just be restating that loop's own job. */
 }
 
 /* Who glows, and what stops light. See g_matLight in materials.h for why this
@@ -977,6 +1114,16 @@ static void initLight() {
     g_matOpacity[MAT_OAK_POD]     = 5;
     g_matOpacity[MAT_BIRCH_LEAF]  = 5;
     g_matOpacity[MAT_BIRCH_POD]   = 5;
+
+    /* Glass. This ALONE does not make it transparent -- see the note on
+       g_matSheer[MAT_GLASS] above, which is the table that actually lets a
+       light sweep cross a glass cell at all. This one governs how much a
+       sweep loses once it is allowed through, the same job it does for
+       leaves: a torch behind a pane, a fire under one, light that has
+       already made it through spreading sideways. Kept low, matching a light
+       SOURCE's own transparency to itself just below, so a wall of windows
+       reads as genuinely open rather than merely less dark. */
+    g_matOpacity[MAT_GLASS] = 3;
 
     /* A source is transparent to its own light and to everyone else's --
        otherwise a wall of lamps lights only its front row, and a lava lake
@@ -1129,6 +1276,15 @@ static void initSmelting() {
     for (int m = 0; m < MAT_COUNT; ++m) g_matSmeltYield[m] = 0;
     g_matSmeltYield[MAT_COPPER_ORE] = 140;   /* 55% */
     g_matSmeltYield[MAT_IRON_ORE]   = 102;   /* 40% */
+    /* Tin exists only to be alloyed, so it is generous -- 65%, the best yield
+       in the game -- since the interesting cost of bronze is the extra step,
+       not the ore. Gold, titanium and tungsten sit progressively meaner as
+       they get rarer and deeper, the same ladder copper-to-iron already
+       walks. */
+    g_matSmeltYield[MAT_TIN_ORE]      = 166;   /* 65% */
+    g_matSmeltYield[MAT_GOLD_ORE]     = 128;   /* 50% */
+    g_matSmeltYield[MAT_TITANIUM_ORE] = 89;    /* 35% */
+    g_matSmeltYield[MAT_TUNGSTEN_ORE] = 64;    /* 25% */
 }
 
 /* See g_matConducts in materials.h. A short explicit list rather than a rule, for
@@ -1143,6 +1299,18 @@ static void initConducts() {
     g_matConducts[MAT_MERCURY]  = 1;
     g_matConducts[MAT_MERCURY_ICE] = 1;
     g_matConducts[MAT_GRAPHENE] = 1;
+    g_matConducts[MAT_STEEL]        = 1;
+    g_matConducts[MAT_STEEL_MELT]   = 1;
+    g_matConducts[MAT_BRONZE]       = 1;
+    g_matConducts[MAT_BRONZE_MELT]  = 1;
+    /* Gold: the best conductor here and the whole reason to want it once
+       copper is easy to come by -- see the note on MAT_GOLD. */
+    g_matConducts[MAT_GOLD]      = 1;
+    g_matConducts[MAT_GOLD_MELT] = 1;
+    g_matConducts[MAT_TITANIUM]      = 1;
+    g_matConducts[MAT_TITANIUM_MELT] = 1;
+    g_matConducts[MAT_TUNGSTEN]      = 1;
+    g_matConducts[MAT_TUNGSTEN_MELT] = 1;
 }
 
 /* See g_matWetInto in materials.h. One entry, and it is the whole fuel step. */
@@ -1150,6 +1318,64 @@ static void initSlaking() {
     for (int m = 0; m < MAT_COUNT; ++m) { g_matWetInto[m] = 0; g_matWetBy[m] = 0; }
     g_matWetInto[MAT_COAL] = MAT_FUEL;
     g_matWetBy[MAT_COAL]   = MAT_STEAM;
+
+    /* Steel: molten iron touching a burning coal fire absorbs its carbon and
+       becomes molten steel, and the ember is spent doing it -- the same
+       "consumed by contact" shape coal-into-fuel already has, reused rather
+       than duplicated because carbon really is consumed into the melt.
+
+       EMBER, not raw MAT_COAL. Coal ignites at 90 C and sits directly against
+       iron_melt's 200+, so raw coal used here would race its OWN igniteTemp
+       check and simply burn to fire most of the time instead of ever being
+       seen as steel's ingredient -- exactly the ordering trap the note on
+       coal's igniteTemp already warns about, just on the other material's
+       row. Ember has already ignited and has no igniteTemp of its own to
+       race against, so touching molten iron with your coal FIRE, not raw
+       coal, is what makes steel -- which a furnace already needs lit to
+       reach iron's own smelting point in the first place, so nothing new is
+       demanded of the player here. */
+    g_matWetInto[MAT_IRON_MELT] = MAT_STEEL_MELT;
+    g_matWetBy[MAT_IRON_MELT]   = MAT_EMBER;
+
+    for (int m = 0; m < MAT_COUNT; ++m) { g_matAlloyWith[m] = 0; g_matAlloysTo[m] = 0; }
+    /* Bronze: both directions, so the mixture converges on bronze from
+       whichever metal happens to touch the other first, and neither is ever
+       destroyed. See the note on g_matAlloyWith in materials.h for why this
+       is not built on g_matWetInto the way steel is. */
+    g_matAlloyWith[MAT_COPPER_MELT] = MAT_TIN_MELT;
+    g_matAlloysTo[MAT_COPPER_MELT]  = MAT_BRONZE_MELT;
+    g_matAlloyWith[MAT_TIN_MELT]    = MAT_COPPER_MELT;
+    g_matAlloysTo[MAT_TIN_MELT]     = MAT_BRONZE_MELT;
+}
+
+/* See g_matStation in materials.h. Four entries, one per tier, and the enum
+   value already IS the tier -- see CraftStation in craft.h, which this table
+   exists to answer questions from without either side knowing about the
+   other. */
+static void initStations() {
+    for (int m = 0; m < MAT_COUNT; ++m) g_matStation[m] = 0;
+    g_matStation[MAT_STATION_BENCH]    = 1;
+    g_matStation[MAT_STATION_ANVIL]    = 2;
+    g_matStation[MAT_STATION_CHEM]     = 3;
+    g_matStation[MAT_STATION_ASSEMBLY] = 4;
+}
+
+/* See g_matDissolvedBy in materials.h. Everything at or below STR_ROCK that
+   is not deliberately acid-proof: sand, dirt, stone, ice, wood, rubber, clay
+   and coal all give way to it. Metal is untouched -- acid is the chemical
+   route past materials the thermal route cannot reach, not a second way to
+   cut metal -- and glass, gold and ceramic are the exceptions that make them
+   containers: all three would qualify by strength alone (ceramic shares
+   stone's own tier) and are left out on purpose. That omission is the whole
+   of the "acid-proof vessel" mechanic; it costs nothing further to express. */
+static void initAcid() {
+    for (int m = 0; m < MAT_COUNT; ++m) g_matDissolvedBy[m] = 0;
+    static const MatId DISSOLVES[] = {
+        MAT_SAND, MAT_DIRT, MAT_GRASS, MAT_ICE, MAT_WOOD, MAT_BIRCH_WOOD,
+        MAT_RUBBER, MAT_CLAY, MAT_COAL, MAT_STONE,
+    };
+    for (unsigned i = 0; i < sizeof(DISSOLVES) / sizeof(DISSOLVES[0]); ++i)
+        g_matDissolvedBy[DISSOLVES[i]] = MAT_ACID;
 }
 
 /* See g_bgRetain in materials.h. Ceramic is the reason this table exists: a
@@ -1330,6 +1556,17 @@ static void initSheer() {
     g_matSheer[MAT_OAK_POD]     = 3;
     g_matSheer[MAT_BIRCH_LEAF]  = 3;
     g_matSheer[MAT_BIRCH_POD]   = 3;
+    /* Glass. This, not g_matOpacity, is what actually makes it transparent --
+       see lightOpen() in light.cpp, which is the gate every light sweep
+       checks before it will cross a cell at all: MAT_EMPTY, a gas, or
+       anything with a nonzero g_matSheer. A first pass set only opacity and
+       measured it doing nothing whatsoever, because glass is KIND_STATIC and
+       lightOpen() never even asked its opacity -- it was rejected as solid
+       before opacity was ever consulted, the exact same gate that already
+       exists for leaves. 2 rather than leaves' 3: a canopy is many cells
+       deep and can afford to dim per cell, while a glass wall is typically
+       one pane thick and is supposed to read as basically clear. */
+    g_matSheer[MAT_GLASS] = 2;
     g_matSheer[MAT_STALK]       = 3;
     g_matSheer[MAT_STALK_DRY]   = 3;
     g_matSheer[MAT_WHEAT]       = 3;
@@ -1420,6 +1657,8 @@ void initMaterials() {
     initSmelting();
     initConducts();
     initSlaking();
+    initStations();
+    initAcid();
     initBgRetain();
     initDrive();
     initLight();

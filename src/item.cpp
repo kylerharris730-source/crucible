@@ -462,9 +462,54 @@ void initItems() {
     ITEMS[ITEM_DECIDER_COMBINATOR].maxStack   = 64;
     ITEMS[ITEM_DECIDER_COMBINATOR].colour     = 0xB070E8;
     ITEMS[ITEM_DECIDER_COMBINATOR].sprite     = SPR_CIRCUIT_DECIDER;
+
+    /* --- armour --------------------------------------------------------
+       The equipment category heatResist/coldResist existed for and had
+       nothing on the other end of, until now -- see the field comments in
+       item.h. Two tiers, a helmet and a suit each, EQ_HEAD and EQ_BODY so a
+       full set is two separate choices rather than one slot fighting
+       itself. Resolved through the same "largest, never summed" rule as
+       reachBonus and speedPct -- see Inventory::tempResist() -- so a suit
+       makes its matching helmet redundant rather than stacking with it,
+       consistent with every other equipment ladder here. The suit is
+       always the bigger number for exactly that reason: it is the piece
+       actually worth building the tier around. */
+    ITEMS[ITEM_STEEL_HELMET].name       = "Steel Helmet";
+    ITEMS[ITEM_STEEL_HELMET].kind       = ITEMK_WORN;
+    ITEMS[ITEM_STEEL_HELMET].equipSlot  = EQ_HEAD;
+    ITEMS[ITEM_STEEL_HELMET].maxStack   = 1;
+    ITEMS[ITEM_STEEL_HELMET].colour     = 0x9CA0A6;
+    ITEMS[ITEM_STEEL_HELMET].heatResist = 15;
+    ITEMS[ITEM_STEEL_HELMET].coldResist = 15;
+
+    ITEMS[ITEM_STEEL_SUIT].name       = "Steel Suit";
+    ITEMS[ITEM_STEEL_SUIT].kind       = ITEMK_WORN;
+    ITEMS[ITEM_STEEL_SUIT].equipSlot  = EQ_BODY;
+    ITEMS[ITEM_STEEL_SUIT].maxStack   = 1;
+    ITEMS[ITEM_STEEL_SUIT].colour     = 0x9CA0A6;
+    ITEMS[ITEM_STEEL_SUIT].heatResist = 30;
+    ITEMS[ITEM_STEEL_SUIT].coldResist = 30;
+
+    /* Titanium: corrosion-proof and the metal DESIGN.md calls "the hull of
+       the thing you leave on" -- a real jump over steel, not an increment. */
+    ITEMS[ITEM_TITANIUM_HELMET].name       = "Titanium Helmet";
+    ITEMS[ITEM_TITANIUM_HELMET].kind       = ITEMK_WORN;
+    ITEMS[ITEM_TITANIUM_HELMET].equipSlot  = EQ_HEAD;
+    ITEMS[ITEM_TITANIUM_HELMET].maxStack   = 1;
+    ITEMS[ITEM_TITANIUM_HELMET].colour     = 0xC8CCD2;
+    ITEMS[ITEM_TITANIUM_HELMET].heatResist = 45;
+    ITEMS[ITEM_TITANIUM_HELMET].coldResist = 45;
+
+    ITEMS[ITEM_TITANIUM_SUIT].name       = "Titanium Suit";
+    ITEMS[ITEM_TITANIUM_SUIT].kind       = ITEMK_WORN;
+    ITEMS[ITEM_TITANIUM_SUIT].equipSlot  = EQ_BODY;
+    ITEMS[ITEM_TITANIUM_SUIT].maxStack   = 1;
+    ITEMS[ITEM_TITANIUM_SUIT].colour     = 0xC8CCD2;
+    ITEMS[ITEM_TITANIUM_SUIT].heatResist = 70;
+    ITEMS[ITEM_TITANIUM_SUIT].coldResist = 70;
 }
 
-const char* const EQ_NAMES[EQ_COUNT] = { "Feet", "Back", "Trinket", "Trinket" };
+const char* const EQ_NAMES[EQ_COUNT] = { "Feet", "Back", "Trinket", "Trinket", "Head", "Body" };
 
 /* Returning a tool's instance to the pool when the tool leaves the pack. Miss
    this and the pool leaks: pick up and drop a multitool 32 times and the next
@@ -682,7 +727,7 @@ int Inventory::firstToolSlot() const {
 ToolShot toolResolve(const ItemStack& st) {
     ToolShot s;
     s.canFire = false; s.delay = 0; s.power = 0; s.pierce = 0; s.blast = 0;
-    s.colour = 0xFFFFFF;
+    s.colour = 0xFFFFFF; s.payloadMat = MAT_EMPTY;
     if (st.empty() || ITEMS[st.item].kind != ITEMK_TOOL) return s;
 
     const ItemDef& tool = ITEMS[st.item];
@@ -690,6 +735,11 @@ ToolShot toolResolve(const ItemStack& st) {
     if (st.inst == 0 || st.inst >= MAX_TOOL_INST) return s;   /* no state: a stick */
 
     const ToolInst& ti = g_toolInst[st.inst];
+    /* Only reported if there is actually something left to fire -- an empty
+       payload slot is the same as none loaded, not a MatId of zero counted
+       wrong. */
+    if (!ti.payload.empty() && ITEMS[ti.payload.item].kind == ITEMK_MATERIAL)
+        s.payloadMat = (u8)ti.payload.item;
     const int n = imin(tool.toolSlots, TOOL_SLOTS_MAX);
     for (int i = 0; i < n; ++i) {
         const ItemId m = ti.slot[i];

@@ -71,13 +71,14 @@ void projClear() {
 }
 
 void projSpawn(float x, float y, float vx, float vy,
-               int power, int pierce, int life, u32 colour, int blast) {
+               int power, int pierce, int life, u32 colour, int blast,
+               int payload) {
     for (int i = 0; i < MAX_PROJ; ++i) {
         if (g_proj[i].alive) continue;
         Projectile& p = g_proj[i];
         p.x = x; p.y = y; p.vx = vx; p.vy = vy;
         p.power = power; p.pierce = pierce; p.life = life; p.blast = blast;
-        p.colour = colour; p.alive = true;
+        p.colour = colour; p.payload = (u8)payload; p.alive = true;
         return;
     }
     /* Full: drop it. Silently, because the alternative -- replacing the oldest
@@ -141,9 +142,14 @@ int projUpdate(World& w) {
            width and height of the world put together. */
         int guard = SIM_W + SIM_H;
         bool blocked = false;
+        /* Where a payload gets DEPOSITED, which is not always (cx,cy) -- see
+           the note below on the two shapes a stop can take. -1 means "no
+           valid impact point", for a shot that left the play area. */
+        int dropX = -1, dropY = -1;
 
         while (guard-- > 0) {
             if (cx == endX && cy == endY) break;
+            const int px_ = cx, py_ = cy;   /* the cell about to be left behind */
             if (nextX < nextY) { cx += stepX; nextX += invX; }
             else               { cy += stepY; nextY += invY; }
 
@@ -157,10 +163,22 @@ int projUpdate(World& w) {
             const int strength = g_matStrength[m];
             if (strength == STR_NOTHING) continue;   /* gases: fly straight through */
 
-            if (strength > p.power) { p.alive = false; blocked = true; break; }
+            if (strength > p.power) {
+                /* Stopped BY something it could not break -- that cell is
+                   still occupied, so a payload cannot land there. It lands
+                   one step back instead, in the last cell the shot actually
+                   passed through (already open, or gas), which is where it
+                   is visually sitting anyway once position is clamped below. */
+                p.alive = false; blocked = true;
+                dropX = px_; dropY = py_;
+                break;
+            }
 
             w.breakCell(cx, cy);
             ++destroyed;
+            /* Broke THIS cell, so it is empty now -- the payload belongs
+               here, at the point of impact, not one short of it. */
+            dropX = cx; dropY = cy;
             if (--p.pierce <= 0) { p.alive = false; blocked = true; break; }
         }
 
@@ -169,9 +187,23 @@ int projUpdate(World& w) {
         if (blocked) { p.x = (float)cx + 0.5f; p.y = (float)cy + 0.5f; }
         else         { p.x = tx; p.y = ty; }
 
+        /* The blast FIRST, then the payload -- ordering that matters for the
+           one combination that has both. explodeAt clears every cell weaker
+           than its power, and every payload worth firing is a liquid or a
+           powder, so placing the payload before the explosion means the
+           shot's own blast wipes out the thing it just delivered. Detonate,
+           then drop into the crater. */
         if (!p.alive && p.blast > 0) {
             explodeAt(w, (int)p.x, (int)p.y, p.blast, p.power);
             ++projExplosionsThisFrame;
+        }
+
+        /* A payload only ever delivers on an actual impact -- running out of
+           LIFE mid-air (a shot fired at open sky) has no landing cell and
+           should not conjure one out of the aim direction. See the note on
+           dropX/dropY above for which cell that honestly is. */
+        if (blocked && p.payload != MAT_EMPTY && dropX >= 0) {
+            w.setCell(dropX, dropY, p.payload);
         }
     }
     return destroyed;

@@ -23,6 +23,14 @@ struct Projectile {
     i32   life;      /* frames remaining */
     i32   blast;     /* explosion radius on impact; 0 for an ordinary shot */
     u32   colour;
+    /* A MatId, or MAT_EMPTY for an ordinary shot. See the note on projSpawn.
+       This is the whole of "a launcher fires whatever you load it with" --
+       DESIGN.md's second open decision -- and it costs one field here plus
+       one placement at impact, because every payload material's actual
+       BEHAVIOUR (LN2 freezing and boiling to cold fire, acid dissolving,
+       lava igniting) is already simulated and asks nothing further of this
+       file. */
+    u8    payload;
     bool  alive;
 };
 
@@ -34,8 +42,17 @@ static const int MAX_PROJ = 64;
 extern Projectile g_proj[MAX_PROJ];
 
 void projClear();
+/* `payload` is a MatId, MAT_EMPTY (0) by default -- an ordinary shot. When
+   set, the cell the shot comes to rest in (whichever cell that honestly is;
+   see the note in projUpdate()) is converted to it on impact rather than
+   simply cleared. Nothing about delivery is special-cased per material:
+   dropping LN2 there freezes and boils away on its own schedule, lava
+   ignites what is nearby, acid starts dissolving its neighbours -- all of
+   that is the ordinary simulation reacting to a cell that changed, exactly
+   as it would if a player had placed the material by hand. */
 void projSpawn(float x, float y, float vx, float vy,
-               int power, int pierce, int life, u32 colour, int blast = 0);
+               int power, int pierce, int life, u32 colour, int blast = 0,
+               int payload = MAT_EMPTY);
 
 /* Blows a hole, sets fire to the middle of it and heats the lot. Exposed
    because an explosion is a world event rather than a projectile one -- the
