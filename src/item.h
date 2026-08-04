@@ -87,8 +87,41 @@ enum {
     ITEM_STEEL_SUIT,
     ITEM_TITANIUM_HELMET,
     ITEM_TITANIUM_SUIT,
+    /* --- spawn eggs -------------------------------------------------------
+       One per creature, and they exist for the same reason the creative
+       inventory does: this is a debug tool that is honest about being one.
+       Testing a creature otherwise means finding a dark cave at the right
+       depth and waiting for the spawner to agree with you, which is a slow way
+       to look at a sprite.
+
+       They are ITEMK_EGG rather than a device or a seed because what they do is
+       unlike either: a seed converts a cell, a device claims a rectangle, and
+       an egg creates something that is not in the grid at all. Numbered in
+       EntityType order so the mapping is index arithmetic rather than a switch
+       that can fall out of step -- see eggEntityType(). */
+    ITEM_EGG_MITE,
+    ITEM_EGG_MOTH,
+    ITEM_EGG_SLIME,
+    /* --- the forge core ---------------------------------------------------
+       What the layer 1 boss drops, and the only ingredient of the Blast
+       Furnace. This is the shape the layer's reward takes: a STATION you win
+       once, not an ore you go back and farm. See MAT_STATION_FORGE.
+
+       An item rather than the station itself so that the reward is a thing you
+       carry home and decide where to install, which is a small moment and a
+       better one than a furnace appearing where the boss died. */
+    ITEM_FORGE_CORE,
     ITEM_COUNT
 };
+
+/* Which creature an egg makes, or 0 for anything that is not an egg. The eggs
+   are contiguous and in EntityType order, so this is a subtraction rather than
+   a table -- and a static assert would be nice here but the two enums live in
+   files that cannot see each other, so entity.cpp checks it at startup. */
+static inline int eggEntityType(ItemId item) {
+    if (item < ITEM_EGG_MITE || item > ITEM_EGG_SLIME) return 0;
+    return 1 + (item - ITEM_EGG_MITE);
+}
 
 enum ItemKind {
     ITEMK_MATERIAL = 0,   /* stacks; one unit is one cell of world */
@@ -139,7 +172,12 @@ enum ItemKind {
        where you clicked, it can fail because the slot is taken rather than
        because the cell is full, and it creates an entity with state that
        outlives the click. `deviceType` says which machine. See device.h. */
-    ITEMK_DEVICE
+    ITEMK_DEVICE,
+    /* Spawns a CREATURE, which is neither a cell nor a machine. Its own kind
+       for the same reason ITEMK_SEED and ITEMK_DEVICE are: nothing about
+       placement is shared. It needs no free cell, respects no lattice, and what
+       it creates does not live in the grid at all. */
+    ITEMK_EGG
 };
 
 struct ItemDef {
@@ -195,6 +233,20 @@ struct ItemDef {
        "temperature resistance" would make them one item at two volumes. */
     i16  heatResist, coldResist;
 
+    /* Flat health subtracted from each contact with a creature. Zero on
+       everything that is not armour.
+
+       SUMMED across slots, which is the one place this file breaks its own
+       "largest, never summed" rule, so it is worth being explicit about why.
+       That rule exists to stop two cheap items beating one good one, and it
+       bites where several slots can hold the same KIND of thing -- two trinket
+       slots, boots against a jetpack. Armour cannot do that: a helmet only fits
+       EQ_HEAD and a suit only EQ_BODY, so there is no slot to stuff and no
+       ladder to shortcut. A helmet and a suit are a SET, and a game where
+       wearing both protects you exactly as much as wearing one is a game that
+       has taught you not to bother with the helmet. See Inventory::armour. */
+    i16  armour;
+
     /* Thrust, for boots and jetpacks. Zero on everything else, and resolved
        through flightSpec() rather than read directly -- see the note there for
        why two pieces of flight gear do not add up either. */
@@ -209,6 +261,18 @@ struct ItemDef {
     u8   mineRadius;
     u8   mineBite;      /* cells per action */
     u8   mineCooldown;  /* frames between actions */
+    /* The hardest g_matStrength this tool will bite, the same threshold a shot's
+       `power` means -- so "what can break this" is one question with one answer
+       whether the thing asking is a projectile or a drill.
+
+       Digging had NO such gate before the layer barriers arrived: digInto()
+       removed whatever it touched, and the four mining tiers differed only in
+       radius, bite and cooldown. Every existing tool is therefore set to
+       STR_HARD, which is the strongest material that existed at the time, so
+       nothing that could be dug yesterday resists today. The gate exists for
+       exactly one material -- see MAT_STRATUM -- and the tool that beats it
+       does not exist yet. */
+    u8   minePower;
     /* --- the harvesting tool -------------------------------------------
        When set, the tool passes over anything that is not g_matIsPlant. It is
        a RESTRICTION and it is the whole value of the tool: clearing a canopy
@@ -226,7 +290,25 @@ struct ItemDef {
        several modules are stacked -- unlike, say, a damage multiplier, where
        two modules interact in a way nobody can predict from the tooltips. */
     u8   addDelay;
+    /* --- power is TERRAIN, damage is COMBAT ---------------------------
+       Two numbers, and keeping them apart is what lets the game have a
+       progression at all.
+
+       `power` is a threshold against g_matStrength, so it is bounded by the
+       material ladder: STR_HARD is 210, absolute is 255, and a shot that
+       breaks everything breakable has nowhere further to go. That is a
+       perfectly good terminal state for a mining stat.
+
+       `damage` has no such ceiling, and must not: three cave layers plus a
+       hardmode with four more bosses needs roughly seven steps of combat
+       power, and there are four rungs left on the strength ladder. Deriving
+       damage from power -- which is what a single "power" number would have
+       meant -- would have capped how strong a weapon can ever be at how hard
+       rock is, which are not related questions.
+
+       An int rather than a u8 for the same reason. */
     u8   power;       /* highest material strength the shot can break */
+    int  damage;      /* health taken off a creature it hits */
     u8   pierce;      /* cells it can destroy before it is spent */
     u8   blast;       /* explosion radius on impact; 0 for an ordinary shot */
     u32  shotColour;
@@ -419,6 +501,10 @@ struct Inventory {
        they are. Zero on both with nothing worn, which is the bare character. */
     TempSpec tempResist() const;
 
+    /* Total flat damage reduction from everything worn. Summed, unlike every
+       other bonus here -- see ItemDef::armour for why this one is different. */
+    int  armour() const;
+
     /* The first tool in the pack, or -1. The inventory screen shows one tool's
        loadout and this is the one it shows -- with a single multitool in play
        that is unambiguous, and when there are two it is at least stable. */
@@ -433,6 +519,7 @@ struct ToolShot {
     bool   canFire;
     int    delay;      /* frames between shots: tool base + module */
     int    power;
+    int    damage;     /* see ItemDef::damage -- not derived from power */
     int    pierce;
     int    blast;
     u32    colour;
@@ -466,6 +553,7 @@ struct ToolSpec {
     int cellsPerBite;   /* cells removed per action */
     int cooldown;       /* frames between actions */
     bool plantsOnly;    /* cuts only what grew; see ItemDef::minePlantsOnly */
+    int power;          /* hardest material it bites; see ItemDef::minePower */
 };
 
 /* Hands. Slow and small on purpose: this is the baseline every tool is measured
@@ -530,8 +618,13 @@ void initDiscTable();   /* called by initItems() */
 
    maxCells caps how much comes out in one call; 0 means the whole disc, which
    is what the unlimited sandbox brush wants. A tool passes its cellsPerBite. */
+/* `power` is the hardest g_matStrength that may be bitten; anything above it is
+   passed over WITHOUT spending a bite, the same way plantsOnly skips what did
+   not grow. Defaulted to STR_ABSOLUTE so that every existing caller -- the
+   sandbox brush, the miner device, a dozen harnesses -- keeps digging exactly
+   what it always dug, and only callers that opt in are gated. */
 int digInto(World& w, Inventory& inv, int cx, int cy, int r, int maxCells = 0,
-            bool plantsOnly = false);
+            bool plantsOnly = false, int power = STR_ABSOLUTE);
 
 /* Places the held stack into empty cells of a disc, one item per cell, until
    the stack runs out. Returns how many cells were filled. Never overwrites

@@ -136,6 +136,13 @@ static bool boxBlocked(const World& w, int bx, int by, int mode = SOLID_ANY,
     return false;
 }
 
+bool solidBox(const World& w, int bx, int by, int bw, int bh, int mode) {
+    for (int yy = 0; yy < bh; ++yy)
+        for (int xx = 0; xx < bw; ++xx)
+            if (playerSolid(w, bx + xx, by + yy, mode)) return true;
+    return false;
+}
+
 bool playerOnClimb(const World& w, const Player& p) {
     const int y0 = imax(0, p.top()),  y1 = imin(SIM_H - 1, p.bottom());
     const int x0 = imax(0, p.left()), x1 = imin(SIM_W - 1, p.right());

@@ -33,6 +33,13 @@ enum CraftStation {
     STATION_ANVIL,
     STATION_CHEM,
     STATION_ASSEMBLY,
+    /* The blast furnace. Appended after ASSEMBLY rather than slotted in beside
+       the anvil it upgrades, because these values are written into RECIPES[]
+       and renumbering them would silently move every recipe to a different
+       station. The enum is no longer a strict difficulty order because of that,
+       which is the price of the ordering being stable -- read the station a
+       recipe needs from its row, never from the enum's arithmetic. */
+    STATION_FORGE,
     STATION_COUNT
 };
 

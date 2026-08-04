@@ -1,4 +1,6 @@
 #include "save.h"
+#include "entity.h"
+#include "light.h"
 #include "player.h"
 #include "item.h"
 #include "room.h"
@@ -291,6 +293,19 @@ bool saveWrite(const char* path, const World& w) {
         fwrite(g_trees, sizeof(Tree), MAX_TREES, f);
         s.end();
     }
+    {
+        /* The time of day, and nothing else about creatures.
+
+           Enemies are deliberately NOT written -- see the note at the top of
+           entity.h. They respawn out of the dark, so preserving them would buy
+           nothing and would cost a versioned section that could be wrong. The
+           CLOCK is different: a world that reloads at noon every time does not
+           have a day/night cycle, it has a lighting effect, and four bytes is
+           the whole price of it being real. */
+        SectionWriter s; s.begin(f, "TIME", "time of day");
+        fwrite(&g_worldTime, sizeof(g_worldTime), 1, f);
+        s.end();
+    }
 
     const u32 endTag = 0;
     fwrite(&endTag, sizeof(endTag), 1, f);
@@ -472,6 +487,15 @@ bool saveRead(const char* path, World& w) {
         } else if (tag == fourcc("TREE")) {
             if (len == sizeof(Tree) * MAX_TREES) fread(g_trees, sizeof(Tree), MAX_TREES, f);
             statAdd("growing trees", len + 12);
+        } else if (tag == fourcc("TIME")) {
+            if (len == sizeof(g_worldTime)) {
+                fread(&g_worldTime, sizeof(g_worldTime), 1, f);
+                /* A save from before this section existed simply leaves the
+                   clock where it was, which is dawn on a fresh run -- the same
+                   graceful degradation every other optional section gets. */
+                g_worldTime %= DAY_LENGTH;
+            }
+            statAdd("time of day", len + 12);
         } else {
             /* Unknown tag: skipped, which is the whole point of the framing.
                A save written by a later build loads here without whatever this
@@ -483,6 +507,11 @@ bool saveRead(const char* path, World& w) {
 
     fclose(f);
     circuitInitMissingConfigs();
+    /* Whatever was chasing you is gone. Creatures are not saved (entity.h), so
+       the ones still in the array are from the world that was open a moment
+       ago -- leaving them would strand them inside whatever terrain now
+       occupies the cells they were standing in. */
+    entReset();
 
     /* Everything must be simulated once, and the room flags rebuilt from the
        rooms that were loaded. Dirtying the whole world is a one-off cost on

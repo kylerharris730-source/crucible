@@ -1,4 +1,5 @@
 #include "projectile.h"
+#include "entity.h"
 #include "item.h"     /* the nearest-first disc table, for explosions */
 #include "render.h"   /* VIEW_CELLS_W/H */
 #include <math.h>
@@ -72,13 +73,14 @@ void projClear() {
 
 void projSpawn(float x, float y, float vx, float vy,
                int power, int pierce, int life, u32 colour, int blast,
-               int payload) {
+               int payload, int damage) {
     for (int i = 0; i < MAX_PROJ; ++i) {
         if (g_proj[i].alive) continue;
         Projectile& p = g_proj[i];
         p.x = x; p.y = y; p.vx = vx; p.vy = vy;
         p.power = power; p.pierce = pierce; p.life = life; p.blast = blast;
-        p.colour = colour; p.payload = (u8)payload; p.alive = true;
+        p.colour = colour; p.payload = (u8)payload; p.damage = damage;
+        p.alive = true;
         return;
     }
     /* Full: drop it. Silently, because the alternative -- replacing the oldest
@@ -157,6 +159,19 @@ int projUpdate(World& w) {
                 p.alive = false; blocked = true; break;
             }
 
+            /* Creatures are checked BEFORE the material, and before the
+               MAT_EMPTY skip, because they live in the air: an enemy standing
+               in an open tunnel occupies cells that are all MAT_EMPTY, so a
+               test placed after that `continue` would never see one. A shot
+               spends itself on a body rather than passing through -- which is
+               also what stops a single pierce-10 shot from killing a whole
+               line of them at once. */
+            if (p.damage > 0 && entDamageAt(cx, cy, p.damage)) {
+                p.alive = false; blocked = true;
+                dropX = px_; dropY = py_;
+                break;
+            }
+
             const u8 m = w.at(cx, cy).mat;
             if (m == MAT_EMPTY) continue;
 
@@ -195,6 +210,11 @@ int projUpdate(World& w) {
            then drop into the crater. */
         if (!p.alive && p.blast > 0) {
             explodeAt(w, (int)p.x, (int)p.y, p.blast, p.power);
+            /* Everything in the crater, not only whatever the shot happened to
+               touch on its way in. An explosion that damaged one creature
+               would be strictly worse than the ordinary shot it costs 24 extra
+               frames of delay to fire. */
+            if (p.damage > 0) entDamageDisc((int)p.x, (int)p.y, p.blast, p.damage);
             ++projExplosionsThisFrame;
         }
 

@@ -1,4 +1,5 @@
 #include "item.h"
+#include "entity.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -23,7 +24,12 @@ void toolInstFree(u16 inst) {
     memset(&g_toolInst[inst], 0, sizeof(ToolInst));
 }
 
-const ToolSpec HAND = { "Hands", 6, 10, 6, false };
+/* STR_HARD, not something lower, and that is a deliberate non-change: before
+   the layer barriers there was no strength gate on digging at all, so bare
+   hands could already clear tungsten given the time. Introducing a gate is not
+   an excuse to quietly re-balance the mining ladder underneath it -- the only
+   material anything here cannot bite is MAT_STRATUM. */
+const ToolSpec HAND = { "Hands", 6, 10, 6, false, STR_HARD };
 
 DiscOff g_disc[DISC_MAX_CELLS];
 int     g_discEnd[DISC_MAX_R + 1];
@@ -148,6 +154,11 @@ void initItems() {
     ITEMS[ITEM_MOD_SHOT].colour     = 0x70D0FF;
     ITEMS[ITEM_MOD_SHOT].addDelay   = 0;
     ITEMS[ITEM_MOD_SHOT].power      = STR_LOOSE;
+    /* 6 against a rock mite's 18 hp: three hits. Deliberately not two -- the
+       first weapon in the game should make a layer 1 creature killable rather
+       than trivial, since "get a weapon" is the whole difficulty curve of the
+       first layer and it should feel like it resolved something. */
+    ITEMS[ITEM_MOD_SHOT].damage     = 6;
     ITEMS[ITEM_MOD_SHOT].pierce     = 10;
     ITEMS[ITEM_MOD_SHOT].shotColour = 0x9CE0FF;
     ITEMS[ITEM_MOD_SHOT].sprite     = SPR_MOD_SHOT;
@@ -173,6 +184,10 @@ void initItems() {
        stone's 90 and metal's 150, so it carves a wide crater in stone, a wider
        one in loose ground, and cannot touch iron at all. */
     ITEMS[ITEM_MOD_BLAST].power      = 120;
+    /* Enough to one-shot anything in layer 1, and it costs 24 frames of extra
+       delay plus a hole in the floor to do it. The blast module is the answer
+       to a group, not to a single creature. */
+    ITEMS[ITEM_MOD_BLAST].damage     = 22;
     ITEMS[ITEM_MOD_BLAST].pierce     = 1;
     ITEMS[ITEM_MOD_BLAST].blast      = 14;
     ITEMS[ITEM_MOD_BLAST].shotColour = 0xFFC060;
@@ -213,6 +228,13 @@ void initItems() {
         ITEMS[t.id].mineRadius   = t.r;
         ITEMS[t.id].mineBite     = t.bite;
         ITEMS[t.id].mineCooldown = t.cool;
+        /* Uniform across the whole ladder, on purpose. These four tiers are a
+           ladder of SPEED and REACH and always have been; making the top one
+           also the only one that can bite hard rock would silently re-tier
+           every material in the game. When something is built that beats
+           MAT_STRATUM it will be a new tier with a new number here, not a
+           quiet promotion of the Disruptor. */
+        ITEMS[t.id].minePower    = STR_HARD;
         ITEMS[t.id].sprite       = t.spr;
     }
 
@@ -248,6 +270,12 @@ void initItems() {
     ITEMS[ITEM_SICKLE].mineBite       = 40;
     ITEMS[ITEM_SICKLE].mineCooldown   = 5;
     ITEMS[ITEM_SICKLE].minePlantsOnly = 1;
+    /* Set explicitly rather than left at the zero the table is cleared to. A
+       mining tool with minePower 0 cuts NOTHING -- every plant is at least
+       STR_LOOSE -- so forgetting this line does not degrade the sickle, it
+       disables it. The tiers above get theirs from the MINE[] loop; this one is
+       built by hand and so has to say it by hand. */
+    ITEMS[ITEM_SICKLE].minePower      = STR_HARD;
     ITEMS[ITEM_SICKLE].sprite         = SPR_MINE1;
 
     /* Reach extenders. Two tiers so the ladder is visible; the numbers are
@@ -481,6 +509,7 @@ void initItems() {
     ITEMS[ITEM_STEEL_HELMET].colour     = 0x9CA0A6;
     ITEMS[ITEM_STEEL_HELMET].heatResist = 15;
     ITEMS[ITEM_STEEL_HELMET].coldResist = 15;
+    ITEMS[ITEM_STEEL_HELMET].armour     = 2;
 
     ITEMS[ITEM_STEEL_SUIT].name       = "Steel Suit";
     ITEMS[ITEM_STEEL_SUIT].kind       = ITEMK_WORN;
@@ -489,6 +518,7 @@ void initItems() {
     ITEMS[ITEM_STEEL_SUIT].colour     = 0x9CA0A6;
     ITEMS[ITEM_STEEL_SUIT].heatResist = 30;
     ITEMS[ITEM_STEEL_SUIT].coldResist = 30;
+    ITEMS[ITEM_STEEL_SUIT].armour     = 4;
 
     /* Titanium: corrosion-proof and the metal DESIGN.md calls "the hull of
        the thing you leave on" -- a real jump over steel, not an increment. */
@@ -499,6 +529,7 @@ void initItems() {
     ITEMS[ITEM_TITANIUM_HELMET].colour     = 0xC8CCD2;
     ITEMS[ITEM_TITANIUM_HELMET].heatResist = 45;
     ITEMS[ITEM_TITANIUM_HELMET].coldResist = 45;
+    ITEMS[ITEM_TITANIUM_HELMET].armour     = 5;
 
     ITEMS[ITEM_TITANIUM_SUIT].name       = "Titanium Suit";
     ITEMS[ITEM_TITANIUM_SUIT].kind       = ITEMK_WORN;
@@ -507,6 +538,38 @@ void initItems() {
     ITEMS[ITEM_TITANIUM_SUIT].colour     = 0xC8CCD2;
     ITEMS[ITEM_TITANIUM_SUIT].heatResist = 70;
     ITEMS[ITEM_TITANIUM_SUIT].coldResist = 70;
+    ITEMS[ITEM_TITANIUM_SUIT].armour     = 9;
+
+    ITEMS[ITEM_FORGE_CORE].name     = "Forge Core";
+    ITEMS[ITEM_FORGE_CORE].kind     = ITEMK_MATERIAL;   /* carried, never placed */
+    ITEMS[ITEM_FORGE_CORE].maxStack = 16;
+    ITEMS[ITEM_FORGE_CORE].colour   = 0xE07A32;
+
+    /* Spawn eggs. Named from the creature table so the two can never disagree
+       about what an egg makes, and swatched in each creature's own colour so
+       three otherwise identical entries in the creative list are told apart the
+       way everything else in that list is -- by looking at it.
+
+       maxStack 1 rather than a real stack: these are a debug convenience, and a
+       slot holding ninety-nine of them is a slot you have to clear out. */
+    /* The two enums have to stay in step, and nothing in the language enforces
+       it because they live in headers that cannot see each other. Checked here
+       rather than hoped for: an egg that made the wrong creature would look
+       exactly like a creature behaving strangely. */
+    if (ITEM_EGG_SLIME - ITEM_EGG_MITE != ENT_COUNT - 2) {
+        fprintf(stderr, "spawn eggs and EntityType are out of step: %d eggs, %d creatures\n",
+                ITEM_EGG_SLIME - ITEM_EGG_MITE + 1, ENT_COUNT - 1);
+        abort();
+    }
+    static char eggNames[ENT_COUNT][40];
+    for (int t = ENT_NONE + 1; t < ENT_COUNT; ++t) {
+        const ItemId id = (ItemId)(ITEM_EGG_MITE + (t - 1));
+        sprintf(eggNames[t], "%s Egg", ENT_DEFS[t].name);
+        ITEMS[id].name     = eggNames[t];
+        ITEMS[id].kind     = ITEMK_EGG;
+        ITEMS[id].maxStack = 1;
+        ITEMS[id].colour   = ENT_DEFS[t].eggColour;
+    }
 }
 
 const char* const EQ_NAMES[EQ_COUNT] = { "Feet", "Back", "Trinket", "Trinket", "Head", "Body" };
@@ -633,6 +696,13 @@ TempSpec Inventory::tempResist() const {
     return t;
 }
 
+int Inventory::armour() const {
+    int total = 0;
+    for (int i = 0; i < EQ_COUNT; ++i)
+        if (!equip[i].empty()) total += ITEMS[equip[i].item].armour;
+    return total;
+}
+
 bool equipFits(ItemId item, int eqSlot) {
     if (item == ITEM_NONE || eqSlot < 0 || eqSlot >= EQ_COUNT) return false;
     const ItemDef& d = ITEMS[item];
@@ -712,6 +782,7 @@ ToolSpec miningSpec(const ItemStack& held) {
             s.cellsPerBite = d.mineBite;
             s.cooldown     = d.mineCooldown;
             s.plantsOnly   = d.minePlantsOnly != 0;
+            s.power        = d.minePower;
             return s;
         }
     }
@@ -726,7 +797,7 @@ int Inventory::firstToolSlot() const {
 
 ToolShot toolResolve(const ItemStack& st) {
     ToolShot s;
-    s.canFire = false; s.delay = 0; s.power = 0; s.pierce = 0; s.blast = 0;
+    s.canFire = false; s.delay = 0; s.power = 0; s.damage = 0; s.pierce = 0; s.blast = 0;
     s.colour = 0xFFFFFF; s.payloadMat = MAT_EMPTY;
     if (st.empty() || ITEMS[st.item].kind != ITEMK_TOOL) return s;
 
@@ -752,6 +823,7 @@ ToolShot toolResolve(const ItemStack& st) {
         if (!s.canFire) {
             s.canFire = true;
             s.power   = ITEMS[m].power;
+            s.damage  = ITEMS[m].damage;
             s.pierce  = ITEMS[m].pierce;
             s.blast   = ITEMS[m].blast;
             s.colour  = ITEMS[m].shotColour;
@@ -762,7 +834,7 @@ ToolShot toolResolve(const ItemStack& st) {
 }
 
 int digInto(World& w, Inventory& inv, int cx, int cy, int r, int maxCells,
-            bool plantsOnly) {
+            bool plantsOnly, int power) {
     int dug = 0;
     const int n = g_discEnd[imax(0, imin(r, DISC_MAX_R))];
     for (int i = 0; i < n; ++i) {
@@ -777,6 +849,11 @@ int digInto(World& w, Inventory& inv, int cx, int cy, int r, int maxCells,
            standing in a field of grass, instead of the bite being eaten by the
            ground between the plants. */
         if (plantsOnly && !g_matIsPlant[m]) continue;
+        /* Too hard for this tool. Skipped BEFORE the bite counter, exactly like
+           the plantsOnly filter above and for the same reason: a sweep that
+           clips the corner of a layer barrier should still clear the rock
+           beside it, not spend its whole bite failing against the barrier. */
+        if ((int)g_matStrength[m] > power) continue;
         /* g_matDropsAs, not m: what you dig out and what you end up holding are
            two different questions for anything whose cell is a STATE. Breaking
            an open door puts a door in your pack.

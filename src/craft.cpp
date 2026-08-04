@@ -1,7 +1,7 @@
 #include "craft.h"
 
 const char* const STATION_NAMES[STATION_COUNT] = {
-    "Hand", "Bench", "Anvil", "Chemistry Bench", "Assembly Table"
+    "Hand", "Bench", "Anvil", "Chemistry Bench", "Assembly Table", "Blast Furnace"
 };
 
 /* One cell of world is one unit of item (see MATERIAL_STACK), so a recipe's
@@ -92,6 +92,37 @@ const Recipe RECIPES[] = {
     { { { (ItemId)MAT_GOLD, 2 }, { (ItemId)MAT_STEEL, 2 }, { (ItemId)MAT_GLASS, 1 } },
       (ItemId)MAT_STATION_ASSEMBLY, 1, "Assembly Table", STATION_ANVIL },
 
+    /* --- the blast furnace, and what it costs ------------------------------
+       The layer 1 reward. One Forge Core plus a real quantity of the layer's
+       own materials, built AT the anvil it supersedes -- so the upgrade reads
+       as the next rung of the same ladder rather than a parallel one.
+
+       Everything at the steel tier moved behind it: the Thermal Lance, both
+       pieces of steel armour, and the Mk II jetpack. Note what did NOT move --
+       SMELTING steel is still an iron+coal contact reaction and still happens
+       in a vessel you built out of pixels. The forge gates turning a steel bar
+       into an OBJECT, which is fabrication. See PROGRESSION.md section 2 for
+       why the line is drawn exactly there. */
+    { { { ITEM_FORGE_CORE, 1 }, { (ItemId)MAT_CERAMIC, 8 }, { (ItemId)MAT_IRON, 6 } },
+      (ItemId)MAT_STATION_FORGE, 1, "Blast Furnace", STATION_ANVIL },
+
+    /* --- PLACEHOLDER: delete this when the layer 1 boss exists -------------
+       The Forge Core is meant to be the boss's drop and nothing else. There is
+       no boss yet, and shipping the gate without the key would make the whole
+       steel tier unreachable in survival -- a straight downgrade from a game
+       where steel armour is craftable today, and a failure `reachable.cpp`
+       would correctly report.
+
+       So until the boss lands, one Core can be forged from a deliberately
+       painful pile of late layer 1 materials. Expensive enough not to be the
+       obvious path, cheap enough not to be a wall.
+
+       When the boss arrives: give it ITEM_FORGE_CORE as its drop, delete this
+       recipe, and re-run reachable.cpp -- which will then be asserting that the
+       boss is the only source, which is the whole point. */
+    { { { (ItemId)MAT_STEEL, 6 }, { (ItemId)MAT_GRAPHENE, 1 }, { (ItemId)MAT_CERAMIC, 8 } },
+      ITEM_FORGE_CORE, 1, "Forge Core", STATION_ANVIL },
+
     /* --- the bench --------------------------------------------------------
        Wood, stone and the earliest metal: everything a workbench can put
        together with hand tools. This is also where the mining ladder's
@@ -172,13 +203,13 @@ const Recipe RECIPES[] = {
        auger -- and the jetpack's second tier both ask for it rather than
        for iron a second time. */
     { { { (ItemId)MAT_STEEL, 4 }, { (ItemId)MAT_COPPER, 2 }, { ITEM_NONE, 0 } },
-      ITEM_LANCE, 1, "Thermal Lance", STATION_ANVIL },
+      ITEM_LANCE, 1, "Thermal Lance", STATION_FORGE },
     { { { (ItemId)MAT_STEEL, 4 }, { (ItemId)MAT_RUBBER, 2 }, { (ItemId)MAT_FUEL, 2 } },
-      ITEM_JETPACK2, 1, "Jetpack Mk II", STATION_ANVIL },
+      ITEM_JETPACK2, 1, "Jetpack Mk II", STATION_FORGE },
     { { { (ItemId)MAT_STEEL, 4 }, { ITEM_NONE, 0 }, { ITEM_NONE, 0 } },
-      ITEM_STEEL_HELMET, 1, "Steel Helmet", STATION_ANVIL },
+      ITEM_STEEL_HELMET, 1, "Steel Helmet", STATION_FORGE },
     { { { (ItemId)MAT_STEEL, 8 }, { (ItemId)MAT_RUBBER, 2 }, { ITEM_NONE, 0 } },
-      ITEM_STEEL_SUIT, 1, "Steel Suit", STATION_ANVIL },
+      ITEM_STEEL_SUIT, 1, "Steel Suit", STATION_FORGE },
 
     /* --- the chemistry bench -----------------------------------------------
        Glass work: optics, a bulb, and the two materials this whole plan

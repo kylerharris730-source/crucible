@@ -292,6 +292,41 @@ enum MatId {
        craft.cpp. */
     MAT_REFRACTORY,
 
+    /* --- stratum --------------------------------------------------------------
+       The sealed band between one cave layer and the next. Not decoration and
+       not ordinary rock: it is the thing that makes the layers LAYERS rather
+       than depth ranges with different ore in them, because it cannot be dug
+       until the endgame.
+
+       STR_SEALED rather than STR_ABSOLUTE is the whole design. Wall is the edge
+       of the universe and is meant to be permanent; this is meant to be
+       permanent UNTIL IT IS NOT. Putting it one rung below absolute leaves it
+       breakable by a tool that does not exist yet, which is what turns "I can
+       finally dig through the world's floors" into a reward hardmode can hand
+       out. See MatStrength.
+
+       Corrosion-proof (deliberately absent from g_matDissolvedBy) and with no
+       phase change at any temperature the byte can express: a barrier that
+       could be melted or dissolved would be a barrier with a trivial bypass,
+       and the whole point is that the ONLY way past is a tool strong enough. */
+    MAT_STRATUM,
+
+    /* --- the blast furnace ---------------------------------------------------
+       The layer 1 boss's reward, and a STATION rather than a material or an
+       ore. That choice is the design: making the reward an exclusive ore turns
+       the boss into something you farm, and a boss you farm is a chore with a
+       health bar. A station is won ONCE, changes what you can build forever
+       after, and cannot be ground for.
+
+       It sits above the anvil in the same ladder every other station is on --
+       see g_matStation -- and it is what the steel tier is fabricated at. Note
+       that this does NOT gate the SMELTING of steel: steel is an iron+coal
+       contact reaction and stays one, because heat and chemistry belong to the
+       simulation (see PROGRESSION.md section 2). What the forge gates is
+       turning a steel bar into an object, which is fabrication and therefore a
+       bench's business. */
+    MAT_STATION_FORGE,
+
     MAT_COUNT
 };
 
@@ -513,6 +548,16 @@ enum MatStrength {
        between two tiers has somewhere to look for the convention. */
     STR_ALLOY   = 180,   /* steel, titanium */
     STR_HARD    = 210,   /* graphene, tungsten */
+    /* The layer barriers, and nothing else. Above every tool and every shot
+       that currently exists, below absolute -- so it reads as unbreakable for
+       the whole of the game as it stands, and stops reading that way the moment
+       something with power 235 is built.
+
+       That gap is the last of the ladder's headroom and it is being spent
+       deliberately on one thing. Anything else that wants to sit between HARD
+       and ABSOLUTE from here on should ask whether it really wants to be a
+       layer barrier, because there is no room left for a third opinion. */
+    STR_SEALED  = 235,   /* MAT_STRATUM: the floor between cave layers */
     STR_ABSOLUTE = 255   /* wall, and the machines: nothing breaks these */
 };
 
@@ -1030,7 +1075,7 @@ extern u32 g_bgPlacedLut[MAT_COUNT * 16];
    sky rendered as a grey wash. Comfortably past SURFACE_Y. */
 static const int SKY_BAND = 1400;
 extern u32 g_skyLut[SKY_BAND];
-extern u32 g_caveLut[16];
+extern u32 g_caveLut[3][16];   /* one per cave layer; index with caveLayerOf() */
 
 /* Static per-cell speckle. Cheap, and stable for a given cell for all time. */
 static inline u32 bgSpeckle(int x, int y) {

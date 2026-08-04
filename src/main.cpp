@@ -18,6 +18,7 @@
 #include "door.h"
 #include "tree.h"
 #include "craft.h"
+#include "entity.h"
 #include "save.h"
 
 /* The window is a fixed-size left-hand tool panel plus the sim viewport. The
@@ -318,6 +319,13 @@ static bool g_uiCapture = false;   /* the click landed on the panel, not the sim
 static bool g_overwrite = true;    /* false = brush only fills empty space */
 static int  g_view      = VIEW_NORMAL;
 static bool g_lmb = false, g_rmb = false;
+/* One spawn per click rather than one per frame. Every other left-click action
+   in the game wants to repeat while held -- digging, building, sowing -- so the
+   rate limiting they share is a cooldown rather than a latch. An egg is the
+   opposite: it consumes a unique item and creates a creature, and holding the
+   button for a third of a second would empty the pool into a heap. Cleared on
+   button release, in the same WM_LBUTTONUP that clears g_lmb. */
+static bool g_eggLatch = false;
 
 /* --- the line tool ---------------------------------------------------------
    Hold R, press a mouse button, drag, release: the brush is laid down along the
@@ -1323,6 +1331,11 @@ static void makeWorld() {
        by the last one's contraptions. Same reason roomsClear() exists. */
     devClear();
     sparkClear();
+    /* Creatures are transient (see entity.h) but they are not automatically
+       gone: they live in a global array beside the grid, exactly like devices,
+       so a fresh world would otherwise arrive with the last one's wildlife
+       standing in mid-air where its floor used to be. */
+    entReset();
     generateWorld(g_world);
     /* Generation rebuilds every cell, so any room that existed described a
        building that no longer does. Nothing else clears them: a room outlives
@@ -1447,7 +1460,7 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_LBUTTONUP:
         commitWire();       /* before the button clears -- see commitLine */
         commitLine();
-        g_lmb = false; g_uiCapture = false; ReleaseCapture(); return 0;
+        g_lmb = false; g_eggLatch = false; g_uiCapture = false; ReleaseCapture(); return 0;
     case WM_RBUTTONDOWN:
         g_mx = (short)LOWORD(lp);
         g_my = (short)HIWORD(lp);
@@ -1806,7 +1819,7 @@ static void fireTool(const Aim& aim) {
         if (--ti.payload.count == 0) { ti.payload.item = ITEM_NONE; ti.payload.inst = 0; }
     }
     projSpawn(pcx + dx * MUZZLE, pcy + dy * MUZZLE, dx * SPEED, dy * SPEED,
-              s.power, s.pierce, 90, s.colour, s.blast, payload);
+              s.power, s.pierce, 90, s.colour, s.blast, payload, s.damage);
 }
 
 /* Devices are discrete, but a drag is still a useful way to lay out a run. Walk
@@ -1884,6 +1897,22 @@ static void applyBrush() {
         return;
     }
 
+    /* Spawn eggs. Like a seed in that they consume the item and place nothing,
+       and unlike everything else on this path in that what they create is not
+       in the grid at all -- so they get their own branch rather than being
+       squeezed into placeFrom. Rate-limited by g_clickLatch so that holding the
+       button does not empty the pool in a second. */
+    if (g_playerOn && g_lmb && !g_rmb && !g_bgLayer
+        && !g_inv.held().empty() && ITEMS[g_inv.held().item].kind == ITEMK_EGG) {
+        if (!g_eggLatch) {
+            const int type = eggEntityType(g_inv.held().item);
+            if (type && entSpawn(g_world, type, (float)aim.x, (float)aim.y) >= 0)
+                g_inv.take(g_inv.held().item, 1);
+            g_eggLatch = true;
+        }
+        return;
+    }
+
     /* Background mode. Rate-limited on the dig side exactly like the
        foreground, so scraping a wall costs the same effort as mining one. */
     if (g_survival && g_playerOn && g_bgLayer) {
@@ -1904,7 +1933,7 @@ static void applyBrush() {
     if (g_survival && g_playerOn && g_rmb) {
         const ToolSpec d = digSpec();
         if (g_digCool <= 0) {
-            digInto(g_world, g_inv, aim.x, aim.y, digRadius(), d.cellsPerBite, d.plantsOnly);
+            digInto(g_world, g_inv, aim.x, aim.y, digRadius(), d.cellsPerBite, d.plantsOnly, d.power);
             g_digCool = d.cooldown;
         }
         roomsNotifyEdit(g_world, aim.x, aim.y);
@@ -3631,6 +3660,32 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         devTick(g_world);
         treesTick(g_world);
 
+        /* Creatures run AFTER the character has moved, so contact damage is
+           tested against where the player actually ended up this frame rather
+           than where they were at the start of it -- walking into something
+           and being hit by it are the same event and must not be a frame
+           apart. Gated on the same conditions the character is: nothing should
+           be stalking you while the crafting screen is open.
+
+           The clock advances here too, on exactly the frames the world does, so
+           time cannot pass while paused. It is deliberately NOT multiplied by
+           the sim speed: the speed control is a debugging tool for watching the
+           simulation, and having 4x quietly mean "and also make it night four
+           times faster" would be a surprise nobody asked for. */
+        if (!g_paused && !g_menuOpen && !g_creativeOpen && !g_craftOpen && g_chestOpen < 0) {
+            dayAdvance();
+            /* Creatures MOVE whenever there is a character for them to move
+               relative to, but they only APPEAR on their own in survival. The
+               split matters for the spawn eggs: those are a debug tool reached
+               through the creative menu, and an egg that produced something
+               frozen in place until you switched modes would be useless for the
+               one job it has. Sandbox stays free of unasked-for wildlife. */
+            if (g_playerOn) {
+                entTick(g_world, g_player);
+                if (g_survival) entSpawnTick(g_world, g_player, g_camX, g_camY);
+            }
+        }
+
         /* Light is computed for this camera position and consumed immediately
            by renderView. The two must agree about where the camera is, which
            is why this sits here and not up beside the sim step. */
@@ -3646,6 +3701,10 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
             g_player.draw(g_pixels, g_camX, g_camY, g_lightOn);
             if (g_survival) drawHeldTool(g_pixels, currentAim(), g_lightOn);
         }
+        /* Before sparks and shots so that something being hit is drawn UNDER
+           the projectile hitting it, and after the player so a creature in
+           front of you cannot hide the character you are steering. */
+        entDraw(g_pixels, g_camX, g_camY, g_lightOn);
         sparkDraw(g_pixels, g_camX, g_camY);
         projDraw(g_pixels, g_camX, g_camY);
         /* Modals dim the world in the pixel buffer, before it becomes a blit --

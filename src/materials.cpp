@@ -792,6 +792,30 @@ MatInfo MATS[MAT_COUNT] = {
      open: something that insulates better than rubber AND does not have a
      failure temperature. */
   { "Refract", KIND_STATIC, 240,   0,    0,   0,   0,   0,  0,    4,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0xD8D0C4, 0xB8B0A4, 0xD8D0C4, 0xB8B0A4, 0 },
+
+  /* --- stratum -----------------------------------------------------------
+     Modelled on Wall rather than on Stone, because what it is FOR is what
+     Wall is for: an edge you do not get through. It differs from Wall in the
+     one way that matters -- see STR_SEALED -- and in being something you are
+     meant to look at and recognise, which Wall (the outer ring of the world)
+     never really is.
+
+     No melt at any temperature. Stone turns to lava at 185 and that is
+     exactly the bypass this must not have: a barrier you can pour a lava
+     pocket onto and walk through is not a barrier, and layer 3 is FULL of
+     lava pockets. Same reasoning keeps it off g_matDissolvedBy.
+
+     Dark and slightly warm against stone's cool grey, so a seam of it in a
+     cave wall reads as "this is different rock" at a glance rather than as a
+     shadow. heatCond 30 matches Wall: it neither insulates a room for you nor
+     acts as a heat sink you could exploit. */
+  { "Stratum",KIND_STATIC, 255,   0,    0,   0,   0,   0,  0,   30,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0x4A4038, 0x322C26, 0x4A4038, 0x322C26, 0 },
+
+  /* --- the blast furnace ---------------------------------------------------
+     Built like the anvil it upgrades: solid, metal-strength, and rather more
+     heat-conductive than either bench, because it is a lined furnace and
+     standing next to a working one ought to be warm. */
+  { "Forge",  KIND_STATIC, 255,   0,    0,   0,   0,   0,  0,   40,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0x6E4A3A, 0x4A2E22, 0x6E4A3A, 0x4A2E22, 0 },
 };
 
 u32 g_colorLut[MAT_COUNT * 256];
@@ -828,7 +852,7 @@ u8  g_lightShade[256];
 u32 g_bgColorLut[MAT_COUNT * 16];
 u32 g_bgPlacedLut[MAT_COUNT * 16];
 u32 g_skyLut[SKY_BAND];
-u32 g_caveLut[16];
+u32 g_caveLut[3][16];
 
 /* The durability ladder, in one place, ordered so the ranking is readable at a
    glance -- which is the whole reason this is not a MATS[] column.
@@ -951,6 +975,7 @@ static void initStrength() {
     g_matStrength[MAT_STATION_ANVIL]    = STR_METAL;
     g_matStrength[MAT_STATION_CHEM]     = STR_SOFT;
     g_matStrength[MAT_STATION_ASSEMBLY] = STR_METAL;
+    g_matStrength[MAT_STATION_FORGE]    = STR_METAL;
 
     /* Glass is a pane, not a wall -- its whole point is opacity 0, not
        toughness, so it sits with ice and wood rather than with stone. */
@@ -978,6 +1003,10 @@ static void initStrength() {
 
     /* As tough as the ceramic it is built from. */
     g_matStrength[MAT_REFRACTORY]   = STR_ROCK;
+
+    /* The layer barriers. The only STR_SEALED material there is, and the only
+       one there should be -- see the note on the rung itself. */
+    g_matStrength[MAT_STRATUM]      = STR_SEALED;
 
     /* Note what is DELIBERATELY absent: MAT_ACID is KIND_LIQUID, so the
        by-kind loop at the top of this function already gave it STR_FLUID --
@@ -1211,8 +1240,23 @@ static void initZoneColours() {
     /* Underground. Warm-shifted rather than neutral grey so it reads as rock
        rather than as an unlit hole, and barely speckled -- enough to have some
        grain at all, not enough to compete with anything in front of it. */
-    const u32 CAVE_A = 0x14110F, CAVE_B = 0x1C1916;
-    for (int k = 0; k < 16; ++k) g_caveLut[k] = lerpColor(CAVE_A, CAVE_B, k * 17);
+    /* One ramp per cave layer, so crossing a barrier is something you SEE.
+       Without this the layers are an invisible property of the chunk table and
+       the only way to know which one you are in is to read a depth number,
+       which is exactly the kind of fact a game should be able to show you.
+
+       Layer 1 keeps the colour the underground has always had -- the shallow
+       game should not look different because deeper ones now exist. Layer 2
+       cools and greens toward the acid that characterises it; layer 3 goes warm
+       and red toward the lava. All three stay very dark: this is the backdrop
+       behind everything else, and a backdrop that competes with the material in
+       front of it is a backdrop that has forgotten its job. The DIRECTION of
+       the shift is what carries the information, not its intensity. */
+    static const u32 LAYER_A[3] = { 0x14110F, 0x0E1512, 0x1A0E0C };
+    static const u32 LAYER_B[3] = { 0x1C1916, 0x16201C, 0x261412 };
+    for (int z = 0; z < 3; ++z)
+        for (int k = 0; k < 16; ++k)
+            g_caveLut[z][k] = lerpColor(LAYER_A[z], LAYER_B[z], k * 17);
 
     /* The sky: cold high air, through daylight blue, into a dusty haze near the
        ground. Three stops rather than two because a straight two-colour ramp
@@ -1358,6 +1402,7 @@ static void initStations() {
     g_matStation[MAT_STATION_ANVIL]    = 2;
     g_matStation[MAT_STATION_CHEM]     = 3;
     g_matStation[MAT_STATION_ASSEMBLY] = 4;
+    g_matStation[MAT_STATION_FORGE]    = 5;
 }
 
 /* See g_matDissolvedBy in materials.h. Everything at or below STR_ROCK that

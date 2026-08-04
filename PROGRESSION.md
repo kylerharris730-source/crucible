@@ -376,11 +376,33 @@ shades — that was the point of building it that way.
 
 Scale by **depth, not by elapsed time**, matching the loop.
 
-### What does not exist yet
+### Status: built, for layer 1
 
-This is the largest new subsystem in this document. There is currently **no
-entity system at all** — the player is a single global with bespoke physics.
-Needed:
+This section was written when there was no entity system at all. There is one
+now, and three of the archetypes above exist: the **rock mite** (burrower), the
+**cinder moth** (heat-seeker) and the **drip slime** (corroder). See
+`src/entity.h` for the design and §10 below for the layer scheme they belong to.
+
+What was built and what it cost:
+
+- `Entity` + `ENT_DEFS[]` in a fixed pool of 96, ticked after the player so
+  contact damage tests where the character actually ended up.
+- `solidBox()` in `player.cpp`, sharing `playerSolid()` with the character —
+  one collider, not two that can disagree about platforms or falling powder.
+- `ItemDef::damage` split from `ItemDef::power`, and `ItemDef::armour` added.
+  **This split is the load-bearing one:** `power` is a threshold against
+  `g_matStrength` and is therefore capped by the material ladder, which has four
+  rungs left. Combat needs about seven steps to reach the end of hardmode, so
+  damage had to become an unbounded number of its own.
+- Entities are **not saved**. They respawn from the dark, so the save format did
+  not have to grow; only `g_worldTime` was added (four bytes, `TIME` section).
+
+Still missing: bosses, and anything for layers 2 and 3.
+
+### What did not exist when this was written
+
+There was **no entity system at all** — the player was a single global with
+bespoke physics. What it needed, all now done:
 
 - An entity list with per-entity position, velocity, hp, and state.
 - Reuse of `Player`'s grid collision (`playerSolid`, `boxBlocked`) — generalise
@@ -431,3 +453,110 @@ Steps 1–3 alone deliver "you can craft everything", which is what was asked fo
 - **Scope.** Sections 1–5 are a coherent, complete game improvement on their
   own. Sections 6–8 are a second project wearing the same coat. It is entirely
   reasonable to stop after §5 and reassess.
+
+---
+
+## 10. The three cave layers
+
+Added after §1–§9 were implemented. This is the structure the rest of the
+progression hangs off, and it replaces "depth" as the game's pacing axis with
+something the player can see and be stopped by.
+
+### The world got taller
+
+`SIM_H` 3072 → **6144**, `SURFACE_Y` → `SIM_H/2`, so both the sky and the
+underground doubled. The old world was crossable in well under a minute in
+either direction. Costs 145 MB of `World` against a 32-bit process's 2 GB;
+settled chunks are still free, which is what makes that a memory question
+rather than a frame-time one.
+
+**Measure, do not assume.** The mean stone line sits at **y=2962**, not at
+`SURFACE_Y` — soil depth and the lake basin both push it down — so the
+underground is about **3180 cells**, not the 3900 that halving the world height
+suggests. The first cut of the layer depths was picked from the optimistic
+figure and gave layer 3 a fifth of the world. `layers.cpp` re-measures this in
+one line.
+
+### The layers, and what seals them
+
+| | depth below stone line | ore | hazard | backdrop |
+|---|---|---|---|---|
+| **Layer 1** | 0 – 1050 | copper, tin, coal, iron | — | warm brown |
+| *stratum* | 1050 | — | — | — |
+| **Layer 2** | 1074 – 2050 | gold, titanium | acid pockets (1150+) | cold green |
+| *stratum* | 2050 | — | — | — |
+| **Layer 3** | 2074 – ~3180 | tungsten | lava hotspots (2200+) | hot red |
+
+`MAT_STRATUM` at a new strength rung **`STR_SEALED = 235`** — above every tool
+and shot that exists, below `STR_ABSOLUTE`. So it reads as unbreakable for the
+whole of the game as it stands and stops reading that way the moment something
+with power 235 is built, which is a reward hardmode can hand out. That gap is
+the last of the ladder's headroom and is deliberately spent on this one thing.
+
+Generated **last**, after caves, ore, hotspots and acid, so nothing can cut
+through it — the seal is a property of the ordering, not of every other
+generator agreeing to be careful. Verified unbroken across all 4,094 columns.
+
+`digInto()` gained a `power` parameter to make this bite. Every existing tool is
+set to `STR_HARD`, so **nothing that could be dug before is harder now** —
+introducing a gate is not an excuse to re-tier the mining ladder underneath it.
+
+### Iron was not a layer 1 ore
+
+Worth recording because the table said otherwise. Measured on a generated
+world, iron ran 420–1900 with a **p10 of 640 and a mean of 1145** — against
+gold's 1166. Iron and gold were the same tier by every measure except intent,
+and 92% of the world's iron sat below what is now the layer 1 boundary. Every
+band is now bounded by a *layer*, and `layers.cpp` asserts the invariant that
+actually matters: **no ore ever appears above its own layer.** (Leaking a little
+*deeper* is fine — a vein of copper poking under a barrier costs nothing.)
+
+### Zones do two jobs
+
+`ZoneId` grew from `{SKY, UNDER}` to `{SKY, LAYER1, LAYER2, LAYER3}`, appended
+so old saves keep their meaning (`ZONE_LAYER1` *is* the old `ZONE_UNDER`, which
+is right — an old world's underground is shallow-tier). One label now picks both
+the backdrop and which creatures may spawn, so crossing a boundary is visible
+and "what lives here" is a property of the place.
+
+### Day and night
+
+One counter (`g_worldTime`), twelve minutes, applied at the **ray seed** in
+`light.cpp` rather than to the finished light value — so a torch at night is
+correctly brighter than its surroundings instead of being dimmed along with
+them. Night floors at 34/255 rather than 0: a pure-black surface is
+indistinguishable from the void outside the world and cannot be walked on.
+
+### The reward is a station, not an ore
+
+**Decided.** The layer 1 boss drops a **Forge Core**, whose only use is building
+the **Blast Furnace** (`STATION_FORGE`, `MAT_STATION_FORGE`) at the anvil it
+supersedes. The steel tier — Thermal Lance, both pieces of steel armour, Jetpack
+Mk II — moved behind it.
+
+The reasoning, which generalises to every later boss: an exclusive **ore** makes
+the boss something you *farm*, and a boss you farm is a chore with a health bar.
+A **station** is won once, changes what you can build forever, and cannot be
+ground for. Later layers should follow the same shape.
+
+Note carefully what did *not* move. Smelting steel is still an iron+coal contact
+reaction happening in a vessel you built out of pixels. The forge gates turning
+a steel bar into an **object**. That is §2's line — simulation transforms
+matter, crafting fabricates objects — and `forge.cpp` asserts it by failing if a
+recipe ever appears whose output is steel.
+
+**One placeholder to delete.** There is no boss yet, so shipping the gate
+without the key would make the entire steel tier unreachable — a straight
+downgrade from today, and something `reachable.cpp` would correctly report as a
+failure. Until the boss exists, a Forge Core can be crafted from a deliberately
+painful pile of late layer 1 materials. When the boss lands: give it
+`ITEM_FORGE_CORE` as its drop, delete that one recipe, and re-run
+`reachable.cpp` — which will then be asserting the boss is the only source.
+
+### What layer 1 still needs
+
+- **The boss itself.**
+- Layers 2 and 3 have **no creatures** — deliberate, and `spawn.cpp` asserts it,
+  so the day something is given a layer 2 mask that test notices.
+- **Hardmode has no materials at all.** Seven ores do not stretch to three
+  layers plus four more bosses; that is the next real content gap.

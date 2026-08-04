@@ -50,6 +50,44 @@ extern u8 g_light[LIGHT_W * LIGHT_H];
    definition. */
 extern bool g_lightOn;
 
+/* --- the day ---------------------------------------------------------------
+
+   One counter, advanced a frame at a time and wrapped at DAY_LENGTH. It is the
+   only piece of world state in this file, and it lives here because the only
+   thing it does is scale the sky: night is not a separate lighting model, it is
+   the same skylight with less of it.
+
+   Twelve minutes, which is between Minecraft's twenty and Terraria's fifteen,
+   and chosen from what a cycle has to be long enough to CONTAIN. A day should
+   fit a trip out to the caves and back with something to show for it; much
+   under ten minutes and night arrives while you are still walking to where you
+   meant to dig, which trains players to ignore the surface entirely.
+
+   Night is a little shorter than day -- see dayLight() -- because the
+   interesting part is the transition and the pressure it puts on being outside,
+   not the waiting.
+
+   Saved, because a world that resets to noon every time you load it does not
+   have a day/night cycle, it has a lighting effect. One u32. */
+extern u32 g_worldTime;
+
+static const u32 DAY_LENGTH = 60 * 60 * 12;   /* frames; twelve minutes */
+
+/* Advance the clock one step. Separate from lightCompute because time passes
+   whether or not the lighting is switched on, and because a headless harness
+   wanting to test night has to be able to get there without a camera. */
+void dayAdvance();
+
+/* How bright the sun is right now, 0..255. Full daylight through the middle of
+   the day, a genuine dusk and dawn at the ends, and a floor at night rather
+   than zero -- see the note in light.cpp for why moonlight is not optional. */
+int dayLight();
+
+/* Is it dark enough outside for things to spawn on the surface? A threshold on
+   dayLight() rather than a second clock, so the two can never disagree about
+   what time it is. */
+bool isNight();
+
 void lightCompute(const World& w, int camX, int camY);
 
 /* The first light value of view row vy, so the render loop can walk it with

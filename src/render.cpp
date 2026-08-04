@@ -55,11 +55,27 @@ static inline u32 backdrop(const World& w, int wx, int wy, int i, bool* openSky)
        across the sky above every hillside. Below the boundary there is nothing
        but rock -- generation puts the boundary under the deepest ground in the
        column -- so fading downward from it is always hidden. */
+    const int zone = w.zone[cy * CHUNKS_X + cx];
+    const u32* lut = g_caveLut[caveLayerOf(zone)];
+
     const int above = cy - 1;
     if (above >= 0 && w.zone[above * CHUNKS_X + cx] == ZONE_SKY)
-        return lerpColor(sky, g_caveLut[bgSpeckle(wx, wy)], (wy & (CHUNK - 1)) * 8);
+        return lerpColor(sky, lut[bgSpeckle(wx, wy)], (wy & (CHUNK - 1)) * 8);
 
-    return g_caveLut[bgSpeckle(wx, wy)];
+    /* A layer boundary gets the same treatment the sky/underground join does,
+       and needs it for the same reason: the zones change on a hard 32-cell
+       chunk edge, so wherever that edge crosses open air an abrupt change of
+       backdrop would draw a ruled line across the world. Fading down through
+       the first chunk of the new layer hides the step in the same place the
+       barrier itself sits, which is solid rock. */
+    if (above >= 0) {
+        const int azone = w.zone[above * CHUNKS_X + cx];
+        if (azone != zone)
+            return lerpColor(g_caveLut[caveLayerOf(azone)][bgSpeckle(wx, wy)],
+                             lut[bgSpeckle(wx, wy)], (wy & (CHUNK - 1)) * 8);
+    }
+
+    return lut[bgSpeckle(wx, wy)];
 }
 
 /* One linear pass per visible row. The material colour is a single lookup into

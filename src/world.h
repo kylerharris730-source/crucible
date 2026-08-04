@@ -18,7 +18,20 @@
    live window (see setLiveWindow below). Both of those are hard rules now: any
    new per-frame pass over SIM_W*SIM_H undoes the whole thing. */
 static const int SIM_W = 4096;
-static const int SIM_H = 3072;
+/* 6144, doubled from 3072, and the reason is PACING rather than scale. At the
+   old height the surface sat at y=1200 with about 1870 cells of rock beneath
+   it, which is 62 body heights -- a jetpack reaches the bottom of the world in
+   well under a minute, and the sky ran out about as fast going the other way.
+   Three cave layers cut out of 1870 cells give each layer 620, which is 20 body
+   heights: a "layer" you cross in seconds.
+
+   Doubling costs 72 MB of World, and the measurement is what makes that safe
+   rather than the hope in the paragraph above: a settled chunk is free at any
+   size, so the price is address space and not frame time. At 6144 the World is
+   145 MB and the save's scratch plane another 25 MB, against a 32-bit process's
+   2 GB. The things that would NOT survive doubling are the per-frame whole-grid
+   passes, and there are none -- which is exactly what the rule above protects. */
+static const int SIM_H = 6144;
 
 /* Chunked dirty rectangles. Each chunk remembers the smallest box that had
    anything happen in it, and only that box is simulated next frame. A pile
@@ -53,12 +66,40 @@ static const u8 BG_PLACED   = 0x80;
    which into rock; asking it to encode that as a number the renderer can
    rediscover from y is throwing away the answer and guessing it back.
 
-   One byte per chunk is 6 KB for the whole world. */
+   One byte per chunk is 6 KB for the whole world.
+
+   Underground is subdivided by CAVE LAYER, and that subdivision does two jobs
+   at once, which is why it is here rather than being recomputed from depth
+   wherever it is wanted. It picks the backdrop, so crossing a layer boundary is
+   something you can SEE rather than infer from a depth readout; and it picks
+   which enemies may spawn, so "what lives here" is a property of the place
+   instead of a threshold every spawn site has to re-derive.
+
+   Appended, never inserted, for the same reason MatId is append-only: the zone
+   array is written to saves as CHUNK_COUNT raw bytes, so renumbering these
+   would silently relabel every chunk of every existing world. ZONE_LAYER1 is
+   deliberately the value ZONE_UNDER already had -- an old save's underground
+   is shallow-tier underground, which is exactly what layer 1 is. */
 enum ZoneId {
     ZONE_SKY = 0,      /* outdoors: the backdrop is the sky */
-    ZONE_UNDER,        /* underground: the backdrop is cave dark */
+    ZONE_LAYER1,       /* underground, above the first stratum */
+    ZONE_LAYER2,       /* between the two strata: the difficulty step */
+    ZONE_LAYER3,       /* below the second stratum: the deep */
     ZONE_COUNT
 };
+/* The name the renderer and the light pass grew up with. Kept because it still
+   reads better than ZONE_LAYER1 at those two call sites, where what is meant is
+   genuinely "not sky" rather than "the shallow tier". */
+static const int ZONE_UNDER = ZONE_LAYER1;
+
+/* 0, 1 or 2 for the three cave layers -- the index the per-layer tables are
+   sized to. Sky answers 0 rather than -1: every caller of this is already
+   inside a branch that established the chunk is not sky, and returning a value
+   that indexes nothing would mean each of them needing a guard against a case
+   they have already ruled out. */
+static inline int caveLayerOf(int zone) {
+    return zone <= ZONE_LAYER1 ? 0 : (zone == ZONE_LAYER2 ? 1 : 2);
+}
 
 static const int PLAY_X0 = 1;
 static const int PLAY_Y0 = 1;

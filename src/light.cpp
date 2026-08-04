@@ -64,6 +64,47 @@ static inline bool lightOpen(u8 m) {
    Weights sum to LIGHT_MAX so open sky is still exactly full daylight, and are
    biased toward the vertical the way a real sky's contribution is: straight up
    is a third of it. */
+/* --- the day ---------------------------------------------------------------
+   See light.h for why this lives here at all. The shape of the curve is the
+   only part with any content in it:
+
+     0.00 .. 0.42   day      full sun
+     0.42 .. 0.50   dusk     falling to the night floor
+     0.50 .. 0.92   night    the floor
+     0.92 .. 1.00   dawn     rising back
+
+   Dusk and dawn are 8% of the cycle each, which at twelve minutes is about
+   fifty-five seconds -- long enough to notice it happening and to decide to
+   head home, short enough that it is an event rather than a mood.
+
+   NIGHT_FLOOR is 34 of 255, not 0. A moonless night that renders the surface as
+   pure black sounds atmospheric and plays terribly: the world outside becomes
+   indistinguishable from the void beyond the world's edge, you cannot see
+   terrain to walk on, and the only workable response is to stand still for four
+   minutes. At 34 the ground is legible in silhouette and a torch is still
+   obviously worth carrying, which is the balance the whole feature needs. */
+u32 g_worldTime = 0;
+static const int NIGHT_FLOOR = 34;
+
+void dayAdvance() { g_worldTime = (g_worldTime + 1) % DAY_LENGTH; }
+
+int dayLight() {
+    const float t = (float)g_worldTime / (float)DAY_LENGTH;
+    if (t < 0.42f) return LIGHT_MAX;
+    if (t < 0.50f) {
+        const float k = (t - 0.42f) / 0.08f;              /* dusk: 1 -> 0 */
+        return NIGHT_FLOOR + (int)((float)(LIGHT_MAX - NIGHT_FLOOR) * (1.0f - k));
+    }
+    if (t < 0.92f) return NIGHT_FLOOR;
+    const float k = (t - 0.92f) / 0.08f;                  /* dawn: 0 -> 1 */
+    return NIGHT_FLOOR + (int)((float)(LIGHT_MAX - NIGHT_FLOOR) * k);
+}
+
+/* Halfway down from full daylight. Deliberately not "at the night floor":
+   things should start appearing during dusk, while you can still see them
+   coming, rather than all at once the instant it is fully dark. */
+bool isNight() { return dayLight() < (LIGHT_MAX + NIGHT_FLOOR) / 2; }
+
 static const int SUN_RAYS = 5;
 /* Lateral movement per row, in halves: 0, -1/2, +1/2, -1, +1. */
 static const int RAY_HALF[SUN_RAYS] = { 0, -1, 1, -2, 2 };
@@ -150,7 +191,13 @@ static void findBoundaries(const World& w, int wx0, int lx0, int lx1) {
             lastCx = cx;
             lastY = SIM_H;
             for (int cy = 0; cy < CHUNKS_Y; ++cy)
-                if (w.zone[cy * CHUNKS_X + cx] == ZONE_UNDER) { lastY = cy << CHUNK_SHIFT; break; }
+                /* "Not sky", not "is the shallow tier". Underground is several
+                   zones now (one per cave layer), and testing for one of them
+                   by name would put the sky boundary at the top of layer 1 --
+                   fine until a column's first non-sky chunk is a deeper layer,
+                   at which point daylight would be declared to reach all the
+                   way down to it. */
+                if (w.zone[cy * CHUNKS_X + cx] != ZONE_SKY) { lastY = cy << CHUNK_SHIFT; break; }
         }
         g_boundY[lx] = lastY;
     }
@@ -457,8 +504,16 @@ void lightCompute(const World& w, int camX, int camY) {
         const int depth = wy0 - g_boundY[lx];
         if (depth > 0 && ((depth * SUN_FADE_Q8) >> 8) >= LIGHT_MAX) continue;
         if (!openAbove(w, wx0 + lx, wy0)) continue;
+        /* Night is applied HERE, at the source, rather than to the finished
+           light value. Scaling the seed means everything downstream -- the
+           per-ray attenuation, the sheer canopy multiply, the depth fade, the
+           ground soak -- is already working in the dimmed units, so a torch at
+           night is correctly brighter than its surroundings instead of being
+           dimmed along with them. Scaling the output would have darkened lamps
+           and lava at midnight too, which is not what night is. */
+        const int sun = dayLight();
         for (int r = 0; r < SUN_RAYS; ++r)
-            g_ray[r][lx + RAY_BIAS] = (u16)(RAY_WEIGHT[r] << RAY_FRAC);
+            g_ray[r][lx + RAY_BIAS] = (u16)((RAY_WEIGHT[r] * sun / LIGHT_MAX) << RAY_FRAC);
         anySky = true;
     }
     if (anySky)

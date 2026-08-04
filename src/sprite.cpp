@@ -80,6 +80,30 @@ static u32 paletteOf(char c) {
     case 'i': return 0xE8503A;     /* the needle: red, and the only warm thing */
     case 'l': return 0x9CE0FF;     /* terminal, where a spark goes in or out */
 
+    /* --- creatures --------------------------------------------------------
+       Their own letters rather than borrowed ones, and the reason is the same
+       one the suit gives above: a shared palette is only worth having while a
+       colour means the same thing everywhere, and "carapace" is not "steel
+       shaft". These are also the only entries read at world scale rather than
+       at hotbar size, so they are picked for contrast against TERRAIN -- stone
+       is 0x6E747C and dirt is browner still, which is why the mite is darker
+       and warmer than either rather than the mid-grey a bug wants to be. */
+    case 'a': return 0x463A2E;     /* mite: underside, deepest shade */
+    case 'b': return 0x6A5643;     /* mite: carapace */
+    case 'h': return 0x8E7758;     /* mite: lit plates along the back */
+    case 'j': return 0x241E18;     /* mite: legs and mandible, near-black */
+    case 'x': return 0xFF8A3A;     /* an ember eye. Shared by all three: it is
+                                      the one thing that says "alive" at the
+                                      edge of a torch's reach, and it should
+                                      mean that regardless of species. */
+    case 'M': return 0x8A6E52;     /* moth: wing */
+    case 'N': return 0xC0A47C;     /* moth: wing edge, catching the light */
+    case 'X': return 0xE0561C;     /* moth: body, banked heat */
+    case 'Y': return 0xFFC24A;     /* moth: the core of it */
+    case 'Q': return 0x6FA23C;     /* slime: body */
+    case 'C': return 0x466A26;     /* slime: shade, and the drips */
+    case 'Z': return 0xA8D866;     /* slime: highlight along the top */
+
     default:  return 0xFF00FF;     /* unmapped: loud on purpose */
     }
 }
@@ -607,8 +631,96 @@ static void makeSignalSprite(int sprite, int digit) {
     }
 }
 
+/* --- the creatures ---------------------------------------------------------
+   All three face RIGHT; entDraw mirrors them by reading the far column when
+   facing is negative, so there is one drawing of each rather than two that can
+   drift apart.
+
+   Each is built around a silhouette that survives being seen badly: a low wedge
+   bristling with legs, a wide pair of wings around a hot core, a sagging blob
+   that drips. At one sprite pixel per world cell these are about a third of the
+   character's height, which is the size a thing has to be before you can tell
+   what it is while it is moving toward you. */
+
+/* The burrower. Low and wide, all back-plate and legs, with the mandible and
+   the eye at the leading edge -- so which way it is coming is readable from the
+   silhouette alone before any of the detail resolves. */
+static const char* ART_MITE[SPR_H] = {
+    "..............",
+    "..............",
+    "..............",
+    "....bbbb......",
+    "..bbhhhhbb....",
+    ".bbhhhhhhbb...",
+    ".bhhhhhhhhbbj.",
+    ".abhhhhhhhhbxj",
+    ".aabbbbbbbbbxj",
+    ".aaaaaaaaaaaj.",
+    "..j..j..j..j..",
+    "..j..j..j..j..",
+    "..............",
+    "..............",
+};
+
+/* The heat-seeker. Nearly all wing, with a narrow column of banked heat down
+   the middle -- it is the only creature here that GLOWS, which is the honest
+   thing for something that spends its life looking for the hottest cell it can
+   find, and it makes one visible in an unlit tunnel before it reaches you.
+
+   The first version left the middle of the canvas empty for the top three
+   rows, so the two wing halves did not meet and the thing read as a butterfly
+   that had been cut down the middle. Rendered large it was obvious and no
+   number would ever have said so -- which is the whole argument for looking at
+   the picture. The body is now a continuous column from the antennae to the
+   abdomen, and the wings attach to it. */
+static const char* ART_MOTH[SPR_H] = {
+    "..............",
+    "....N....N....",
+    ".....N..N.....",
+    "..NMMMXXMMMN..",
+    ".NMMMMXXMMMMN.",
+    ".NMMMMXYMMMMN.",
+    ".NMMMMXYMMMMN.",
+    "..NMMMXYMMMN..",
+    "...NMMXYMMN...",
+    "....NMXYMN....",
+    "......XY......",
+    "......XY......",
+    "..............",
+    "..............",
+};
+
+/* The corroder. Heaviest at the bottom and visibly falling apart at the base,
+   because what actually threatens you is not the creature but what comes off
+   it -- the drips in the last row are the whole warning.
+
+   The underside went through the same correction the moth's wings did. It was
+   a flat row of short stubs, which at world scale read as FEET -- and feet are
+   exactly the wrong reading for the one creature here whose threat is that it
+   leaks. It is now a ragged sag with two droplets falling clear of the body,
+   so what the silhouette says about it is what it actually does. */
+static const char* ART_SLIME[SPR_H] = {
+    "..............",
+    "..............",
+    "..............",
+    ".....ZZZ......",
+    "...ZZQQQZZ....",
+    "..ZQQQQQQQZ...",
+    ".ZQQQQQQQQQZ..",
+    ".QQQQQQQQQxQQ.",
+    ".QQQQQQQQQQQQ.",
+    ".CQQQQQQQQQQC.",
+    ".CCQQQQQQQQCC.",
+    "..CCCQQQQCCC..",
+    "...CC.CC.CC...",
+    "....C...C.....",
+};
+
 void initSprites() {
     memset(g_sprite, 0, sizeof(g_sprite));
+    expand(SPR_MITE,      ART_MITE);
+    expand(SPR_MOTH,      ART_MOTH);
+    expand(SPR_SLIME,     ART_SLIME);
     expand(SPR_TOOL1,     ART_TOOL1);
     expand(SPR_TOOL2,     ART_TOOL2);
     expand(SPR_MOD_SHOT,  ART_MOD_SHOT);

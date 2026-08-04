@@ -65,6 +65,19 @@ enum SpriteId {
     SPR_SIGNAL7,
     SPR_SIGNAL8,
     SPR_SIGNAL9,
+    /* --- creatures --------------------------------------------------------
+       The one category here that is neither an inventory icon nor a machine:
+       these are drawn in the WORLD, at one sprite pixel per cell, so they are
+       read at the same scale as the terrain rather than at hotbar size.
+
+       That changes what the art has to do. An icon needs to be identifiable in
+       a grid of other icons; a creature needs a SILHOUETTE that survives being
+       seen at the edge of a torch's reach, in motion, against rock. So each of
+       these is built around one unmistakable outline -- a low wedge, a pair of
+       wings, a sagging blob -- and the interior detail is secondary. */
+    SPR_MITE,
+    SPR_MOTH,
+    SPR_SLIME,
     SPR_COUNT
 };
 

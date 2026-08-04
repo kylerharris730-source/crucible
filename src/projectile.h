@@ -19,6 +19,13 @@ struct Projectile {
     float x, y;      /* cells, with a fractional part */
     float vx, vy;
     i32   power;     /* highest material strength it can break through */
+    /* Health taken off a creature it strikes. Carried on the shot rather than
+       looked up from the module that fired it, because by the time a shot
+       lands the tool may have been unloaded, dropped or reconfigured -- a
+       projectile has to be self-describing or its damage becomes a question
+       about the state of something else, later. See ItemDef::damage for why
+       this is not derived from `power`. */
+    i32   damage;
     i32   pierce;    /* cells it can still destroy before it is spent */
     i32   life;      /* frames remaining */
     i32   blast;     /* explosion radius on impact; 0 for an ordinary shot */
@@ -52,7 +59,7 @@ void projClear();
    as it would if a player had placed the material by hand. */
 void projSpawn(float x, float y, float vx, float vy,
                int power, int pierce, int life, u32 colour, int blast = 0,
-               int payload = MAT_EMPTY);
+               int payload = MAT_EMPTY, int damage = 0);
 
 /* Blows a hole, sets fire to the middle of it and heats the lot. Exposed
    because an explosion is a world event rather than a projectile one -- the

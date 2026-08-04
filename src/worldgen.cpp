@@ -576,34 +576,54 @@ static void carveVein(World& w, u32 seed, float x, float y, float baseAng,
 static void generateOre(World& w) {
     /* Counts and bands. Copper is shallower and more common; iron is deeper and
        scarcer, matching the yields in initSmelting(). */
+    /* --- ore against the three layers --------------------------------------
+
+       Every band here is bounded by a LAYER, not merely by a depth, and that is
+       the change the layering forced. It was not true before: iron ran from 420
+       to 1900 and, measured over a generated world, 92% of it sat below what is
+       now the layer 1 boundary -- its mean depth was 1145 against gold's 1166,
+       so the two were the same tier by every measure except the table's
+       intention. "Layer 1 has copper and iron" was a description of a world
+       that did not exist.
+
+       So: copper, tin, coal and iron are layer 1 and stop above LAYER1_DEPTH;
+       gold and titanium are layer 2; tungsten is layer 3 and is the reason
+       layer 3 is worth reaching. Nothing crosses a barrier, because an ore that
+       crossed one would let a player mine the next tier's metal out of the
+       ceiling above it without ever breaking through.
+
+       Iron starts deeper than copper and tin WITHIN layer 1, which is what
+       keeps the early ladder a ladder: you meet copper and tin near the top of
+       the caves and iron further in, so bronze genuinely precedes iron rather
+       than the two arriving together. */
     struct OreBand { u8 mat; int veins; int fromStone; int toStone; float r; u32 salt; };
     static const OreBand BANDS[] = {
-        { MAT_COPPER_ORE, 90,   40, 1000, 5.0f, 0x1234u },
-        { MAT_IRON_ORE,   70,  420, 1900, 4.6f, 0x9ABCu },
+        { MAT_COPPER_ORE, 90,   40,  950, 5.0f, 0x1234u },
+        { MAT_IRON_ORE,   70,  240, 1000, 4.6f, 0x9ABCu },
         /* Coal. Shallower and more common than either metal, because it is the
            thing you need FIRST and in bulk -- a fuel you have to go as deep for as
            the iron it is meant to smelt would defeat the point of the ladder.
            Fatter veins too: coal comes in seams. */
-        { MAT_COAL,      110,   60, 1200, 6.0f, 0x5E7Du },
+        { MAT_COAL,      110,   60,  980, 6.0f, 0x5E7Du },
         /* Tin sits right beside copper, shallower than iron -- it exists to be
            alloyed into bronze and the whole point is that both halves of that
            alloy should be reachable at the same time you first go looking for
            metal at all. Nearly as plentiful as copper for the same reason. */
-        { MAT_TIN_ORE,    80,   30,  900, 4.4f, 0x2A6Fu },
+        { MAT_TIN_ORE,    80,   30,  920, 4.4f, 0x2A6Fu },
         /* Gold: rare and in SMALL pockets rather than long veins -- a lower
            radius, not just fewer of them, so finding one reads as a nugget
            rather than a thin smear of ordinary ore. Deeper than either early
            metal, because it answers "copper corrodes here, now what" and that
            question should not arrive before the corrosion does. */
-        { MAT_GOLD_ORE,   22,  700, 1600, 3.0f, 0x77E1u },
+        { MAT_GOLD_ORE,   30, 1150, 1950, 3.0f, 0x77E1u },
         /* Titanium: past iron, sharing the depth band tungsten and the
            hotspots start in -- the smelting note on its MATS row explains why
            that overlap is deliberate rather than incidental. */
-        { MAT_TITANIUM_ORE, 42, 1000, 1750, 4.0f, 0xB4A2u },
+        { MAT_TITANIUM_ORE, 48, 1250, 1980, 4.0f, 0xB4A2u },
         /* Tungsten: the deepest ore in the game and sparse to match, sitting
            right where HOT_MIN_DEP begins -- see the note on its MATS row for
            why that proximity to the hotspots is the point, not a coincidence. */
-        { MAT_TUNGSTEN_ORE, 18, 1250, 1900, 3.4f, 0xF00Du },
+        { MAT_TUNGSTEN_ORE, 26, 2200, 3050, 3.4f, 0xF00Du },
     };
     for (int b = 0; b < (int)(sizeof(BANDS) / sizeof(BANDS[0])); ++b) {
         const OreBand& ob = BANDS[b];
@@ -654,8 +674,13 @@ static void generateOre(World& w) {
    past everything else you have to go to reach one. At 1300 they sit in the
    bottom quarter, below every ore vein and every cave, and getting to one is a
    trip you outfit for rather than something that happens on the way past. */
-static const int HOT_COUNT   = 14;     /* blobs in the whole world */
-static const int HOT_MIN_DEP = 1300;   /* cells below the stone line, at least */
+static const int HOT_COUNT   = 20;     /* blobs in the whole world */
+/* Layer 3's characteristic hazard, and the reason to go there: lava is the only
+   thing hot enough to smelt tungsten (213 C, two below the temperature byte's
+   ceiling), and tungsten is layer 3's ore. Putting the two in the same layer is
+   not a coincidence to be tidied up -- it is what makes the deepest layer worth
+   the trip, and what makes it dangerous in the same breath. */
+static const int HOT_MIN_DEP = 2200;   /* cells below the stone line, at least */
 static const int HOT_R       = 46;     /* radius, in cells */
 
 static void generateHotspots(World& w) {
@@ -718,8 +743,13 @@ static void generateHotspots(World& w) {
    Shallower than the hotspot floor, though -- acid does not need to sit next
    to the deepest heat the way tungsten does, and gold, its first real payoff
    material, lives well above HOT_MIN_DEP too. */
-static const int ACID_COUNT = 10;
-static const int ACID_MIN_DEP = 700;
+/* Layer 2's characteristic hazard, so the floor beneath the first barrier is
+   where acid starts. It was 700, which in the taller world with layers is
+   halfway up layer 1 -- the early game would meet a pool of something that
+   dissolves the world before it had a way to contain or cross one. 1300 puts
+   the first pocket just past the first barrier. */
+static const int ACID_COUNT = 14;
+static const int ACID_MIN_DEP = 1150;
 static const int ACID_R = 24;
 
 static void generateAcidPockets(World& w) {
@@ -750,6 +780,66 @@ static void generateAcidPockets(World& w) {
                    exactly how a player should find one. */
                 if (w.at(x, y).mat != MAT_STONE) continue;
                 w.setCell(x, y, MAT_ACID);
+            }
+        }
+    }
+}
+
+/* ==========================================================================
+   The layer barriers
+   ==========================================================================
+
+   Two solid bands of MAT_STRATUM, at LAYER1_DEPTH and LAYER2_DEPTH below the
+   local stone line, sealing one cave layer off from the next.
+
+   Run LAST, after the caves, the ore, the hotspots and the acid, and that order
+   is the whole of the guarantee. Every one of those passes carves or replaces
+   material, so anything laid before them can be cut through -- a cave worm
+   crossing the boundary would open a hole straight to the next layer and there
+   would be no way to notice except by falling through one. Laying the band last
+   means it OVERWRITES whatever crossed it, and the seal is total by
+   construction rather than by every other generator agreeing to respect it.
+
+   It follows the stone line rather than sitting at a fixed y for the same
+   reason the ore bands are quoted that way: the surface wanders about a hundred
+   cells and the mountain a great deal more, so a flat band would surface
+   halfway up a hillside on one seed and sit below its own layer's ore on
+   another. The band undulates with the terrain above it, which also reads far
+   better -- it looks like geology instead of like a floor somebody installed.
+
+   The wobble is fbm on x alone, so the band's thickness varies a little without
+   ever breaking: STRATUM_THICK is a minimum that the noise only ever adds to.
+   A barrier with a thin spot is a barrier with a hole in it as soon as somebody
+   finds the thin spot. */
+static void generateStrata(World& w) {
+    for (int x = PLAY_X0; x <= PLAY_X1; ++x) {
+        for (int band = 0; band < 2; ++band) {
+            const int depth = band == 0 ? LAYER1_DEPTH : LAYER2_DEPTH;
+            /* Two octaves at different scales so the band has both a long roll
+               and a little local roughness, rather than reading as a sine wave
+               somebody stretched across the world. */
+            const float wob = fbm((float)x / 260.0f, 0x5A11u + (u32)band * 977u, 3) * 46.0f
+                            + fbm((float)x / 70.0f,  0xB0C4u + (u32)band * 331u, 2) * 12.0f;
+            const int top = g_stoneY[x] + depth + (int)wob;
+            /* fabsf, and it matters: fbm is signed, so adding it raw made the
+               band THINNER than STRATUM_THICK wherever the noise went negative.
+               Measured before this, the thinnest run was 19 cells against a
+               nominal 24 -- not a hole, but the comment above promises a
+               minimum the code was not keeping, and a barrier's minimum
+               thickness is the only number about it that matters. */
+            const int bot = top + STRATUM_THICK
+                          + (int)(fabsf(fbm((float)x / 120.0f, 0x77E3u + (u32)band, 2)) * 7.0f);
+            for (int y = imax(PLAY_Y0, top); y <= imin(PLAY_Y1, bot); ++y) {
+                /* Unconditional. Not "stone only" like every other underground
+                   pass -- those are looking for somewhere to put something and
+                   should leave caves alone, whereas this one exists precisely
+                   to close whatever is in its way. A cave, an ore vein, a lava
+                   pocket or an acid pocket that reaches the band all get walled
+                   through, which is what makes the seal a guarantee. */
+                w.setCell(x, y, MAT_STRATUM);
+                /* Backed too, so a band crossing an existing cave does not show
+                   that cave's dark through it as if it were a window. */
+                w.setBg(x, y, MAT_STRATUM, false);
             }
         }
     }
@@ -818,6 +908,10 @@ void generateWorld(World& w) {
     generateHotspots(w);
     generateAcidPockets(w);
 
+    /* After every pass that carves or replaces underground material, so the
+       seal cannot be cut by one of them. See generateStrata. */
+    generateStrata(w);
+
     generateTrees(w);
 
     /* --- zones ------------------------------------------------------------
@@ -829,13 +923,30 @@ void generateWorld(World& w) {
        the entire point of zones being labels -- the mountain's summit is 780
        cells above the plains, so no single depth could serve both. */
     for (int cx = 0; cx < CHUNKS_X; ++cx) {
-        int deepest = 0;
+        int deepest = 0, stoneDeepest = 0;
         const int x0 = cx << CHUNK_SHIFT;
-        for (int x = x0; x < x0 + CHUNK && x < SIM_W; ++x)
-            if (g_surfaceY[x] > deepest) deepest = g_surfaceY[x];
+        for (int x = x0; x < x0 + CHUNK && x < SIM_W; ++x) {
+            if (g_surfaceY[x] > deepest)      deepest = g_surfaceY[x];
+            if (g_stoneY[x]   > stoneDeepest) stoneDeepest = g_stoneY[x];
+        }
         const int firstUnder = ((deepest >> CHUNK_SHIFT) + 1);
-        for (int cy = 0; cy < CHUNKS_Y; ++cy)
-            w.zone[cy * CHUNKS_X + cx] = (u8)(cy >= firstUnder ? ZONE_UNDER : ZONE_SKY);
+        /* Which cave layer a chunk belongs to, on the same "entirely below the
+           line" rule the sky/underground split uses -- a chunk straddling a
+           barrier counts as the SHALLOWER layer, so the boundary lands at the
+           lower edge of the barrier's own chunk and a layer never starts in mid
+           air. Measured from the deepest stone line in the chunk's columns, for
+           the same reason the barriers themselves are: the layers have to
+           undulate with the terrain or they do not line up with the rock they
+           are supposed to be dividing. */
+        const int layer2Cy = ((stoneDeepest + LAYER1_DEPTH) >> CHUNK_SHIFT) + 1;
+        const int layer3Cy = ((stoneDeepest + LAYER2_DEPTH) >> CHUNK_SHIFT) + 1;
+        for (int cy = 0; cy < CHUNKS_Y; ++cy) {
+            u8 z = ZONE_SKY;
+            if      (cy >= layer3Cy)  z = ZONE_LAYER3;
+            else if (cy >= layer2Cy)  z = ZONE_LAYER2;
+            else if (cy >= firstUnder) z = ZONE_LAYER1;
+            w.zone[cy * CHUNKS_X + cx] = z;
+        }
     }
 }
 

@@ -559,6 +559,20 @@ extern Player g_player;
    later. */
 bool playerSolid(const World& w, int x, int y, int mode = SOLID_ANY);
 
+/* Is a plain RECTANGULAR box blocked with its top-left at (bx, by)?
+
+   Shares playerSolid() with the character rather than being a second opinion
+   about what "solid" means, which is the whole reason it lives here instead of
+   in entity.cpp. Everything subtle is in that one function -- platforms are
+   floor-only, pipes are walk-through, powder in free fall is not ground -- and
+   a creature that disagreed with the player about any of those would produce
+   bugs that look like physics and are actually two tables drifting apart.
+
+   Rectangular, where the player's own test is tapered: the taper describes one
+   particular silhouette with a pointed head, and nothing else in the game has
+   that shape. See PLAYER_TAPER. */
+bool solidBox(const World& w, int bx, int by, int bw, int bh, int mode = SOLID_ANY);
+
 /* Is any cell of the body touching a climbable one? Published on the Player so
    the HUD and the tests can see it without repeating the scan. */
 bool playerOnClimb(const World& w, const Player& p);
