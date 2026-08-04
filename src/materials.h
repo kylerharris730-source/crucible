@@ -327,6 +327,21 @@ enum MatId {
        bench's business. */
     MAT_STATION_FORGE,
 
+    /* --- the spring ----------------------------------------------------------
+       A rock that makes water, forever, into any empty cell beside it.
+
+       Bounded by the shape of the world rather than by a budget, which is what
+       makes an infinite source safe here: it only ever fills cells that are
+       EMPTY, so it floods its chamber up to its own level and then has nothing
+       left to do and lets its chunk sleep. Drain the pool and it refills. That
+       is the entire mechanism, and it is self-limiting by construction rather
+       than by a counter somebody has to keep correct.
+
+       Deliberately not a device: it has no state, no tick of its own, no facing
+       and no panel, and a cell that answers one question about its neighbours is
+       what a material is for. See the spring rule in world.cpp. */
+    MAT_SPRING,
+
     MAT_COUNT
 };
 

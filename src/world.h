@@ -18,20 +18,29 @@
    live window (see setLiveWindow below). Both of those are hard rules now: any
    new per-frame pass over SIM_W*SIM_H undoes the whole thing. */
 static const int SIM_W = 4096;
-/* 6144, doubled from 3072, and the reason is PACING rather than scale. At the
-   old height the surface sat at y=1200 with about 1870 cells of rock beneath
-   it, which is 62 body heights -- a jetpack reaches the bottom of the world in
-   well under a minute, and the sky ran out about as fast going the other way.
-   Three cave layers cut out of 1870 cells give each layer 620, which is 20 body
-   heights: a "layer" you cross in seconds.
+/* Grown twice, for the same reason both times: PACING, not scale.
 
-   Doubling costs 72 MB of World, and the measurement is what makes that safe
-   rather than the hope in the paragraph above: a settled chunk is free at any
-   size, so the price is address space and not frame time. At 6144 the World is
-   145 MB and the save's scratch plane another 25 MB, against a 32-bit process's
-   2 GB. The things that would NOT survive doubling are the per-frame whole-grid
-   passes, and there are none -- which is exactly what the rule above protects. */
-static const int SIM_H = 6144;
+   3072 -> 6144. The surface sat at y=1200 with about 1870 cells of rock beneath
+   it -- 62 body heights, a jetpack ride of well under a minute -- and the sky
+   ran out about as fast going the other way.
+
+   6144 -> 9216, and this time the growth is ENTIRELY underground: SURFACE_Y
+   moved from SIM_H/2 to SIM_H/3 in the same change so the sky stays at the 3072
+   cells it already had. The sky was not the problem. The layers were: three
+   cave layers cut out of a 3180-cell underground come to about 1050 each, which
+   is thirty-five body heights, and a "layer" you cross in thirty-five body
+   heights reads as a stripe rather than as a place. The underground is now
+   about 6250 cells and each layer roughly 2100.
+
+   The measurement is what makes this safe rather than the hope in the paragraph
+   above: a settled chunk is free at any size, so the price is address space and
+   not frame time. World is 217 MB and the save's scratch plane another 38 MB,
+   against a 32-bit process's 2 GB. That is a third of the budget, though, so
+   the NEXT increase is the one that has to argue for itself rather than lean on
+   this note. The things that would not survive growing are the per-frame
+   whole-grid passes, and there are none -- which is what the rule above
+   protects. */
+static const int SIM_H = 9216;
 
 /* Chunked dirty rectangles. Each chunk remembers the smallest box that had
    anything happen in it, and only that box is simulated next frame. A pile
@@ -264,6 +273,13 @@ static const int FIRE_SPREAD    = 34;  /* chance/255 per frame that a flammable
    in a little over two seconds on average -- long enough to watch it happen,
    short enough that acid is worth carrying. */
 static const int ACID_DISSOLVE_CHANCE = 20;
+
+/* How readily a spring pushes water into an empty neighbour, out of 255. Slow
+   on purpose: a spring that filled at the rate water flows would be a burst
+   pipe rather than a spring, and the pleasure of finding one is watching the
+   pool come back. 12 refills a body of any useful size in a few seconds and
+   still reads as seeping. */
+static const int SPRING_FLOW_CHANCE = 12;
 
 /* Heater and cooler setpoints. These are the extremes of the u8 scale on
    purpose: the heater sits above stone's melting point (220) and so above

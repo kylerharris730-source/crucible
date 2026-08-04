@@ -35,12 +35,18 @@ extern int g_stoneY[SIM_W];
    the plains wander a little either side of it, the mountain rises far above,
    and the underground runs from here to the bottom of the world.
 
-   Moved with SIM_H rather than left alone, and it has to be: this is the single
-   number that splits the world into sky and rock, so doubling the height while
-   leaving it at 1200 would have spent the entire new allowance on underground
-   and none of it on air. Half of SIM_H keeps the proportion the world was tuned
-   at while doubling both halves in absolute terms. */
-static const int SURFACE_Y = SIM_H / 2;
+   A FRACTION of SIM_H rather than a constant, because this is the single number
+   that splits the world into sky and rock and it has to move when the world
+   does -- growing the height while leaving it at 1200 would spend the entire
+   new allowance underground.
+
+   The fraction itself carries the intent, and it changed with the second
+   growth. At SIM_H/2 both halves grew together, which was right when the sky
+   and the underground were each too small. SIM_H/3 of 9216 is 3072 -- exactly
+   what SIM_H/2 of 6144 was -- so the sky is held EXACTLY where it was while the
+   whole of the increase goes below it. The sky had already been fixed; the
+   layers had not. */
+static const int SURFACE_Y = SIM_H / 3;
 
 /* --- the three cave layers -------------------------------------------------
 
@@ -52,19 +58,23 @@ static const int SURFACE_Y = SIM_H / 2;
    on one seed and below the ore on another.
 
    These are MEASURED against the real world rather than derived from SIM_H, and
-   the difference is large enough to matter: the mean stone line sits at y=2962,
-   not at SURFACE_Y, because soil depth and the lake basin both push it down. So
-   the underground is about 3180 cells, not the 3900 that halving the world
-   height would suggest. The first cut of these constants was picked from the
-   optimistic figure and gave layer 3 only 730 cells -- barely a fifth of the
-   underground for the layer that has to hold the endgame.
+   the difference is large enough to matter: the mean stone line sits well below
+   SURFACE_Y because soil depth and the lake basin both push it down. At the
+   previous height that was y=2962 against a SURFACE_Y of 3072, leaving 3180
+   cells of underground rather than the 3900 the arithmetic suggested -- and the
+   first cut of these constants was picked from the optimistic figure and gave
+   layer 3 only 730 cells, barely a fifth of the underground for the layer that
+   has to hold the endgame.
 
-   At 1050 and 2050 the three layers are about 1050, 1000 and 1130 cells: even,
-   and thirty-five body heights each. Anything that changes the surface, the
-   soil depth or the world height has to come back and re-measure, which the
-   layers harness does in one line. */
-static const int LAYER1_DEPTH  = 1050;   /* stone line .. here is layer 1 */
-static const int LAYER2_DEPTH  = 2050;   /* .. and here is layer 2 */
+   Doubled with the world's second growth, which put its entire increase
+   underground (see SURFACE_Y). Three layers of roughly 2100 cells: seventy body
+   heights each, which is a place rather than a stripe.
+
+   Anything that changes the surface, the soil depth or the world height has to
+   come back and re-measure. The layers harness prints the real figure in one
+   line; do not re-derive it from SIM_H. */
+static const int LAYER1_DEPTH  = 2100;   /* stone line .. here is layer 1 */
+static const int LAYER2_DEPTH  = 4100;   /* .. and here is layer 2 */
 /* Thickness of the sealed band between layers. Thick enough that it cannot be
    mistaken for an ordinary vein and cannot be skirted by a cave worm that
    happens to graze it, thin enough that breaking through once you CAN is a

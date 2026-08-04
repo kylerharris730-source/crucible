@@ -715,6 +715,35 @@ void World::updateHeat(int x, int y) {
         }
     }
 
+    /* --- why this wakes unconditionally ---------------------------------
+
+       It looks like waste and it was investigated as such: every cell whose
+       heat is updated re-arms itself for the next frame whether or not a degree
+       moved, so no thermal field in this game ever comes fully to rest. A
+       settled lava pocket costs about 64 chunks a frame indefinitely.
+
+       Two ways of making it conditional were tried and both are wrong.
+
+       A TOLERANCE on the change ("only wake if it moved more than N") is what
+       actually reduces wakefulness -- with N=3 a graphene column over lava went
+       from 24 ms a frame to 9 -- and it stalls slow work. Measured: `cold`
+       failed, because liquid nitrogen chilling an iron bar moves each cell one
+       degree a frame, none re-armed, and the chill stopped twenty cells short.
+       N=4 and N=5 failed harder and took `melt` and `heat` with them.
+
+       A plain "did it change at all" avoids that and breaks something else: a
+       PINNED source has a constant temperature by definition. Lava held at
+       215 C by its molten backdrop never changes, so it would stop waking
+       itself, sleep, and quietly stop heating anything -- `heat` and `lava4`
+       both caught it.
+
+       The real fix is a signal over TIME rather than magnitude, per chunk:
+       accumulate the signed sum of temperature deltas and a count of cells that
+       moved, and treat a chunk with plenty of movement and near-zero net drift
+       as converged. At equilibrium the changes cancel -- total heat drifted
+       0.0037% over 600 frames -- while genuine transfer drifts one way, and a
+       pinned source keeps its neighbours drifting so it never looks converged.
+       Until that exists, this stays unconditional on purpose. */
     dirtyPoint(x, y);
 }
 
@@ -1276,6 +1305,40 @@ void World::updateCell(int x, int y) {
        dissolvable is left touching it, it stops dirtying itself and the
        pool settles down and sleeps like any other liquid -- an idle acid
        pool costs the same as an idle pool of anything else. */
+    /* --- the spring ------------------------------------------------------
+       Makes water into any empty cell beside it, forever.
+
+       Self-limiting by construction, which is the only reason an infinite
+       source is safe: it fills EMPTY cells only, so it floods its chamber up
+       to its own level, runs out of empty neighbours, and stops. Drain the
+       pool and it starts again. There is no budget to keep correct and no
+       counter to get wrong.
+
+       The two subtleties here are both lessons the acid rule paid for.
+
+       It scans for an empty neighbour BEFORE rolling the chance, because
+       rngChance draws from the shared global stream -- rolling once per
+       spring per frame worldwide would shift every other consumer of that
+       stream and make unrelated tests non-deterministic.
+
+       And it only re-dirties itself while it still has somewhere to put
+       water. A spring that dirtied unconditionally would hold its chunk awake
+       forever, which is precisely the "settled chunks cost nothing" property
+       the whole engine is built on. A drowned spring sleeps. */
+    if (c.mat == MAT_SPRING) {
+        bool room = false;
+        for (int k = 0; k < 4; ++k) {
+            const int nx = x + NB_DX[k], ny = y + NB_DY[k];
+            if (cells[ny * SIM_W + nx].mat != MAT_EMPTY) continue;
+            room = true;
+            if (!rngChance(SPRING_FLOW_CHANCE)) continue;
+            spawnCell(nx, ny, MAT_WATER);
+            dirtyPoint(nx, ny);
+            return;
+        }
+        if (room) dirtyPoint(x, y);
+    }
+
     if (c.mat == MAT_ACID) {
         bool moreToDo = false;
         for (int k = 0; k < 4; ++k) {

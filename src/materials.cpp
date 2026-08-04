@@ -816,6 +816,14 @@ MatInfo MATS[MAT_COUNT] = {
      heat-conductive than either bench, because it is a lined furnace and
      standing next to a working one ought to be warm. */
   { "Forge",  KIND_STATIC, 255,   0,    0,   0,   0,   0,  0,   40,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0x6E4A3A, 0x4A2E22, 0x6E4A3A, 0x4A2E22, 0 },
+
+  /* --- the spring ----------------------------------------------------------
+     Wet rock. Reads as a blue-grey seam rather than as a machine, because it
+     is one -- the water it makes is the point, not the block. No phase change
+     at any temperature: a spring you could melt would be a spring with a
+     trivial off switch, and the whole value of one is that it is still there
+     when you come back. */
+  { "Spring", KIND_STATIC, 255,   0,    0,   0,   0,   0,  0,   26,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0x3E6E86, 0x2A4E62, 0x3E6E86, 0x2A4E62, 0 },
 };
 
 u32 g_colorLut[MAT_COUNT * 256];
@@ -976,6 +984,11 @@ static void initStrength() {
     g_matStrength[MAT_STATION_CHEM]     = STR_SOFT;
     g_matStrength[MAT_STATION_ASSEMBLY] = STR_METAL;
     g_matStrength[MAT_STATION_FORGE]    = STR_METAL;
+    /* Breakable, at rock's tier. A spring is a feature of the world you find
+       and use in place, not a machine you relocate -- see g_matDropsAs, which
+       deliberately gives it no drop, so mining one destroys it rather than
+       handing you a portable infinite water supply. */
+    g_matStrength[MAT_SPRING]           = STR_ROCK;
 
     /* Glass is a pane, not a wall -- its whole point is opacity 0, not
        toughness, so it sits with ice and wood rather than with stone. */
@@ -1378,6 +1391,26 @@ static void initSlaking() {
        coal, is what makes steel -- which a furnace already needs lit to
        reach iron's own smelting point in the first place, so nothing new is
        demanded of the player here. */
+    /* --- how you MAKE acid ---------------------------------------------
+       Slag plus water. Until this existed there was no way to make any at
+       all: acid had no recipe and no phase change, so the only sources were
+       natural pockets (which dissolve themselves away) and a creature drop.
+
+       Slag is the right ingredient for two reasons beyond it being spare.
+       It is the WASTE of the entire smelting loop -- the crust you break off
+       every pour and then have nothing to do with -- so the chemical branch
+       of the game is paid for by the metallurgical one. And it is what
+       actually happens: sulphide-bearing mine waste plus water is acid mine
+       drainage, which is the most ordinary industrial acid there is.
+
+       Bounded, because wetInto CONSUMES both sides: one slag and one water
+       make one acid and then the slag is gone. A tailings pile in a pond
+       yields exactly as much acid as it had slag. Note also that slag is
+       deliberately NOT in the DISSOLVES list, so the acid this makes does not
+       eat the pile that is making it. */
+    g_matWetInto[MAT_SLAG] = MAT_ACID;
+    g_matWetBy[MAT_SLAG]   = MAT_WATER;
+
     g_matWetInto[MAT_IRON_MELT] = MAT_STEEL_MELT;
     g_matWetBy[MAT_IRON_MELT]   = MAT_EMBER;
 

@@ -502,7 +502,13 @@ static void generateCaves(World& w) {
        15 taller ones cover less of it while each being a more substantial thing to
        walk into, which is the trade worth making -- what you want underground is
        fewer, better caves rather than a sponge. */
-    const int WORMS = 15;
+    /* Scaled with the world. 15 was chosen against a 3180-cell underground; the
+       underground is 6252 cells now, so the same 15 worms would cover half the
+       fraction of it and the deep would read as solid rock with a few threads
+       through it. 30 restores the density the number was actually picked for --
+       this is not a decision to have more caves, it is the same decision
+       expressed against a world twice as tall. */
+    const int WORMS = 30;
     for (int i = 0; i < WORMS; ++i) {
         const u32 seed = 31u + (u32)i * 6151u;
         const float fx = ((float)i + 0.5f) / (float)WORMS * (float)SIM_W
@@ -518,6 +524,130 @@ static void generateCaves(World& w) {
                         + ((float)(int)(hash1(i, 7717u) % 100u) / 100.0f - 0.5f) * 0.7f;
         carveWorm(w, seed, (float)ix, fy, ang,
                   600 + (int)(hash1(i, 1543u) % 900u), 14.0f, 0);
+    }
+}
+
+/* ==========================================================================
+   Chambers
+   ==========================================================================
+
+   Worms give you tunnels, and only tunnels. Every one of them is the same bore
+   -- CAVE_MIN_R stretched CAVE_TALL -- so however far you walk, the space
+   around you is the same size it was at the entrance, and an underground made
+   entirely of them reads as one corridor with a great many corners.
+
+   What was missing is the moment where the corridor opens out. So: a second
+   pass that carves large, deliberately DIFFERENT SHAPES, independent of the
+   worms and free to intersect them. Some open off a tunnel, some are sealed
+   pockets you break into with no warning, and both are worth having.
+
+   Three kinds rather than one size dial. A single "big cave" knob makes every
+   large space the same space at different volumes, which is the problem this is
+   here to fix rather than a smaller version of it:
+
+     HALL     wide and low. Somewhere you walk ACROSS. The horizon of the room
+              is further away than the ceiling, which no worm ever achieves.
+     SHAFT    narrow and very tall -- the vertical counterpart, and the only
+              natural feature that makes a rope or a jetpack the obvious answer
+              rather than a convenience.
+     ROTUNDA  big and round. The "walk in and stop" room.
+
+   Run BEFORE the ore and before the strata, in that order and for two separate
+   reasons. Before the ore, because a vein only replaces stone, so a chamber cut
+   first has ore showing in its walls rather than floating in its air -- which is
+   how you find a seam. Before the strata, because the barriers overwrite
+   whatever crosses them, so a chamber that strays into one is walled off with no
+   special case here: the seal stays a property of the ordering. */
+
+enum ChamberKind { CH_HALL = 0, CH_SHAFT, CH_ROTUNDA, CH_KINDS };
+
+static const int CHAMBER_COUNT = 26;
+
+/* An ellipse with a wobbled rim. The wobble is a sum of HARMONICS of the angle
+   rather than fbm of it, and that is not a stylistic choice: fbm sampled on
+   atan2 is discontinuous across the +/-pi seam, so every chamber would have a
+   visible crack down one side where the noise jumped. Harmonics are periodic by
+   construction and cannot seam.
+
+   Three of them, at 3 / 5 / 8 cycles with independent phases, so the outline has
+   a big lobed shape, a medium undulation and a fine roughness -- the same
+   three-scale reasoning the surface heightmap uses. */
+static void carveChamber(World& w, u32 seed, int cx, int cy, int rx, int ry) {
+    const float p1 = (float)(hash1(0, seed) % 628u) / 100.0f;
+    const float p2 = (float)(hash1(1, seed) % 628u) / 100.0f;
+    const float p3 = (float)(hash1(2, seed) % 628u) / 100.0f;
+    const int pad = 1 + (rx > ry ? rx : ry) / 3;
+    const int x0 = imax(PLAY_X0, cx - rx - pad), x1 = imin(PLAY_X1, cx + rx + pad);
+    const int y0 = imax(PLAY_Y0, cy - ry - pad), y1 = imin(PLAY_Y1, cy + ry + pad);
+    for (int y = y0; y <= y1; ++y) {
+        const float ny = (float)(y - cy) / (float)ry;
+        for (int x = x0; x <= x1; ++x) {
+            const float nx = (float)(x - cx) / (float)rx;
+            const float d2 = nx * nx + ny * ny;
+            if (d2 > 2.0f) continue;              /* cheap reject before the trig */
+            const float d = sqrtf(d2);
+            if (d < 0.0001f) { w.setCell(x, y, MAT_EMPTY); continue; }
+            const float a = atan2f(ny, nx);
+            const float wob = 1.0f + 0.13f * sinf(3.0f * a + p1)
+                                   + 0.08f * sinf(5.0f * a + p2)
+                                   + 0.05f * sinf(8.0f * a + p3);
+            if (d > wob) continue;
+            w.setCell(x, y, MAT_EMPTY);
+        }
+    }
+}
+
+static void generateChambers(World& w) {
+    for (int i = 0; i < CHAMBER_COUNT; ++i) {
+        const u32 seed = 0xC4A3u + (u32)i * 7919u;
+
+        /* Spread by index across the world and jittered, the same way the worms
+           and the ore veins are: even coverage with no rejection sampling. */
+        const float fx = ((float)i + 0.5f) / (float)CHAMBER_COUNT * (float)SIM_W
+                       + (float)(int)(hash1(i, 6113u) % 400u) - 200.0f;
+        const int cx = imin(PLAY_X1 - 200, imax(PLAY_X0 + 200, (int)fx));
+
+        const int kind = (int)(hash1(i, 991u) % (u32)CH_KINDS);
+
+        /* Depth first, because the SIZE depends on it. Never in the soil, and
+           clear of the roof for the same reason the worms are -- a chamber that
+           breaches the surface is a crater, and one with a soil ceiling caves in
+           the first time the world is simulated. */
+        const int top  = g_stoneY[cx] + CAVE_ROCK + 300;
+        const int span = imax(1, (CAVE_FLOOR_Y - 300) - top);
+        const int cy   = top + (int)(hash1(i, 4231u) % (u32)span);
+
+        /* Deeper chambers are bigger. One multiplier, and it is doing real work:
+           it is what makes the bottom of the world feel unlike the top by
+           something other than the colour of the backdrop. The deep should be
+           where the ceiling goes out of sight. */
+        const int depth = cy - g_stoneY[cx];
+        const float grow = 1.0f + 0.55f * (float)depth / (float)(LAYER2_DEPTH + 2000);
+
+        int rx, ry;
+        switch (kind) {
+        case CH_HALL:
+            rx = (int)((110 + (int)(hash1(i, 55u) % 70u)) * grow);
+            ry = (int)((float)rx * 0.34f);
+            break;
+        case CH_SHAFT:
+            rx = (int)((26 + (int)(hash1(i, 77u) % 18u)) * grow);
+            ry = (int)((float)rx * 3.6f);
+            break;
+        default: /* CH_ROTUNDA */
+            rx = (int)((70 + (int)(hash1(i, 99u) % 40u)) * grow);
+            ry = (int)((float)rx * 1.15f);
+            break;
+        }
+
+        /* Clamp so the shape cannot reach the soil or the world's floor. A tall
+           shaft is the one that will actually hit this. */
+        const int roof = g_stoneY[cx] + CAVE_ROCK;
+        if (cy - ry < roof)          ry = cy - roof;
+        if (cy + ry > CAVE_FLOOR_Y)  ry = CAVE_FLOOR_Y - cy;
+        if (rx < 12 || ry < 12) continue;
+
+        carveChamber(w, seed, cx, cy, rx, ry);
     }
 }
 
@@ -598,32 +728,32 @@ static void generateOre(World& w) {
        than the two arriving together. */
     struct OreBand { u8 mat; int veins; int fromStone; int toStone; float r; u32 salt; };
     static const OreBand BANDS[] = {
-        { MAT_COPPER_ORE, 90,   40,  950, 5.0f, 0x1234u },
-        { MAT_IRON_ORE,   70,  240, 1000, 4.6f, 0x9ABCu },
+        { MAT_COPPER_ORE,140,   80, 1900, 5.0f, 0x1234u },
+        { MAT_IRON_ORE,  110,  480, 2000, 4.6f, 0x9ABCu },
         /* Coal. Shallower and more common than either metal, because it is the
            thing you need FIRST and in bulk -- a fuel you have to go as deep for as
            the iron it is meant to smelt would defeat the point of the ladder.
            Fatter veins too: coal comes in seams. */
-        { MAT_COAL,      110,   60,  980, 6.0f, 0x5E7Du },
+        { MAT_COAL,      170,  120, 1960, 6.0f, 0x5E7Du },
         /* Tin sits right beside copper, shallower than iron -- it exists to be
            alloyed into bronze and the whole point is that both halves of that
            alloy should be reachable at the same time you first go looking for
            metal at all. Nearly as plentiful as copper for the same reason. */
-        { MAT_TIN_ORE,    80,   30,  920, 4.4f, 0x2A6Fu },
+        { MAT_TIN_ORE,   125,   60, 1840, 4.4f, 0x2A6Fu },
         /* Gold: rare and in SMALL pockets rather than long veins -- a lower
            radius, not just fewer of them, so finding one reads as a nugget
            rather than a thin smear of ordinary ore. Deeper than either early
            metal, because it answers "copper corrodes here, now what" and that
            question should not arrive before the corrosion does. */
-        { MAT_GOLD_ORE,   30, 1150, 1950, 3.0f, 0x77E1u },
+        { MAT_GOLD_ORE,   48, 2300, 3900, 3.0f, 0x77E1u },
         /* Titanium: past iron, sharing the depth band tungsten and the
            hotspots start in -- the smelting note on its MATS row explains why
            that overlap is deliberate rather than incidental. */
-        { MAT_TITANIUM_ORE, 48, 1250, 1980, 4.0f, 0xB4A2u },
+        { MAT_TITANIUM_ORE, 76, 2500, 3960, 4.0f, 0xB4A2u },
         /* Tungsten: the deepest ore in the game and sparse to match, sitting
            right where HOT_MIN_DEP begins -- see the note on its MATS row for
            why that proximity to the hotspots is the point, not a coincidence. */
-        { MAT_TUNGSTEN_ORE, 26, 2200, 3050, 3.4f, 0xF00Du },
+        { MAT_TUNGSTEN_ORE, 42, 4400, 6100, 3.4f, 0xF00Du },
     };
     for (int b = 0; b < (int)(sizeof(BANDS) / sizeof(BANDS[0])); ++b) {
         const OreBand& ob = BANDS[b];
@@ -674,13 +804,25 @@ static void generateOre(World& w) {
    past everything else you have to go to reach one. At 1300 they sit in the
    bottom quarter, below every ore vein and every cave, and getting to one is a
    trip you outfit for rather than something that happens on the way past. */
-static const int HOT_COUNT   = 20;     /* blobs in the whole world */
+static const int HOT_COUNT   = 32;     /* blobs in the whole world */
 /* Layer 3's characteristic hazard, and the reason to go there: lava is the only
    thing hot enough to smelt tungsten (213 C, two below the temperature byte's
    ceiling), and tungsten is layer 3's ore. Putting the two in the same layer is
    not a coincidence to be tidied up -- it is what makes the deepest layer worth
    the trip, and what makes it dangerous in the same breath. */
-static const int HOT_MIN_DEP = 2200;   /* cells below the stone line, at least */
+/* Layer 2, not layer 3. Lava was the deepest thing in the game on the reasoning
+   that it is the hottest, and that made the single most striking material in the
+   simulation something you meet only after two barriers. Starting it just past
+   the FIRST barrier means the difficulty step into layer 2 is announced by
+   something you can see glowing, and the deep half of the world still gets the
+   bulk of it -- placement runs from this depth to the floor, so hotspots spread
+   across layers 2 and 3 rather than clustering at the top of the range.
+
+   The knock-on is deliberate: lava is the only thing hot enough to smelt
+   tungsten (213 C), so tungsten becomes smeltable as soon as you can carry it
+   up from layer 3 rather than requiring a second trip. That is a fair trade for
+   lava arriving while it can still frighten you. */
+static const int HOT_MIN_DEP = 2300;   /* cells below the stone line, at least */
 static const int HOT_R       = 46;     /* radius, in cells */
 
 static void generateHotspots(World& w) {
@@ -748,8 +890,8 @@ static void generateHotspots(World& w) {
    halfway up layer 1 -- the early game would meet a pool of something that
    dissolves the world before it had a way to contain or cross one. 1300 puts
    the first pocket just past the first barrier. */
-static const int ACID_COUNT = 14;
-static const int ACID_MIN_DEP = 1150;
+static const int ACID_COUNT = 22;
+static const int ACID_MIN_DEP = 2300;
 static const int ACID_R = 24;
 
 static void generateAcidPockets(World& w) {
@@ -779,7 +921,144 @@ static void generateAcidPockets(World& w) {
                    is left showing in a cave wall it happens to cross is
                    exactly how a player should find one. */
                 if (w.at(x, y).mat != MAT_STONE) continue;
+                /* --- the vessel -------------------------------------------
+                   A shell of GLASS between the acid and the rock, and then the
+                   acid inside it.
+
+                   Without this a natural pocket destroys itself. Acid is
+                   generated inside stone, stone is dissolvable, and the acid
+                   rule spends a cell of acid for every cell of wall it eats --
+                   so a fresh pocket immediately begins consuming its own rim
+                   and, some thousands of frames later, there is a slightly
+                   larger cavity and no acid in it. The player who finally digs
+                   down to one finds a hole.
+
+                   Glass is what the game already uses for containment (it is
+                   the reason glass comes before acid at all -- see
+                   MAT_GLASS_MELT), it is absent from the DISSOLVES list, and it
+                   is transparent, so a lined pocket is a thing you can SEE the
+                   contents of through the wall of. Physically it is a fiction;
+                   as a game object it is a bottle, and a bottle is exactly what
+                   a pool of acid that is still there in an hour has to be. */
+                const float lining = rr * 0.86f;
+                if ((float)d2 > lining * lining) { w.setCell(x, y, MAT_GLASS); continue; }
                 w.setCell(x, y, MAT_ACID);
+            }
+        }
+
+        /* --- seal it properly -------------------------------------------
+           The radial pass above lays glass in the shell between `lining` and
+           `rr`, which is a bottle only where the surrounding cell was STONE.
+           It is not one anywhere a cave or a chamber had already cut the rock
+           away: those cells are skipped by the stone-only test, so the shell
+           has a hole in it exactly where the pocket meets open space, and the
+           acid pours out and dissolves its way onward.
+
+           Measured with the radial pass alone: a pocket went from 556 cells to
+           ZERO in 6,000 frames. The lining looked right and was not closed.
+
+           So the shell is finished by CONSTRUCTION rather than by geometry --
+           walk the region and glass over every non-acid cell touching an acid
+           one, whatever it happens to be. Reading "is acid" from the world
+           while only ever writing glass into cells that are not acid means
+           this is safe in a single pass. */
+        const int sr = ACID_R * 2;
+        for (int y = cy - sr; y <= cy + sr; ++y) {
+            if (y < PLAY_Y0 + 1 || y > PLAY_Y1 - 1) continue;
+            for (int x = cx - sr; x <= cx + sr; ++x) {
+                if (x < PLAY_X0 + 1 || x > PLAY_X1 - 1) continue;
+                if (w.at(x, y).mat != MAT_ACID) continue;
+                for (int oy = -1; oy <= 1; ++oy)
+                    for (int ox = -1; ox <= 1; ++ox) {
+                        if (!ox && !oy) continue;
+                        const u8 nm = w.at(x + ox, y + oy).mat;
+                        if (nm == MAT_ACID || nm == MAT_GLASS) continue;
+                        w.setCell(x + ox, y + oy, MAT_GLASS);
+                    }
+            }
+        }
+
+        /* --- and a halo of slag ---------------------------------------------
+           Because slag plus water IS acid (see g_matWetInto[MAT_SLAG]), and a
+           player who has just dug through a seam of slag to reach a pocket of
+           acid has been shown the recipe rather than told it. The natural
+           deposit and the manufacturing route are the same chemistry, so they
+           should be found in the same place.
+
+           Outside the glass, in the rock, and sparse -- a scatter you notice
+           rather than a second shell. */
+        const int hr = ACID_R * 2;
+        for (int y = cy - hr; y <= cy + hr; ++y) {
+            if (y < PLAY_Y0 || y > PLAY_Y1) continue;
+            for (int x = cx - hr; x <= cx + hr; ++x) {
+                if (x < PLAY_X0 || x > PLAY_X1) continue;
+                const int dx = x - cx, dy = y - cy;
+                const int d2 = dx * dx + dy * dy;
+                if (d2 > hr * hr) continue;
+                if (w.at(x, y).mat != MAT_STONE) continue;
+                if (fbm((float)(dx * 3 + dy) / 9.0f, 0x5AA6u + (u32)i, 2) < 0.42f) continue;
+                w.setCell(x, y, MAT_SLAG);
+            }
+        }
+    }
+}
+
+/* ==========================================================================
+   Springs
+   ==========================================================================
+
+   Rock that makes water, in layer 1, marked by a blue backdrop.
+
+   Shallow deliberately: water is a first-hour material, it is half of the fuel
+   step (coal plus steam), and the only source until now was one lake on the
+   surface. A player who has dug in and does not want to walk all the way back
+   up for a bucket is exactly who this is for.
+
+   The blue is the BACKGROUND layer doing what it is for. Painting water-coloured
+   backdrop around the seam marks the place without putting anything in the way,
+   and it costs no new mechanism at all -- the renderer already draws bg, and the
+   simulation already ignores it. */
+static const int SPRING_COUNT  = 14;
+static const int SPRING_MIN_DEP = 120;   /* below the stone line, so never in soil */
+static const int SPRING_R      = 7;      /* the seam itself: small */
+static const int SPRING_HALO   = 26;     /* how far the blue reaches */
+
+static void generateSprings(World& w) {
+    for (int i = 0; i < SPRING_COUNT; ++i) {
+        const float fx = ((float)i + 0.5f) / (float)SPRING_COUNT * (float)SIM_W
+                       + (float)(int)(hash1(i, 0x5B09u) % 300u) - 150.0f;
+        const int cx = imin(PLAY_X1 - 60, imax(PLAY_X0 + 60, (int)fx));
+        /* Layer 1 only, and clear of both the soil above and the barrier below. */
+        const int top  = g_stoneY[cx] + SPRING_MIN_DEP;
+        const int span = imax(1, LAYER1_DEPTH - SPRING_MIN_DEP - 200);
+        const int cy   = top + (int)(hash1(i, 0x9E11u) % (u32)span);
+        if (cy < PLAY_Y0 + 40 || cy > PLAY_Y1 - 40) continue;
+
+        /* The blue halo first, so the seam is drawn over the top of it. Only
+           behind rock and air -- never over somebody's future room, and never
+           replacing a backdrop that is already there. */
+        for (int y = cy - SPRING_HALO; y <= cy + SPRING_HALO; ++y) {
+            if (y < PLAY_Y0 || y > PLAY_Y1) continue;
+            for (int x = cx - SPRING_HALO; x <= cx + SPRING_HALO; ++x) {
+                if (x < PLAY_X0 || x > PLAY_X1) continue;
+                const int dx = x - cx, dy = y - cy;
+                if (dx * dx + dy * dy > SPRING_HALO * SPRING_HALO) continue;
+                const float wob = 1.0f + fbm((float)(dx + dy * 2) / 11.0f, 0x5B10u + (u32)i, 3) * 0.4f;
+                if ((float)(dx * dx + dy * dy) > (float)(SPRING_HALO * SPRING_HALO) * wob * 0.6f) continue;
+                w.setBg(x, y, MAT_WATER, false);
+            }
+        }
+
+        /* The seam. Stone only, so a spring never generates hanging in the air
+           of a cave the worms already cut -- what you want is a wet WALL. */
+        for (int y = cy - SPRING_R; y <= cy + SPRING_R; ++y) {
+            if (y < PLAY_Y0 || y > PLAY_Y1) continue;
+            for (int x = cx - SPRING_R; x <= cx + SPRING_R; ++x) {
+                if (x < PLAY_X0 || x > PLAY_X1) continue;
+                const int dx = x - cx, dy = y - cy;
+                if (dx * dx + dy * dy > SPRING_R * SPRING_R) continue;
+                if (w.at(x, y).mat != MAT_STONE) continue;
+                w.setCell(x, y, MAT_SPRING);
             }
         }
     }
@@ -897,6 +1176,9 @@ void generateWorld(World& w) {
        much roof to leave, so this cannot run earlier. Before the zone pass only
        by convention: zones depend on the heightmap, which caves do not change. */
     generateCaves(w);
+    /* Large open shapes, after the tunnels so they can open onto them and
+       before the ore so that ore shows in their walls. See generateChambers. */
+    generateChambers(w);
     /* Ore AFTER caves, and the order is the whole reason veins work: carveVein
        only replaces stone, so by running second a vein that crosses a tunnel
        leaves the tunnel open and the ore showing in its wall. Reversed, caves
@@ -907,6 +1189,9 @@ void generateWorld(World& w) {
        anything caves or veins already claimed. */
     generateHotspots(w);
     generateAcidPockets(w);
+    /* After the pockets, because both write into stone and a spring has no
+       business appearing inside somebody's acid bottle. */
+    generateSprings(w);
 
     /* After every pass that carves or replaces underground material, so the
        seal cannot be cut by one of them. See generateStrata. */
