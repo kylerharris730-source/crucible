@@ -188,6 +188,36 @@ static const int WICK_UP_SHIFT   = 2;
 static const int AMBIENT_TEMP   = degC(20);
 static const int HEAT_MIN_DIFF  = 2;   /* below this no conduction happens, so
                                           the field can actually reach rest */
+/* How many points along a long-range conduction run get checked before the hop
+   is taken. See the fast path in updateHeat.
+
+   This is a SPEED-FOR-REALISM dial and the trade was measured before it was
+   picked. On a 160-wide graphene column standing in lava, with the camera on
+   the junction -- the case that provoked all of this at 30fps:
+
+     probes  spacing   sim      total    fps   what a graphene run jumps
+       4       7      12.71    17.5 ms   57    gaps up to 6 cells
+       7       4      15.84    20.6 ms   48    gaps up to 3 cells
+      14       2      21.51    26.3 ms   38    1-cell gaps, about half of them
+      28       1      31.24    36.0 ms   28    nothing -- and SLOWER than walking
+
+   That last row is worth keeping: probing every cell is strictly worse than the
+   walk it replaces, because it pays for the probe loop and then walks anyway.
+   The fast path only earns its place while it is genuinely coarse.
+
+   Four, chosen deliberately. The cost is real and specific: a graphene run
+   hops over an insulating gap narrower than seven cells, so a thin ceramic
+   liner between two graphene sheets less than 28 cells apart stops holding
+   heat back. Thicker walls behave correctly, and so does anything sitting
+   directly against the conductor, which the immediate-neighbour pass handles
+   exactly and this never touches.
+
+   Note what is NOT affected. The probe spacing is spread/SPREAD_PROBES, so
+   copper (spread 5) gets a spacing of 1 and iron (spread 2) a spacing of 0 --
+   both exact. Only graphene is coarse enough to leak, which is the one material
+   whose entire character is conducting further than seems reasonable. */
+static const int SPREAD_PROBES = 4;
+
 static const int AIR_COOL       = 20;  /* chance/255 per frame that an AIR cell
                                           steps one degree toward ambient -- the
                                           main way heat leaves the scene, as if

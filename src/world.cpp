@@ -644,6 +644,42 @@ void World::updateHeat(int x, int y) {
     if (spread >= 2) {
         for (int k = 0; k < 4; ++k) {
             const int dx = NB_DX[k], dy = NB_DY[k];
+
+            /* --- the fast path: probe, do not walk -------------------------
+               The walk below exists for one reason -- to find where the
+               conductive run ends -- and in the INTERIOR of a solid block the
+               answer is always "the full distance". Walking every cell to
+               rediscover that is what makes graphene expensive: at spread 28
+               it is 112 steps per cell per frame, and two of the four
+               directions stride SIM_W, so most of those steps are a cache miss.
+
+               So sample a few points along the run instead of every one. If
+               they are all conductive, take the full hop; if any is not, fall
+               through to the exact walk. Boundaries are a small fraction of any
+               blob worth worrying about, so the expensive path is rare.
+
+               This is an APPROXIMATION and the failure is worth stating: an
+               insulating barrier thinner than the gap between probes can be
+               jumped, so heat crosses it as if it were not there. With probes
+               at quarters of a 28-cell span the widest thing that can hide is
+               six cells. Anything a player builds as insulation is either
+               thicker than that or is up against the conductor, where the
+               immediate-neighbour pass sees it regardless. */
+            const int fxFull = x + dx * spread, fyFull = y + dy * spread;
+            bool clear = fxFull >= 0 && fxFull < SIM_W && fyFull >= 0 && fyFull < SIM_H;
+            if (clear) {
+                for (int q = 1; q <= SPREAD_PROBES && clear; ++q) {
+                    const int t = spread * q / SPREAD_PROBES;
+                    const int px = x + dx * t, py = y + dy * t;
+                    if (MATS[cells[py * SIM_W + px].mat].heatSpread == 0) clear = false;
+                }
+            }
+            if (clear) {
+                if (spread > 1) heatPair(i, fxFull, fyFull);
+                continue;
+            }
+
+            /* --- the exact walk, for cells at a boundary ------------------- */
             int cx = x, cy = y, fx = -1, fy = -1;
             for (int s = 0; s < spread; ++s) {
                 cx += dx; cy += dy;
