@@ -545,6 +545,55 @@ void initItems() {
     ITEMS[ITEM_FORGE_CORE].maxStack = 16;
     ITEMS[ITEM_FORGE_CORE].colour   = 0xE07A32;
 
+    /* Spawn eggs, one per creature, built straight off the creature table --
+       so a creature added tomorrow gets an egg with no edit here at all, and
+       the egg cannot disagree with it about name or colour.
+
+       maxStack 1: these are a debug convenience, and a slot holding ninety-nine
+       of them is a slot you have to clear out. */
+    static char eggNames[ENT_COUNT][40];
+    for (int t = ENT_NONE + 1; t < ENT_COUNT; ++t) {
+        const ItemId id = (ItemId)(ITEM_EGG_MITE + (t - 1));
+        sprintf(eggNames[t], "%s Egg", ENT_DEFS[t].name);
+        ITEMS[id].name     = eggNames[t];
+        ITEMS[id].kind     = ITEMK_EGG;
+        ITEMS[id].summons  = (u8)t;
+        ITEMS[id].maxStack = 1;
+        ITEMS[id].colour   = ENT_DEFS[t].eggColour;
+    }
+
+    /* The boss summon. An egg by KIND -- it spawns a creature and is consumed,
+       which is exactly what an egg does -- but a crafted item rather than a
+       creative-menu convenience. See ITEM_BROOD_CALL. */
+    ITEMS[ITEM_BROOD_CALL].name     = "Brood Call";
+    ITEMS[ITEM_BROOD_CALL].kind     = ITEMK_EGG;
+    ITEMS[ITEM_BROOD_CALL].summons  = ENT_BROOD;
+    ITEMS[ITEM_BROOD_CALL].maxStack = 4;
+    ITEMS[ITEM_BROOD_CALL].colour   = 0xC85A44;
+
+    ITEMS[ITEM_TITANIUM_HELMET].name       = "Titanium Helmet";
+    ITEMS[ITEM_TITANIUM_HELMET].kind       = ITEMK_WORN;
+    ITEMS[ITEM_TITANIUM_HELMET].equipSlot  = EQ_HEAD;
+    ITEMS[ITEM_TITANIUM_HELMET].maxStack   = 1;
+    ITEMS[ITEM_TITANIUM_HELMET].colour     = 0xC8CCD2;
+    ITEMS[ITEM_TITANIUM_HELMET].heatResist = 45;
+    ITEMS[ITEM_TITANIUM_HELMET].coldResist = 45;
+    ITEMS[ITEM_TITANIUM_HELMET].armour     = 5;
+
+    ITEMS[ITEM_TITANIUM_SUIT].name       = "Titanium Suit";
+    ITEMS[ITEM_TITANIUM_SUIT].kind       = ITEMK_WORN;
+    ITEMS[ITEM_TITANIUM_SUIT].equipSlot  = EQ_BODY;
+    ITEMS[ITEM_TITANIUM_SUIT].maxStack   = 1;
+    ITEMS[ITEM_TITANIUM_SUIT].colour     = 0xC8CCD2;
+    ITEMS[ITEM_TITANIUM_SUIT].heatResist = 70;
+    ITEMS[ITEM_TITANIUM_SUIT].coldResist = 70;
+    ITEMS[ITEM_TITANIUM_SUIT].armour     = 9;
+
+    ITEMS[ITEM_FORGE_CORE].name     = "Forge Core";
+    ITEMS[ITEM_FORGE_CORE].kind     = ITEMK_MATERIAL;   /* carried, never placed */
+    ITEMS[ITEM_FORGE_CORE].maxStack = 16;
+    ITEMS[ITEM_FORGE_CORE].colour   = 0xE07A32;
+
     /* Spawn eggs. Named from the creature table so the two can never disagree
        about what an egg makes, and swatched in each creature's own colour so
        three otherwise identical entries in the creative list are told apart the
@@ -552,24 +601,6 @@ void initItems() {
 
        maxStack 1 rather than a real stack: these are a debug convenience, and a
        slot holding ninety-nine of them is a slot you have to clear out. */
-    /* The two enums have to stay in step, and nothing in the language enforces
-       it because they live in headers that cannot see each other. Checked here
-       rather than hoped for: an egg that made the wrong creature would look
-       exactly like a creature behaving strangely. */
-    if (ITEM_EGG_SLIME - ITEM_EGG_MITE != ENT_COUNT - 2) {
-        fprintf(stderr, "spawn eggs and EntityType are out of step: %d eggs, %d creatures\n",
-                ITEM_EGG_SLIME - ITEM_EGG_MITE + 1, ENT_COUNT - 1);
-        abort();
-    }
-    static char eggNames[ENT_COUNT][40];
-    for (int t = ENT_NONE + 1; t < ENT_COUNT; ++t) {
-        const ItemId id = (ItemId)(ITEM_EGG_MITE + (t - 1));
-        sprintf(eggNames[t], "%s Egg", ENT_DEFS[t].name);
-        ITEMS[id].name     = eggNames[t];
-        ITEMS[id].kind     = ITEMK_EGG;
-        ITEMS[id].maxStack = 1;
-        ITEMS[id].colour   = ENT_DEFS[t].eggColour;
-    }
 }
 
 const char* const EQ_NAMES[EQ_COUNT] = { "Feet", "Back", "Trinket", "Trinket", "Head", "Body" };

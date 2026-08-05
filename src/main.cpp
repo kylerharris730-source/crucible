@@ -1905,7 +1905,7 @@ static void applyBrush() {
     if (g_playerOn && g_lmb && !g_rmb && !g_bgLayer
         && !g_inv.held().empty() && ITEMS[g_inv.held().item].kind == ITEMK_EGG) {
         if (!g_eggLatch) {
-            const int type = eggEntityType(g_inv.held().item);
+            const int type = ITEMS[g_inv.held().item].summons;
             if (type && entSpawn(g_world, type, (float)aim.x, (float)aim.y) >= 0)
                 g_inv.take(g_inv.held().item, 1);
             g_eggLatch = true;

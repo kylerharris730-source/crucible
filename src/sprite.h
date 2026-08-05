@@ -78,6 +78,15 @@ enum SpriteId {
     SPR_MITE,
     SPR_MOTH,
     SPR_SLIME,
+    SPR_HUSK,
+    SPR_BAT,
+    SPR_SPITTER,
+    /* The boss. Drawn from the same 14x14 canvas as everything else and then
+       SCALED UP by its collision box -- see entDraw -- rather than given a
+       larger grid of its own. Fourteen pixels of shape blown up to 34 cells
+       reads as a big creature, and a second canvas size would mean a second set
+       of art conventions for one sprite. */
+    SPR_BROOD,
     SPR_COUNT
 };
 

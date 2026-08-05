@@ -26,6 +26,14 @@ struct Projectile {
        about the state of something else, later. See ItemDef::damage for why
        this is not derived from `power`. */
     i32   damage;
+    /* Whose shot this is. A player's shot hurts creatures and passes through
+       the character; a creature's shot does exactly the opposite.
+
+       One bit rather than two projectile systems, because everything else about
+       a shot -- how it flies, what it breaks, what it drops on impact -- is
+       identical whoever fired it, and a second system would be a second place
+       for that behaviour to drift. */
+    bool  hostile;
     i32   pierce;    /* cells it can still destroy before it is spent */
     i32   life;      /* frames remaining */
     i32   blast;     /* explosion radius on impact; 0 for an ordinary shot */
@@ -59,7 +67,7 @@ void projClear();
    as it would if a player had placed the material by hand. */
 void projSpawn(float x, float y, float vx, float vy,
                int power, int pierce, int life, u32 colour, int blast = 0,
-               int payload = MAT_EMPTY, int damage = 0);
+               int payload = MAT_EMPTY, int damage = 0, bool hostile = false);
 
 /* Blows a hole, sets fire to the middle of it and heats the lot. Exposed
    because an explosion is a world event rather than a projectile one -- the

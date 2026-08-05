@@ -824,6 +824,15 @@ MatInfo MATS[MAT_COUNT] = {
      trivial off switch, and the whole value of one is that it is still there
      when you come back. */
   { "Spring", KIND_STATIC, 255,   0,    0,   0,   0,   0,  0,   26,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0x3E6E86, 0x2A4E62, 0x3E6E86, 0x2A4E62, 0 },
+
+  /* --- chitin --------------------------------------------------------------
+     A POWDER, so a pile of it behaves like the heap of shell it is rather than
+     like masonry -- and so a drop that lands on a slope slides down to where
+     you can reach it instead of perching. Burns, because it is organic and a
+     player who tips it into a fire should not be surprised by it surviving.
+     Light: density 90 puts it under sand, so it settles on top of anything
+     mineral rather than sinking through a heap. */
+  { "Chitin", KIND_POWDER,  90,  70,   40,   0,   0,   0,  0,   14,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY, degC(120), MAT_FIRE, 0,  0x9A7A4E, 0x6E5434, 0x9A7A4E, 0x6E5434, 0 },
 };
 
 u32 g_colorLut[MAT_COUNT * 256];
@@ -989,6 +998,8 @@ static void initStrength() {
        deliberately gives it no drop, so mining one destroys it rather than
        handing you a portable infinite water supply. */
     g_matStrength[MAT_SPRING]           = STR_ROCK;
+    /* Loose, like the other powders -- the starting shot clears it. */
+    g_matStrength[MAT_CHITIN]           = STR_LOOSE;
 
     /* Glass is a pane, not a wall -- its whole point is opacity 0, not
        toughness, so it sits with ice and wood rather than with stone. */

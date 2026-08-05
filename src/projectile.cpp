@@ -1,5 +1,6 @@
 #include "projectile.h"
 #include "entity.h"
+#include "item.h"
 #include "item.h"     /* the nearest-first disc table, for explosions */
 #include "render.h"   /* VIEW_CELLS_W/H */
 #include <math.h>
@@ -73,14 +74,14 @@ void projClear() {
 
 void projSpawn(float x, float y, float vx, float vy,
                int power, int pierce, int life, u32 colour, int blast,
-               int payload, int damage) {
+               int payload, int damage, bool hostile) {
     for (int i = 0; i < MAX_PROJ; ++i) {
         if (g_proj[i].alive) continue;
         Projectile& p = g_proj[i];
         p.x = x; p.y = y; p.vx = vx; p.vy = vy;
         p.power = power; p.pierce = pierce; p.life = life; p.blast = blast;
         p.colour = colour; p.payload = (u8)payload; p.damage = damage;
-        p.alive = true;
+        p.hostile = hostile; p.alive = true;
         return;
     }
     /* Full: drop it. Silently, because the alternative -- replacing the oldest
@@ -166,10 +167,28 @@ int projUpdate(World& w) {
                spends itself on a body rather than passing through -- which is
                also what stops a single pierce-10 shot from killing a whole
                line of them at once. */
-            if (p.damage > 0 && entDamageAt(cx, cy, p.damage)) {
-                p.alive = false; blocked = true;
-                dropX = px_; dropY = py_;
-                break;
+            if (p.damage > 0) {
+                if (!p.hostile) {
+                    if (entDamageAt(cx, cy, p.damage)) {
+                        p.alive = false; blocked = true;
+                        dropX = px_; dropY = py_;
+                        break;
+                    }
+                } else if (g_player.alive
+                           && cx >= g_player.left() && cx <= g_player.right()
+                           && cy >= g_player.top()  && cy <= g_player.bottom()) {
+                    /* Armour applies here for the same reason it does to a
+                       creature's touch: this is the only other way the player
+                       takes damage from something alive, and a resistance that
+                       covered one and not the other would be a resistance
+                       nobody could reason about. */
+                    const int dmg = imax(1, p.damage - g_inv.armour());
+                    g_player.damage((float)dmg);
+                    g_player.hurtFlash = 10;
+                    p.alive = false; blocked = true;
+                    dropX = px_; dropY = py_;
+                    break;
+                }
             }
 
             const u8 m = w.at(cx, cy).mat;
@@ -214,7 +233,8 @@ int projUpdate(World& w) {
                touch on its way in. An explosion that damaged one creature
                would be strictly worse than the ordinary shot it costs 24 extra
                frames of delay to fire. */
-            if (p.damage > 0) entDamageDisc((int)p.x, (int)p.y, p.blast, p.damage);
+            if (p.damage > 0 && !p.hostile)
+                entDamageDisc((int)p.x, (int)p.y, p.blast, p.damage);
             ++projExplosionsThisFrame;
         }
 

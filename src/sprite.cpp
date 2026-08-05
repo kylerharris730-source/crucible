@@ -104,6 +104,36 @@ static u32 paletteOf(char c) {
     case 'C': return 0x466A26;     /* slime: shade, and the drips */
     case 'Z': return 0xA8D866;     /* slime: highlight along the top */
 
+    /* --- the Terraria half ------------------------------------------------
+       Four more creatures. The letters are picked from what was actually LEFT
+       rather than from what would read nicely, which is why there are digits in
+       here: this palette is one switch over a char, so a duplicate case is a
+       compile error, and every obvious letter was already spoken for. Used
+       elsewhere and unavailable: T S G H J R B K L W w V v U u P O g 1-4 k p q
+       n m f e c y z A D d E F i l a b h j x M N X Y Q C Z. */
+    /* Husk: drained greyish-green, the only humanoid down here. */
+    case 'o': return 0x6E7A52;     /* husk: hide */
+    case 'r': return 0x4E5838;     /* husk: shade and hollows */
+    case 's': return 0x8E9A6E;     /* husk: lit edge */
+    case 't': return 0x2A2E20;     /* husk: the gaps between its ribs */
+    /* Bat: nearly black with a violet cast, so it reads as a SILHOUETTE first --
+       right for the one creature you track by its motion rather than its
+       detail. */
+    case '5': return 0x3A2C38;     /* bat: membrane */
+    case '6': return 0x6A4C68;     /* bat: lit edge of the wing */
+    case '7': return 0x241A24;     /* bat: body, darkest */
+    /* Spitter: warm clay-brown with a pale sac. The sac is the tell that this
+       one shoots, so it is the lightest thing on the creature. */
+    case '8': return 0x8A5A3A;     /* spitter: carapace */
+    case '9': return 0xA87A52;     /* spitter: lit plates */
+    case 'I': return 0xD8E098;     /* spitter: the venom sac */
+    /* Brood mother: her young are warm browns and she is RED, because a boss
+       should be recognisable as itself from across a cavern before any of the
+       detail resolves. */
+    case '0': return 0xB04838;     /* brood: carapace */
+    case '+': return 0x7A2A20;     /* brood: shade */
+    case '=': return 0xE87A4A;     /* brood: lit ridge */
+
     default:  return 0xFF00FF;     /* unmapped: loud on purpose */
     }
 }
@@ -716,9 +746,94 @@ static const char* ART_SLIME[SPR_H] = {
     "....C...C.....",
 };
 
+
+/* The zombie. Upright and heavy-shouldered, and the only thing in layer 1
+   shaped like a PERSON -- so it registers as a different category of threat
+   from the vermin before any detail lands. */
+static const char* ART_HUSK[SPR_H] = {
+    ".....ssss.....",
+    "....soooos....",
+    "....soxoos....",
+    "....soooos....",
+    ".....roor.....",
+    "..ssooooooss..",
+    "..soooooooos..",
+    "..roooooooor..",
+    "..r.oooooo.r..",
+    "..r.oooooo.r..",
+    "....oooooo....",
+    "....otttto....",
+    "....oo..oo....",
+    "....rr..rr....",
+};
+
+/* The bat. Wings wide and body tiny, so the silhouette is almost entirely
+   membrane -- which is what you actually track when one crosses a dark cavern
+   at speed. */
+static const char* ART_BAT[SPR_H] = {
+    "..............",
+    "..6........6..",
+    ".656......656.",
+    ".6555....5556.",
+    "65555....55556",
+    "6555557755555.",
+    ".55557xx755555",
+    "..5557777555..",
+    "...55.77.55...",
+    "......77......",
+    "..............",
+    "..............",
+    "..............",
+    "..............",
+};
+
+/* The spitter. Squat and front-heavy, with the venom sac riding high on its
+   back where it cannot be missed -- the sac is the warning that this one
+   shoots. */
+static const char* ART_SPITTER[SPR_H] = {
+    "..............",
+    "..............",
+    ".....III......",
+    "....IIIII.....",
+    "...9IIIII9....",
+    "..9998889999..",
+    ".988888888899.",
+    ".98888888888x.",
+    ".88888888888..",
+    ".8888888888...",
+    "..8.8.8.8.8...",
+    "..8.8.8.8.8...",
+    "..............",
+    "..............",
+};
+
+/* The brood mother. The mite silhouette widened and given a ridged back, so she
+   reads as the same KIND of thing you have been killing all layer, only wrong
+   in scale. That recognition is the design -- she needs no introduction. */
+static const char* ART_BROOD[SPR_H] = {
+    "..............",
+    "...======.....",
+    "..=000000==...",
+    ".=0000000000=.",
+    "=000000000000=",
+    "=00++++++000==",
+    "=00+++++++000=",
+    "=+++++++++0x0=",
+    "=++++++++++x0=",
+    ".+++++++++++=.",
+    ".++++++++++=..",
+    "..+.+.+.+.+=..",
+    "..+.+.+.+.+...",
+    "..+.+.+.+.+...",
+};
+
 void initSprites() {
     memset(g_sprite, 0, sizeof(g_sprite));
     expand(SPR_MITE,      ART_MITE);
+    expand(SPR_HUSK,      ART_HUSK);
+    expand(SPR_BAT,       ART_BAT);
+    expand(SPR_SPITTER,   ART_SPITTER);
+    expand(SPR_BROOD,     ART_BROOD);
     expand(SPR_MOTH,      ART_MOTH);
     expand(SPR_SLIME,     ART_SLIME);
     expand(SPR_TOOL1,     ART_TOOL1);

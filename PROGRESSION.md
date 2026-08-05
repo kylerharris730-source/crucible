@@ -553,9 +553,57 @@ painful pile of late layer 1 materials. When the boss lands: give it
 `ITEM_FORGE_CORE` as its drop, delete that one recipe, and re-run
 `reachable.cpp` — which will then be asserting the boss is the only source.
 
+### The roster, and how it splits
+
+Six creatures, deliberately in two halves. The first three interact with the
+SIMULATION -- a burrower that eats walls, a heat-seeker that finds your furnace,
+a corroder that leaves acid. The second three are pure combat, and what
+distinguishes them is MOVEMENT rather than a gimmick, because a layer made only
+of gimmicks is a layer where every fight is a puzzle.
+
+| | size | hp | touch | speed | what it is |
+|---|---|---|---|---|---|
+| Rock mite | 12x9 | 18 | 6 | 0.34 | chews rock; a wall is a delay |
+| Cinder moth | 9x7 | 10 | 4 | 0.52 | flies to the hottest cell |
+| Drip slime | 11x8 | 24 | 5 | 0.20 | leaves acid that outlives it |
+| Husk | 11x22 | 46 | 11 | 0.42 | walks at you and does not stop |
+| Bat | 9x7 | 12 | 7 | 1.35 | fast, poor steering, overshoots |
+| Spitter | 10x12 | 22 | 5 | 0.26 | holds distance and shoots |
+
+The bat is the one worth explaining, because the obvious implementation is
+wrong. The overshoot is NOT speed -- a fast creature that re-aims every frame
+tracks you perfectly and is simply unavoidable. It commits to a heading for
+34-60 frames and cannot turn fast enough to correct it, so it arrives where you
+WERE. The counter-play is to let it commit and then not be there.
+
+### The boss
+
+**Brood Mother**, 34x24, 900 hp. A rock mite grown enormous, which is the right
+shape for a first boss: after a layer of killing her young she needs no
+introduction and her threat is legible before she does anything.
+
+Two phases and nothing more. She walks, charges (committed for CHARGE_FRAMES so
+the lunge is readable rather than merely fast), and chews rock across her whole
+face so no wall is an answer. Below half health she charges more often and calls
+her brood.
+
+Summoned by a crafted **Brood Call** -- 12 chitin, 6 iron, 4 bronze at the anvil
+-- and never spawned. A boss you can blunder into is one that kills you while
+you are carrying a full pack of ore; a summon means you arrive having chosen the
+ground and the moment.
+
+She drops the **Forge Core**, so the steel tier is genuinely behind her and the
+placeholder recipe that stood in for her is deleted. That closes the loop the
+Blast Furnace opened.
+
 ### What layer 1 still needs
 
-- **The boss itself.**
+- **Play testing.** Nothing below has met a human. The numbers most likely to be
+  wrong: the husk hitting for 11 against 100 hp with no armour; whether the
+  bat is fun or merely annoying; 900 boss hp, which assumes you fight her after
+  the Blast Module (22 damage, 41 hits) rather than the Shot Module (6, and 150);
+  a spawn cap of ten filling a cavern in seconds; and 12 chitin at 1-3 a kill
+  being roughly seven creatures, which may be too cheap for a summon.
 - Layers 2 and 3 have **no creatures** — deliberate, and `spawn.cpp` asserts it,
   so the day something is given a layer 2 mask that test notices.
 - **Hardmode has no materials at all.** Seven ores do not stretch to three

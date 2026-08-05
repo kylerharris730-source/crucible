@@ -47,8 +47,30 @@ enum EntityType {
     ENT_MITE,            /* burrower: walks at you, chews through rock */
     ENT_MOTH,            /* heat-seeker: flies to the hottest cell it can find */
     ENT_SLIME,           /* corroder: slow, and leaves acid behind it */
+    /* --- the Terraria half ----------------------------------------------
+       The three above all interact with the SIMULATION -- they eat walls, chase
+       heat, leave acid. These three are pure combat, and that is deliberate
+       rather than a lapse: a layer made only of gimmicks is a layer where every
+       fight is a puzzle, and the fun of Terraria's roster is that most of it is
+       simple enough to read at a glance and still worth fighting.
+
+       Simple AI, distinct MOVEMENT. That is the whole design -- a zombie you
+       walk away from, a bat you cannot, and a shooter that makes standing still
+       the wrong answer. */
+    ENT_HUSK,            /* zombie: slow, tanky, hits hard, will not stop */
+    ENT_BAT,             /* fast flier with bad steering -- it OVERSHOOTS */
+    ENT_SPITTER,         /* keeps its distance and shoots */
+    /* --- the layer 1 boss -------------------------------------------------
+       Summoned, never spawned. See BOSS_LAYER1 and the summon item. */
+    ENT_BROOD,
     ENT_COUNT
 };
+
+/* Which bosses have been beaten. A bitmask rather than a list, and the ONLY
+   creature state that survives a session -- see the note above about entities
+   being transient. One bit per boss, saved as a single u32. */
+extern u32 g_bossesBeaten;
+static const u32 BOSS_LAYER1 = 1u << 0;
 
 /* 96 rather than a round 128, and the number is a budget rather than a limit
    anyone should be hitting: the spawner caps live creatures far below this (see
@@ -74,6 +96,20 @@ struct EntityDef {
        light.h -- the classic rule is that darkness is what spawns things, and
        the surface is only dark half the time. */
     bool  surfaceAtNight;
+    /* --- ranged attack ---------------------------------------------------
+       Frames between shots, 0 for everything that does not shoot. A creature
+       with this fires at the player when it has line of sight and is roughly
+       facing them; see spitterTick. */
+    int   shotEvery;
+    int   shotDamage;
+    float shotSpeed;
+    /* How far it tries to stay from the player. Zero means "close the
+       distance", which is what everything melee wants. A shooter that walked
+       into contact range would be a bad melee creature rather than a shooter. */
+    float standOff;
+    /* Bosses do not spawn from the dark, are not capped by ENT_MAX_ALIVE, and
+       announce themselves. Summoned by an item instead. */
+    bool  isBoss;
     ItemId dropItem;
     int   dropMin, dropMax;
     u8    sprite;
@@ -95,6 +131,13 @@ struct Entity {
     int   touchTimer;  /* frames until it can hurt the player again */
     int   hurtFlash;   /* frames of white; damage you cannot see teaches nothing */
     int   actTimer;    /* per-type: chew progress, acid drip, wingbeat */
+    int   shotTimer;   /* frames until it can shoot again */
+    /* Where a bat is currently committed to flying. Held for a stretch of
+       frames rather than recomputed every one, which is the entire reason a bat
+       overshoots -- see batTick. */
+    float aimX, aimY;
+    int   aimHold;
+    int   phase;       /* bosses: which half of the fight this is */
     float animPhase;
 
     bool  alive() const { return type != ENT_NONE && hp > 0; }
@@ -147,3 +190,8 @@ void entSpawnTick(World& w, const Player& p, int camX, int camY);
    occupied and few enough that the contact-damage rules never turn into an
    unavoidable grind. */
 static const int ENT_MAX_ALIVE = 10;
+
+/* How long a boss stays committed to a charge. Long enough to see it start,
+   decide, and be somewhere else -- a lunge you cannot read is just damage that
+   arrives. */
+static const int CHARGE_FRAMES = 46;

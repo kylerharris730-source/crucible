@@ -306,6 +306,16 @@ bool saveWrite(const char* path, const World& w) {
         fwrite(&g_worldTime, sizeof(g_worldTime), 1, f);
         s.end();
     }
+    {
+        /* Which bosses have been beaten -- the ONLY thing about creatures that
+           is written at all. Everything else respawns from the dark and is
+           deliberately not saved (entity.h); this is the one fact that must
+           not, because a boss you have to kill twice is a boss whose reward
+           was never really a reward. Four bytes. */
+        SectionWriter s; s.begin(f, "BOSS", "bosses beaten");
+        fwrite(&g_bossesBeaten, sizeof(g_bossesBeaten), 1, f);
+        s.end();
+    }
 
     const u32 endTag = 0;
     fwrite(&endTag, sizeof(endTag), 1, f);
@@ -487,6 +497,10 @@ bool saveRead(const char* path, World& w) {
         } else if (tag == fourcc("TREE")) {
             if (len == sizeof(Tree) * MAX_TREES) fread(g_trees, sizeof(Tree), MAX_TREES, f);
             statAdd("growing trees", len + 12);
+        } else if (tag == fourcc("BOSS")) {
+            if (len == sizeof(g_bossesBeaten))
+                fread(&g_bossesBeaten, sizeof(g_bossesBeaten), 1, f);
+            statAdd("bosses beaten", len + 12);
         } else if (tag == fourcc("TIME")) {
             if (len == sizeof(g_worldTime)) {
                 fread(&g_worldTime, sizeof(g_worldTime), 1, f);

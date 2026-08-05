@@ -342,6 +342,18 @@ enum MatId {
        what a material is for. See the spring rule in world.cpp. */
     MAT_SPRING,
 
+    /* --- chitin --------------------------------------------------------------
+       What comes off the things living in layer 1, and the main ingredient of
+       the item that calls the layer's boss.
+
+       A MATERIAL rather than a bare item, and that is forced rather than
+       stylistic: a creature's drop is placed into the world as a CELL where it
+       died (see entDie -- loot you collect, not loot that teleports into your
+       pack), and only a MatId can be a cell. Making it a material also means it
+       stacks, renders and saves with no extra work, which is the whole reason
+       item ids share the material id space to begin with. */
+    MAT_CHITIN,
+
     MAT_COUNT
 };
 

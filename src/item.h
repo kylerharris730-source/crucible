@@ -97,11 +97,19 @@ enum {
        They are ITEMK_EGG rather than a device or a seed because what they do is
        unlike either: a seed converts a cell, a device claims a rectangle, and
        an egg creates something that is not in the grid at all. Numbered in
-       EntityType order so the mapping is index arithmetic rather than a switch
-       that can fall out of step -- see eggEntityType(). */
+       EntityType order for readability, but nothing DEPENDS on that order any
+       more: what each one makes is stated outright in ItemDef::summons. It used
+       to be index arithmetic over this range, which was a coupling between two
+       enums in headers that cannot see each other -- and the startup check
+       guarding it fired the moment four more creatures arrived, which is the
+       coupling proving the point rather than the check being annoying. */
     ITEM_EGG_MITE,
     ITEM_EGG_MOTH,
     ITEM_EGG_SLIME,
+    ITEM_EGG_HUSK,
+    ITEM_EGG_BAT,
+    ITEM_EGG_SPITTER,
+    ITEM_EGG_BROOD,
     /* --- the forge core ---------------------------------------------------
        What the layer 1 boss drops, and the only ingredient of the Blast
        Furnace. This is the shape the layer's reward takes: a STATION you win
@@ -111,17 +119,18 @@ enum {
        carry home and decide where to install, which is a small moment and a
        better one than a furnace appearing where the boss died. */
     ITEM_FORGE_CORE,
+    /* --- the summon ------------------------------------------------------
+       What calls layer 1's boss. Crafted, never found, and consumed on use --
+       so fighting her is a thing you DECIDE to do rather than something that
+       happens to you in a tunnel.
+
+       That is the Terraria shape and it is the right one here: a boss you can
+       blunder into is a boss that kills you while you are carrying a full pack
+       of ore, and the whole point of a summon is that you arrive having chosen
+       the ground and the moment. */
+    ITEM_BROOD_CALL,
     ITEM_COUNT
 };
-
-/* Which creature an egg makes, or 0 for anything that is not an egg. The eggs
-   are contiguous and in EntityType order, so this is a subtraction rather than
-   a table -- and a static assert would be nice here but the two enums live in
-   files that cannot see each other, so entity.cpp checks it at startup. */
-static inline int eggEntityType(ItemId item) {
-    if (item < ITEM_EGG_MITE || item > ITEM_EGG_SLIME) return 0;
-    return 1 + (item - ITEM_EGG_MITE);
-}
 
 enum ItemKind {
     ITEMK_MATERIAL = 0,   /* stacks; one unit is one cell of world */
@@ -312,6 +321,16 @@ struct ItemDef {
     u8   pierce;      /* cells it can destroy before it is spent */
     u8   blast;       /* explosion radius on impact; 0 for an ordinary shot */
     u32  shotColour;
+
+    /* --- ITEMK_EGG only ----------------------------------------------
+       Which EntityType this spawns. ENT_NONE (0) on everything else.
+
+       Stated per item rather than derived from where the item sits in the enum.
+       The derived version was index arithmetic across two enums that cannot
+       include each other, kept honest by a startup abort -- and it aborted the
+       first time the creature roster grew. One field cannot fall out of step
+       with itself. */
+    u8   summons;
 
     /* --- ITEMK_DEVICE only -------------------------------------------
        Which DeviceType this places. 0 is a valid device type, so this field

@@ -1,6 +1,7 @@
 #include "entity.h"
 #include "sprite.h"
 #include "light.h"
+#include "projectile.h"
 #include <string.h>
 #include <math.h>
 
@@ -18,8 +19,8 @@ static const float ENT_GRAVITY  = 0.18f;
 static const float ENT_MAX_FALL = 6.0f;
 
 const EntityDef ENT_DEFS[ENT_COUNT] = {
-    /* name        w   h  hp  dmg  cd   speed accel  fly  layers night  drop            min max sprite      egg */
-    { "none",      0,  0,  0,   0,   0, 0.00f, 0.00f, false, 0,  false, ITEM_NONE,        0, 0, SPR_NONE,  0x000000 },
+    /* name       w   h  hp dmg  cd   speed accel  fly layers night | shotEvery dmg spd standOff boss | drop min max sprite egg */
+    { "none",      0,  0,  0,   0,   0, 0.00f, 0.00f, false, 0,  false,   0, 0, 0.0f, 0.0f, false, ITEM_NONE,        0, 0, SPR_NONE,  0x000000 },
 
     /* --- rock mite ---------------------------------------------------------
        The one that makes the first twenty minutes treacherous. Slow enough to
@@ -28,11 +29,12 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
        not a strategy. That last property is the whole reason it exists: it is
        the cheapest possible way to make the world's solidity negotiable.
 
-       Drops coal, which is not a joke about carbon so much as the most useful
-       thing a layer 1 player can be handed. Coal is the fuel gate on the entire
-       early ladder, and a creature that pays for the trip into a dark tunnel
-       with the thing you went in for is a creature worth fighting. */
-    { "Rock Mite",12,  9, 18,   6,  36, 0.34f, 0.05f, false, 1,  true,  (ItemId)MAT_COAL, 1, 2, SPR_MITE,  0x8E7758 },
+       Drops chitin, which is what calls the layer's boss -- so the commonest
+       creature in layer 1 is also the one you farm to pick a fight with its
+       matriarch. That is the Terraria shape: the summon is assembled out of
+       what the place is already made of, so deciding to fight the boss is a
+       decision you make gradually while doing something else. */
+    { "Rock Mite",12,  9, 18,   6,  36, 0.34f, 0.05f, false, 1,  true,    0, 0, 0.0f, 0.0f, false, (ItemId)MAT_CHITIN, 1, 2, SPR_MITE,  0x8E7758 },
 
     /* --- cinder moth -------------------------------------------------------
        Navigates to the hottest cell it can sense, which means it navigates to
@@ -45,7 +47,7 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
        chases -- which matters because glass gates the Chemistry Bench and the
        Assembly Table, and until now the world's only source of it was one beach
        on one lake. */
-    { "Cinder Moth",9,  7, 10,   4,  30, 0.52f, 0.09f, true,  1,  true,  (ItemId)MAT_GLASS,1, 2, SPR_MOTH,  0xE0561C },
+    { "Cinder Moth",9,  7, 10,   4,  30, 0.52f, 0.09f, true,  1,  true,    0, 0, 0.0f, 0.0f, false, (ItemId)MAT_GLASS,  1, 2, SPR_MOTH,  0xE0561C },
 
     /* --- drip slime --------------------------------------------------------
        The corroder, and the slowest thing in the game: it is not a chase, it is
@@ -56,8 +58,68 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
        Introduces acid a whole layer above where acid pockets generate, so the
        material is familiar before the terrain is full of it. Drops it too,
        which is the only way to get any in layer 1. */
-    { "Drip Slime",11,  8, 24,   5,  40, 0.20f, 0.04f, false, 1,  false, (ItemId)MAT_ACID, 1, 3, SPR_SLIME, 0x6FA23C },
+    { "Drip Slime",11,  8, 24,   5,  40, 0.20f, 0.04f, false, 1,  false,   0, 0, 0.0f, 0.0f, false, (ItemId)MAT_ACID,   1, 3, SPR_SLIME, 0x6FA23C },
+
+    /* --- husk ---------------------------------------------------------------
+       The zombie, and deliberately the dullest thing in the game: it walks at
+       you, it does not stop, and it hits harder than anything else in the
+       layer. No gimmick at all.
+
+       That is the point. Terraria's zombie has perhaps ten lines of AI and is
+       still worth fighting, because what makes it dangerous is not cleverness
+       but COMMITMENT -- it is slow enough to walk away from and tough enough
+       that you cannot casually kill it, so it turns a corridor into somewhere
+       you have to decide about. Everything interesting about the encounter
+       comes from the terrain it is standing in. */
+    { "Husk",     11, 22, 46,  11,  34, 0.42f, 0.06f, false, 1,  true,    0, 0, 0.0f, 0.0f, false, (ItemId)MAT_CHITIN, 1, 3, SPR_HUSK,  0x6E7A52 },
+
+    /* --- bat ----------------------------------------------------------------
+       Fast, and BAD AT STEERING. The overshoot is the entire creature.
+
+       It is not achieved with speed -- a fast thing that tracks you perfectly
+       is just an unavoidable thing. It comes from committing to a heading for a
+       stretch of frames and only re-aiming occasionally (see aimHold), plus an
+       acceleration far too low to correct a bad line. So it comes at you,
+       misses, sails past, wheels around and comes again, and the way to fight
+       it is to let it commit and then not be there.
+
+       Fragile to match: two hits from the starting shot. A bat you had to chase
+       AND could not kill would be a tax rather than an encounter. */
+    { "Bat",       9,  7, 12,   7,  26, 1.35f, 0.055f, true, 1,  true,    0, 0, 0.0f, 0.0f, false, (ItemId)MAT_CHITIN, 1, 1, SPR_BAT,   0x6A4C68 },
+
+    /* --- spitter ------------------------------------------------------------
+       The one that makes standing still wrong. It holds its distance and shoots,
+       so a corridor you were happily backing down becomes a place you have to
+       either close or leave.
+
+       standOff is what makes it a shooter rather than a bad melee creature: it
+       actively backs away when you approach, so the answer is to commit to
+       closing rather than to trade at range with something that outranges you.
+
+       Slow shots, on purpose -- see shotSpeed. A projectile you can watch and
+       step around is a threat you play against; one that arrives instantly is a
+       threat you only read about afterwards in the health bar. */
+    { "Spitter",  10, 12, 22,   5,  30, 0.26f, 0.05f, false, 1,  false,  95, 9, 1.7f, 90.0f, false, (ItemId)MAT_CHITIN, 1, 2, SPR_SPITTER, 0x8A5A3A },
+
+    /* --- the brood mother, layer 1's boss ------------------------------------
+       A rock mite grown enormous, which is the right shape for a first boss:
+       you have been killing its brood for the whole layer, so it needs no
+       introduction and its threat is legible before it does anything.
+
+       Two phases and nothing more, in the Terraria manner. It walks and charges
+       and chews through rock, so no wall you build is an answer; below half
+       health it charges more often and starts calling its young. See broodTick.
+
+       hp 900 against a starting shot that does 6 is a real fight without being
+       a war of attrition, and it is meant to be fought AFTER the Blast Module,
+       which does 22. Drops the Forge Core -- see the note there. */
+    { "Brood Mother", 34, 24, 900, 16, 26, 0.55f, 0.05f, false, 0, false,  0, 0, 0.0f, 0.0f, true,  ITEM_FORGE_CORE, 1, 1, SPR_BROOD, 0xB04838 },
 };
+
+/* Not saved with the creatures -- see entity.h. Written by save.cpp as one u32
+   because "which bosses have you beaten" is the one fact about them that has to
+   outlive a session. */
+u32 g_bossesBeaten = 0;
 
 void entReset() { memset(g_entities, 0, sizeof(g_entities)); }
 
@@ -104,6 +166,11 @@ int entSpawn(const World& w, int type, float cx, float cy) {
    overwrites the world and never vanishes into a wall. */
 static void entDie(World& w, Entity& e) {
     const EntityDef& d = ENT_DEFS[e.type];
+    /* The one fact about a creature that outlives the session. Set BEFORE the
+       drop, so a pack too full to hold the Forge Core still counts as having
+       beaten her -- the loot is on the floor either way, and "you won but the
+       game did not notice" is the worst possible outcome of a boss fight. */
+    if (d.isBoss) g_bossesBeaten |= BOSS_LAYER1;
     if (d.dropItem != ITEM_NONE && d.dropMax > 0) {
         int n = d.dropMin + (int)(rngNext() % (u32)(d.dropMax - d.dropMin + 1));
         const int cx = (int)e.centreX(), cy = (int)e.centreY();
@@ -301,6 +368,145 @@ static void slimeTick(World& w, Entity& e, const Player& p) {
     }
 }
 
+/* Walk toward the player, or away to hold a standoff. Shared by everything that
+   moves along the ground, because "which way is the player" is the same
+   question however the creature answers it. */
+static void groundChase(Entity& e, const Player& p, float speed, float accel,
+                        float standOff) {
+    const float dx = p.centreX() - e.centreX();
+    const float adx = dx < 0 ? -dx : dx;
+    float want = dx > 0 ? 1.0f : -1.0f;
+    if (standOff > 0.0f) {
+        /* Too close: back off. Roughly right: hold station. This is what makes
+           a shooter a shooter rather than a slow melee creature. */
+        if (adx < standOff * 0.75f)      want = -want;
+        else if (adx < standOff * 1.25f) want = 0.0f;
+    }
+    if (want > 0.1f)       e.facing = 1;
+    else if (want < -0.1f) e.facing = -1;
+    e.vx += want * accel;
+    if (e.vx >  speed) e.vx =  speed;
+    if (e.vx < -speed) e.vx = -speed;
+}
+
+static void huskTick(Entity& e, const Player& p) {
+    const EntityDef& d = ENT_DEFS[e.type];
+    groundChase(e, p, d.speed, d.accel, 0.0f);
+    /* Hops when it is up against something and the player is above. The whole
+       creature is "it does not stop", and a zombie permanently stuck on a
+       one-cell lip is a zombie that stops. */
+    if (e.onGround && e.vx == 0.0f && p.centreY() < e.centreY()) e.vy = -2.2f;
+}
+
+/* --- the bat: why it misses -------------------------------------------------
+   It picks a heading, commits to it for a stretch of frames, and cannot turn
+   fast enough to fix a bad one. That is the whole trick, and it is worth being
+   explicit that the overshoot is NOT emergent from being fast: a fast creature
+   that re-aims every frame tracks you perfectly and is simply unavoidable.
+
+   aimHold is the commitment. While it runs, the bat flies at a point it decided
+   on earlier -- so if you move after it commits, it arrives where you WERE,
+   sails past, and has to come round again. */
+static void batTick(Entity& e, const Player& p) {
+    const EntityDef& d = ENT_DEFS[e.type];
+    if (--e.aimHold <= 0) {
+        /* Re-aim at where the player is RIGHT NOW, then stop looking. The
+           jitter stops two bats in one room flying as a matched pair. */
+        e.aimX = p.centreX() + (float)((int)(rngNext() % 41u) - 20);
+        e.aimY = p.centreY() + (float)((int)(rngNext() % 41u) - 20);
+        e.aimHold = 34 + (int)(rngNext() % 26u);
+    }
+    float ax = e.aimX - e.centreX(), ay = e.aimY - e.centreY();
+    const float len = sqrtf(ax * ax + ay * ay);
+    if (len > 0.01f) { ax /= len; ay /= len; }
+    e.vx += ax * d.accel;
+    e.vy += ay * d.accel;
+    /* A flutter, so it does not read as a dart on rails. */
+    e.animPhase += 0.32f;
+    e.vy += sinf(e.animPhase) * 0.06f;
+    const float sp = sqrtf(e.vx * e.vx + e.vy * e.vy);
+    if (sp > d.speed) { e.vx = e.vx / sp * d.speed; e.vy = e.vy / sp * d.speed; }
+    if (e.vx > 0.05f) e.facing = 1; else if (e.vx < -0.05f) e.facing = -1;
+}
+
+static void spitterTick(World& w, Entity& e, const Player& p) {
+    const EntityDef& d = ENT_DEFS[e.type];
+    groundChase(e, p, d.speed, d.accel, d.standOff);
+
+    if (e.shotTimer > 0) { --e.shotTimer; return; }
+    float dx = p.centreX() - e.centreX(), dy = p.centreY() - e.centreY();
+    const float dist = sqrtf(dx * dx + dy * dy);
+    if (dist > d.standOff * 2.2f || dist < 8.0f) return;
+
+    /* Line of sight, SAMPLED rather than walked -- the same reasoning as the
+       conduction probes: a handful of checks answers "is there a wall in the
+       way" well enough, and this runs for a couple of creatures rather than for
+       every cell in the world. */
+    for (int k = 1; k <= 6; ++k) {
+        const int sx = (int)(e.centreX() + dx * (float)k / 7.0f);
+        const int sy = (int)(e.centreY() + dy * (float)k / 7.0f);
+        if (sx < 0 || sx >= SIM_W || sy < 0 || sy >= SIM_H) return;
+        if (playerSolid(w, sx, sy)) return;   /* blocked: hold fire */
+    }
+
+    dx /= dist; dy /= dist;
+    e.facing = dx > 0 ? 1 : -1;
+    /* Power STR_NOTHING: an enemy shot passes through the world rather than
+       digging it. A creature that could excavate at range would rewrite the
+       terrain of every fight, which is the burrower archetype and deliberately
+       not this one. */
+    projSpawn(e.centreX() + dx * 8.0f, e.centreY() + dy * 8.0f,
+              dx * d.shotSpeed, dy * d.shotSpeed,
+              STR_NOTHING, 1, 240, 0xC8E060, 0, MAT_EMPTY, d.shotDamage, true);
+    e.shotTimer = d.shotEvery;
+}
+
+/* --- the boss ---------------------------------------------------------------
+   Two phases, and the second differs from the first in exactly two ways: it
+   charges more often and it calls its brood. That is the entire fight.
+
+   Terraria first bosses are this simple and they work, because what makes them
+   memorable is the SHAPE of the encounter -- a thing far larger than you that
+   keeps arriving -- rather than the branching of a decision tree. */
+static void broodTick(World& w, Entity& e, const Player& p) {
+    const EntityDef& d = ENT_DEFS[e.type];
+    const bool wounded = e.hp * 2 <= d.hp;
+    e.phase = wounded ? 1 : 0;
+
+    /* actTimer counts down to the next charge; while it is NEGATIVE the charge
+       is in progress and the creature is committed. Committing is what makes a
+       charge dodgeable -- a boss that could abort mid-lunge would only be a
+       faster walker. */
+    if (--e.actTimer <= -CHARGE_FRAMES) e.actTimer = wounded ? 130 : 210;
+
+    const bool charging = e.actTimer < 0;
+    const float speed = charging ? d.speed * 3.4f : d.speed;
+    groundChase(e, p, speed, charging ? d.accel * 3.0f : d.accel, 0.0f);
+    if (e.onGround && e.vx == 0.0f && p.centreY() < e.centreY()) e.vy = -2.6f;
+
+    /* Chews rock like its young, but across its whole face -- it is 34 cells
+       wide and should read as going THROUGH a wall rather than nibbling it. */
+    const int ahead = e.facing > 0 ? e.right() + 1 : e.left() - 1;
+    if (ahead > PLAY_X0 && ahead < PLAY_X1) {
+        for (int y = e.top(); y <= e.bottom(); ++y) {
+            if (y < PLAY_Y0 || y > PLAY_Y1) continue;
+            const u8 m = w.at(ahead, y).mat;
+            if (m == MAT_EMPTY || g_matStrength[m] > STR_ROCK) continue;
+            w.setCell(ahead, y, MAT_EMPTY);
+        }
+    }
+
+    /* The brood, in the second half only. Spawned AT the mother rather than
+       around the player, so they arrive as a wave you can see coming. */
+    if (wounded && ++e.shotTimer >= 150) {
+        e.shotTimer = 0;
+        for (int k = 0; k < 3; ++k)
+            entSpawn(w, ENT_MITE,
+                     e.centreX() + (float)((int)(rngNext() % 60u) - 30),
+                     e.centreY() - 20.0f);
+    }
+}
+
 void entTick(World& w, Player& p) {
     for (int i = 0; i < MAX_ENTITIES; ++i) {
         Entity& e = g_entities[i];
@@ -312,9 +518,13 @@ void entTick(World& w, Player& p) {
         if (e.touchTimer > 0) --e.touchTimer;
 
         switch (e.type) {
-        case ENT_MITE:  miteTick(w, e, p);  break;
-        case ENT_MOTH:  mothTick(w, e, p);  break;
-        case ENT_SLIME: slimeTick(w, e, p); break;
+        case ENT_MITE:    miteTick(w, e, p);    break;
+        case ENT_MOTH:    mothTick(w, e, p);    break;
+        case ENT_SLIME:   slimeTick(w, e, p);   break;
+        case ENT_HUSK:    huskTick(e, p);       break;
+        case ENT_BAT:     batTick(e, p);        break;
+        case ENT_SPITTER: spitterTick(w, e, p); break;
+        case ENT_BROOD:   broodTick(w, e, p);   break;
         default: break;
         }
 
@@ -395,8 +605,21 @@ static const int SPAWN_DARK  = 40;
    half the view's height. */
 static const int SPAWN_MIN_DIST = 150;
 
+/* Live creatures that the SPAWNER is responsible for. Bosses are excluded,
+   because they are summoned rather than spawned and a boss in the room must not
+   stop the cave around it from being occupied -- nor count toward a cap that
+   would then let her suppress her own brood. */
+static int entSpawnedCount() {
+    int n = 0;
+    for (int i = 0; i < MAX_ENTITIES; ++i) {
+        const Entity& e = g_entities[i];
+        if (e.alive() && !ENT_DEFS[e.type].isBoss) ++n;
+    }
+    return n;
+}
+
 void entSpawnTick(World& w, const Player& p, int camX, int camY) {
-    if (entAliveCount() >= ENT_MAX_ALIVE) return;
+    if (entSpawnedCount() >= ENT_MAX_ALIVE) return;
 
     for (int attempt = 0; attempt < SPAWN_TRIES; ++attempt) {
         /* Drawn from the padded light rectangle, then rejected if it lands on
@@ -443,6 +666,7 @@ void entSpawnTick(World& w, const Player& p, int camX, int camY) {
         int pick[ENT_COUNT], np = 0;
         for (int t = ENT_NONE + 1; t < ENT_COUNT; ++t) {
             const EntityDef& d = ENT_DEFS[t];
+            if (d.isBoss) continue;   /* summoned, never found */
             if (surface) { if (!d.surfaceAtNight) continue; }
             else if (!(d.layerMask & (1 << layer))) continue;
             pick[np++] = t;
@@ -476,13 +700,23 @@ void entDraw(u32* px, int camX, int camY, bool lit) {
         if (d.sprite == SPR_NONE) continue;
         const u32* art = g_sprite[d.sprite];
 
-        const int ox = (int)e.x + (d.w - SPR_W) / 2 - camX;
-        const int oy = (int)e.y + (d.h - SPR_H) / 2 - camY;
-        for (int sy = 0; sy < SPR_H; ++sy) {
-            const int vy = oy + sy;
+        /* Anything much larger than the canvas is SCALED to its box rather than
+           centred in it. A 34-cell boss drawn from a 14-pixel sprite centred
+           would be a small creature floating in a large hitbox, which is the
+           one thing a boss must not look like. Everything ordinary keeps the
+           centred path, where the art overhanging the box is what gives wings
+           and antennae something to be. */
+        const bool scaled = d.w > SPR_W + 6 || d.h > SPR_H + 6;
+        const int ox = scaled ? (int)e.x - camX : (int)e.x + (d.w - SPR_W) / 2 - camX;
+        const int oy = scaled ? (int)e.y - camY : (int)e.y + (d.h - SPR_H) / 2 - camY;
+        const int stepX = scaled ? d.w : SPR_W, stepY = scaled ? d.h : SPR_H;
+        for (int qy = 0; qy < stepY; ++qy) {
+            const int sy = scaled ? qy * SPR_H / stepY : qy;
+            const int vy = oy + qy;
             if (vy < 0 || vy >= VIEW_CELLS_H) continue;
-            for (int sx = 0; sx < SPR_W; ++sx) {
-                const int vx = ox + sx;
+            for (int qx = 0; qx < stepX; ++qx) {
+                const int sx = scaled ? qx * SPR_W / stepX : qx;
+                const int vx = ox + qx;
                 if (vx < 0 || vx >= VIEW_CELLS_W) continue;
                 /* Mirrored by facing, so a creature walking left looks left.
                    Read from the far column rather than writing to it, so the

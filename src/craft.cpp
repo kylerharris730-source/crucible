@@ -106,22 +106,20 @@ const Recipe RECIPES[] = {
     { { { ITEM_FORGE_CORE, 1 }, { (ItemId)MAT_CERAMIC, 8 }, { (ItemId)MAT_IRON, 6 } },
       (ItemId)MAT_STATION_FORGE, 1, "Blast Furnace", STATION_ANVIL },
 
-    /* --- PLACEHOLDER: delete this when the layer 1 boss exists -------------
-       The Forge Core is meant to be the boss's drop and nothing else. There is
-       no boss yet, and shipping the gate without the key would make the whole
-       steel tier unreachable in survival -- a straight downgrade from a game
-       where steel armour is craftable today, and a failure `reachable.cpp`
-       would correctly report.
+    /* --- calling the boss ---------------------------------------------------
+       Chitin off the things that live in layer 1, plus the layer's two metals.
+       Assembled from what the place is MADE of, which is the point: you gather
+       the summon incidentally, while doing something else, and the decision to
+       fight her arrives gradually rather than as a menu entry.
 
-       So until the boss lands, one Core can be forged from a deliberately
-       painful pile of late layer 1 materials. Expensive enough not to be the
-       obvious path, cheap enough not to be a wall.
-
-       When the boss arrives: give it ITEM_FORGE_CORE as its drop, delete this
-       recipe, and re-run reachable.cpp -- which will then be asserting that the
-       boss is the only source, which is the whole point. */
-    { { { (ItemId)MAT_STEEL, 6 }, { (ItemId)MAT_GRAPHENE, 1 }, { (ItemId)MAT_CERAMIC, 8 } },
-      ITEM_FORGE_CORE, 1, "Forge Core", STATION_ANVIL },
+       The Forge Core recipe that used to sit here is gone. It existed because
+       the gate had shipped without its key -- the Blast Furnace needed a Core
+       and there was no boss to drop one -- and it was labelled as the
+       placeholder it was. The Brood Mother drops the Core now, so the only way
+       to the steel tier is through her, which is what the reward was always
+       meant to be. */
+    { { { (ItemId)MAT_CHITIN, 12 }, { (ItemId)MAT_IRON, 6 }, { (ItemId)MAT_BRONZE, 4 } },
+      ITEM_BROOD_CALL, 1, "Brood Call", STATION_ANVIL },
 
     /* --- the bench --------------------------------------------------------
        Wood, stone and the earliest metal: everything a workbench can put
