@@ -68,6 +68,13 @@ static u32 paletteOf(char c) {
        this", which is the single fact these boots most need not to imply. */
     case 'y': return 0xE8D45A;     /* winged leather */
     case 'z': return 0xB09A2E;     /* its shade */
+    /* Rough wood, for the starter weapon's stock. A SYMBOL rather than a
+       letter because every letter and digit in this palette is now spoken for
+       -- which is a warning worth leaving here: the next few additions will
+       have to either reuse a colour that already means something else or start
+       on punctuation, and the first of those is how a shared palette quietly
+       stops being shared. */
+    case '#': return 0x6A4A2A;
     case 'A': return 0xF6F0D0;     /* feather */
     /* Devices. A shared casing palette so every machine reads as part of one
        family of equipment, with only the FACE -- the dial, the gauge, whatever the
@@ -827,6 +834,59 @@ static const char* ART_BROOD[SPR_H] = {
     "..+.+.+.+.+...",
 };
 
+/* Two stones and the spark between them. The spark is the whole icon -- a pair
+   of grey lumps alone would read as "rock", which is exactly what this is made
+   of and exactly not what it is for. */
+static const char* ART_FLINT[SPR_H] = {
+    "..............",
+    "...SS.........",
+    "..SSSS...f....",
+    "..SSSSS.f.....",
+    "...SSS..ff....",
+    "....S..f..f...",
+    ".......ff.....",
+    "......f..f....",
+    ".....SSS......",
+    "....SSSSS.....",
+    "...SSSSSSS....",
+    "...SSSSSS.....",
+    "....SSSS......",
+    "..............",
+};
+
+/* The starter weapon. Keeps the house diagonal every tool icon uses -- handle
+   at the bottom left, working end at the top right -- because the hotbar reads
+   as a set and one item lying the other way looks like a mistake.
+
+   Everything else is deliberately the OPPOSITE of the multitools, and the FIRST
+   attempt at that got it wrong in a way only a picture showed. That version was
+   the Mk I silhouette in the Mk I colours, two rows shorter, on the theory that
+   size would carry the difference. Rendered at true hotbar scale beside the
+   real thing it was simply a slightly smaller Mk I -- at fourteen pixels a two
+   row difference is nothing, and shape and colour are all there is.
+
+   So the difference is VALUE. The multitools are light: pale steel on a cream
+   handle, which is what a precision instrument looks like. This is dark: a fat
+   rough-wood stock under a stubby dark barrel, which is what something you
+   made yourself out of a plank looks like. Light versus dark survives being
+   three pixels tall, where eleven rows versus thirteen does not. */
+static const char* ART_BOLTER[SPR_H] = {
+    "..............",
+    "..............",
+    "..............",
+    "..........TT..",
+    ".........GG...",
+    "........GG....",
+    ".......##.....",
+    "......###.....",
+    ".....####.....",
+    "....####......",
+    "....##........",
+    "..............",
+    "..............",
+    "..............",
+};
+
 void initSprites() {
     memset(g_sprite, 0, sizeof(g_sprite));
     expand(SPR_MITE,      ART_MITE);
@@ -845,6 +905,8 @@ void initSprites() {
     expand(SPR_MINE3,     ART_MINE3);
     expand(SPR_MINE4,     ART_MINE4);
     expand(SPR_SEED,      ART_SEED);
+    expand(SPR_FLINT,     ART_FLINT);
+    expand(SPR_BOLTER,    ART_BOLTER);
     expand(SPR_BOOTS,     ART_BOOTS);
     expand(SPR_HERMES,    ART_HERMES);
     expand(SPR_PACK1,     ART_PACK1);

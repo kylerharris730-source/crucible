@@ -1323,6 +1323,22 @@ static void panCamera(float dx, float dy) {
 static void cycleView()      { g_view = (g_view + 1) % VIEW_COUNT; }
 static void changeSize(int d){ g_brushRadius = imax(1, imin(64, g_brushRadius + d)); }
 
+/* What a new character starts holding.
+
+   Two items, and each one closes a hole that made the opening unplayable rather
+   than merely hard. Without the Bolt Caster nothing living could be hurt at all
+   -- damage lives on modules, modules need a Multitool, and both need copper --
+   so the first descent had no answer to a rock mite. Without the striker there
+   was no way to light a fire, and every thermal step in the game is downstream
+   of that.
+
+   Added rather than assigned, and only when absent, so using the Clear button
+   on a world you have been playing does not quietly duplicate them. */
+static void giveStartingKit() {
+    if (g_inv.countOf(ITEM_BOLTER) == 0) g_inv.add(ITEM_BOLTER, 1);
+    if (g_inv.countOf(ITEM_FLINT)  == 0) g_inv.add(ITEM_FLINT, 1);
+}
+
 /* Builds the world. See worldgen.cpp -- plains to the left, a mountain to the
    right, and the flats beyond it. */
 static void makeWorld() {
@@ -1337,6 +1353,7 @@ static void makeWorld() {
        standing in mid-air where its floor used to be. */
     entReset();
     generateWorld(g_world);
+    giveStartingKit();
     /* Generation rebuilds every cell, so any room that existed described a
        building that no longer does. Nothing else clears them: a room outlives
        everything short of a new world. */
@@ -1894,6 +1911,32 @@ static void applyBrush() {
         && !g_inv.held().empty() && ITEMS[g_inv.held().item].kind == ITEMK_SEED) {
         sowSeeds(g_world, g_inv, aim.x, aim.y, buildRadius());
         g_pmx = aim.x; g_pmy = aim.y;
+        return;
+    }
+
+    /* Food. One per click like the eggs, and for the same reason: holding the
+       button would put the whole stack away in a third of a second. */
+    if (g_playerOn && g_lmb && !g_rmb && !g_bgLayer
+        && !g_inv.held().empty() && ITEMS[g_inv.held().item].kind == ITEMK_FOOD) {
+        if (!g_eggLatch) {
+            const ItemId what = g_inv.held().item;
+            /* Refuse at full health rather than silently eating it. Wasting a
+               loaf because you mis-clicked is exactly the kind of small theft
+               players remember. */
+            if (g_player.hp < PLAYER_HP_MAX && g_inv.take(what, 1) == 1)
+                g_player.heal(ITEMS[what].heal);
+            g_eggLatch = true;
+        }
+        return;
+    }
+
+    /* The striker. Not rate-limited and not consumed: holding the button is
+       exactly the gesture -- you are working at a spark until it catches -- and
+       IGNITE_MAX means holding it forever still cannot do anything a fire could
+       not. See ITEM_FLINT. */
+    if (g_survival && g_playerOn && g_lmb && !g_rmb && !g_bgLayer
+        && !g_inv.held().empty() && ITEMS[g_inv.held().item].kind == ITEMK_IGNITE) {
+        g_world.ignite(aim.x, aim.y, IGNITE_RADIUS);
         return;
     }
 

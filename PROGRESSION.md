@@ -596,6 +596,51 @@ She drops the **Forge Core**, so the steel tier is genuinely behind her and the
 placeholder recipe that stood in for her is deleted. That closes the loop the
 Blast Furnace opened.
 
+### Four dead ends in the opening — all of them ours
+
+Designing layer 1 turned up four things that were not *hard*, they were
+**impossible**, and every one had been invisible because the tests all started
+from a stocked inventory. They are worth listing together because they share a
+shape: a loop with no way in, which no amount of playing better can open.
+
+| Dead end | Why it was sealed | What opens it |
+|---|---|---|
+| **No fire** | The torch is cold, lava is behind a sealed stratum, and sparks need a Clock, which needs iron, which needs fire. The survival opening ran on the debug Heat brush. | **Flint Striker** — 4 stone, by hand |
+| **No weapon** | Damage lives on *modules*; a module needs a Multitool; both need copper. The first descent had no answer to anything alive. | **Bolt Caster** — you spawn holding one |
+| **Wheat did nothing** | It grew from seed and dropped seed. Nothing in the middle. | **Bread** — 4 wheat at a bench, heals 30 |
+| **No crop seeds anywhere** | Wheat, flax and cotton grow from seed and drop seed, and worldgen plants only oak. The entire agricultural branch was unreachable. | 2 grass → 1 seed, by hand *(stopgap)* |
+
+Two notes on these.
+
+The **grass-to-seed recipes are a stopgap and are labelled as one in
+`craft.cpp`.** The real answer is that wheat and flax should *generate* — wild
+meadows, the way oak generates — and when they do, those three rows should be
+deleted. Grass is the placeholder source only because it is the one plant that
+spreads on its own, so it is renewable without being free.
+
+`reachable.cpp` **did not catch the crop loop and still would not**, which is
+the more useful finding. Its closure seeds itself with `GROWN[]` — everything a
+plant can drop — so it believed wheat was available because wheat drops wheat.
+A closure that seeds itself with its own outputs cannot detect a cycle with no
+entry point. It *did* catch the Brood Call (`needs Chitin — which nothing
+produces`) because creature drops were genuinely missing from its seed set, and
+that is now fixed. The crop case is a different bug in the same tool and it is
+still open.
+
+The **Bolt Caster is the floor of the ladder, not a rung on it.** Four damage
+against the Shot Module's six, and `power = 0`, which loses to every material in
+the game — so a bolt stops at the first wall instead of digging through it. That
+is the line between a weapon and a tool, and a starter weapon belongs on this
+side of it. It has no module slots at all, which is what makes it a floor: there
+is nothing to socket into it and never will be, so the only way to shoot harder
+is to build the Multitool it is pointedly worse than.
+
+That slotlessness needed one change in `toolResolve()`. Its first job is to bail
+out of a tool with no `ToolInst` — *"no state: a stick"* — and a slotless weapon
+has no state by construction, so the starter weapon has to be answered **above**
+that check rather than below it. Put below it, as it first was, the thing you
+spawn holding resolves to a stick.
+
 ### What layer 1 still needs
 
 - **Play testing.** Nothing below has met a human. The numbers most likely to be
@@ -603,8 +648,17 @@ Blast Furnace opened.
   bat is fun or merely annoying; 900 boss hp, which assumes you fight her after
   the Blast Module (22 damage, 41 hits) rather than the Shot Module (6, and 150);
   a spawn cap of ten filling a cavern in seconds; and 12 chitin at 1-3 a kill
-  being roughly seven creatures, which may be too cheap for a summon.
+  being roughly seven creatures, which may be too cheap for a summon. Add to
+  that list: whether 30 health a loaf makes bread worth the pack space, and
+  whether the Bolt Caster is weak enough to be a reason to upgrade without being
+  so weak that the first mite is a war of attrition.
 - Layers 2 and 3 have **no creatures** — deliberate, and `spawn.cpp` asserts it,
   so the day something is given a layer 2 mask that test notices.
 - **Hardmode has no materials at all.** Seven ores do not stretch to three
   layers plus four more bosses; that is the next real content gap.
+- **Wild wheat and flax should generate**, so the grass-seed stopgap above can
+  be deleted rather than kept.
+- **The sprite palette is full.** Every letter and digit is spoken for; the
+  Bolt Caster's stock had to take `#`. The next additions either start on
+  punctuation or begin reusing colours that already mean something else, and
+  the second of those is how a shared palette quietly stops being shared.

@@ -218,6 +218,27 @@ static const int HEAT_MIN_DIFF  = 2;   /* below this no conduction happens, so
    whose entire character is conducting further than seems reasonable. */
 static const int SPREAD_PROBES = 4;
 
+/* --- lighting a fire -------------------------------------------------------
+
+   Until this existed there was no way to start one. The torch emits no heat at
+   all, and the only sources in the world are lava -- which is in layer 2, past
+   a barrier you cannot break -- and electric sparks, which need a Clock, which
+   needs iron, which needs a fire. The survival opening ran entirely on the
+   debug Heat brush, which main.cpp is honest about calling a diagnostic tool.
+
+   The ceiling is what makes a striker a striker rather than a portable furnace.
+   110 C is above wood's 80 and coal's 90, so it lights both, and below clay's
+   120 and every smelting point in the game -- so it cannot fire a pot, cannot
+   melt tin at 120, and certainly cannot reach copper at 165 or iron at 190. It
+   starts a fire and the FIRE does the work, which is the whole shape of the
+   heat ladder: what you burn and what you burn it in are the interesting
+   decisions, and being unable to strike a spark was never one of them. */
+static const int IGNITE_MAX  = degC(110);
+static const int IGNITE_STEP = 14;   /* degrees a frame while it is held */
+/* Small: a striker lights a spot, not a room. Wide enough to cover a couple of
+   cells of tinder and narrow enough that aiming it is a real act. */
+static const int IGNITE_RADIUS = 3;
+
 static const int AIR_COOL       = 20;  /* chance/255 per frame that an AIR cell
                                           steps one degree toward ambient -- the
                                           main way heat leaves the scene, as if
@@ -585,6 +606,9 @@ struct World {
     void paint(int cx, int cy, int r, u8 mat, bool replace = true);
     void paintBg(int cx, int cy, int r, u8 mat);
     void heat(int cx, int cy, int r, int delta);
+    /* A striker's spark: warms a small disc TOWARD a ceiling and no further.
+       See IGNITE_MAX for why the ceiling is the whole design. */
+    void ignite(int cx, int cy, int r);
     void setCell(int x, int y, u8 mat);
     /* Change what a cell is MADE OF and nothing else: temperature, moisture and
        speckle all survive. setCell is the wrong verb when the thing in the cell

@@ -129,6 +129,29 @@ enum {
        of ore, and the whole point of a summon is that you arrive having chosen
        the ground and the moment. */
     ITEM_BROOD_CALL,
+    /* --- the striker ------------------------------------------------------
+       Two stones knocked together. It exists because there was no other way to
+       light a fire: the torch is cold, lava is behind a layer barrier, and
+       sparks need iron which needs a fire. See IGNITE_MAX in world.h for why it
+       reaches ignition temperature and not one degree further. */
+    ITEM_FLINT,
+    /* --- the starter weapon ----------------------------------------------
+       You spawn holding this. Before it existed a new character could not hurt
+       anything at all: damage lives on MODULES, a module needs a Multitool, and
+       both need copper -- so the whole first descent, which is where the game
+       puts its most dangerous creatures relative to your kit, had no answer to
+       anything living.
+
+       Deliberately feeble. It breaks no terrain (power 0), pierces one cell,
+       and does four damage against the Shot Module's six. It is the floor of
+       the ladder, not a rung on it: enough that a rock mite is a fight rather
+       than an execution, and weak enough that building a real weapon is still
+       the first thing you want. */
+    ITEM_BOLTER,
+    /* --- food -------------------------------------------------------------
+       What wheat is FOR. It had none: you could grow it, harvest it, and turn
+       it back into seed, which is a loop with nothing in the middle. */
+    ITEM_BREAD,
     ITEM_COUNT
 };
 
@@ -186,7 +209,17 @@ enum ItemKind {
        for the same reason ITEMK_SEED and ITEMK_DEVICE are: nothing about
        placement is shared. It needs no free cell, respects no lattice, and what
        it creates does not live in the grid at all. */
-    ITEMK_EGG
+    ITEMK_EGG,
+    /* --- ITEMK_IGNITE ----------------------------------------------------
+       Held, and clicking warms what is under the cursor toward ignition. Its
+       own kind rather than a module or a device because it consumes nothing,
+       places nothing and creates nothing -- it only nudges a field the
+       simulation already has, which is unlike every other verb here. */
+    ITEMK_IGNITE,
+    /* --- ITEMK_FOOD ------------------------------------------------------
+       Eaten, and gone. Its own kind because nothing else here is consumed for
+       an effect on the CHARACTER -- every other item acts on the world. */
+    ITEMK_FOOD
 };
 
 struct ItemDef {
@@ -331,6 +364,10 @@ struct ItemDef {
        first time the creature roster grew. One field cannot fall out of step
        with itself. */
     u8   summons;
+
+    /* --- ITEMK_FOOD only ---------------------------------------------
+       Health restored per unit eaten. */
+    i16  heal;
 
     /* --- ITEMK_DEVICE only -------------------------------------------
        Which DeviceType this places. 0 is a valid device type, so this field

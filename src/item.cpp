@@ -545,6 +545,44 @@ void initItems() {
     ITEMS[ITEM_FORGE_CORE].maxStack = 16;
     ITEMS[ITEM_FORGE_CORE].colour   = 0xE07A32;
 
+    /* The starter weapon. A TOOL with no module slots, which is what makes it
+       the floor of the ladder rather than a rung on it -- there is nothing to
+       socket into it and never will be, so the only way to shoot harder is to
+       build the Multitool it is pointedly worse than. See toolResolve for how a
+       slotless tool fires from its own stats. */
+    ITEMS[ITEM_BOLTER].name       = "Bolt Caster";
+    ITEMS[ITEM_BOLTER].kind       = ITEMK_TOOL;
+    ITEMS[ITEM_BOLTER].maxStack   = 1;
+    ITEMS[ITEM_BOLTER].colour     = 0x9A8A6E;
+    ITEMS[ITEM_BOLTER].toolSlots  = 0;
+    ITEMS[ITEM_BOLTER].baseDelay  = 22;
+    /* Power 0 breaks NOTHING -- every material outranks it, so a bolt stops at
+       the first wall instead of digging. That is the line between a weapon and
+       a tool, and this side of it is where a starter weapon belongs. */
+    ITEMS[ITEM_BOLTER].power      = 0;
+    ITEMS[ITEM_BOLTER].damage     = 4;
+    ITEMS[ITEM_BOLTER].pierce     = 1;
+    ITEMS[ITEM_BOLTER].shotColour = 0xE8D8A0;
+    ITEMS[ITEM_BOLTER].sprite     = SPR_BOLTER;
+
+    /* Bread. 30 of 100, so it is a meaningful recovery without being a reset
+       button -- three loaves brings you back from nearly dead, and carrying
+       three loaves is a decision about pack space. */
+    ITEMS[ITEM_BREAD].name     = "Bread";
+    ITEMS[ITEM_BREAD].kind     = ITEMK_FOOD;
+    ITEMS[ITEM_BREAD].heal     = 30;
+    ITEMS[ITEM_BREAD].maxStack = 32;
+    ITEMS[ITEM_BREAD].colour   = 0xC89A5A;
+
+    /* The striker. Reusable rather than consumed: it is a pair of stones, the
+       cost of replacing it would be trivial, and an igniter you can run out of
+       is an igniter that strands you next to an unlit furnace. */
+    ITEMS[ITEM_FLINT].name     = "Flint Striker";
+    ITEMS[ITEM_FLINT].kind     = ITEMK_IGNITE;
+    ITEMS[ITEM_FLINT].maxStack = 1;
+    ITEMS[ITEM_FLINT].colour   = 0xB8B4A6;
+    ITEMS[ITEM_FLINT].sprite   = SPR_FLINT;
+
     /* Spawn eggs, one per creature, built straight off the creature table --
        so a creature added tomorrow gets an egg with no edit here at all, and
        the egg cannot disagree with it about name or colour.
@@ -834,6 +872,29 @@ ToolShot toolResolve(const ItemStack& st) {
 
     const ItemDef& tool = ITEMS[st.item];
     s.delay = tool.baseDelay;
+
+    /* A tool with NO slots shoots from its own row. That is how the starter
+       weapon works and the only way it could: damage lives on modules, and a
+       weapon you cannot socket anything into would otherwise be a stick.
+
+       Answered ABOVE the instance check, not below it, and that placement is
+       the whole point rather than a tidiness preference. A ToolInst is where a
+       tool's MUTABLE state lives -- which modules are fitted, what payload is
+       loaded -- and a slotless weapon has none of that by construction. Making
+       it wait for an instance would mean the starter weapon you spawn holding
+       stops working the moment one fails to be allocated, and it would fail the
+       way this function's own comment describes: silently, as a stick. Nothing
+       below this point is read here. */
+    if (tool.toolSlots == 0 && tool.damage > 0) {
+        s.canFire = true;
+        s.power   = tool.power;
+        s.damage  = tool.damage;
+        s.pierce  = tool.pierce;
+        s.blast   = tool.blast;
+        s.colour  = tool.shotColour;
+        return s;
+    }
+
     if (st.inst == 0 || st.inst >= MAX_TOOL_INST) return s;   /* no state: a stick */
 
     const ToolInst& ti = g_toolInst[st.inst];
@@ -842,6 +903,7 @@ ToolShot toolResolve(const ItemStack& st) {
        wrong. */
     if (!ti.payload.empty() && ITEMS[ti.payload.item].kind == ITEMK_MATERIAL)
         s.payloadMat = (u8)ti.payload.item;
+
     const int n = imin(tool.toolSlots, TOOL_SLOTS_MAX);
     for (int i = 0; i < n; ++i) {
         const ItemId m = ti.slot[i];

@@ -77,6 +77,31 @@ const Recipe RECIPES[] = {
     { { { (ItemId)MAT_GRASS, 1 }, { ITEM_NONE, 0 }, { ITEM_NONE, 0 } },
       ITEM_GRASS_SEED, 2, "2 Grass Seed", STATION_HAND },
 
+    /* --- every crop seed, out of grass ------------------------------------
+       A STOPGAP, and worth labelling as one. Wheat, flax and cotton grow from
+       seed and drop seed, which is a closed loop with no way in: a world that
+       generates only oak has no wheat anywhere, so the entire agricultural
+       branch was unreachable in survival unless you already had some.
+
+       Grass is the placeholder source because it is the one plant that spreads
+       on its own, so it is renewable without being free. The real answer is
+       that these should GENERATE -- meadows of wild wheat and flax, the way oak
+       generates -- and when they do, these three rows should go. */
+    { { { (ItemId)MAT_GRASS, 2 }, { ITEM_NONE, 0 }, { ITEM_NONE, 0 } },
+      (ItemId)MAT_WHEAT_SEED, 1, "Wheat Seed from Grass", STATION_HAND },
+    { { { (ItemId)MAT_GRASS, 2 }, { ITEM_NONE, 0 }, { ITEM_NONE, 0 } },
+      (ItemId)MAT_FLAX_SEED, 1, "Flax Seed from Grass", STATION_HAND },
+    { { { (ItemId)MAT_GRASS, 2 }, { ITEM_NONE, 0 }, { ITEM_NONE, 0 } },
+      (ItemId)MAT_COTTON_SEED, 1, "Cotton Seed from Grass", STATION_HAND },
+
+    /* --- the striker --------------------------------------------------------
+       By HAND and out of nothing but stone, which is the point: it is the very
+       first thing a player makes, before the bench, and it has to be craftable
+       with what you can pick up in the opening thirty seconds. Everything
+       thermal in this game is downstream of being able to light something. */
+    { { { (ItemId)MAT_STONE, 4 }, { ITEM_NONE, 0 }, { ITEM_NONE, 0 } },
+      ITEM_FLINT, 1, "Flint Striker", STATION_HAND },
+
     /* --- stations -------------------------------------------------------
        HAND -> BENCH -> {ANVIL, CHEM} -> ASSEMBLY. Each station is craftable
        at the tier below it, which is what makes the ladder a ladder rather
@@ -164,6 +189,15 @@ const Recipe RECIPES[] = {
        material two tiers above them. */
     { { { (ItemId)MAT_WOOD, 3 }, { (ItemId)MAT_COAL, 1 }, { ITEM_NONE, 0 } },
       (ItemId)MAT_RUBBER, 2, "2 Rubber", STATION_BENCH },
+
+    /* --- bread ------------------------------------------------------------
+       What wheat is FOR, and the first thing in this game that acts on the
+       CHARACTER rather than on the world. Four wheat a loaf: a planted row
+       yields several harvests, so a field is a few loaves rather than one, and
+       food is something you keep a stock of rather than something you make when
+       you are already dying. */
+    { { { (ItemId)MAT_WHEAT, 4 }, { ITEM_NONE, 0 }, { ITEM_NONE, 0 } },
+      ITEM_BREAD, 1, "Bread", STATION_BENCH },
 
     /* --- the anvil, bronze tier ---------------------------------------------
        The mining ladder's second rung, and the first machines: sensing and

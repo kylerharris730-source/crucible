@@ -32,6 +32,8 @@ enum SpriteId {
     SPR_MINE3,
     SPR_MINE4,
     SPR_SEED,
+    SPR_FLINT,
+    SPR_BOLTER,
     SPR_BOOTS,       /* worn on the feet */
     SPR_HERMES,      /* also worn on the feet, and the reason that slot is a choice */
     SPR_PACK1,       /* the jetpack ladder: one silhouette, three sizes */

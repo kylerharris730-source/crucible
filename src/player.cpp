@@ -187,6 +187,13 @@ void Player::reset(float cx, float cy) {
     speedMul   = 1.0f;
 }
 
+void Player::heal(int amount) {
+    if (amount <= 0 || !alive) return;
+    hp += amount;
+    if (hp > PLAYER_HP_MAX) hp = PLAYER_HP_MAX;
+    hurt = 0.0f;
+}
+
 void Player::damage(float amount) {
     if (!alive || amount <= 0.0f) return;
     hurt += amount;

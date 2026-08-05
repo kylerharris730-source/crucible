@@ -500,6 +500,10 @@ struct Player {
     /* Take damage. Rounds UP through the accumulator rather than truncating, so
        a rate slower than a point a frame still eventually kills -- see `hurt`. */
     void damage(float amount);
+    /* Put health back. Clears the sub-point accumulator too, or a character
+       healed while standing in something hot keeps the fractional damage they
+       had banked and loses a point the instant they are topped up. */
+    void heal(int amount);
     /* The lines this character actually burns and freezes at, equipment
        included. Everything -- the damage, the HUD warning, the tests -- asks
        these rather than the constants, so a resistance that failed to move one

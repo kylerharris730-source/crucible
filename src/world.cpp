@@ -132,6 +132,26 @@ void World::reportFelled(int x, int y, u8 was, u8 now) {
     felled[felledCount++] = ch;
 }
 
+/* Warm a disc toward IGNITE_MAX, never past it. Cells already hotter are left
+   alone rather than dragged down -- a striker cannot cool anything, and running
+   one over an ember should not put it out. */
+void World::ignite(int cx, int cy, int r) {
+    const int x0 = imax(0, cx - r), x1 = imin(SIM_W - 1, cx + r);
+    const int y0 = imax(0, cy - r), y1 = imin(SIM_H - 1, cy + r);
+    const int r2 = r * r;
+    for (int y = y0; y <= y1; ++y)
+        for (int x = x0; x <= x1; ++x) {
+            const int dx = x - cx, dy = y - cy;
+            if (dx * dx + dy * dy > r2) continue;
+            const int i = y * SIM_W + x;
+            const int t = temp[i];
+            if (t >= IGNITE_MAX) continue;
+            const int nt = t + IGNITE_STEP;
+            temp[i] = (u8)(nt > IGNITE_MAX ? IGNITE_MAX : nt);
+            dirtyPoint(x, y);
+        }
+}
+
 void World::setCell(int x, int y, u8 mat) {
     const int i = y * SIM_W + x;
     Cell& c = cells[i];
