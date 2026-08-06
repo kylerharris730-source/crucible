@@ -186,10 +186,17 @@ void entDraw(u32* px, int camX, int camY, bool lit);
 void entSpawnTick(World& w, const Player& p, int camX, int camY);
 
 /* Creatures alive at once. Small on purpose: these are meant to be a hazard you
-   meet in a tunnel, not a horde. Ten is enough that a dark cavern feels
-   occupied and few enough that the contact-damage rules never turn into an
-   unavoidable grind. */
-static const int ENT_MAX_ALIVE = 10;
+   meet in a tunnel, not a horde. Enough that a dark cavern feels occupied and
+   few enough that the contact-damage rules never turn into an unavoidable
+   grind.
+
+   Ten -> seven, which is the "how many" half of a complaint that also had a
+   "how fast" half. The two are separate levers and it is worth keeping them
+   that way: this one sets the DENSITY a cave settles at, and SPAWN_COOL in
+   entity.cpp sets how long it takes to get there. Seven still fills a chamber;
+   ten was starting to read as a horde in the corridors, which are the tight
+   spaces where touch damage has nowhere for you to go. */
+static const int ENT_MAX_ALIVE = 7;
 
 /* How long a boss stays committed to a charge. Long enough to see it start,
    decide, and be somewhere else -- a lunge you cannot read is just damage that

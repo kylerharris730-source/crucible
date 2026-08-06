@@ -339,7 +339,13 @@ struct CavePoint { int x, y; };
 
 static void carveWorm(World& w, u32 seed, float x, float y, float baseAng,
                       int steps, float rBase, int breachFor,
-                      CavePoint* path = 0, int* pathLen = 0, int pathMax = 0) {
+                      CavePoint* path = 0, int* pathLen = 0, int pathMax = 0,
+                      /* How far this particular worm may turn off its base
+                         heading. Defaulted to CAVE_SWING so every existing
+                         caller keeps the wander it was tuned with; the galleries
+                         (see generateCaves) pass a small value to cut a tunnel
+                         that actually goes somewhere in a straight line. */
+                      float swing = CAVE_SWING) {
     const int sampleEvery = steps / (pathMax > 0 ? pathMax : 1) + 1;
     int pinned = 0;
     for (int s = 0; s < steps; ++s) {
@@ -349,7 +355,7 @@ static void carveWorm(World& w, u32 seed, float x, float y, float baseAng,
            without a restoring force and the worm eats its own tail. Offsetting
            from a fixed base keeps a tunnel going somewhere while still
            wandering. */
-        const float ang = baseAng + fbm(t / 90.0f, seed, 3) * CAVE_SWING;
+        const float ang = baseAng + fbm(t / 90.0f, seed, 3) * swing;
         float r = rBase * (1.0f + fbm(t / 55.0f, seed + 4441u, 2) * CAVE_FAT);
         if (r < (float)CAVE_MIN_R) r = (float)CAVE_MIN_R;
 
@@ -509,6 +515,36 @@ static void generateCaves(World& w) {
        this is not a decision to have more caves, it is the same decision
        expressed against a world twice as tall. */
     const int WORMS = 30;
+
+    /* --- galleries ----------------------------------------------------------
+       Every third worm is a GALLERY: a long, near-level tunnel that goes
+       somewhere instead of wandering.
+
+       The wander is controlled by CAVE_SWING, which at 1.15 radians is about
+       66 degrees off the base heading -- and a heading that free means a
+       "mostly horizontal" worm still spends most of its length climbing and
+       diving. That is good for the network overall, because a tunnel that
+       weaves connects things at different depths, but it means the underground
+       has no long level runs anywhere: you are always going up or down, and a
+       cave system with no horizontal in it reads as one continuous scramble.
+
+       So a minority of them are cut with a fraction of the swing and a fixed
+       level heading. A third rather than half, because these are the boring
+       ones -- they are worth having as the SPINE that the wandering caves
+       cross, and an underground made mostly of straight corridors would be
+       worse than one made mostly of squiggles.
+
+       0.28 rather than the 0.11 this was first written with, and the picture is
+       what said so. At 0.11 the galleries came out RULED: measured, the longest
+       walkable level run went from 487 cells to 1178, and at world scale you
+       could see several dead-flat lines crossing most of the map. That is not a
+       cave, it is a corridor somebody built. 0.28 still reads as horizontal --
+       the run lands around 800, comfortably above the 487 there was nothing
+       deliberate about -- while the tunnel visibly rises and falls as it goes.
+       "Horizontal section" has to mean a stretch you can walk along, not a
+       straight edge. */
+    static const float GALLERY_SWING = 0.28f;
+
     for (int i = 0; i < WORMS; ++i) {
         const u32 seed = 31u + (u32)i * 6151u;
         const float fx = ((float)i + 0.5f) / (float)WORMS * (float)SIM_W
@@ -518,12 +554,19 @@ static void generateCaves(World& w) {
         const int top  = g_surfaceY[ix] + CAVE_ROOF + 2 * CAVE_MIN_R;
         const int span = imax(1, CAVE_FLOOR_Y - top - 100);
         const float fy = (float)(top + (int)(hash1(i, 8677u) % (u32)span));
+
+        const bool gallery = (i % 3) == 0;
         /* Mostly horizontal headings: a vertical tunnel is a shaft you fall
-           down, and a cave you can walk along is worth more of them. */
-        const float ang = ((hash1(i, 2287u) & 1) ? 3.14159f : 0.0f)
-                        + ((float)(int)(hash1(i, 7717u) % 100u) / 100.0f - 0.5f) * 0.7f;
+           down, and a cave you can walk along is worth more of them. A gallery
+           takes the same left/right choice but none of the tilt. */
+        const float tilt = gallery ? 0.0f
+                         : ((float)(int)(hash1(i, 7717u) % 100u) / 100.0f - 0.5f) * 0.7f;
+        const float ang = ((hash1(i, 2287u) & 1) ? 3.14159f : 0.0f) + tilt;
+
+        const int steps = 600 + (int)(hash1(i, 1543u) % 900u);
         carveWorm(w, seed, (float)ix, fy, ang,
-                  600 + (int)(hash1(i, 1543u) % 900u), 14.0f, 0);
+                  gallery ? (int)(steps * 1.3f) : steps, 14.0f, 0,
+                  0, 0, 0, gallery ? GALLERY_SWING : CAVE_SWING);
     }
 }
 
@@ -561,7 +604,18 @@ static void generateCaves(World& w) {
 
 enum ChamberKind { CH_HALL = 0, CH_SHAFT, CH_ROTUNDA, CH_KINDS };
 
-static const int CHAMBER_COUNT = 26;
+/* 26 -> 34. Chambers were the rarest thing underground and the best, which is
+   the wrong way round: walking a long way between them meant the underground
+   read as corridor with an occasional room, rather than as rooms joined by
+   corridor.
+
+   38 was tried first and measured too far. Air by layer went 11.4/11.8/8.5 per
+   cent to 14.0/18.2/14.5 -- layer 2 up by half and layer 3 by seventy per cent,
+   which is the "sponge" the worm count was deliberately held down to avoid. The
+   deep is supposed to be rock you cut rooms out of, not rooms with rock between
+   them. 34, with the great-chamber multiplier below eased at the same time,
+   lands nearer 13/15/12: clearly more open than before, still solid. */
+static const int CHAMBER_COUNT = 34;
 
 /* An ellipse with a wobbled rim. The wobble is a sum of HARMONICS of the angle
    rather than fbm of it, and that is not a stylistic choice: fbm sampled on
@@ -609,13 +663,34 @@ static void generateChambers(World& w) {
 
         const int kind = (int)(hash1(i, 991u) % (u32)CH_KINDS);
 
-        /* Depth first, because the SIZE depends on it. Never in the soil, and
+        /* --- depth, dealt ROUND THE LAYERS rather than drawn from the whole ---
+           Depth first, because the SIZE depends on it. Never in the soil, and
            clear of the roof for the same reason the worms are -- a chamber that
            breaches the surface is a crater, and one with a soil ceiling caves in
-           the first time the world is simulated. */
-        const int top  = g_stoneY[cx] + CAVE_ROCK + 300;
-        const int span = imax(1, (CAVE_FLOOR_Y - 300) - top);
-        const int cy   = top + (int)(hash1(i, 4231u) % (u32)span);
+           the first time the world is simulated.
+
+           Each chamber is assigned to a LAYER by its index and then placed
+           inside it, instead of being dropped anywhere in the six thousand cells
+           of underground. That was a lottery, and with only a few dozen rooms
+           spread over three layers it was a coarse one -- which showed up the
+           moment this got tuned. Raising the count from 26 to 38 and easing it
+           back to 34 did not move layer 3 smoothly from 8.5% air to somewhere
+           between; it went 8.5 -> 14.5 -> 7.9, because changing the COUNT
+           changes every chamber's index and therefore relocates the entire set.
+           A knob whose effect is not monotonic cannot be tuned, only guessed at.
+
+           Dealing them round the layers makes the count mean what it looks like
+           it means, and guarantees the thing the lottery could not: that every
+           layer actually gets rooms. */
+        const int lay   = i % 3;
+        const int lTop  = g_stoneY[cx] + (lay == 0 ? CAVE_ROCK + 300
+                                        : lay == 1 ? LAYER1_DEPTH + STRATUM_THICK + 200
+                                                   : LAYER2_DEPTH + STRATUM_THICK + 200);
+        const int lBot  = (lay == 0 ? g_stoneY[cx] + LAYER1_DEPTH - 200
+                         : lay == 1 ? g_stoneY[cx] + LAYER2_DEPTH - 200
+                                    : CAVE_FLOOR_Y - 300);
+        const int span  = imax(1, lBot - lTop);
+        const int cy    = lTop + (int)(hash1(i, 4231u) % (u32)span);
 
         /* Deeper chambers are bigger. One multiplier, and it is doing real work:
            it is what makes the bottom of the world feel unlike the top by
@@ -624,18 +699,40 @@ static void generateChambers(World& w) {
         const int depth = cy - g_stoneY[cx];
         const float grow = 1.0f + 0.55f * (float)depth / (float)(LAYER2_DEPTH + 2000);
 
+        /* Every fourth one is a GREAT chamber, at nearly double the radius.
+           Making all of them bigger would just move the baseline and leave the
+           underground as uniform as it was -- what a cave system wants is a
+           long tail, so that finding a room you can barely see the far side of
+           is a thing that happens rather than a thing that happens every time.
+           A quarter is often enough to meet a few in a descent and rare enough
+           that they stay an event.
+
+           1.55 rather than the 1.85 first tried, and the reason is that this
+           COMPOUNDS with `grow` above: at depth grow is already about 1.37, so
+           1.85 made the deepest rooms two and a half times the base radius and
+           six times the area, and the bottom of the world measured 70% more
+           hollow than it had been. Radius multipliers that stack are the easiest
+           way to be surprised by an area. */
+        const bool great = (i % 4) == 0;
+        const float big = great ? 1.55f : 1.0f;
+
         int rx, ry;
         switch (kind) {
         case CH_HALL:
-            rx = (int)((110 + (int)(hash1(i, 55u) % 70u)) * grow);
+            rx = (int)((110 + (int)(hash1(i, 55u) % 70u)) * grow * big);
             ry = (int)((float)rx * 0.34f);
             break;
         case CH_SHAFT:
-            rx = (int)((26 + (int)(hash1(i, 77u) % 18u)) * grow);
+            /* Shafts grow far less. They are already the tallest thing in the
+               world at 3.6x their width, and the clamp below would eat most of
+               a big one anyway -- a shaft that wants to be 900 cells tall just
+               gets trimmed back to whatever fits between the soil and the
+               floor, so the extra size would be spent rather than seen. */
+            rx = (int)((26 + (int)(hash1(i, 77u) % 18u)) * grow * (great ? 1.35f : 1.0f));
             ry = (int)((float)rx * 3.6f);
             break;
         default: /* CH_ROTUNDA */
-            rx = (int)((70 + (int)(hash1(i, 99u) % 40u)) * grow);
+            rx = (int)((70 + (int)(hash1(i, 99u) % 40u)) * grow * big);
             ry = (int)((float)rx * 1.15f);
             break;
         }

@@ -631,6 +631,75 @@ tracks you perfectly and is simply unavoidable. It commits to a heading for
 34-60 frames and cannot turn fast enough to correct it, so it arrives where you
 WERE. The counter-play is to let it commit and then not be there.
 
+#### A drop is not just a supply question
+
+The moth used to drop **glass** — wings fused by the heat it chases, and
+justified on supply: glass gates the Chemistry Bench and the Assembly Table, and
+the only other source is a two-cell-deep beach on one lake.
+
+It was still the wrong drop, for a reason the supply argument never reaches.
+**Glass is a building block, and the commonest flier in the layer handing you
+stacks of one turns a fight into inventory management.** What you want off a
+fast nuisance is something you *spend*. It drops **coal** now, which is what a
+heat-chaser should be carrying anyway.
+
+**This costs something and the cost is real:** glass is back to being gated on
+that one beach. The honest fix is for sand to generate somewhere underground —
+it is currently the only common surface material with no deep source at all —
+and that is worth doing before the Chemistry Bench matters.
+
+### How fast a cave fills, which the comment got backwards
+
+`entSpawnTick` carried a claim that twenty probes against a cap of ten "fills a
+dark cavern over a few seconds — somewhere gradually becoming occupied, not an
+ambush materialising." That was written beside the constant rather than measured
+from it. Measured in a dark layer-1 cavern: **first creature on frame 1, cap
+full on frame 10.** A sixth of a second. Precisely the ambush it promised not to
+be.
+
+Two separate levers now, because "too many" and "too fast" are different
+complaints:
+
+- `ENT_MAX_ALIVE` **10 → 7** — the density a cave settles at.
+- `SPAWN_COOL` **= 45 frames** — a global clock, reset only on a successful
+  spawn. Probes are *not* the pacing lever; lowering them would make spawn rate
+  depend on how cluttered the cave is rather than on time.
+
+Measured after: **cap reached at 4.62 s**, one creature at a time.
+
+### Galleries, and a tuning knob that was not monotonic
+
+Two changes to the caves, both measured against the previous world rather than
+eyeballed.
+
+**Galleries.** Every third worm is now cut with a fraction of `CAVE_SWING` and a
+dead-level base heading. `CAVE_SWING` is 1.15 rad — about 66° — so a "mostly
+horizontal" worm still spent most of its length climbing and diving, and the
+underground had no long level runs anywhere. First attempt used swing 0.11 and
+produced *ruled lines*: the longest walkable level run went 487 → **1178** cells
+and the overview showed dead-flat tunnels crossing most of the map. 0.28 lands
+at **684** — clearly horizontal, still visibly rising and falling.
+
+**More and bigger chambers**, 26 → 34, with every fourth at 1.55× radius. Note
+that multiplier *compounds* with the existing depth `grow` (~1.37 at the
+bottom); at the 1.85 first tried, the deepest rooms were 6× the base area and
+layer 3 measured 70% more hollow.
+
+The finding worth keeping is about the **knob, not the number**. Chamber depth
+used to be drawn uniformly from the whole underground, so changing
+`CHAMBER_COUNT` changed every chamber's index and relocated the entire set.
+Layer 3's air went **8.5% → 14.5% → 7.9%** across three successive tunings —
+*not monotonic*, and a knob that is not monotonic cannot be tuned, only guessed
+at. Chambers are now **dealt round the layers** by index and placed within one,
+which makes the count mean what it looks like it means and guarantees every
+layer gets rooms.
+
+| air by layer | before | after |
+|---|---|---|
+| Layer 1 | 11.36% | 14.61% |
+| Layer 2 | 11.80% | 13.73% |
+| Layer 3 | 8.54% | 12.52% |
+
 ### The boss
 
 **Brood Mother**, 34x24, 900 hp. A rock mite grown enormous, which is the right

@@ -43,11 +43,22 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
        an hour, is the entire point of putting it this early.
 
        Fragile and fast: it should die to one good shot and be genuinely
-       annoying to hit with a bad one. Drops glass -- wings fused by the heat it
-       chases -- which matters because glass gates the Chemistry Bench and the
-       Assembly Table, and until now the world's only source of it was one beach
-       on one lake. */
-    { "Cinder Moth",9,  7, 10,   4,  30, 0.52f, 0.09f, true,  1,  true,    0, 0, 0.0f, 0.0f, false, (ItemId)MAT_GLASS,  1, 2, SPR_MOTH,  0xE0561C },
+       annoying to hit with a bad one.
+
+       Drops COAL, not the glass it used to. Glass was the clever answer -- wings
+       fused by the heat it chases -- and it was justified on supply grounds,
+       since glass gates the Chemistry Bench and the Assembly Table and the only
+       other source is a two-cell beach on one lake. It was still the wrong
+       drop, for a reason no supply argument reaches: glass is a BUILDING
+       BLOCK, and the commonest flying creature in the layer handing you stacks
+       of one turns a fight into inventory management. What you want off a fast
+       nuisance is something you spend, not something you store.
+
+       Coal is what a heat-chaser should be carrying anyway, and it is consumed
+       rather than stockpiled. See the note in PROGRESSION about what this costs:
+       glass is back to being gated on that one beach, and the honest fix is for
+       sand to generate somewhere underground too. */
+    { "Cinder Moth",9,  7, 10,   4,  30, 0.52f, 0.09f, true,  1,  true,    0, 0, 0.0f, 0.0f, false, (ItemId)MAT_COAL,   1, 2, SPR_MOTH,  0xE0561C },
 
     /* --- drip slime --------------------------------------------------------
        The corroder, and the slowest thing in the game: it is not a chase, it is
@@ -143,7 +154,19 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
    outlive a session. */
 u32 g_bossesBeaten = 0;
 
-void entReset() { memset(g_entities, 0, sizeof(g_entities)); }
+/* Frames left before the spawner may act again; see SPAWN_COOL, which is kept
+   beside the rest of the spawn tuning rather than up here. Declared at this
+   point only because entReset has to clear it. */
+static int g_spawnCool = 0;
+
+void entReset() {
+    memset(g_entities, 0, sizeof(g_entities));
+    /* Or a new world inherits the last one's cooldown -- which would be a
+       silent, unreproducible delay of up to SPAWN_COOL frames on the first
+       spawn after every Clear, and a test that ran a second scenario would
+       measure the tail of the first. */
+    g_spawnCool = 0;
+}
 
 int entAliveCount() {
     int n = 0;
@@ -664,10 +687,32 @@ void entTick(World& w, Player& p) {
 
 /* Sites tried per frame. Small: a spawn is a rare event and this runs every
    frame forever, so the budget is per-frame cost rather than per-spawn success.
-   Twenty probes against a cap of ten live creatures fills a dark cavern over a
-   few seconds, which is the pace this wants -- somewhere gradually becoming
-   occupied, not an ambush materialising. */
+
+   This used to carry a claim that twenty probes against a cap of ten "fills a
+   dark cavern over a few seconds, which is the pace this wants -- somewhere
+   gradually becoming occupied, not an ambush materialising". That claim was
+   written beside the constant rather than measured from it, and it was wrong in
+   the worst possible direction: measured in a dark layer-1 cavern, the first
+   creature arrives on frame 1 and the cap is full on frame 10. A sixth of a
+   second. It was precisely the ambush it promised not to be.
+
+   Probes are not the pacing lever, though -- they are how hard the spawner
+   looks for a legal site, and lowering them would make spawning depend on how
+   cluttered the cave is rather than on time. The pacing lever is SPAWN_COOL
+   below, which is a clock. */
 static const int SPAWN_TRIES = 20;
+
+/* Frames between spawns, whatever the probes find. This is the whole of the
+   pacing: a cavern now reaches the cap in about five seconds instead of a sixth
+   of one, and creatures arrive one at a time, which is what "somewhere
+   gradually becoming occupied" has to mean if it means anything.
+
+   A single global clock rather than per-creature or per-site cooldowns, because
+   what wants limiting is the RATE THE PLAYER EXPERIENCES, and the player
+   experiences one world. Reset on a successful spawn only -- frames where every
+   probe was rejected cost nothing and should not bank credit toward a burst the
+   moment you step into somewhere dark. */
+static const int SPAWN_COOL = 45;
 /* Brightness at or below which a site counts as dark. Torchlight is far above
    this, so a lit corridor is genuinely clear. */
 static const int SPAWN_DARK  = 40;
@@ -690,6 +735,7 @@ static int entSpawnedCount() {
 }
 
 void entSpawnTick(World& w, const Player& p, int camX, int camY) {
+    if (g_spawnCool > 0) { --g_spawnCool; return; }
     if (entSpawnedCount() >= ENT_MAX_ALIVE) return;
 
     for (int attempt = 0; attempt < SPAWN_TRIES; ++attempt) {
@@ -753,7 +799,10 @@ void entSpawnTick(World& w, const Player& p, int camX, int camY) {
         if (solidBox(w, bx, by, d.w, d.h)) continue;
         if (!d.flies && !solidBox(w, bx, by + d.h, d.w, 1, SOLID_FLOOR)) continue;
 
-        if (entSpawn(w, type, (float)x, (float)y) >= 0) return;   /* one a frame */
+        if (entSpawn(w, type, (float)x, (float)y) >= 0) {
+            g_spawnCool = SPAWN_COOL;
+            return;                                   /* one a frame, at most */
+        }
     }
 }
 
