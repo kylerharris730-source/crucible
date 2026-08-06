@@ -3419,6 +3419,28 @@ static void drawCreative(HDC hdc) {
    Greyed-out rows are a shopping list. */
 static RECT g_craftPanel;
 static RECT g_craftRow[128];
+
+/* --- making more than one -------------------------------------------------
+   Crafting a hundred platform one click at a time is not a decision repeated a
+   hundred times, it is the same decision and ninety-nine chores. Two ways out,
+   and they answer different questions:
+
+     HOLD    keep the button down and it repeats, accelerating. For "I want a
+             lot and I will stop when it looks right" -- you watch the number
+             climb and let go.
+     SHIFT   one click, sixty-four made. For "I know exactly how many", which
+             is what a stack is.
+
+   The ramp rather than a fixed repeat rate because both ends matter: the first
+   repeat has to be slow enough that a slightly long click does not make five of
+   something expensive, and the tail has to be fast enough that a hundred is a
+   second rather than a chore with a different shape. */
+static const int  CRAFT_REPEAT_DELAY = 26;   /* frames before the first repeat */
+static const int  CRAFT_REPEAT_MIN   = 1;    /* the floor it accelerates to */
+static const int  CRAFT_SHIFT_BATCH  = 64;
+static int g_craftHeldRow  = -1;   /* which row the button is down on */
+static int g_craftHeldFor  = 0;    /* frames it has been down */
+static int g_craftCool     = 0;    /* frames until the next repeat */
 bool g_craftOpen = false;
 
 /* A fixed window of rows with the rest scrolled past, exactly the shape the
@@ -3481,7 +3503,22 @@ static void layoutCraft() {
 static bool handleCraftClick(int mx, int my) {
     if (!g_craftOpen) return false;
     for (int i = 0; i < N_RECIPES && i < 128; ++i)
-        if (inRect(g_craftRow[i], mx, my)) { craftMake(g_inv, i); return true; }
+        if (inRect(g_craftRow[i], mx, my)) {
+            /* Shift makes a stack in one go. Stopping the moment one fails --
+               out of ingredients, or no room for the result -- rather than
+               pushing on: craftMake is already all-or-nothing per item, and
+               sixty-four attempts against an empty pack should cost nothing
+               and change nothing. */
+            const int n = (GetKeyState(VK_SHIFT) & 0x8000) ? CRAFT_SHIFT_BATCH : 1;
+            for (int k = 0; k < n; ++k)
+                if (!craftMake(g_inv, i)) break;
+            /* Arm the repeat on THIS row, so sliding the mouse onto another
+               recipe mid-hold does not silently start making that one. */
+            g_craftHeldRow = i;
+            g_craftHeldFor = 0;
+            g_craftCool    = CRAFT_REPEAT_DELAY;
+            return true;
+        }
     /* Clicking the track pages toward the click -- the same gesture every
        scrollbar supports, and it needs no drag handling to be useful since
        the wheel already covers fine scrolling. */
@@ -3925,6 +3962,31 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
             DispatchMessage(&msg);
         }
         if (!g_running) break;
+
+        /* --- holding the craft button -------------------------------------
+           Repeats while the button stays down on the row it was pressed on,
+           accelerating from CRAFT_REPEAT_DELAY toward CRAFT_REPEAT_MIN.
+
+           Driven from the frame loop rather than from mouse messages because
+           the rate has to be in FRAMES: WM_MOUSEMOVE arrives when the mouse
+           moves, and a held button on a still mouse generates nothing at all. */
+        if (g_craftHeldRow >= 0) {
+            if (!g_lmb || !g_craftOpen) {
+                g_craftHeldRow = -1;
+            } else if (--g_craftCool <= 0) {
+                ++g_craftHeldFor;
+                /* Halve the gap every five repeats, down to the floor. A
+                   geometric ramp rather than a linear one because what it has to
+                   span is a factor of twenty-six, and stepping down by one frame a
+                   time would spend most of the hold in the slow half. */
+                int gap = CRAFT_REPEAT_DELAY >> (g_craftHeldFor / 5);
+                if (gap < CRAFT_REPEAT_MIN) gap = CRAFT_REPEAT_MIN;
+                g_craftCool = gap;
+                const int n = (GetKeyState(VK_SHIFT) & 0x8000) ? CRAFT_SHIFT_BATCH : 1;
+                for (int k = 0; k < n; ++k)
+                    if (!craftMake(g_inv, g_craftHeldRow)) { g_craftHeldRow = -1; break; }
+            }
+        }
 
         /* Ticked unconditionally, so a cooldown can never outlive the drag that
            set it and the first click after a pause always acts at once. */

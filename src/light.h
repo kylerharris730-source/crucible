@@ -27,15 +27,17 @@
    Without the margin, walking toward a lamp would make the wall in front of
    you brighten only once the lamp itself came into frame.
 
-   85 is not a round number picked for comfort: it is exactly the furthest a
-   source can reach, LIGHT_MAX divided by air's attenuation of 3 (see initLight
-   in materials.cpp). At that width there is no seam to hide -- a source one
+   127 is not a round number picked for comfort: it is exactly the furthest a
+   source can reach, LIGHT_MAX divided by air's attenuation of 2 (see initLight
+   in materials.cpp). It was 85 against an attenuation of 3, and the two moved
+   together when torches were made to reach further -- which is the invariant
+   this paragraph exists to state. At that width there is no seam to hide -- a source one
    cell outside the rectangle contributes nothing to the first cell inside it,
    so cutting the rectangle off is not an approximation at all. It is also the
    only thing here that costs area, so it is the number to look at if lighting
    ever needs to be cheaper: air's attenuation and this must move together, or
    lamps will start popping into existence at the edge of the screen. */
-static const int LIGHT_MARGIN = 85;
+static const int LIGHT_MARGIN = 127;
 static const int LIGHT_W = VIEW_CELLS_W + 2 * LIGHT_MARGIN;
 static const int LIGHT_H = VIEW_CELLS_H + 2 * LIGHT_MARGIN;
 

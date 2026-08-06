@@ -395,6 +395,7 @@ static bool sparkStep(World& w, Spark& s) {
     const int fromX = s.x, fromY = s.y;
     bool travelled = false;
     bool delivered = false;
+    bool sleepingBoundary = false;
     /* Set when an onward cell was conductive but already carried this pulse --
        i.e. the wave goes on through it, just not carried by this front. */
     bool handedOn = false;
@@ -402,6 +403,15 @@ static bool sparkStep(World& w, Spark& s) {
         const int nx = fromX + cand[k][0], ny = fromY + cand[k][1];
         if (nx == fromX && ny == fromY) continue;
         if (nx < PLAY_X0 || nx > PLAY_X1 || ny < PLAY_Y0 || ny > PLAY_Y1) continue;
+
+        /* The wire beyond the live simulation boundary is frozen. Let the pulse
+           vanish there instead of treating that boundary as a physical open end:
+           clocks can then never pour endpoint heat into copper that is not getting
+           its matching cooling step. */
+        if (!w.electricalLive(nx, ny)) {
+            if (conducts(w, nx, ny) || devAt(nx, ny)) sleepingBoundary = true;
+            continue;
+        }
 
         /* A machine is a SINK, not wire. Reaching one delivers the spark and ends
            its journey -- which is what makes "wire the clock to the placer" mean
@@ -445,6 +455,7 @@ static bool sparkStep(World& w, Spark& s) {
 
     if (travelled) return true;
     if (delivered) return false;
+    if (sleepingBoundary) return false;
 
     /* Nowhere to go: spat out. The heat goes into the cell it was heading into if
        that is open, and otherwise into the conductor it died in. */
@@ -489,7 +500,7 @@ static void sparkCrowdHeat(World& w) {
     int touched = 0;
     for (int i = 0; i < MAX_SPARKS; ++i) {
         const Spark& s = g_sparks[i];
-        if (!s.used) continue;
+        if (!s.used || !w.electricalLive(s.x, s.y)) continue;
         const int ci = (s.y >> CHUNK_SHIFT) * CHUNKS_X + (s.x >> CHUNK_SHIFT);
         if (g_sparkLoad[ci] == 0) {
             g_sparkTouched[touched++] = ci;
@@ -540,25 +551,25 @@ static int devEmit(World& w, const Device& d) {
        the two sides of a corner are two different directions to leave in. */
     run = false;
     for (int x = d.x; x < d.x + DEV_W; ++x) {
-        const bool c = conducts(w, x, d.y - 1);
+        const bool c = w.electricalLive(x, d.y - 1) && conducts(w, x, d.y - 1);
         if (c && !run && sparkAdd(x, d.y - 1, 0, -1)) ++sent;
         run = c;
     }
     run = false;
     for (int x = d.x; x < d.x + DEV_W; ++x) {
-        const bool c = conducts(w, x, d.y + DEV_H);
+        const bool c = w.electricalLive(x, d.y + DEV_H) && conducts(w, x, d.y + DEV_H);
         if (c && !run && sparkAdd(x, d.y + DEV_H, 0, 1)) ++sent;
         run = c;
     }
     run = false;
     for (int y = d.y; y < d.y + DEV_H; ++y) {
-        const bool c = conducts(w, d.x - 1, y);
+        const bool c = w.electricalLive(d.x - 1, y) && conducts(w, d.x - 1, y);
         if (c && !run && sparkAdd(d.x - 1, y, -1, 0)) ++sent;
         run = c;
     }
     run = false;
     for (int y = d.y; y < d.y + DEV_H; ++y) {
-        const bool c = conducts(w, d.x + DEV_W, y);
+        const bool c = w.electricalLive(d.x + DEV_W, y) && conducts(w, d.x + DEV_W, y);
         if (c && !run && sparkAdd(d.x + DEV_W, y, 1, 0)) ++sent;
         run = c;
     }
@@ -615,6 +626,7 @@ static void shedTick(World& w) {
     for (int i = 0; i < MAX_SHED; ++i) {
         ShedSpark& s = g_shed[i];
         if (!s.used) continue;
+        if (!w.electricalLive((int)s.x, (int)s.y)) continue;
         if (--s.life <= 0) { s.used = false; continue; }
 
         s.vy += PROJ_GRAVITY;
@@ -628,6 +640,7 @@ static void shedTick(World& w) {
             if (cx < PLAY_X0 || cx > PLAY_X1 || cy < PLAY_Y0 || cy > PLAY_Y1) {
                 s.used = false; break;
             }
+            if (!w.electricalLive(cx, cy)) { s.used = false; break; }
             /* THE point of the whole feature. Landing in bare conductor starts
                a pulse there, which is how a spark shed by one circuit sets off
                another one nobody wired to it. */
@@ -1062,7 +1075,7 @@ void devTick(World& w) {
     if (g_sparkFrame == 0) g_sparkFrame = 1;
     for (int i = 0; i < MAX_SPARKS; ++i) {
         Spark& s = g_sparks[i];
-        if (!s.used || s.stepped == g_sparkFrame) continue;
+        if (!s.used || !w.electricalLive(s.x, s.y) || s.stepped == g_sparkFrame) continue;
         for (int step = 0; step < SPARK_SPEED; ++step) {
             if (!sparkStep(w, s)) { s.used = false; break; }
         }
@@ -1078,6 +1091,11 @@ void devTick(World& w) {
     for (int i = 0; i < MAX_DEVICES; ++i) {
         Device& d = g_devices[i];
         if (!d.used) continue;
+
+        /* A machine's centre chooses its chunk. Its entire 14-cell footprint is
+           then frozen with that chunk, so an off-screen clock cannot fire into a
+           wire that the material simulation has stopped cooling. */
+        if (!w.electricalLive(d.x + DEV_W / 2, d.y + DEV_H / 2)) continue;
 
         if (!devIntact(w, d)) { devRemove(w, &d); continue; }
 

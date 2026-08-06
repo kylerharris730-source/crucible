@@ -1102,7 +1102,16 @@ static void initLight() {
     for (int m = 0; m < MAT_COUNT; ++m) {
         g_matLight[m]   = 0;
         switch (MATS[m].kind) {
-        case KIND_EMPTY:  g_matOpacity[m] = 3;  break;
+        /* 3 -> 2, which is the only lever on how far a lamp reaches: a torch
+           already emits 235 of a possible 255, so brightness was out of road.
+           Reach is LIGHT_MAX / this, so 85 cells becomes 127.
+
+           LIGHT_MARGIN moves with it and MUST -- see the note on it in light.h.
+           The margin is exactly the furthest a source can reach, which is what
+           makes cutting the light rectangle off an exact operation rather than
+           an approximation; leaving it behind would put a visible seam wherever
+           a lamp sat just outside the frame. */
+        case KIND_EMPTY:  g_matOpacity[m] = 2;  break;
         case KIND_GAS:    g_matOpacity[m] = 5;  break;
         case KIND_LIQUID: g_matOpacity[m] = 12; break;
         default:          g_matOpacity[m] = 38; break;

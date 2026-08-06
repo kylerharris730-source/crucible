@@ -130,6 +130,14 @@ static const int RAY_SPAN = LIGHT_W + 2 * RAY_BIAS;
 
    Eight fractional bits give a beam room to lose half a percent per cell for a
    hundred cells and still mean something. Costs 18 KB, once. */
+/* How bright a cell is allowed to be purely because there is open sky BEHIND
+   it, with no ray able to reach it. See the note where it is applied.
+
+   64 of 255 -- a quarter. Enough to move about, read the terrain and see a
+   creature coming; nowhere near enough to work by, so a roofed building still
+   wants torches. Above about a third it stops reading as shelter at all. */
+static const int SKY_AMBIENT = 64;
+
 static const int RAY_FRAC = 8;
 static u16 g_ray[SUN_RAYS][RAY_SPAN];
 
@@ -621,6 +629,34 @@ void lightCompute(const World& w, int camX, int camY) {
                     const int depth = wy - g_boundY[lx];
                     if (depth > 0) sum -= (depth * SUN_FADE_Q8) >> 8;
                     if (sum > 0) sky = (u8)(sum > LIGHT_MAX ? LIGHT_MAX : sum);
+                    if (sky > lit) lit = sky;
+                }
+
+                /* --- the sky you cannot see is still the sky ---------------
+                   Rays are straight lines, so ANY roof takes a cell from full
+                   daylight to nothing. Standing under a plank two cells above
+                   open ground was as dark as a cave three thousand cells down,
+                   which is wrong in a way you feel immediately: putting a lid
+                   on a hut should dim it, not blind you.
+
+                   The signal is the BACKGROUND. Worldgen writes a backdrop
+                   behind every cell it fills, so a cell whose background is
+                   still empty is one where the world never had any ground --
+                   open air, whatever has since been built in front of it. That
+                   is exactly "outdoors, under cover", and it is distinguishable
+                   from a cave (backed by rock) and from a room whose walls you
+                   put up yourself (backed by placed background) without any new
+                   state at all.
+
+                   Scaled by the same daylight the rays carry, so a covered
+                   porch still goes dark at night, and capped well below full
+                   sun -- it is bounced light, not a second sun. */
+                const int wx = wx0 + lx;
+                if (sky < SKY_AMBIENT && wx >= 0 && wx < SIM_W
+                    && wy >= 0 && wy < SIM_H
+                    && !w.bgPlaced(wx, wy) && w.bgAt(wx, wy) == MAT_EMPTY) {
+                    const int amb = (SKY_AMBIENT * dayLight()) / LIGHT_MAX;
+                    if (amb > (int)sky) sky = (u8)amb;
                     if (sky > lit) lit = sky;
                 }
             }

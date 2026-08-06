@@ -188,6 +188,27 @@ int main() {
         fprintf(stderr, "overload did not rupture and clear\n"); return 18;
     }
 
+    /* Electricity must freeze with an off-screen chunk. Before this, world.step
+       froze copper's cooling while devTick kept clocks firing into it; a simple
+       clock-and-wire run consequently heated itself until it exploded. */
+    w.reset(); devClear(); sparkClear();
+    const int clockX = 800, clockY = 800;
+    if (!devPlace(w, DEV_CLOCK, clockX, clockY)) {
+        fprintf(stderr, "could not place off-screen clock test\n"); return 25;
+    }
+    Device* clock = devAt(clockX, clockY);
+    for (int x = clock->x + DEV_W; x <= clock->x + DEV_W + 16; ++x)
+        w.setCell(x, clock->y + DEV_H / 2, MAT_COPPER);
+    clock->value = 6;
+    clock->phase = 5;  /* next active tick would emit immediately */
+    const int wireEnd = clock->x + DEV_W + 16;
+    w.setLiveWindow(1400, 1400, 1463, 1463);
+    for (int i = 0; i < 360; ++i) devTick(w);
+    if (clock->phase != 5 || sparkCount() != 0 ||
+        w.at(wireEnd, clock->y + DEV_H / 2).mat != MAT_COPPER) {
+        fprintf(stderr, "off-screen clock advanced or overloaded its wire\n"); return 26;
+    }
+
     /* Circuit wires are separate from copper: a chest contributes its material
        count to a named signal, a constant contributes a numbered signal, and an
        arithmetic combinator can add the two after the deliberate one-tick

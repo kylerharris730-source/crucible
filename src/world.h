@@ -556,6 +556,23 @@ struct World {
     }
     void clearLiveWindow() { setLiveWindow(0, 0, SIM_W - 1, SIM_H - 1); }
 
+    /* Electrical state is time-based, so it must share the world's actual live
+       area rather than its off-screen grace period. Grace preserves pending
+       material work after the camera moves; letting clocks run through it would
+       keep adding heat to copper whose cooling step has already frozen. Built
+       rooms are the intentional exception: their chunks are explicitly kept
+       alive so a workshop can keep operating while the player is away. */
+    bool electricalLive(int x, int y) const {
+        if (x < 0 || x >= SIM_W || y < 0 || y >= SIM_H) return false;
+        const int cx = x >> CHUNK_SHIFT, cy = y >> CHUNK_SHIFT;
+        const int ci = cy * CHUNKS_X + cx;
+        if (keepAlive[ci]) return true;
+        return (cx >= liveCoreCX0 && cx <= liveCoreCX1 &&
+                cy >= liveCoreCY0 - fingerTop && cy <= liveCoreCY1 + fingerBottom) ||
+               (cy >= liveCoreCY0 && cy <= liveCoreCY1 &&
+                cx >= liveCoreCX0 - fingerLeft && cx <= liveCoreCX1 + fingerRight);
+    }
+
     /* --- solid entity box ------------------------------------------------
        A single axis-aligned box that no material may move into. It exists so
        the player has physical presence -- sand piles on their head instead of
