@@ -24,6 +24,43 @@ void toolInstFree(u16 inst) {
     memset(&g_toolInst[inst], 0, sizeof(ToolInst));
 }
 
+/* See the note in item.h for what this repairs and why it cannot be skipped. */
+void toolInstReconcile(Inventory& inv) {
+    bool referenced[MAX_TOOL_INST];
+    memset(referenced, 0, sizeof(referenced));
+
+    ItemStack* stacks[INV_SLOTS + EQ_COUNT];
+    int n = 0;
+    for (int i = 0; i < INV_SLOTS; ++i) stacks[n++] = &inv.slot[i];
+    for (int i = 0; i < EQ_COUNT;   ++i) stacks[n++] = &inv.equip[i];
+
+    for (int i = 0; i < n; ++i) {
+        ItemStack& s = *stacks[i];
+        if (s.inst == 0) continue;
+        /* A reference out of range, or from something that is not a tool, is
+           corruption rather than state -- drop it rather than trust it. */
+        if (s.inst >= MAX_TOOL_INST || s.empty() ||
+            ITEMS[s.item].kind != ITEMK_TOOL) { s.inst = 0; continue; }
+        /* Two stacks naming one instance would share modules and ammo, which is
+           worse than either losing them. The first keeps it; the second gets a
+           blank one. */
+        if (referenced[s.inst]) { s.inst = toolInstNew(); if (!s.inst) continue; }
+        referenced[s.inst] = true;
+        /* ADOPT it. For a save written before the pool was persisted this is
+           an empty tool rather than the loadout you had -- the modules were
+           never written and cannot be conjured back -- but an empty tool that
+           works beats a tool frozen after one shot. */
+        g_toolInst[s.inst].used = true;
+        /* A cooldown is transient. Restoring one means loading into a fraction
+           of a firing delay, which is meaningless, and a corrupt one would
+           reproduce the exact bug this function exists to fix. */
+        g_toolInst[s.inst].cooldown = 0;
+    }
+
+    for (int i = 1; i < MAX_TOOL_INST; ++i)
+        if (!referenced[i] && g_toolInst[i].used) toolInstFree(i);
+}
+
 /* STR_HARD, not something lower, and that is a deliberate non-change: before
    the layer barriers there was no strength gate on digging at all, so bare
    hands could already clear tungsten given the time. Introducing a gate is not

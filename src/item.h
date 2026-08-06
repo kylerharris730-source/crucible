@@ -516,6 +516,7 @@ extern ToolInst g_toolInst[MAX_TOOL_INST];
 u16  toolInstNew();
 void toolInstFree(u16 inst);
 
+
 /* --- equipment slots -------------------------------------------------------
    Named by where they go on the body, not numbered, because the whole value of
    a typed slot is that it says what belongs in it. Two named slots and two
@@ -621,6 +622,27 @@ struct Inventory {
        answer to this question. */
     int  firstToolSlot() const;
 };
+
+/* --- the invariant, restated after a load ----------------------------------
+   An instance is `used` if and only if some stack in the pack or the equipment
+   references it. Holds by construction while the game is running -- add()
+   allocates, releaseStack() frees -- and does NOT survive a load, because the
+   inventory and the instance pool are separate things written at separate
+   times.
+
+   That gap produced a genuinely baffling bug: a tool that fired exactly once
+   and then never again, for the rest of the session. The inventory is saved
+   whole, INCLUDING each stack's inst id, and the pool was not saved at all, so
+   after loading in a fresh session every stack pointed at an instance whose
+   `used` was false. fireTool then wrote its cooldown into that dead instance
+   quite happily -- and the frame loop, which decrements cooldowns only for
+   instances that are `used`, skipped it forever.
+
+   Two rules disagreeing about the same flag: the WRITE path did not check
+   `used` and the TICK path did. Call this after loading and both are true
+   again. It also frees instances nothing references, so a load cannot leak the
+   pool the way picking up and dropping a tool 32 times once did. */
+void toolInstReconcile(Inventory& inv);
 
 /* Muzzle speed for anything that does not state one, in cells per frame. This
    is the number every shot used to fly at, hard-coded at the firing site, so

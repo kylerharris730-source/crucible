@@ -269,6 +269,18 @@ bool saveWrite(const char* path, const World& w) {
         s.end();
     }
     {
+        /* The tool instance pool. INVN already stores each stack's inst ID, so
+           without this the save was internally inconsistent: it remembered
+           WHICH instance a multitool owned and nothing about what was in it.
+           Every module you had fitted and every payload you had loaded was
+           dropped on the floor by a save, silently.
+
+           Worse than losing them, it froze the tool. See toolInstReconcile. */
+        SectionWriter s; s.begin(f, "TOOL", "tool loadouts");
+        fwrite(g_toolInst, sizeof(ToolInst), MAX_TOOL_INST, f);
+        s.end();
+    }
+    {
         SectionWriter s; s.begin(f, "DEVS", "machines");
         fwrite(g_devices, sizeof(Device), MAX_DEVICES, f);
         fwrite(g_sparks,  sizeof(Spark),  MAX_SPARKS,  f);
@@ -457,6 +469,10 @@ bool saveRead(const char* path, World& w) {
         } else if (tag == fourcc("INVN")) {
             if (len == sizeof(Inventory)) fread(&g_inv, sizeof(Inventory), 1, f);
             statAdd("inventory", len + 12);
+        } else if (tag == fourcc("TOOL")) {
+            if (len == sizeof(ToolInst) * MAX_TOOL_INST)
+                fread(g_toolInst, sizeof(ToolInst), MAX_TOOL_INST, f);
+            statAdd("tool loadouts", len + 12);
         } else if (tag == fourcc("DEVS")) {
             if (len == sizeof(Device) * MAX_DEVICES + sizeof(Spark) * MAX_SPARKS) {
                 fread(g_devices, sizeof(Device), MAX_DEVICES, f);
@@ -521,6 +537,13 @@ bool saveRead(const char* path, World& w) {
 
     fclose(f);
     circuitInitMissingConfigs();
+    /* Put the inventory and the tool pool back in agreement. Needed for every
+       save written before the TOOL section existed, where the pack names
+       instances that were never restored -- and cheap insurance for every save
+       written after it. See toolInstReconcile: the failure it prevents is a
+       tool that fires exactly once and then never again, which is about as
+       far from its cause as a symptom can get. */
+    toolInstReconcile(g_inv);
     /* Whatever was chasing you is gone. Creatures are not saved (entity.h), so
        the ones still in the array are from the world that was open a moment
        ago -- leaving them would strand them inside whatever terrain now
