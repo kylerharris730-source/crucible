@@ -18,6 +18,7 @@
 #include "door.h"
 #include "tree.h"
 #include "craft.h"
+#include "map.h"
 #include "entity.h"
 #include "save.h"
 
@@ -393,6 +394,19 @@ static int  g_paletteScroll = 0;
 static int  g_paletteMaxScroll = 0;
 static int  g_brushRadius = 6;
 static bool g_paused = false;
+
+/* --- the map ------------------------------------------------------------
+   Two views of one dataset (see map.h). The MINIMAP is a small always-on
+   window on the corner of the screen, and the FULL MAP takes the viewport and
+   scrolls. They share the reveal, so walking with the minimap up fills in the
+   full map too -- there is one record of where you have been, not two. */
+static bool g_mapOpen  = false;      /* the full-screen map */
+static bool g_miniOn   = true;       /* the corner minimap */
+/* Where the full map is looking, in MAP pixels. Follows the player until you
+   drag it, and re-centres when reopened -- a map you have to re-find yourself
+   on every time you open it is a map you stop opening. */
+static int  g_mapPanX = 0, g_mapPanY = 0;
+static bool g_mapPanned = false;
 static bool g_stepOnce = false;
 static int  g_speedIdx = 0;      /* index into SPEEDS */
 /* The character can be switched off, because the sandbox this grew out of is
@@ -1417,6 +1431,10 @@ static void makeWorld() {
        so a fresh world would otherwise arrive with the last one's wildlife
        standing in mid-air where its floor used to be. */
     entReset();
+    /* A new world has not been explored. Without this a Clear leaves the old
+       world's map showing, which is worse than a blank one: it is a confident
+       picture of somewhere that no longer exists. */
+    mapClear();
     generateWorld(g_world);
     giveStartingKit();
     /* Generation rebuilds every cell, so any room that existed described a
@@ -1764,6 +1782,15 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
            character to control it is the obvious binding for something else,
            and every player will try it. The panel button still pauses too. */
         case 'P': g_paused = !g_paused; break;
+        /* Q for the full map, Z for the corner one. Not M, which every game
+           with a map uses and which is taken here by the copper brush -- moving
+           an existing binding to get the nicer letter is not this feature's
+           call to make.
+
+           Opening the full map re-centres it on the player: a map you have to
+           find yourself on every time is a map you stop opening. */
+        case 'Q': g_mapOpen = !g_mapOpen; if (g_mapOpen) g_mapPanned = false; break;
+        case 'Z': g_miniOn = !g_miniOn; break;
         case VK_OEM_PERIOD: g_stepOnce = true; break;
         case VK_OEM_4: changeSize(-1); break;  /* [ */
         case VK_OEM_6: changeSize(+1); break;  /* ] */
@@ -1776,7 +1803,8 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
            menu -- one key that always means "close the thing in front of me" is
            worth more than a second binding to remember. */
         case VK_ESCAPE:
-            if (g_chestOpen >= 0)    closeChest();
+            if (g_mapOpen)           g_mapOpen = false;
+            else if (g_chestOpen >= 0) closeChest();
             else if (g_craftOpen)    g_craftOpen = false;
             else if (g_creativeOpen) { g_creativeOpen = false; g_filterDevice = -1; g_digFilterPicking = false; g_signalPickerDevice = -1; g_signalPickerField = CIR_PICK_NONE; g_creSearchFocus = false; dragStow(); }
             else                     g_menuOpen = !g_menuOpen;
@@ -2857,6 +2885,132 @@ static void drawBrushOutline(HDC hdc, int x, int y, int radius) {
     DeleteObject(pen);
 }
 
+/* ======================================================================
+   The map
+   ====================================================================== */
+
+/* Painted into the pixel buffer rather than through GDI, for the same reason
+   everything else in the viewport is: one blit at the end beats a few hundred
+   thousand SetPixel calls, and the map is at its largest a full viewport of
+   them. */
+static void mapBlit(u32* px, int dstX, int dstY, int dstW, int dstH,
+                    int srcX, int srcY, int zoom, bool fogged) {
+    for (int y = 0; y < dstH; ++y) {
+        const int vy = dstY + y;
+        if (vy < 0 || vy >= VIEW_CELLS_H) continue;
+        const int my = srcY + y / zoom;
+        for (int x = 0; x < dstW; ++x) {
+            const int vx = dstX + x;
+            if (vx < 0 || vx >= VIEW_CELLS_W) continue;
+            const int mx = srcX + x / zoom;
+            u32 c;
+            if (!mapColour(mx, my, &c)) {
+                /* Unexplored. Drawn as a flat dark field rather than left
+                   transparent: a map with holes you can see the game through
+                   reads as a rendering fault, and the whole point of a fog is
+                   that it is a positive statement about not knowing. */
+                if (!fogged) continue;
+                c = (mx < 0 || mx >= MAP_W || my < 0 || my >= MAP_H)
+                    ? 0x000000 : 0x0B0D11;
+            }
+            px[vy * VIEW_CELLS_W + vx] = c;
+        }
+    }
+}
+
+/* A box outline, for the "you are here" marker and the minimap frame. */
+static void mapBox(u32* px, int x0, int y0, int w, int h, u32 c) {
+    for (int x = 0; x < w; ++x) {
+        const int a = x0 + x;
+        if (a < 0 || a >= VIEW_CELLS_W) continue;
+        if (y0 >= 0 && y0 < VIEW_CELLS_H)          px[y0 * VIEW_CELLS_W + a] = c;
+        const int b = y0 + h - 1;
+        if (b >= 0 && b < VIEW_CELLS_H)            px[b * VIEW_CELLS_W + a] = c;
+    }
+    for (int y = 0; y < h; ++y) {
+        const int b = y0 + y;
+        if (b < 0 || b >= VIEW_CELLS_H) continue;
+        if (x0 >= 0 && x0 < VIEW_CELLS_W)          px[b * VIEW_CELLS_W + x0] = c;
+        const int a = x0 + w - 1;
+        if (a >= 0 && a < VIEW_CELLS_W)            px[b * VIEW_CELLS_W + a] = c;
+    }
+}
+
+/* The corner minimap. Small, always on, and centred on the player -- its job is
+   "which way is the tunnel I came from", not navigation. */
+static const int MINI_W = 132, MINI_H = 108, MINI_PAD = 6;
+
+static void drawMinimap(u32* px) {
+    if (!g_miniOn || g_mapOpen) return;
+    const int x0 = VIEW_CELLS_W - MINI_W - MINI_PAD, y0 = MINI_PAD;
+    const int pcx = (int)g_player.centreX() >> MAP_SHIFT;
+    const int pcy = (int)g_player.centreY() >> MAP_SHIFT;
+
+    mapBlit(px, x0, y0, MINI_W, MINI_H, pcx - MINI_W / 2, pcy - MINI_H / 2, 1, true);
+    mapBox(px, x0 - 1, y0 - 1, MINI_W + 2, MINI_H + 2, 0x6E7684);
+    /* The player, dead centre by construction. Two cells so it is visible
+       against a busy map. */
+    for (int oy = -1; oy <= 1; ++oy)
+        for (int ox = -1; ox <= 1; ++ox) {
+            const int a = x0 + MINI_W / 2 + ox, b = y0 + MINI_H / 2 + oy;
+            if (a < 0 || a >= VIEW_CELLS_W || b < 0 || b >= VIEW_CELLS_H) continue;
+            px[b * VIEW_CELLS_W + a] = 0xFFD24A;
+        }
+}
+
+/* The full map. Takes the viewport, scaled so the world's WIDTH fits, and
+   scrolls vertically -- the world is 2.25 times taller than it is wide, so
+   there is no zoom at which the whole thing is usefully on screen at once. */
+static void drawFullMap(u32* px) {
+    if (!g_mapOpen) return;
+    /* Integer zoom only. A fractional scale on a pixel map produces seams and
+       shimmer as it pans, and the map is a diagram rather than a photograph. */
+    const int zoom = VIEW_CELLS_W / MAP_W > 0 ? VIEW_CELLS_W / MAP_W : 1;
+    const int viewMapW = VIEW_CELLS_W / zoom, viewMapH = VIEW_CELLS_H / zoom;
+
+    int cx = g_mapPanX, cy = g_mapPanY;
+    if (!g_mapPanned) {
+        cx = (int)g_player.centreX() >> MAP_SHIFT;
+        cy = (int)g_player.centreY() >> MAP_SHIFT;
+    }
+    /* Drag to look around. Held-button deltas rather than a scrollbar, because
+       the map is a thing you push about rather than a document you seek in. */
+    static int lastX = -1, lastY = -1;
+    if (g_lmb && g_mx >= PANEL_W) {
+        if (lastX >= 0) {
+            cx -= (g_mx - lastX) / (zoom * SCALE);
+            cy -= (g_my - lastY) / (zoom * SCALE);
+            if (g_mx != lastX || g_my != lastY) g_mapPanned = true;
+        }
+        lastX = g_mx; lastY = g_my;
+    } else { lastX = lastY = -1; }
+    /* Clamped so the map cannot be scrolled off into blackness. */
+    int sx = cx - viewMapW / 2, sy = cy - viewMapH / 2;
+    if (sx > MAP_W - viewMapW) sx = MAP_W - viewMapW;
+    if (sy > MAP_H - viewMapH) sy = MAP_H - viewMapH;
+    if (sx < 0) sx = 0;
+    if (sy < 0) sy = 0;
+
+    mapBlit(px, 0, 0, VIEW_CELLS_W, VIEW_CELLS_H, sx, sy, zoom, true);
+
+    /* You, and the patch of world currently on screen. The box is what turns
+       the map from a picture into a position: it says how much of what you are
+       looking at you can actually see right now. */
+    const int pmx = ((int)g_player.centreX() >> MAP_SHIFT) - sx;
+    const int pmy = ((int)g_player.centreY() >> MAP_SHIFT) - sy;
+    const int bw = (VIEW_CELLS_W >> MAP_SHIFT) * zoom;
+    const int bh = (VIEW_CELLS_H >> MAP_SHIFT) * zoom;
+    mapBox(px, pmx * zoom - bw / 2, pmy * zoom - bh / 2, bw, bh, 0x5A6472);
+    for (int oy = -2; oy <= 2; ++oy)
+        for (int ox = -2; ox <= 2; ++ox) {
+            const int a = pmx * zoom + ox, b = pmy * zoom + oy;
+            if (a < 0 || a >= VIEW_CELLS_W || b < 0 || b >= VIEW_CELLS_H) continue;
+            px[b * VIEW_CELLS_W + a] = 0xFFD24A;
+        }
+    g_mapPanX = sx + viewMapW / 2;
+    g_mapPanY = sy + viewMapH / 2;
+}
+
 static void drawCursor(HDC hdc) {
     if (g_mx < PANEL_W) return;                 /* over the panel: system cursor */
 
@@ -3781,7 +3935,10 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
            instance rather than beside the input handler. */
         for (int i = 1; i < MAX_TOOL_INST; ++i)
             if (g_toolInst[i].used && g_toolInst[i].cooldown > 0) --g_toolInst[i].cooldown;
-        if (!g_menuOpen && !g_creativeOpen && !g_craftOpen && g_chestOpen < 0) applyBrush();
+        /* The map covers the viewport, so a click while it is up must not dig
+           the world underneath it -- you cannot see what you would be hitting. */
+        if (!g_menuOpen && !g_creativeOpen && !g_craftOpen && g_chestOpen < 0 && !g_mapOpen)
+            applyBrush();
         /* Whether the sim actually advanced this frame, so the character moves
            in lockstep with the world -- including on a single frame-advance. */
         bool steppedThisFrame = false;
@@ -3825,7 +3982,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
            polled rather than event-driven because held keys are the whole
            interface here, and WM_KEYDOWN repeat rates are a user setting. */
         if (g_playerOn && !g_menuOpen && !g_creativeOpen && !g_craftOpen && g_chestOpen < 0
-            && (!g_paused || steppedThisFrame)) {
+            && !g_mapOpen && (!g_paused || steppedThisFrame)) {
             PlayerInput in;
             in.left  = (GetAsyncKeyState('A') & 0x8000) || (GetAsyncKeyState(VK_LEFT)  & 0x8000);
             in.right = (GetAsyncKeyState('D') & 0x8000) || (GetAsyncKeyState(VK_RIGHT) & 0x8000);
@@ -3915,6 +4072,10 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
            is why this sits here and not up beside the sim step. */
         if (g_lightOn) lightCompute(g_world, g_camX, g_camY);
         g_cellCount = renderView(g_world, g_pixels, g_view, g_camX, g_camY, g_lightOn);
+        /* Reveal AFTER rendering, so the map records the frame you actually
+           saw rather than the one before it, and only while the world is
+           running -- standing on a pause screen should not fill in terrain. */
+        if (!g_paused && !g_menuOpen) mapReveal(g_world, g_camX, g_camY);
         /* Machines draw whether or not the character is enabled -- they are part
            of the world, not part of the player, and the sandbox half of this
            program is exactly where you want to inspect a contraption. Before the
@@ -3946,6 +4107,11 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         drawPanel(g_backDC);
         if (g_survival && g_playerOn) drawHotbar(g_backDC);
         drawDevPanel(g_backDC);
+        /* Over the world and the machines, under the panels. The full map
+           REPLACES the viewport, so it is drawn last of the pixel-buffer
+           passes; the minimap is a corner window on top of the world. */
+        drawFullMap(g_pixels);
+        drawMinimap(g_pixels);
         if (!g_menuOpen && !g_creativeOpen && !g_craftOpen && g_chestOpen < 0) drawCursor(g_backDC);
         if (g_creativeOpen) drawCreative(g_backDC);
         if (g_craftOpen)    drawCraft(g_backDC);

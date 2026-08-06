@@ -1,4 +1,5 @@
 #include "save.h"
+#include "map.h"
 #include "entity.h"
 #include "light.h"
 #include "player.h"
@@ -281,6 +282,15 @@ bool saveWrite(const char* path, const World& w) {
         s.end();
     }
     {
+        /* Where you have been. 576 KB raw, which is nothing beside the world
+           plane and not worth compressing -- an explored map is mostly
+           non-repeating material ids, so RLE would buy little and cost a second
+           encoder to get wrong. */
+        SectionWriter s; s.begin(f, "MAPX", "explored map");
+        fwrite(g_map, 1, sizeof(g_map), f);
+        s.end();
+    }
+    {
         SectionWriter s; s.begin(f, "DEVS", "machines");
         fwrite(g_devices, sizeof(Device), MAX_DEVICES, f);
         fwrite(g_sparks,  sizeof(Spark),  MAX_SPARKS,  f);
@@ -469,6 +479,23 @@ bool saveRead(const char* path, World& w) {
         } else if (tag == fourcc("INVN")) {
             if (len == sizeof(Inventory)) fread(&g_inv, sizeof(Inventory), 1, f);
             statAdd("inventory", len + 12);
+        } else if (tag == fourcc("MAPX")) {
+            if (len == (u64)sizeof(g_map)) {
+                fread(g_map, 1, sizeof(g_map), f);
+                /* Remapped like every other stored MatId -- the map is made of
+                   them, so a save written before a material moved would draw
+                   the wrong colours. MAP_UNSEEN and MAP_AIR are NOT material
+                   ids and must survive untouched: remapping MAP_AIR (255)
+                   through the table would land on MAT_EMPTY, which is
+                   MAP_UNSEEN, and every tunnel you had walked would go back to
+                   being unexplored. */
+                for (int i = 0; i < MAP_W * MAP_H; ++i) {
+                    const u8 v = g_map[i];
+                    if (v == MAP_UNSEEN || v == MAP_AIR) continue;
+                    g_map[i] = g_remap[v] ? g_remap[v] : MAP_AIR;
+                }
+            }
+            statAdd("explored map", len + 12);
         } else if (tag == fourcc("TOOL")) {
             if (len == sizeof(ToolInst) * MAX_TOOL_INST)
                 fread(g_toolInst, sizeof(ToolInst), MAX_TOOL_INST, f);
