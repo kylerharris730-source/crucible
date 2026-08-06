@@ -273,6 +273,51 @@ bool sparkAdd(int x, int y, int dx, int dy);
    most useful thing to be able to see. */
 void sparkDraw(u32* px, int camX, int camY);
 
+/* --- what an unterminated wire sheds ---------------------------------------
+
+   A pulse reaching the open end of a wire has nowhere to go, and until now it
+   simply stopped (with a little heat). Now it SPITS: a bright mote drops out of
+   the cut end and falls.
+
+   In open air that is decoration -- it drops, dims and is gone. What makes it
+   worth having is what happens when it lands on another exposed conductor,
+   which is that it energises it. So a tidy circuit is unaffected, and a bundle
+   of bare wire ends over a bundle of bare wire is a machine that sets itself
+   off. The consequence is entirely emergent from where you left your cables.
+
+   --- why this is a PARTICLE and not a material ---
+
+   The obvious reading of "a new spark material" is a MatId that falls like sand
+   and reacts with wire on contact, and that is the one thing the architecture
+   here will not buy cheaply. world.cpp knows nothing about electricity -- no
+   devices, no doors, no sparks, not one reference -- and that purity is load
+   bearing: the falling-sand rules are a closed system that can be reasoned
+   about and tested without any of this file existing. A material whose rule is
+   "energise the wire I touched" would put the first crack in that.
+
+   So it lives here, next to the thing that creates it and the thing it acts on,
+   and it is an overlay for the same reason the player and projectiles are: it
+   moves in a way cells cannot, and it needs to be somewhere the grid is not.
+   See the note at the top of projectile.h, which is the same argument. */
+struct ShedSpark {
+    float x, y;      /* cells, with a fractional part -- it falls smoothly */
+    float vx, vy;
+    i32   life;      /* frames remaining */
+    bool  used;
+};
+
+/* Small, and the cap is the whole safety story. A conductive blob can terminate
+   dozens of fronts a pulse and every one of them sheds, so this is what stops a
+   badly-built circuit from filling the screen with motes. Dropping the excess is
+   right: the interesting event is that a wire end spits, not that every single
+   one did on a particular frame. */
+static const int MAX_SHED = 96;
+extern ShedSpark g_shed[MAX_SHED];
+
+int  shedCount();
+void shedClear();
+void shedDraw(u32* px, int camX, int camY);
+
 struct DeviceInfo {
     const char* name;
     /* What the adjustable number MEANS, for the panel. Every device has exactly

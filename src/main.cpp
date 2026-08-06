@@ -3930,6 +3930,9 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
            front of you cannot hide the character you are steering. */
         entDraw(g_pixels, g_camX, g_camY, g_lightOn);
         sparkDraw(g_pixels, g_camX, g_camY);
+        /* After the fronts, so a mote falling in front of a lit wire is drawn
+           over it rather than under. */
+        shedDraw(g_pixels, g_camX, g_camY);
         projDraw(g_pixels, g_camX, g_camY);
         /* Modals dim the world in the pixel buffer, before it becomes a blit --
            see dimPixels(). Doing it to the window instead cost 500ms a frame. */

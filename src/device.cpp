@@ -5,6 +5,7 @@
 #include "projectile.h"
 #include <string.h>
 #include <stdlib.h>
+#include <math.h>   /* fabsf, for the shed spark's fall */
 
 Device g_devices[MAX_DEVICES];
 
@@ -281,6 +282,10 @@ int sparkCount() {
 
 void sparkClear() {
     for (int i = 0; i < MAX_SPARKS; ++i) g_sparks[i].used = false;
+    /* The motes go too. They are shed BY this system and feed back into it, so
+       leaving them alive across a clear would let a new world be energised by
+       the last one's loose ends. */
+    shedClear();
     memset(g_pulseMark, 0, sizeof(g_pulseMark));
     memset(g_sparkLoad, 0, sizeof(g_sparkLoad));
     g_nextPulse = 1;
@@ -341,6 +346,10 @@ static const int SPARK_ARC_POWER = 230;
 static const int SPARK_CROWD_AT = 48;
 static const int SPARK_CROWD_HEAT = 2;
 static const int SPARK_CYCLE_RADIUS = 16;
+
+/* Defined further down with the rest of the mote code; declared here because
+   sparkStep sheds one and sparkClear disposes of them, and both come first. */
+static void shedAdd(int x, int y, int dx, int dy);
 
 static void sparkArcIfHot(World& w, int x, int y) {
     if (w.temp[y * SIM_W + x] >= SPARK_ARC_TEMP)
@@ -433,6 +442,12 @@ static bool sparkStep(World& w, Spark& s) {
     const int hx = openAhead ? ox : s.x, hy = openAhead ? oy : s.y;
     w.heat(hx, hy, 1, SPARK_HEAT);
     sparkArcIfHot(w, hx, hy);
+    /* And it SPITS, when there is open air to spit into. A wire buried in rock
+       or butted against a machine just stops; a cut end hanging in a room drops
+       a mote out of it. See ShedSpark -- what makes this more than decoration is
+       that the mote energises any bare conductor it lands on, so where you leave
+       your cable ends becomes something the world has an opinion about. */
+    if (openAhead) shedAdd(ox, oy, s.dx, s.dy);
     return false;
 }
 
@@ -522,6 +537,107 @@ static int devEmit(World& w, const Device& d) {
         run = c;
     }
     return sent;
+}
+
+/* --- the mote a cut wire end spits ---------------------------------------- */
+ShedSpark g_shed[MAX_SHED];
+
+/* Long enough to fall a useful distance and short enough that a shower of them
+   is a moment rather than a state. At PROJ_GRAVITY a mote covers roughly 130
+   cells in 90 frames, which is a couple of screens down -- far enough to reach
+   the cable run you forgot about on the floor below. */
+static const int SHED_LIFE = 90;
+/* Sideways kick, so a row of ends does not drop a ruler-straight curtain. */
+static const float SHED_SPREAD = 0.35f;
+
+void shedClear() { for (int i = 0; i < MAX_SHED; ++i) g_shed[i].used = false; }
+
+int shedCount() {
+    int n = 0;
+    for (int i = 0; i < MAX_SHED; ++i) if (g_shed[i].used) ++n;
+    return n;
+}
+
+/* Dropped out of the open end at (x, y), heading the way the front was going.
+   Silently discarded when the pool is full; see MAX_SHED. */
+static void shedAdd(int x, int y, int dx, int dy) {
+    for (int i = 0; i < MAX_SHED; ++i) {
+        ShedSpark& s = g_shed[i];
+        if (s.used) continue;
+        s.x = (float)x + 0.5f;
+        s.y = (float)y + 0.5f;
+        /* Carries a little of the wire's direction, so a spark leaving a
+           horizontal run visibly goes OUT of the end before gravity takes it,
+           rather than dropping vertically from a point. */
+        s.vx = (float)dx * 0.45f
+             + ((float)(int)(rngNext() % 200u) / 100.0f - 1.0f) * SHED_SPREAD;
+        s.vy = (float)dy * 0.45f;
+        s.life = SHED_LIFE;
+        s.used = true;
+        return;
+    }
+}
+
+/* Fall, and energise whatever conductor we land in.
+
+   Stepped a cell at a time along the frame's path rather than sampled at the
+   end of it: a mote under gravity is soon moving faster than one cell a frame,
+   and a sampled step would drop straight through a one-cell-thick wire, which
+   is exactly the wire somebody strung across a room. Same reasoning as the
+   projectile traversal, at a much smaller scale. */
+static void shedTick(World& w) {
+    for (int i = 0; i < MAX_SHED; ++i) {
+        ShedSpark& s = g_shed[i];
+        if (!s.used) continue;
+        if (--s.life <= 0) { s.used = false; continue; }
+
+        s.vy += PROJ_GRAVITY;
+
+        const float tx = s.x + s.vx, ty = s.y + s.vy;
+        const int steps = 1 + (int)(fabsf(tx - s.x) + fabsf(ty - s.y));
+        for (int k = 1; k <= steps && s.used; ++k) {
+            const float f = (float)k / (float)steps;
+            const int cx = (int)(s.x + (tx - s.x) * f);
+            const int cy = (int)(s.y + (ty - s.y) * f);
+            if (cx < PLAY_X0 || cx > PLAY_X1 || cy < PLAY_Y0 || cy > PLAY_Y1) {
+                s.used = false; break;
+            }
+            /* THE point of the whole feature. Landing in bare conductor starts
+               a pulse there, which is how a spark shed by one circuit sets off
+               another one nobody wired to it. */
+            if (conducts(w, cx, cy)) {
+                sparkAdd(cx, cy, 0, 1);
+                s.used = false;
+                break;
+            }
+            /* Anything else solid just stops it. A mote is not a projectile and
+               does not dig, burn or bounce -- it lands and goes out. */
+            const u8 m = w.at(cx, cy).mat;
+            if (m != MAT_EMPTY && MATS[m].kind != KIND_GAS) { s.used = false; break; }
+        }
+        if (s.used) { s.x = tx; s.y = ty; }
+    }
+}
+
+void shedDraw(u32* px, int camX, int camY) {
+    for (int i = 0; i < MAX_SHED; ++i) {
+        const ShedSpark& s = g_shed[i];
+        if (!s.used) continue;
+        const int vx = (int)s.x - camX, vy = (int)s.y - camY;
+        /* Fades as it dies, so a mote reads as cooling rather than as blinking
+           out. Two cells across for the same reason a spark front is: one cell
+           is two screen pixels and disappears into the noise. */
+        const int fade = s.life > 30 ? 255 : (s.life * 255) / 30;
+        const u32 col = ((u32)(0xFF * fade / 255) << 16)
+                      | ((u32)(0xD8 * fade / 255) << 8)
+                      |  (u32)(0x70 * fade / 255);
+        for (int oy = 0; oy < 2; ++oy)
+            for (int ox = 0; ox < 2; ++ox) {
+                const int px_ = vx + ox, py_ = vy + oy;
+                if (px_ < 0 || px_ >= VIEW_CELLS_W || py_ < 0 || py_ >= VIEW_CELLS_H) continue;
+                px[py_ * VIEW_CELLS_W + px_] = col;
+            }
+    }
 }
 
 void sparkDraw(u32* px, int camX, int camY) {
@@ -927,6 +1043,10 @@ void devTick(World& w) {
         s.stepped = g_sparkFrame;
     }
     sparkCrowdHeat(w);
+    /* After the fronts have moved and before the devices run: a mote that lands
+       on wire this frame starts a pulse, and that pulse should be a front the
+       NEXT frame like any other rather than something devices see half-formed. */
+    shedTick(w);
     circuitPrepareInputs();
 
     for (int i = 0; i < MAX_DEVICES; ++i) {
