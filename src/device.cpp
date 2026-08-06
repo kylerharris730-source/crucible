@@ -280,6 +280,11 @@ int sparkCount() {
     return n;
 }
 
+/* Defined further down with the rest of the mote code; declared here because
+   sparkStep nominates one and sparkClear disposes of them, and both come
+   first. */
+static void shedAdd(int x, int y, int dx, int dy);
+
 void sparkClear() {
     for (int i = 0; i < MAX_SPARKS; ++i) g_sparks[i].used = false;
     /* The motes go too. They are shed BY this system and feed back into it, so
@@ -347,10 +352,6 @@ static const int SPARK_CROWD_AT = 48;
 static const int SPARK_CROWD_HEAT = 2;
 static const int SPARK_CYCLE_RADIUS = 16;
 
-/* Defined further down with the rest of the mote code; declared here because
-   sparkStep sheds one and sparkClear disposes of them, and both come first. */
-static void shedAdd(int x, int y, int dx, int dy);
-
 static void sparkArcIfHot(World& w, int x, int y) {
     if (w.temp[y * SIM_W + x] >= SPARK_ARC_TEMP)
         explodeAt(w, x, y, SPARK_ARC_R, SPARK_ARC_POWER);
@@ -394,6 +395,9 @@ static bool sparkStep(World& w, Spark& s) {
     const int fromX = s.x, fromY = s.y;
     bool travelled = false;
     bool delivered = false;
+    /* Set when an onward cell was conductive but already carried this pulse --
+       i.e. the wave goes on through it, just not carried by this front. */
+    bool handedOn = false;
     for (int k = 0; k < n; ++k) {
         const int nx = fromX + cand[k][0], ny = fromY + cand[k][1];
         if (nx == fromX && ny == fromY) continue;
@@ -417,7 +421,15 @@ static bool sparkStep(World& w, Spark& s) {
 
         if (!conducts(w, nx, ny)) continue;
         const int mark = ny * SIM_W + nx;
-        if (g_pulseMark[mark] == s.pulse) continue;
+        if (g_pulseMark[mark] == s.pulse) {
+            /* Wire, and this wave is already in it -- a sibling front got here
+               first. Remembering that is what tells a wire END apart from a
+               wire that merely got NARROWER, which are the same event from
+               inside this front and completely different from outside it. See
+               the note at the bottom of this function. */
+            handedOn = true;
+            continue;
+        }
         g_pulseMark[mark] = s.pulse;
 
         if (!travelled) {
@@ -442,12 +454,26 @@ static bool sparkStep(World& w, Spark& s) {
     const int hx = openAhead ? ox : s.x, hy = openAhead ? oy : s.y;
     w.heat(hx, hy, 1, SPARK_HEAT);
     sparkArcIfHot(w, hx, hy);
-    /* And it SPITS, when there is open air to spit into. A wire buried in rock
-       or butted against a machine just stops; a cut end hanging in a room drops
-       a mote out of it. See ShedSpark -- what makes this more than decoration is
-       that the mote energises any bare conductor it lands on, so where you leave
-       your cable ends becomes something the world has an opinion about. */
-    if (openAhead) shedAdd(ox, oy, s.dx, s.dy);
+    /* --- and it SPITS, if this is a real end of the wave --------------------
+
+       Not merely if this FRONT stopped. A pulse travels as many fronts abreast
+       -- one per cell of the wire's cross-section -- so every place a conductor
+       narrows, the outer fronts run out of cells while the wave itself carries
+       straight on through the middle. Shedding there sheds at every taper, every
+       bevel and every rounded corner, which is what "the wire spits sparks any
+       time it gets thinner" looks like from the outside.
+
+       `handedOn` is the difference, and it is exact rather than a heuristic: it
+       says an onward cell WAS conductive and already carried this pulse, so the
+       wave is continuing through it and this front is simply the one that lost
+       the race for it. A genuine end has no such cell -- nothing conductive
+       ahead at all, taken or otherwise.
+
+       Which leaves a wave that FORKS behaving properly, and that is the point
+       of doing it this way rather than by counting fronts per pulse: two
+       branches that separate and end in two different places are two real ends,
+       and they shed two motes. Only the ends are counted, not the narrowings. */
+    if (openAhead && !handedOn) shedAdd(ox, oy, s.dx, s.dy);
     return false;
 }
 

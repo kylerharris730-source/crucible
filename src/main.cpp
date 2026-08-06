@@ -4095,6 +4095,17 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
            over it rather than under. */
         shedDraw(g_pixels, g_camX, g_camY);
         projDraw(g_pixels, g_camX, g_camY);
+        /* The map, over the world and the machines and under every panel. Last
+           of the PIXEL-BUFFER passes and before StretchDIBits, which is the
+           part that matters: these write into g_pixels, and once the blit has
+           happened that buffer is not looked at again this frame. Putting them
+           after it -- which is where they went first -- draws a perfectly
+           correct map into memory and shows none of it. The symptom is that the
+           map key appears to do nothing except stop the character, because the
+           input gate works and the drawing does not. */
+        drawFullMap(g_pixels);
+        drawMinimap(g_pixels);
+
         /* Modals dim the world in the pixel buffer, before it becomes a blit --
            see dimPixels(). Doing it to the window instead cost 500ms a frame. */
         if (g_menuOpen || g_creativeOpen || g_craftOpen || g_chestOpen >= 0) dimPixels();
@@ -4107,12 +4118,10 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         drawPanel(g_backDC);
         if (g_survival && g_playerOn) drawHotbar(g_backDC);
         drawDevPanel(g_backDC);
-        /* Over the world and the machines, under the panels. The full map
-           REPLACES the viewport, so it is drawn last of the pixel-buffer
-           passes; the minimap is a corner window on top of the world. */
-        drawFullMap(g_pixels);
-        drawMinimap(g_pixels);
-        if (!g_menuOpen && !g_creativeOpen && !g_craftOpen && g_chestOpen < 0) drawCursor(g_backDC);
+        /* No reticle over the map -- it points at world cells, and the map is
+           not showing world cells. */
+        if (!g_menuOpen && !g_creativeOpen && !g_craftOpen && g_chestOpen < 0 && !g_mapOpen)
+            drawCursor(g_backDC);
         if (g_creativeOpen) drawCreative(g_backDC);
         if (g_craftOpen)    drawCraft(g_backDC);
         if (g_chestOpen >= 0) drawChest(g_backDC);
