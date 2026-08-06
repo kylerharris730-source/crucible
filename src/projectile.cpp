@@ -74,14 +74,14 @@ void projClear() {
 
 void projSpawn(float x, float y, float vx, float vy,
                int power, int pierce, int life, u32 colour, int blast,
-               int payload, int damage, bool hostile) {
+               int payload, int damage, bool hostile, float gravity) {
     for (int i = 0; i < MAX_PROJ; ++i) {
         if (g_proj[i].alive) continue;
         Projectile& p = g_proj[i];
         p.x = x; p.y = y; p.vx = vx; p.vy = vy;
         p.power = power; p.pierce = pierce; p.life = life; p.blast = blast;
         p.colour = colour; p.payload = (u8)payload; p.damage = damage;
-        p.hostile = hostile; p.alive = true;
+        p.hostile = hostile; p.gravity = gravity; p.alive = true;
         return;
     }
     /* Full: drop it. Silently, because the alternative -- replacing the oldest
@@ -123,6 +123,20 @@ int projUpdate(World& w) {
            It also costs less: exactly one iteration per cell actually entered,
            where sub-stepping paid for a fixed number of samples whether they
            landed in new cells or not. */
+
+        /* Gravity is applied to the VELOCITY before the path is built, so the
+           traversal below still walks a straight segment -- one frame's worth
+           of a parabola is a straight line to well under a cell, and the whole
+           point of the traversal is that it misses nothing along the segment it
+           is given. Integrating inside the walk would make the segment curve
+           away from the grid lines it just measured its distances to, which is
+           exactly the sampling gap the traversal exists to avoid.
+
+           Before the path, not after, so the first frame of flight already has
+           some drop in it. Applying it afterwards would make the muzzle frame
+           perfectly flat and put a visible kink at the start of every arc. */
+        p.vy += p.gravity;
+
         const float tx = p.x + p.vx, ty = p.y + p.vy;
 
         int cx = (int)p.x, cy = (int)p.y;

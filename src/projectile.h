@@ -15,9 +15,38 @@
    at or below it, and is stopped dead by anything above. See MatStrength in
    materials.h for why that is the right model here. */
 
+/* --- one gravity, and speed is the lever ------------------------------------
+   The same number the player falls at (see GRAVITY in player.cpp), deliberately,
+   because a world with two gravities is a world where nobody can predict
+   anything by watching it. A shot that fell at its own private rate would look
+   like a rendering effect rather than like a thing obeying the same rules as
+   everything else on screen.
+
+   Which means the interesting number is not this one, it is SPEED. Drop over a
+   distance D at speed v is (g/2)(D/v)^2 -- quadratic in the flight time -- so
+   the same gravity produces a nearly flat line for something fast and a
+   pronounced lob for something slow, with no per-weapon gravity fudge needed.
+   That is also how it works in reality, and it makes shot speed a stat that
+   MEANS something instead of a number nobody could feel:
+
+       weapon            speed   drop at 30 cells   at full reach (56)
+       Bolt Caster        6.0        2.3 cells          7.8 cells
+       Blast Module       3.5        6.6               23.0
+       Spitter glob       1.7       28.0               96.4
+
+   So the starter weapon shoots nearly flat at knife range and asks you to lead
+   it across a cavern; the blast module lobs like the grenade launcher it always
+   was; and the spitter throws a visible arcing glob, which is what a thing that
+   SPITS should do. See the note in spitTick on why the spitter had to be taught
+   to aim high once this existed. */
+static const float PROJ_GRAVITY = 0.18f;
+
 struct Projectile {
     float x, y;      /* cells, with a fractional part */
     float vx, vy;
+    /* Added to vy each frame. Per-projectile rather than global so a shot can
+       opt OUT -- see ItemDef::shotBeam. Zero is a perfectly straight line. */
+    float gravity;
     i32   power;     /* highest material strength it can break through */
     /* Health taken off a creature it strikes. Carried on the shot rather than
        looked up from the module that fired it, because by the time a shot
@@ -67,7 +96,14 @@ void projClear();
    as it would if a player had placed the material by hand. */
 void projSpawn(float x, float y, float vx, float vy,
                int power, int pierce, int life, u32 colour, int blast = 0,
-               int payload = MAT_EMPTY, int damage = 0, bool hostile = false);
+               int payload = MAT_EMPTY, int damage = 0, bool hostile = false,
+               /* Defaulted ON, so a shot arcs unless it says otherwise. That is
+                  the right way round: falling is what things do here, and a new
+                  weapon that forgot to think about it should look like it obeys
+                  the world rather than like it hovers. Pass 0 to opt out, and
+                  say why -- there is exactly one reason so far (a mining beam,
+                  which has to bore a straight tunnel). */
+               float gravity = PROJ_GRAVITY);
 
 /* Blows a hole, sets fire to the middle of it and heats the lot. Exposed
    because an explosion is a world event rather than a projectile one -- the

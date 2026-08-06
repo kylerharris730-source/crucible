@@ -98,8 +98,30 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
 
        Slow shots, on purpose -- see shotSpeed. A projectile you can watch and
        step around is a threat you play against; one that arrives instantly is a
-       threat you only read about afterwards in the health bar. */
-    { "Spitter",  10, 12, 22,   5,  30, 0.26f, 0.05f, false, 1,  false,  95, 9, 1.7f, 90.0f, false, (ItemId)MAT_CHITIN, 1, 2, SPR_SPITTER, 0x8A5A3A },
+       threat you only read about afterwards in the health bar.
+
+       shotSpeed went 1.7 -> 4.7 when shots started obeying gravity, and it had
+       to: a lob's maximum reach is v*v/g regardless of how it is aimed, so at
+       1.7 this creature could throw a glob SIXTEEN cells and it stands off at
+       ninety. It was not inaccurate, it was physically incapable, and the
+       symptom was a spitter that faced you, animated, and never fired.
+
+       4.7 rather than the 4.2 that just barely reaches, for margin -- the
+       player is rarely exactly level, and dy eats into the reachable range.
+       Measured at the stand-off: 123 cells of maximum range, 21 frames in the
+       air, and an arc peaking 9.8 cells above the muzzle. The last number is
+       the one that had to be checked against a CEILING: a glob breaks nothing
+       (power STR_NOTHING), so an arc taller than the room splatters on the
+       roof. Ten cells clears any chamber down here. The high-angle solution to
+       the same shot peaks at 51 cells and is exactly the mortar this rule
+       rejects.
+
+       The shot is faster than it was and therefore less time to react to --
+       0.35s at the stand-off against the old 0.88s -- but it is now a visible
+       ARC rather than a flat line, which is easier to read the landing point
+       of, not harder. Whether that trade is right is a play-testing question
+       and it is on the list. */
+    { "Spitter",  10, 12, 22,   5,  30, 0.26f, 0.05f, false, 1,  false,  95, 9, 4.7f, 90.0f, false, (ItemId)MAT_CHITIN, 1, 2, SPR_SPITTER, 0x8A5A3A },
 
     /* --- the brood mother, layer 1's boss ------------------------------------
        A rock mite grown enormous, which is the right shape for a first boss:
@@ -449,15 +471,64 @@ static void spitterTick(World& w, Entity& e, const Player& p) {
         if (playerSolid(w, sx, sy)) return;   /* blocked: hold fire */
     }
 
-    dx /= dist; dy /= dist;
-    e.facing = dx > 0 ? 1 : -1;
+    /* --- aim ABOVE, because the glob falls ---------------------------------
+       Once shots obey gravity this creature stops being a threat unless it is
+       taught to lead its own arc, and it is the worst case in the game for it:
+       a slow shot (1.7 cells a frame) at a long stand-off, so flight time runs
+       to about fifty frames and an uncorrected glob lands roughly a hundred
+       cells below the player's feet. Not "less accurate" -- it would never hit
+       anything again, while still turning to face you and still playing its
+       attack, which is the kind of break nobody spots from outside.
+
+       This is the EXACT launch, not an approximation. The obvious iterative
+       dodge -- "it takes this long, so it drops that far, so aim there" -- was
+       tried first and measured, and it does not converge here: it treats the
+       flight time as the straight-line distance over the speed, but the shot's
+       horizontal speed is only v*cos(theta), so the steeper it aims the longer
+       it actually takes, and at this speed and range the correction chases its
+       own tail. It landed zero of six shots.
+
+       The closed form. With y measured DOWNWARD, launch (vx,vy), offset
+       (dx,dy), speed v and gravity g:
+
+           dx = vx*t                     and    vx^2 + vy^2 = v^2
+           dy = vy*t + g*t^2/2
+
+       Substituting vx = dx/t and vy = (dy - g*t^2/2)/t and writing T = t^2
+       collapses to one quadratic:
+
+           (g^2/4)*T^2 - (g*dy + v^2)*T + (dx^2 + dy^2) = 0
+
+       A negative discriminant means the target is simply out of ballistic
+       range for this muzzle speed -- a real case, not an error -- and the
+       answer there is to hold fire rather than to lob something that cannot
+       arrive. Of the two roots, the SMALLER T is the flat, direct shot and the
+       larger is the high mortar arc over it; a creature holding its distance
+       and spitting at you wants the direct one. */
+    const float v = d.shotSpeed, g = PROJ_GRAVITY;
+    const float b = g * dy + v * v;
+    const float disc = b * b - g * g * (dx * dx + dy * dy);
+    if (disc < 0.0f) return;                       /* out of range: hold fire */
+    const float T = 2.0f * (b - sqrtf(disc)) / (g * g);
+    if (T <= 0.0001f) return;
+    const float t = sqrtf(T);
+    const float vx = dx / t;
+    const float vy = (dy - 0.5f * g * T) / t;
+
+    e.facing = dx > 0.0f ? 1 : -1;
     /* Power STR_NOTHING: an enemy shot passes through the world rather than
        digging it. A creature that could excavate at range would rewrite the
        terrain of every fight, which is the burrower archetype and deliberately
        not this one. */
-    projSpawn(e.centreX() + dx * 8.0f, e.centreY() + dy * 8.0f,
-              dx * d.shotSpeed, dy * d.shotSpeed,
-              STR_NOTHING, 1, 240, 0xC8E060, 0, MAT_EMPTY, d.shotDamage, true);
+    /* The muzzle offset follows the LAUNCH direction, not the line to the
+       player: the glob has to leave along the arc it is actually flying, or a
+       steeply-lobbed shot appears to start beside the creature and jump. */
+    const float mlen = sqrtf(vx * vx + vy * vy);
+    const float mx = (mlen > 0.001f) ? vx / mlen : 1.0f;
+    const float my = (mlen > 0.001f) ? vy / mlen : 0.0f;
+    projSpawn(e.centreX() + mx * 8.0f, e.centreY() + my * 8.0f, vx, vy,
+              STR_NOTHING, 1, 240, 0xC8E060, 0, MAT_EMPTY, d.shotDamage, true,
+              PROJ_GRAVITY);
     e.shotTimer = d.shotEvery;
 }
 

@@ -342,6 +342,61 @@ numbers.
 model and UI change (what is loaded, how much is left, how you switch). That is
 the actual work here, not the projectile field.
 
+### Shots fall, and speed is the only lever
+
+Projectiles obey gravity — **the same 0.18 the player falls at**, not a private
+number, because a world with two gravities is a world nobody can predict by
+watching it. Which makes muzzle speed the interesting stat rather than a number
+nobody could feel: drop over a distance is quadratic in flight time, so one
+gravity produces a nearly flat line for something fast and a pronounced lob for
+something slow, with no per-weapon fudge. Measured:
+
+| | speed | drop @15 | @30 | @56 (full reach) |
+|---|---|---|---|---|
+| Bolt Caster | 6.0 | 1.1 | 2.7 | 9.9 |
+| Blast Module, default | 3.5 | 2.7 | 8.1 | 24.5 |
+| Spitter glob | 4.7 | 1.8 | 5.0 | 14.0 |
+| **Shot Module** | 3.5 | **0** | **0** | **0** |
+
+**The Shot Module is the one exemption** (`ItemDef::shotBeam`), and it is
+structural rather than cosmetic. Its own note always said it "has to read as a
+beam, not a pebble" — but it is also the *mining* weapon, and with pierce 10 its
+job is to bore a straight tunnel. An arcing beam curves into the floor a few
+cells out and digs a ramp. The opt-out is explicit and the default is ON, so a
+new weapon that never thinks about gravity still obeys the world.
+
+**Aim is deliberately not compensated.** The reticle marks where you pointed,
+not where the shot lands. Auto-correcting would mean adding gravity and then
+hiding every consequence of it, and the gap is the skill the arc buys.
+
+#### A lob cannot outrange `v²/g`, and that broke a creature
+
+The one real casualty, worth recording because it is invisible from outside. A
+projectile's maximum reach is `v²/g` **whatever angle it leaves at** — no
+cleverness in the aiming beats it. The spitter threw its glob at 1.7, giving it
+a reach of **sixteen cells**, and it stands off at **ninety**. It was not
+inaccurate; it was physically incapable, and the symptom was a creature that
+turned to face you, ran its attack timer, and never fired.
+
+Fixed by raising `shotSpeed` to 4.7 (reach 123, comfortable margin over the
+stand-off) and teaching `spitTick` to aim high. That aiming is the **exact**
+launch solution, not an approximation: substituting the speed constraint into
+the two motion equations collapses to one quadratic in `t²`, whose smaller root
+is the direct shot and whose larger is a mortar arc. A negative discriminant
+means genuinely out of range, and the answer there is to hold fire.
+
+The obvious iterative dodge — *"it takes this long, so it drops that far, so aim
+there"* — was tried first and **measured at zero hits from six ranges**. It
+estimates flight time as straight-line distance over speed, but horizontal speed
+is only `v·cosθ`, so the steeper it aims the longer it really takes and the
+correction chases its own tail.
+
+Two things this leaves for play-testing: the glob now arrives in 0.35 s at the
+stand-off against the old 0.88 s (though it is a visible *arc* now, which is
+easier to read the landing point of, not harder), and the mortar solution peaks
+**51 cells** up — confirmed useless underground, since a glob breaks nothing and
+would splatter on any ceiling.
+
 ---
 
 ## 7. Enemies
@@ -651,7 +706,11 @@ spawn holding resolves to a stick.
   being roughly seven creatures, which may be too cheap for a summon. Add to
   that list: whether 30 health a loaf makes bread worth the pack space, and
   whether the Bolt Caster is weak enough to be a reason to upgrade without being
-  so weak that the first mite is a war of attrition.
+  so weak that the first mite is a war of attrition. And now that shots fall:
+  whether leading a bolt across a cavern is satisfying or fiddly (the lever is
+  `ITEMS[ITEM_BOLTER].shotSpeed`, not the gravity), whether the Blast Module's
+  24-cell drop at full reach makes it feel like a grenade launcher or like a
+  broken gun, and whether a spitter glob arriving in 0.35 s is fair.
 - Layers 2 and 3 have **no creatures** — deliberate, and `spawn.cpp` asserts it,
   so the day something is given a layer 2 mask that test notices.
 - **Hardmode has no materials at all.** Seven ores do not stretch to three

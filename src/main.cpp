@@ -1823,7 +1823,13 @@ static void fireTool(const Aim& aim) {
        whatever the character is standing in, so firing while waist-deep in sand
        would spend the whole shot on the cells around your own legs. */
     const float MUZZLE = PLAYER_H * 0.5f + 2.0f;
-    const float SPEED  = 3.5f;
+    /* Speed comes from the shot now rather than being one constant here, which
+       is what lets a flat bolt and a lobbed grenade exist under one gravity.
+       Note the aim is NOT compensated for drop: the reticle marks where you
+       pointed, not where the shot lands, and learning that gap is the skill the
+       arc adds. Auto-correcting it would mean adding gravity and then hiding
+       every consequence of it. */
+    const float SPEED  = s.speed;
     /* The payload is consumed HERE, on firing, not on impact -- a shot that
        missed everything and fizzled out over open sky still cost its LN2,
        the same way a mining tool spends bites whether or not it hit
@@ -1836,7 +1842,8 @@ static void fireTool(const Aim& aim) {
         if (--ti.payload.count == 0) { ti.payload.item = ITEM_NONE; ti.payload.inst = 0; }
     }
     projSpawn(pcx + dx * MUZZLE, pcy + dy * MUZZLE, dx * SPEED, dy * SPEED,
-              s.power, s.pierce, 90, s.colour, s.blast, payload, s.damage);
+              s.power, s.pierce, 90, s.colour, s.blast, payload, s.damage,
+              false, s.gravity);
 }
 
 /* Devices are discrete, but a drag is still a useful way to lay out a run. Walk

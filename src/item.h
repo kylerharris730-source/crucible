@@ -3,6 +3,7 @@
 #include "sprite.h"
 #include "player.h"   /* FlightSpec: what worn flight gear resolves to */
 #include "device.h"   /* DeviceType: which machine an ITEMK_DEVICE places */
+#include "projectile.h"   /* PROJ_GRAVITY: what a shot falls at unless it is a beam */
 
 /* --- items and the inventory ----------------------------------------------
 
@@ -355,6 +356,28 @@ struct ItemDef {
     u8   blast;       /* explosion radius on impact; 0 for an ordinary shot */
     u32  shotColour;
 
+    /* --- how fast it leaves the muzzle, in cells per frame -------------------
+       This became a stat that matters the moment shots started falling. Drop
+       over a distance is quadratic in flight time, so with one world gravity
+       (see PROJ_GRAVITY) speed alone decides whether something flies nearly
+       flat or lobs -- and it does so the way it does in reality, without a
+       per-weapon gravity fudge for each new gun.
+
+       Zero means "use the default", which keeps every module that predates this
+       shooting at exactly the speed it always did. */
+    float shotSpeed;
+
+    /* Set on a shot that must fly PERFECTLY STRAIGHT, and there is currently
+       exactly one: the Shot Module, whose own note says it "has to read as a
+       beam, not a pebble". It is also the mining weapon, so this is not only a
+       matter of look -- an arcing beam curves down into the floor a few cells
+       out and stops boring the straight tunnel that is the entire point of it.
+
+       Kept as an explicit opt-out rather than an opt-in list so that the
+       ordinary case, a thing thrown into the air coming back down, is what you
+       get by saying nothing. */
+    u8   shotBeam;
+
     /* --- ITEMK_EGG only ----------------------------------------------
        Which EntityType this spawns. ENT_NONE (0) on everything else.
 
@@ -567,6 +590,12 @@ struct Inventory {
     int  firstToolSlot() const;
 };
 
+/* Muzzle speed for anything that does not state one, in cells per frame. This
+   is the number every shot used to fly at, hard-coded at the firing site, so
+   leaving it as the fallback is what makes every module that predates
+   ItemDef::shotSpeed behave exactly as it did. */
+static const float SHOT_SPEED_DEFAULT = 3.5f;
+
 /* --- what a loaded tool does ----------------------------------------------
    Resolved fresh from the tool and its installed modules rather than cached on
    the instance, so pulling a module out takes effect immediately and there is
@@ -579,6 +608,13 @@ struct ToolShot {
     int    pierce;
     int    blast;
     u32    colour;
+    /* Cells per frame at the muzzle, and how fast it falls. Resolved here
+       rather than being a constant at the firing site so that two modules in
+       the same tool can handle completely differently -- which, with one world
+       gravity, is the only thing that makes a lobbed grenade and a flat beam
+       different objects. See ItemDef::shotSpeed and ItemDef::shotBeam. */
+    float  speed;
+    float  gravity;
     /* A MatId loaded in the tool's payload slot, or MAT_EMPTY. Read from the
        ToolInst directly (see ToolInst::payload) rather than being a module's
        own stat -- this is "whatever you loaded it with", not a fixed part of

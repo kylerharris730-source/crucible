@@ -161,6 +161,12 @@ void initItems() {
     ITEMS[ITEM_MOD_SHOT].damage     = 6;
     ITEMS[ITEM_MOD_SHOT].pierce     = 10;
     ITEMS[ITEM_MOD_SHOT].shotColour = 0x9CE0FF;
+    /* The one thing in the game that does not fall. It is a BEAM -- see the
+       note above about reading as one rather than as a pebble -- and it is also
+       the mining weapon, so this is structural and not decorative: with pierce
+       10 it is meant to bore a straight tunnel, and an arcing beam curves into
+       the floor a few cells out and digs a ditch instead. */
+    ITEMS[ITEM_MOD_SHOT].shotBeam   = 1;
     ITEMS[ITEM_MOD_SHOT].sprite     = SPR_MOD_SHOT;
 
     /* The blast module. Power STR_ROCK breaks stone -- it is the answer to the
@@ -562,6 +568,16 @@ void initItems() {
     ITEMS[ITEM_BOLTER].power      = 0;
     ITEMS[ITEM_BOLTER].damage     = 4;
     ITEMS[ITEM_BOLTER].pierce     = 1;
+    /* Faster than the default, and that is what makes it a BOLT. Everything
+       here falls at one gravity, so the only thing separating a flat shot from
+       a lobbed one is time of flight: at 6.0 a bolt drops about two cells over
+       thirty and eight over the full reach, which is flat enough to point and
+       shoot at something in your face and arced enough that hitting a moth
+       across a cavern is a thing you learn rather than a thing you are given.
+       At the 3.5 default it dropped nearly seven cells at thirty, which for the
+       weapon you are handed before you can build anything else read as broken
+       rather than as ballistic. */
+    ITEMS[ITEM_BOLTER].shotSpeed  = 6.0f;
     ITEMS[ITEM_BOLTER].shotColour = 0xE8D8A0;
     ITEMS[ITEM_BOLTER].sprite     = SPR_BOLTER;
 
@@ -864,10 +880,19 @@ int Inventory::firstToolSlot() const {
     return -1;
 }
 
+/* One place that turns "what this item says about its shot" into the two
+   numbers a projectile actually needs, so a slotless tool and a module cannot
+   disagree about what shotSpeed 0 or shotBeam means. */
+static void resolveFlight(const ItemDef& d, ToolShot& s) {
+    s.speed   = (d.shotSpeed > 0.0f) ? d.shotSpeed : SHOT_SPEED_DEFAULT;
+    s.gravity = d.shotBeam ? 0.0f : PROJ_GRAVITY;
+}
+
 ToolShot toolResolve(const ItemStack& st) {
     ToolShot s;
     s.canFire = false; s.delay = 0; s.power = 0; s.damage = 0; s.pierce = 0; s.blast = 0;
     s.colour = 0xFFFFFF; s.payloadMat = MAT_EMPTY;
+    s.speed = SHOT_SPEED_DEFAULT; s.gravity = PROJ_GRAVITY;
     if (st.empty() || ITEMS[st.item].kind != ITEMK_TOOL) return s;
 
     const ItemDef& tool = ITEMS[st.item];
@@ -892,6 +917,7 @@ ToolShot toolResolve(const ItemStack& st) {
         s.pierce  = tool.pierce;
         s.blast   = tool.blast;
         s.colour  = tool.shotColour;
+        resolveFlight(tool, s);
         return s;
     }
 
@@ -920,6 +946,7 @@ ToolShot toolResolve(const ItemStack& st) {
             s.pierce  = ITEMS[m].pierce;
             s.blast   = ITEMS[m].blast;
             s.colour  = ITEMS[m].shotColour;
+            resolveFlight(ITEMS[m], s);
         }
         s.delay += ITEMS[m].addDelay;
     }
