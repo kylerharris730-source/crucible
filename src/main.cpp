@@ -144,7 +144,7 @@ static const BrushDef BRUSHES[] = {
 };
 static const int N_BRUSH = (int)(sizeof(BRUSHES) / sizeof(BRUSHES[0]));
 
-enum ActionId { ACT_OVERWRITE, ACT_LAYER, ACT_WIRE, ACT_CIRCUIT, ACT_VIEW, ACT_LIGHT, ACT_PLAYER, ACT_PAUSE, ACT_CLEAR, N_ACT };
+enum ActionId { ACT_OVERWRITE, ACT_LAYER, ACT_WIRE, ACT_CIRCUIT, ACT_VIEW, ACT_LIGHT, ACT_PLAYER, ACT_PAUSE, ACT_FILTER, ACT_CLEAR, N_ACT };
 
 /* --- simulation speed ----------------------------------------------------
    A multiplier on how many sim steps run per displayed frame, NOT a change to
@@ -465,6 +465,52 @@ static int g_creItem[CRE_MAX_ENTRIES];    /* item id or CircuitSignal in picker 
 static char g_creSearch[32] = "";
 static bool g_creSearchFocus = false;
 static int  g_filterDevice = -1;         /* drain/watcher material picker */
+
+/* --- the dig filter --------------------------------------------------------
+   A whitelist of materials the tool is allowed to break, and a mode switch for
+   it. It exists for one situation that has no other answer: a vessel part-way
+   through a smelt holds the thing you are making and the things you are making
+   it FROM, all interleaved -- ceramic with copper and slag through it -- and
+   the ordinary brush is indiscriminate. Draining the copper out while it is
+   still liquid is the elegant way and it needs planning; this is the way that
+   works after the fact, without dismantling the setup.
+
+   Two pieces of state rather than one, because "which materials" should
+   OUTLIVE "is it on". You tick copper and slag once and then toggle the mode
+   as often as you like; losing the selection every time you switched it off
+   would make the feature annoying in exactly the situation it is for. */
+static bool g_digFilterOn = false;
+static bool g_digFilterMat[MAT_COUNT];
+/* True while the whitelist picker is up. Distinct from g_filterDevice above,
+   which picks ONE material for a drain; this one toggles many and stays open. */
+static bool g_digFilterPicking = false;
+
+static int digFilterCount() {
+    int n = 0;
+    for (int m = 1; m < MAT_COUNT; ++m) if (g_digFilterMat[m]) ++n;
+    return n;
+}
+
+/* The picker's title, which doubles as the readout: it is the only place the
+   current selection is written out in words, and a whitelist you cannot read
+   back is a whitelist you will not trust. Names the materials while there are
+   few enough to fit and counts them after that. */
+static const char* digFilterTitle() {
+    static char t[256];
+    const int n = digFilterCount();
+    if (n == 0) {
+        return "DIG FILTER  --  click materials to whitelist. NOTHING TICKED: nothing can be broken";
+    }
+    int written = sprintf(t, "DIG FILTER (%d)  --  breaking only:", n);
+    int listed = 0;
+    for (int m = 1; m < MAT_COUNT && written < 200; ++m) {
+        if (!g_digFilterMat[m]) continue;
+        if (listed == 6) { written += sprintf(t + written, ", ..."); break; }
+        written += sprintf(t + written, "%s %s", listed ? "," : "", MATS[m].name);
+        ++listed;
+    }
+    return t;
+}
 enum CircuitPickField { CIR_PICK_NONE = -1, CIR_PICK_SIGNAL, CIR_PICK_A, CIR_PICK_B, CIR_PICK_OUT };
 static int  g_signalPickerDevice = -1;
 static int  g_signalPickerField = CIR_PICK_NONE;
@@ -1163,6 +1209,13 @@ static bool handleCreativeClick(int mx, int my, bool remove) {
             g_filterDevice = -1; g_creativeOpen = false; g_creSearchFocus = false;
             return true;
         }
+        /* For the dig whitelist this button is "untick everything", not
+           "cancel" -- the panel's own close is how you leave, and a set you
+           spent time building should take a deliberate act to discard. */
+        if (g_digFilterPicking) {
+            memset(g_digFilterMat, 0, sizeof(g_digFilterMat));
+            return true;
+        }
         g_inv.clear();
         g_drag.item = ITEM_NONE; g_drag.count = 0; g_drag.inst = 0;
         layoutCreative();
@@ -1227,6 +1280,18 @@ static bool handleCreativeClick(int mx, int my, bool remove) {
         if (g_filterDevice >= 0) {
             if (it < MAT_COUNT) g_devices[g_filterDevice].value = it;
             g_filterDevice = -1; g_creativeOpen = false; g_creSearchFocus = false;
+            return true;
+        }
+        /* The dig whitelist TOGGLES and stays open, unlike every other picker
+           here, which chooses one thing and closes. That difference is the
+           feature: you are building a set, and a panel that shut after each
+           choice would mean reopening it and re-searching for every material.
+           Only real materials can be ticked -- a whitelist entry for a
+           multitool would be a row you could click that could never match a
+           cell. */
+        if (g_digFilterPicking) {
+            if (it > MAT_EMPTY && it < MAT_COUNT)
+                g_digFilterMat[it] = !g_digFilterMat[it];
             return true;
         }
         if (remove) {
@@ -1420,6 +1485,30 @@ static bool handlePanelClick(int mx, int my) {
         return true;
     }
     if (inRect(g_actRect[ACT_PAUSE],     mx, my)) { g_paused = !g_paused;       return true; }
+    if (inRect(g_actRect[ACT_FILTER],    mx, my)) {
+        /* On -> off is just off. Off -> on opens the picker, because a filter
+           with nothing ticked would silently stop you digging at all, and a
+           tool that does nothing and does not say why is worse than no tool.
+           Re-opening when a selection already exists is deliberate too: the
+           common case is "turn it on and add one more material". */
+        if (g_digFilterOn) {
+            g_digFilterOn = false;
+            g_digFilterPicking = false;
+            g_creativeOpen = false;
+            g_creSearchFocus = false;
+        } else {
+            g_digFilterOn = true;
+            g_digFilterPicking = true;
+            g_filterDevice = -1;
+            g_signalPickerDevice = -1;
+            g_creativeOpen = true;
+            g_creSearch[0] = 0;
+            g_creScroll = 0;
+            g_creSearchFocus = true;
+            layoutCreative();
+        }
+        return true;
+    }
     if (inRect(g_actRect[ACT_CLEAR],     mx, my)) { g_world.reset(); makeWorld(); return true; }
     /* Any other spot on the panel is dead space: swallow it so it never paints. */
     return mx < PANEL_W;
@@ -1592,9 +1681,9 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         if (g_creativeOpen || g_chestOpen >= 0) {
             if (wp == VK_ESCAPE) {
                 if (g_chestOpen >= 0) closeChest();
-                else { g_creativeOpen = false; g_filterDevice = -1; g_signalPickerDevice = -1; g_signalPickerField = CIR_PICK_NONE; g_creSearchFocus = false; dragStow(); }
+                else { g_creativeOpen = false; g_filterDevice = -1; g_digFilterPicking = false; g_signalPickerDevice = -1; g_signalPickerField = CIR_PICK_NONE; g_creSearchFocus = false; dragStow(); }
             } else if (wp == VK_TAB && g_creativeOpen) {
-                g_creativeOpen = false; g_filterDevice = -1; g_signalPickerDevice = -1; g_signalPickerField = CIR_PICK_NONE; g_creSearchFocus = false; dragStow();
+                g_creativeOpen = false; g_filterDevice = -1; g_digFilterPicking = false; g_signalPickerDevice = -1; g_signalPickerField = CIR_PICK_NONE; g_creSearchFocus = false; dragStow();
             }
             return 0;
         }
@@ -1681,7 +1770,7 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case VK_TAB:
             g_creativeOpen = !g_creativeOpen;
             if (g_creativeOpen) { g_creSearchFocus = true; layoutCreative(); g_lmb = g_rmb = false; }
-            else { g_filterDevice = -1; g_signalPickerDevice = -1; g_signalPickerField = CIR_PICK_NONE; g_creSearchFocus = false; dragStow(); }
+            else { g_filterDevice = -1; g_digFilterPicking = false; g_signalPickerDevice = -1; g_signalPickerField = CIR_PICK_NONE; g_creSearchFocus = false; dragStow(); }
             break;
         /* Escape backs out of the creative grid before it reaches the pause
            menu -- one key that always means "close the thing in front of me" is
@@ -1689,7 +1778,7 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case VK_ESCAPE:
             if (g_chestOpen >= 0)    closeChest();
             else if (g_craftOpen)    g_craftOpen = false;
-            else if (g_creativeOpen) { g_creativeOpen = false; g_filterDevice = -1; g_signalPickerDevice = -1; g_signalPickerField = CIR_PICK_NONE; g_creSearchFocus = false; dragStow(); }
+            else if (g_creativeOpen) { g_creativeOpen = false; g_filterDevice = -1; g_digFilterPicking = false; g_signalPickerDevice = -1; g_signalPickerField = CIR_PICK_NONE; g_creSearchFocus = false; dragStow(); }
             else                     g_menuOpen = !g_menuOpen;
             break;
         }
@@ -1983,7 +2072,9 @@ static void applyBrush() {
     if (g_survival && g_playerOn && g_rmb) {
         const ToolSpec d = digSpec();
         if (g_digCool <= 0) {
-            digInto(g_world, g_inv, aim.x, aim.y, digRadius(), d.cellsPerBite, d.plantsOnly, d.power);
+            digInto(g_world, g_inv, aim.x, aim.y, digRadius(), d.cellsPerBite,
+                    d.plantsOnly, d.power,
+                    g_digFilterOn ? g_digFilterMat : 0);
             g_digCool = d.cooldown;
         }
         roomsNotifyEdit(g_world, aim.x, aim.y);
@@ -2715,6 +2806,43 @@ static void drawCircuitReticle(HDC hdc, int x, int y, bool pending) {
     SelectObject(hdc, oldBrush);
 }
 
+/* --- the dig filter's cursor -----------------------------------------------
+   A FUNNEL with a crosshair through it: wide mouth, narrow throat, which is
+   what a filter looks like and what this one does -- everything goes in, one
+   thing comes out.
+
+   A distinct SHAPE rather than a recoloured crosshair, and that is the whole
+   requirement. This is a mode that silently makes the dig button refuse most of
+   the world, so the cursor has to say so at a glance and from the corner of an
+   eye; a colour change reads as decoration and gets missed, and being unable to
+   dig for reasons you cannot see is the single worst way for this feature to
+   fail. Amber for the same reason the wire mode is: warm means "a mode is on".
+   Drawn with a black under-stroke so it survives a bright cave wall. */
+static void drawFilterReticle(HDC hdc, int x, int y) {
+    static const POINT FUNNEL[] = {
+        { -9, -9 }, { 9, -9 }, { 3, -1 }, { 3, 8 }, { -3, 8 }, { -3, -1 }, { -9, -9 }
+    };
+    const int n = (int)(sizeof(FUNNEL) / sizeof(FUNNEL[0]));
+    POINT p[7];
+    for (int i = 0; i < n; ++i) { p[i].x = x + FUNNEL[i].x; p[i].y = y + FUNNEL[i].y; }
+
+    HGDIOBJ oldBrush = SelectObject(hdc, GetStockObject(HOLLOW_BRUSH));
+    HPEN edge = CreatePen(PS_SOLID, 3, RGB(0, 0, 0));
+    HGDIOBJ oldPen = SelectObject(hdc, edge);
+    Polyline(hdc, p, n);
+    SelectObject(hdc, oldPen); DeleteObject(edge);
+
+    HPEN pen = CreatePen(PS_SOLID, 1, RGB(255, 196, 74));
+    oldPen = SelectObject(hdc, pen);
+    Polyline(hdc, p, n);
+    /* The crosshair through the throat, so it is still a cursor you can aim
+       with rather than an icon floating near the point. */
+    MoveToEx(hdc, x - 15, y, NULL); LineTo(hdc, x - 10, y);
+    MoveToEx(hdc, x + 11, y, NULL); LineTo(hdc, x + 16, y);
+    SelectObject(hdc, oldPen); DeleteObject(pen);
+    SelectObject(hdc, oldBrush);
+}
+
 /* A radius in cells is drawn to the outside of its affected cells, not merely
    to their centres. That half-cell matters at small sizes: a size-one brush is
    visibly a three-cell disc, and the outline should promise exactly that. */
@@ -2794,8 +2922,9 @@ static void drawCursor(HDC hdc) {
 
         drawCross(hdc, ax, ay, snapped ? RGB(232, 151, 72) : RGB(150, 158, 174), 3, 4);
     }
-    if (g_circuitWireMode) drawCircuitReticle(hdc, gx, gy, g_circuitWireFrom >= 0);
-    else                   drawCross(hdc, gx, gy, RGB(236, 240, 248), 3, 5);
+    if (g_circuitWireMode)  drawCircuitReticle(hdc, gx, gy, g_circuitWireFrom >= 0);
+    else if (g_digFilterOn) drawFilterReticle(hdc, gx, gy);
+    else                    drawCross(hdc, gx, gy, RGB(236, 240, 248), 3, 5);
 
     /* The line preview. Solid rather than dotted, and drawn on top of the
        tether, because the tether means "you cannot reach that" and this means
@@ -2868,7 +2997,10 @@ static void drawCreative(HDC hdc) {
     RECT title = g_crePanel;
     title.top += 10; title.left += 14;
     SetTextColor(hdc, RGB(226, 190, 90));
-    DrawTextA(hdc, signalPicker ? "SELECT CIRCUIT SIGNAL  --  search or choose" : (g_filterDevice >= 0 ? "SELECT DRAIN FILTER  --  click a material, or clear for all" : "CREATIVE  --  click a swatch to fill the cursor; click a slot to drop it, right-click for half"), -1, &title,
+    DrawTextA(hdc, signalPicker ? "SELECT CIRCUIT SIGNAL  --  search or choose"
+                   : g_filterDevice >= 0 ? "SELECT DRAIN FILTER  --  click a material, or clear for all"
+                   : g_digFilterPicking ? digFilterTitle()
+                   : "CREATIVE  --  click a swatch to fill the cursor; click a slot to drop it, right-click for half", -1, &title,
               DT_LEFT | DT_TOP | DT_SINGLELINE);
 
     FillRect(hdc, &g_creSearchBox, g_btnBg);
@@ -2901,6 +3033,16 @@ static void drawCreative(HDC hdc) {
         FillRect(hdc, &ir, g_panelBg);
         if (signalPicker) drawCircuitSignalIcon(hdc, ir, it);
         else              drawItemIcon(hdc, ir, (ItemId)it);
+
+        /* Ticked, when this grid is being used to build the dig whitelist. The
+           accent frame is the whole feedback for a toggle -- without it the
+           panel is a list of things you have clicked and cannot see. */
+        if (g_digFilterPicking && it > MAT_EMPTY && it < MAT_COUNT && g_digFilterMat[it]) {
+            RECT tick = r;
+            FrameRect(hdc, &tick, g_accentBrush);
+            InflateRect(&tick, -1, -1);
+            FrameRect(hdc, &tick, g_accentBrush);
+        }
 
         /* What you are already carrying, right-aligned, so the grid doubles as
            a readout of the pack -- otherwise you cannot tell a click landed. */
@@ -3070,7 +3212,10 @@ static void drawCreative(HDC hdc) {
         }
     }
 
-    drawButton(hdc, g_creClear, signalPicker ? "Cancel" : (g_filterDevice >= 0 ? "All materials" : "Empty pack"),
+    drawButton(hdc, g_creClear, signalPicker ? "Cancel"
+                   : g_filterDevice >= 0 ? "All materials"
+                   : g_digFilterPicking ? "Untick all"
+                   : "Empty pack",
                NULL, false, inRect(g_creClear, g_mx, g_my));
     {
         RECT hint = g_crePanel;
@@ -3459,6 +3604,17 @@ static void drawPanel(HDC hdc) {
         drawButton(hdc, g_actRect[ACT_PLAYER], pl, NULL, g_playerOn, inRect(g_actRect[ACT_PLAYER], g_mx, g_my));
     }
     drawButton(hdc, g_actRect[ACT_PAUSE], g_paused ? "Paused" : "Pause", NULL, g_paused, inRect(g_actRect[ACT_PAUSE], g_mx, g_my));
+    /* The filter button carries its own state in its label -- how many
+       materials are ticked -- because the mode is otherwise only visible at the
+       cursor, and a mode you can leave on without noticing is a mode that will
+       be blamed for a tool that "stopped working". */
+    {
+        char fl[48];
+        if (g_digFilterOn) sprintf(fl, "Filter: ON (%d)", digFilterCount());
+        else               strcpy(fl, "Filter: Off");
+        drawButton(hdc, g_actRect[ACT_FILTER], fl, NULL, g_digFilterOn,
+                   inRect(g_actRect[ACT_FILTER], g_mx, g_my));
+    }
     drawButton(hdc, g_actRect[ACT_CLEAR], "Clear", NULL, false, inRect(g_actRect[ACT_CLEAR], g_mx, g_my));
 
     /* stats, bottom of the panel */

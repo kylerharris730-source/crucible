@@ -441,6 +441,46 @@ void initItems() {
     ITEMS[ITEM_PIPE_CROSSOVER].colour     = 0xA2BCD0;
     ITEMS[ITEM_PIPE_CROSSOVER].sprite     = SPR_CROSSOVER;
 
+    /* The workbench. Placed like any other device, and the only one that is a
+       crafting STATION rather than a machine -- see DEV_WORKBENCH. */
+    ITEMS[ITEM_WORKBENCH].name       = "Workbench";
+    ITEMS[ITEM_WORKBENCH].kind       = ITEMK_DEVICE;
+    ITEMS[ITEM_WORKBENCH].deviceType = DEV_WORKBENCH;
+    ITEMS[ITEM_WORKBENCH].maxStack   = 64;
+    /* Taken from the material its footprint is made of, so the hotbar swatch
+       and the object in the world are the same colour by construction rather
+       than by two constants agreeing. */
+    ITEMS[ITEM_WORKBENCH].colour     = MATS[MAT_STATION_BENCH].dryA;
+    ITEMS[ITEM_WORKBENCH].sprite     = SPR_BENCH;
+
+    ITEMS[ITEM_ANVIL].name       = "Anvil";
+    ITEMS[ITEM_ANVIL].kind       = ITEMK_DEVICE;
+    ITEMS[ITEM_ANVIL].deviceType = DEV_ANVIL;
+    ITEMS[ITEM_ANVIL].maxStack   = 64;
+    ITEMS[ITEM_ANVIL].colour     = MATS[MAT_STATION_ANVIL].dryA;
+    ITEMS[ITEM_ANVIL].sprite     = SPR_ANVIL;
+
+    ITEMS[ITEM_CHEMSTN].name       = "Chemistry Bench";
+    ITEMS[ITEM_CHEMSTN].kind       = ITEMK_DEVICE;
+    ITEMS[ITEM_CHEMSTN].deviceType = DEV_CHEM;
+    ITEMS[ITEM_CHEMSTN].maxStack   = 64;
+    ITEMS[ITEM_CHEMSTN].colour     = MATS[MAT_STATION_CHEM].dryA;
+    ITEMS[ITEM_CHEMSTN].sprite     = SPR_CHEMSTN;
+
+    ITEMS[ITEM_ASSEMBLY].name       = "Assembly Table";
+    ITEMS[ITEM_ASSEMBLY].kind       = ITEMK_DEVICE;
+    ITEMS[ITEM_ASSEMBLY].deviceType = DEV_ASSEMBLY;
+    ITEMS[ITEM_ASSEMBLY].maxStack   = 64;
+    ITEMS[ITEM_ASSEMBLY].colour     = MATS[MAT_STATION_ASSEMBLY].dryA;
+    ITEMS[ITEM_ASSEMBLY].sprite     = SPR_ASSEMBLY;
+
+    ITEMS[ITEM_FORGESTN].name       = "Blast Furnace";
+    ITEMS[ITEM_FORGESTN].kind       = ITEMK_DEVICE;
+    ITEMS[ITEM_FORGESTN].deviceType = DEV_FORGE;
+    ITEMS[ITEM_FORGESTN].maxStack   = 64;
+    ITEMS[ITEM_FORGESTN].colour     = MATS[MAT_STATION_FORGE].dryA;
+    ITEMS[ITEM_FORGESTN].sprite     = SPR_FORGESTN;
+
     ITEMS[ITEM_CHEST].name       = "Chest";
     ITEMS[ITEM_CHEST].kind       = ITEMK_DEVICE;
     ITEMS[ITEM_CHEST].deviceType = DEV_CHEST;
@@ -875,8 +915,14 @@ ToolSpec miningSpec(const ItemStack& held) {
 }
 
 int Inventory::firstToolSlot() const {
-    for (int i = 0; i < INV_SLOTS; ++i)
-        if (!slot[i].empty() && ITEMS[slot[i].item].kind == ITEMK_TOOL) return i;
+    for (int i = 0; i < INV_SLOTS; ++i) {
+        if (slot[i].empty()) continue;
+        const ItemDef& d = ITEMS[slot[i].item];
+        /* toolSlots > 0, not merely ITEMK_TOOL -- see the note in item.h. A
+           slotless weapon is a tool with nothing to configure, and answering
+           with it hides the bench of whatever multitool is further down. */
+        if (d.kind == ITEMK_TOOL && d.toolSlots > 0) return i;
+    }
     return -1;
 }
 
@@ -954,7 +1000,7 @@ ToolShot toolResolve(const ItemStack& st) {
 }
 
 int digInto(World& w, Inventory& inv, int cx, int cy, int r, int maxCells,
-            bool plantsOnly, int power) {
+            bool plantsOnly, int power, const bool* whitelist) {
     int dug = 0;
     const int n = g_discEnd[imax(0, imin(r, DISC_MAX_R))];
     for (int i = 0; i < n; ++i) {
@@ -974,6 +1020,12 @@ int digInto(World& w, Inventory& inv, int cx, int cy, int r, int maxCells,
            clips the corner of a layer barrier should still clear the rock
            beside it, not spend its whole bite failing against the barrier. */
         if ((int)g_matStrength[m] > power) continue;
+        /* Not on the list. Skipped before the bite counter for the same reason
+           as the two above, and here it is the entire point of the feature: a
+           sweep over a heap of ceramic with copper and slag ticked should take
+           every copper cell in reach, not spend its bite on the first ceramic
+           it touches. See the note on `whitelist` in item.h. */
+        if (whitelist && !whitelist[m]) continue;
         /* g_matDropsAs, not m: what you dig out and what you end up holding are
            two different questions for anything whose cell is a STATE. Breaking
            an open door puts a door in your pack.

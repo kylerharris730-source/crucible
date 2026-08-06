@@ -887,6 +887,119 @@ static const char* ART_BOLTER[SPR_H] = {
     "..............",
 };
 
+/* The workbench. Read as FURNITURE rather than as machinery: a plank top on
+   legs with a shelf under it, and no casing, no rim, no glowing face -- the
+   visual language every other device shares says "this does something when
+   poked", and a bench does not. It is a place.
+
+   Drawn wide and low so the silhouette says "surface you work on" at a glance,
+   with a tool standing on the top to say which kind of surface. Its cells are
+   MAT_STATION_BENCH, whose own colour this deliberately echoes. */
+static const char* ART_BENCH[SPR_H] = {
+    "..............",
+    "..............",
+    ".....SS.......",
+    ".....SS.......",
+    ".....GG.......",
+    "..HHHHHHHHHH..",
+    "..##########..",
+    "..#........#..",
+    "..#........#..",
+    "..#..####..#..",
+    "..#........#..",
+    "..##......##..",
+    "..............",
+    "..............",
+};
+
+/* The rest of the station ladder, drawn as FURNITURE like the bench above --
+   no casing, no rim, no lit face, because the device visual language says "this
+   does something when poked" and a station is a place you stand.
+
+   What tells them apart is the SILHOUETTE plus one identity colour taken from
+   the material each is made of, which is the same rule the mining tiers use.
+   Trying to make four distinguishable "workshop furniture" shapes in fourteen
+   pixels would produce four things you cannot tell apart; one recognisable
+   profile each, in its own colour, is legible at hotbar size. */
+
+/* Anvil: the horn-and-waist profile, which is the one piece of workshop kit
+   with a silhouette everybody already knows. Grey, its own material colour. */
+static const char* ART_ANVIL[SPR_H] = {
+    "..............",
+    "..............",
+    "..............",
+    "...SSSSSSSS...",
+    "..SSSSSSSSSS..",
+    "..SSSSSSSSS...",
+    "....GGGGGG....",
+    ".....GGGG.....",
+    ".....GGGG.....",
+    "....GGGGGG....",
+    "...##########.",
+    "...##########.",
+    "..............",
+    "..............",
+};
+
+/* Chemistry bench: a bench with glassware on it. The flask is the identity --
+   a round-bottomed vessel is unmistakable even at three pixels. */
+static const char* ART_CHEMSTN[SPR_H] = {
+    "..............",
+    "..............",
+    ".....cc.......",
+    ".....cc...cc..",
+    "....cccc..cc..",
+    "...cccccc.cc..",
+    "...cccccccccc.",
+    "..HHHHHHHHHHH.",
+    "..###########.",
+    "..#.........#.",
+    "..#..#####..#.",
+    "..##.......##.",
+    "..............",
+    "..............",
+};
+
+/* Assembly table: a bench with a part clamped on it and a gantry over the top.
+   Brass, matching its material -- the one station that is precision equipment
+   rather than a place to hit things. */
+static const char* ART_ASSEMBLY[SPR_H] = {
+    "..............",
+    "..EEEEEEEEEE..",
+    "..E........E..",
+    "..E...EE...E..",
+    "......EE......",
+    "....JJJJJJ....",
+    "...JJJJJJJJ...",
+    "..HHHHHHHHHH..",
+    "..##########..",
+    "..#........#..",
+    "..#........#..",
+    "..##......##..",
+    "..............",
+    "..............",
+};
+
+/* Blast furnace: a squat stack with a fire door. The only station that is HOT,
+   so it is the only one allowed the flame colours -- which is what makes it
+   read as the end of the ladder at a glance. */
+static const char* ART_FORGESTN[SPR_H] = {
+    "..............",
+    "....######....",
+    "...########...",
+    "..##########..",
+    "..##########..",
+    "..##.ffff.##..",
+    "..##.feef.##..",
+    "..##.ffff.##..",
+    "..##########..",
+    "..##########..",
+    ".############.",
+    ".############.",
+    "..............",
+    "..............",
+};
+
 void initSprites() {
     memset(g_sprite, 0, sizeof(g_sprite));
     expand(SPR_MITE,      ART_MITE);
@@ -907,6 +1020,11 @@ void initSprites() {
     expand(SPR_SEED,      ART_SEED);
     expand(SPR_FLINT,     ART_FLINT);
     expand(SPR_BOLTER,    ART_BOLTER);
+    expand(SPR_BENCH,     ART_BENCH);
+    expand(SPR_ANVIL,     ART_ANVIL);
+    expand(SPR_CHEMSTN,   ART_CHEMSTN);
+    expand(SPR_ASSEMBLY,  ART_ASSEMBLY);
+    expand(SPR_FORGESTN,  ART_FORGESTN);
     expand(SPR_BOOTS,     ART_BOOTS);
     expand(SPR_HERMES,    ART_HERMES);
     expand(SPR_PACK1,     ART_PACK1);

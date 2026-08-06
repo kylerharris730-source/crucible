@@ -102,6 +102,37 @@ enum DeviceType {
     DEV_CONSTANT_COMBINATOR,
     DEV_ARITHMETIC_COMBINATOR,
     DEV_DECIDER_COMBINATOR,
+    /* --- the workbench ----------------------------------------------------
+       A crafting STATION as a device, which is new only in that no station was
+       one before: they were single cells, and a workbench you could lose track
+       of behind a grain of dirt is not a piece of furniture, it is a pixel with
+       a special meaning.
+
+       It needs nothing from the device machinery except the footprint. It has
+       no setpoint, no tick, no ports and no facing -- devTick's switch simply
+       never names it. What it uses is `cellMat`, which already existed for the
+       torch: its fourteen-by-fourteen block is written in MAT_STATION_BENCH, so
+       craftScanStations goes on finding it by looking for that material and
+       does not learn about devices at all. Every other part of the system --
+       overlap rejection on placement, devIntact noticing you mined a corner,
+       devRemove clearing the footprint -- already reads cellMat rather than
+       assuming MAT_DEVICE, so this is a table row rather than a feature.
+
+       Appended, like the combinators above and for the same reason: a Device's
+       type is a raw number in the save. */
+    DEV_WORKBENCH,
+    /* The rest of the station ladder, for the same reason and by the same
+       mechanism: each writes its own MAT_STATION_* into its footprint, so
+       craftScanStations goes on reading g_matStation off the grid and none of
+       the crafting code learns that stations became objects.
+
+       Every one of these is a table row and a sprite. That is the whole cost,
+       and it is what DeviceInfo::cellMat bought when the torch needed to be
+       made of something other than machinery. */
+    DEV_ANVIL,
+    DEV_CHEM,
+    DEV_ASSEMBLY,
+    DEV_FORGE,
     DEV_COUNT
 };
 

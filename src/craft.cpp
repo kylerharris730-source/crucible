@@ -108,14 +108,17 @@ const Recipe RECIPES[] = {
        than four unlocks that happen to exist: you build the bench with your
        hands, then build the anvil AT the bench because a woodworking surface
        is a reasonable place to fit metal parts together, and so on up. */
+    /* Yields the ITEM, which places a 14x14 device, rather than the single cell
+       of MAT_STATION_BENCH it used to. The material still exists and is still
+       what the footprint is made of -- see ITEM_WORKBENCH. */
     { { { (ItemId)MAT_WOOD, 4 }, { (ItemId)MAT_STONE, 2 }, { ITEM_NONE, 0 } },
-      (ItemId)MAT_STATION_BENCH, 1, "Workbench", STATION_HAND },
+      ITEM_WORKBENCH, 1, "Workbench", STATION_HAND },
     { { { (ItemId)MAT_COPPER, 3 }, { (ItemId)MAT_WOOD, 2 }, { ITEM_NONE, 0 } },
-      (ItemId)MAT_STATION_ANVIL, 1, "Anvil", STATION_BENCH },
+      ITEM_ANVIL, 1, "Anvil", STATION_BENCH },
     { { { (ItemId)MAT_GLASS, 3 }, { (ItemId)MAT_STONE, 2 }, { ITEM_NONE, 0 } },
-      (ItemId)MAT_STATION_CHEM, 1, "Chemistry Bench", STATION_BENCH },
+      ITEM_CHEMSTN, 1, "Chemistry Bench", STATION_BENCH },
     { { { (ItemId)MAT_GOLD, 2 }, { (ItemId)MAT_STEEL, 2 }, { (ItemId)MAT_GLASS, 1 } },
-      (ItemId)MAT_STATION_ASSEMBLY, 1, "Assembly Table", STATION_ANVIL },
+      ITEM_ASSEMBLY, 1, "Assembly Table", STATION_ANVIL },
 
     /* --- the blast furnace, and what it costs ------------------------------
        The layer 1 reward. One Forge Core plus a real quantity of the layer's
@@ -129,7 +132,7 @@ const Recipe RECIPES[] = {
        into an OBJECT, which is fabrication. See PROGRESSION.md section 2 for
        why the line is drawn exactly there. */
     { { { ITEM_FORGE_CORE, 1 }, { (ItemId)MAT_CERAMIC, 8 }, { (ItemId)MAT_IRON, 6 } },
-      (ItemId)MAT_STATION_FORGE, 1, "Blast Furnace", STATION_ANVIL },
+      ITEM_FORGESTN, 1, "Blast Furnace", STATION_ANVIL },
 
     /* --- calling the boss ---------------------------------------------------
        Chitin off the things that live in layer 1, plus the layer's two metals.

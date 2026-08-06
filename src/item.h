@@ -153,6 +153,25 @@ enum {
        What wheat is FOR. It had none: you could grow it, harvest it, and turn
        it back into seed, which is a loop with nothing in the middle. */
     ITEM_BREAD,
+    /* --- the workbench, as a thing you place ------------------------------
+       Distinct from MAT_STATION_BENCH, which stays exactly what it was: the
+       MATERIAL the bench's cells are made of. This is the ITEM you carry and
+       put down, and placing it builds a DEV_WORKBENCH whose fourteen-by-
+       fourteen footprint is written in that material.
+
+       Two ids for what a player thinks of as one object, and the split is the
+       point rather than an accident: craftScanStations looks for the material,
+       so it keeps working without knowing devices exist, and an old save whose
+       pack holds the material can still put down the single cell it always
+       could. */
+    ITEM_WORKBENCH,
+    /* The rest of the ladder. Same split as ITEM_WORKBENCH: the MAT_STATION_*
+       material stays what a station's cells are MADE of, and these are the
+       things you carry and put down. */
+    ITEM_ANVIL,
+    ITEM_CHEMSTN,
+    ITEM_ASSEMBLY,
+    ITEM_FORGESTN,
     ITEM_COUNT
 };
 
@@ -584,9 +603,22 @@ struct Inventory {
        other bonus here -- see ItemDef::armour for why this one is different. */
     int  armour() const;
 
-    /* The first tool in the pack, or -1. The inventory screen shows one tool's
-       loadout and this is the one it shows -- with a single multitool in play
-       that is unambiguous, and when there are two it is at least stable. */
+    /* The first tool in the pack WITH MODULE SLOTS, or -1. The inventory screen
+       shows one tool's loadout and this is the one it shows -- with a single
+       multitool in play that is unambiguous, and when there are two it is at
+       least stable.
+
+       "With module slots" is doing real work, and it was added after this
+       function silently broke the module bench. It used to return the first
+       ITEMK_TOOL of any kind, which was unambiguous while the multitools were
+       the only tools in the game. The Bolt Caster is also an ITEMK_TOOL, has
+       toolSlots == 0 by design, and is handed to you in slot 0 at spawn -- so
+       it won this race against every multitool you ever picked up, the panel
+       computed a loadout of zero slots, and the module bench stopped appearing
+       at all. Nothing errored; the section simply had no height.
+
+       A tool with no slots has no loadout to show, so it is never the right
+       answer to this question. */
     int  firstToolSlot() const;
 };
 
@@ -715,8 +747,26 @@ void initDiscTable();   /* called by initItems() */
    not grow. Defaulted to STR_ABSOLUTE so that every existing caller -- the
    sandbox brush, the miner device, a dozen harnesses -- keeps digging exactly
    what it always dug, and only callers that opt in are gated. */
+/* --- the whitelist ---------------------------------------------------------
+   An optional MAT_COUNT-long table of "may I take this". Null means take
+   anything, which is what every existing caller wants and gets by saying
+   nothing.
+
+   This is the third skip in a row that works the same way -- plantsOnly, power,
+   and now this -- and they share the property that makes them useful: a cell
+   that fails the test is passed over WITHOUT spending a bite. That is what
+   turns the filter from a restriction into a TOOL. Sweeping a brush over a
+   half-smelted heap with only Copper ticked takes every copper cell in reach in
+   one bite and leaves the ceramic standing, rather than spending the bite on
+   the first ceramic cell it touches and doing nothing.
+
+   A parameter rather than a global, even though exactly one caller in the game
+   passes it: digInto is also the miner device's and a dozen harnesses' way of
+   removing cells, and a hidden mode switch that silently changed what a MACHINE
+   digs would be a bug nobody could see from the machine. */
 int digInto(World& w, Inventory& inv, int cx, int cy, int r, int maxCells = 0,
-            bool plantsOnly = false, int power = STR_ABSOLUTE);
+            bool plantsOnly = false, int power = STR_ABSOLUTE,
+            const bool* whitelist = 0);
 
 /* Places the held stack into empty cells of a disc, one item per cell, until
    the stack runs out. Returns how many cells were filled. Never overwrites

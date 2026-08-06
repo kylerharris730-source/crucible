@@ -872,6 +872,92 @@ static void generateOre(World& w) {
     }
 }
 
+/* ==========================================================================
+   Sand pockets
+   ==========================================================================
+
+   Sand was the only common surface material in the game with no deep source at
+   all: one beach, two cells thick, on one lake. That was survivable while the
+   cinder moth dropped glass, and stopped being survivable when it stopped --
+   glass gates the Chemistry Bench and the Assembly Table, so the entire middle
+   of the crafting ladder hung off a single stretch of shoreline.
+
+   The machinery is carveVein, unchanged, because "only replaces STONE" is
+   exactly the rule this needs and it buys three things at once: no sand in the
+   soil, no sand filling the caves that were carved before it, and a pocket that
+   happens to cross a tunnel left SHOWING IN THE TUNNEL WALL, which is how you
+   should find one.
+
+   --- but sand is a POWDER, and no ore is ---
+
+   That is the one way this is not an ore vein, and it is worth being explicit
+   because the beach carries a warning about exactly this: sand is capped at the
+   soil line there because "a powder seam laid inside solid rock collapses the
+   moment the world is first simulated".
+
+   Enclosed, it does not. A grain with stone under it does not move, and a grain
+   with sand under it does not move either, so a pocket sealed in rock is as
+   inert as an ore vein -- the beach's problem was a seam with somewhere to fall
+   INTO, not a seam in rock.
+
+   Where a pocket meets a cave it will pour, and that is kept rather than
+   prevented. It is the correct behaviour for a falling-sand game, it is a
+   legible signal (a slope of sand on a cave floor means a pocket is open
+   somewhere above), and the thing actually worth checking is whether a drained
+   pocket can PLUG a tunnel and cut the network -- which is measured in
+   sandpocket.cpp rather than argued about here.
+
+   Layer 1, and shallower on average than iron. The point of the change is that
+   glass stops being an expedition. */
+static void generateSandPockets(World& w) {
+    /* Fatter and shorter than an ore vein, because what you want from sand is a
+       HAUL when you find one -- glass is spent in threes and fives, not ones --
+       so the right shape is a pocket you quarry rather than a thread you follow.
+
+       But bounded, and the bound is not the one you would guess. A pocket that
+       drains into a tunnel and fills it to the roof has cut the cave network,
+       and measured (sandpocket.cpp), a corridor of the bore a worm actually
+       cuts closes when about 40 cells of sand come down into it.
+
+       The trap was estimating the thickness from this radius. At 7.0, fattened
+       up to x1.7 by carveVein's own noise, the arithmetic says 24 cells -- and
+       the generated world contained a deposit 50 THICK. carveVein wanders 2.2
+       radians, so a vein readily crosses its own path and stacks, and the
+       thickness of a self-intersecting worm is not a function of its radius.
+       Measure it, do not derive it.
+
+       And the radius is a weak lever on it, which is the second half of the
+       same lesson: 7.0 measured 50 cells thick and 5.5 measured 44, because
+       what stacks the depth is the worm crossing ITSELF rather than the width
+       of any one pass. Shortening the run does more than thinning it, so both
+       moved. 4.5 over 14-30 steps brings the measured worst case clear of the
+       corridor limit, at the cost of sand nobody was going to run out of --
+       even one pocket is hundreds of cells against a glass recipe spending
+       five.
+
+       COUNT is then the lever left, and it is the right one: thinning each
+       pocket to clear the corridor limit cost coverage -- 19 of 64 sampled
+       columns, down from 29 -- and more pockets buy that back without touching
+       the thickness of any single one. Thin and many, rather than fat and few,
+       which is what a sand deposit should look like anyway. */
+    static const int   POCKETS   = 110;
+    static const float POCKET_R  = 4.5f;
+    static const int   FROM_STONE = 100, TO_STONE = 1900;
+
+    for (int i = 0; i < POCKETS; ++i) {
+        const u32 seed = 0x5A0Du + (u32)i * 4231u;
+        const float fx = ((float)i + 0.5f) / (float)POCKETS * (float)SIM_W
+                       + (float)(int)(hash1(i, 0x5A1Fu) % 260u) - 130.0f;
+        const int ix = imin(PLAY_X1 - 8, imax(PLAY_X0 + 8, (int)fx));
+        const int top  = g_stoneY[ix] + FROM_STONE;
+        int iy = top + (int)(hash1(i, 0x5A2Bu) % (u32)imax(1, TO_STONE - FROM_STONE));
+        if (iy > PLAY_Y1 - 20) iy = PLAY_Y1 - 20;
+        const float ang = (float)(hash1(i, 0x5A37u) % 628u) / 100.0f;
+        carveVein(w, seed, (float)ix, (float)iy, ang,
+                  14 + (int)(hash1(i, 0x5A41u) % 17u), POCKET_R, MAT_SAND);
+    }
+}
+
 
 /* ==========================================================================
    Lava hotspots
@@ -1282,6 +1368,10 @@ void generateWorld(World& w) {
        would carve the ore back out again and nothing would ever be visible from
        inside one. */
     generateOre(w);
+    /* After the ore rather than before it, so where the two overlap the ORE
+       wins. A pocket of sand is worth less than the copper it would otherwise
+       have replaced, and this way a sand pocket can never bury a vein. */
+    generateSandPockets(w);
     /* Hotspots and acid pockets last, so they can test for stone and skip
        anything caves or veins already claimed. */
     generateHotspots(w);

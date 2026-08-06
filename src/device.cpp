@@ -260,6 +260,17 @@ const DeviceInfo DEVS[DEV_COUNT] = {
     { "Constant Combinator", "value", "", -9999, 9999, 1, 1, SPR_CIRCUIT_CONSTANT, MAT_DEVICE, false },
     { "Arithmetic Combinator", "", "", 0, 0, 0, 0, SPR_CIRCUIT_ARITH, MAT_DEVICE, false },
     { "Decider Combinator", "", "", 0, 0, 0, 0, SPR_CIRCUIT_DECIDER, MAT_DEVICE, false },
+    /* The workbench. The only row here whose cellMat is neither MAT_DEVICE nor
+       a material invented for it: MAT_STATION_BENCH already existed and already
+       meant "a bench is here" to craftScanStations, so writing the footprint in
+       it is what lets a station become furniture without the crafting code
+       hearing about devices at all. No setpoint, no facing, and devTick never
+       names it -- it is a shape in the world that other code recognises. */
+    { "Workbench", "", "", 0, 0, 0, 0, SPR_BENCH, MAT_STATION_BENCH, false },
+    { "Anvil", "", "", 0, 0, 0, 0, SPR_ANVIL, MAT_STATION_ANVIL, false },
+    { "Chemistry Bench", "", "", 0, 0, 0, 0, SPR_CHEMSTN, MAT_STATION_CHEM, false },
+    { "Assembly Table", "", "", 0, 0, 0, 0, SPR_ASSEMBLY, MAT_STATION_ASSEMBLY, false },
+    { "Blast Furnace", "", "", 0, 0, 0, 0, SPR_FORGESTN, MAT_STATION_FORGE, false },
 };
 
 int sparkCount() {
@@ -551,13 +562,26 @@ Device* devAt(int cx, int cy) {
     return 0;
 }
 
+static bool isLogistics(u8 type);
+
 bool devPlace(World& w, u8 type, int cx, int cy) {
     if (type >= DEV_COUNT) return false;
     int x0 = devOriginX(cx), y0 = devOriginY(cy);
-    /* Logistics pieces use a coarse, shared lattice.  Their connection rule is
+    /* Logistics pieces use a coarse, shared lattice. Their connection rule is
        literal edge contact, so snapping is what makes a run of pipes a thing
-       you can lay reliably rather than a pixel-perfect placement exercise. */
-    if (type >= DEV_PIPE) {
+       you can lay reliably rather than a pixel-perfect placement exercise.
+
+       Asked by NAME, not by `type >= DEV_PIPE`, which is what this used to say.
+       The ordinal test was only ever right by accident of enum order and had
+       already drifted: the block watcher, the pulse button and all three
+       combinators sort after DEV_PIPE and were being snapped too, none of which
+       connects by edge contact. Appending the workbench made it worse in a way
+       that was visible -- a piece of furniture jumping to a 14-cell grid -- and
+       would have gone on catching every device added after it.
+
+       Free placement is also the documented default here; see the note in
+       device.h on why the lattice was removed from everything else. */
+    if (isLogistics(type)) {
         x0 = PLAY_X0 + ((cx - PLAY_X0) / DEV_W) * DEV_W;
         y0 = PLAY_Y0 + ((cy - PLAY_Y0) / DEV_H) * DEV_H;
     }

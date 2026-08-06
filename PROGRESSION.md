@@ -765,6 +765,85 @@ has no state by construction, so the starter weapon has to be answered **above**
 that check rather than below it. Put below it, as it first was, the thing you
 spawn holding resolves to a stick.
 
+### Stations became objects, and one field made it cheap
+
+All five crafting stations were **single cells** — a workbench you could lose
+behind one grain of dirt. They are now 14×14 devices, each with its own sprite.
+
+The cost was a table row apiece, and the reason is `DeviceInfo::cellMat`. That
+field was added so the torch could be made of `MAT_TORCH` rather than of
+machinery; it means each station's footprint is written in its own
+`MAT_STATION_*`, so **`craftScanStations` still finds a bench by looking for
+bench material and never learns that devices exist.** Everything else — overlap
+rejection, `devIntact` noticing you mined a corner, `devRemove` clearing the
+block — already read `cellMat` rather than assuming `MAT_DEVICE`.
+
+The item and the material stay **separate ids** on purpose: `ITEM_WORKBENCH` is
+what you carry, `MAT_STATION_BENCH` is what the footprint is made of. That also
+means an old save holding the material can still place the single cell it always
+could, and it still works as a station.
+
+**It exposed a latent bug.** `devPlace` decided lattice-snapping with
+`type >= DEV_PIPE` — an ordinal test that was correct only by accident of enum
+order, and had already drifted: the block watcher, pulse button and all three
+combinators sort after `DEV_PIPE` and were being snapped to a 14-cell grid,
+though none of them connects by edge contact. Appending the workbench made it
+*visible* (furniture jumping to a grid). It now asks `isLogistics()`, the named
+predicate that already existed.
+
+### The dig filter
+
+A whitelist of materials the tool may break, for one situation with no other
+answer: a vessel part-way through a smelt holds ceramic with copper and slag
+through it, and the ordinary brush is indiscriminate. Draining the metal out
+while it is still liquid is the elegant route and needs planning; this is the
+one that works after the fact without dismantling the setup.
+
+A `Filter: ON (n)` button, a picker that **toggles and stays open** (unlike every
+other picker here, which chooses one thing and closes — you are building a set),
+and an amber **funnel** cursor. The cursor is a distinct *shape*, not a
+recoloured crosshair, because this is a mode that silently makes digging refuse
+most of the world, and being unable to dig for reasons you cannot see is the
+worst way for it to fail.
+
+Two decisions worth keeping:
+
+- **A skipped cell does not spend the bite.** This is what makes it a tool
+  rather than a curiosity: measured, a filtered bite takes 10 cells and an
+  unfiltered one takes 10. Without it you would hold the button while a
+  thousand-cell heap released one copper a second. It sits with `plantsOnly` and
+  `power`, which skip the same way for the same reason.
+- **A parameter, not a global**, even though exactly one caller passes it.
+  `digInto` is also how the *miner device* removes cells, and a sidebar toggle
+  silently changing what a machine digs would be a bug invisible from the
+  machine.
+
+Scope, deliberately: it gates **digging only** — not projectiles, not background
+scraping — and the whitelist is not saved.
+
+### One `kind`, two different things
+
+`ITEMK_TOOL` now means a modular platform *or* a fixed weapon, and that
+ambiguity broke the module bench in a way nothing caught.
+
+`firstToolSlot()` returned the first `ITEMK_TOOL` in the pack, which was
+unambiguous while the multitools were the only tools. The Bolt Caster is also an
+`ITEMK_TOOL`, has `toolSlots == 0` by design, and is handed to you **in slot 0
+at spawn** — so it beat every multitool, the panel computed a loadout of zero
+slots, `benchH` went to 0, and the module bench rendered at zero height.
+**Nothing errored. A section of the panel simply was not there**, which is why
+the suite was green and a player found it in a minute.
+
+Fixed by requiring `toolSlots > 0` — a tool with no slots has no loadout, so it
+is never the right answer to "which bench do I show". `toolResolve` already
+handled the distinction correctly, which is why *shooting* worked while the
+bench did not.
+
+The general lesson is worth more than the fix: **a `kind` that acquires a second
+meaning silently invalidates every "first of this kind" query written under the
+first meaning.** Those queries do not fail loudly; they answer confidently with
+the wrong thing.
+
 ### What layer 1 still needs
 
 - **Play testing.** Nothing below has met a human. The numbers most likely to be
