@@ -607,6 +607,30 @@ void entTick(World& w, Player& p) {
         if (e.type == ENT_NONE) continue;
         if (e.hp <= 0) { entDie(w, e); continue; }
 
+        /* --- far enough away to stop existing ----------------------------
+           Checked before anything else, so a creature the player will never
+           see costs one distance test rather than a full tick.
+
+           Removed, NOT killed: entDie drops loot and counts toward the boss
+           flags, and a creature you walked away from has not been defeated.
+           Silently dropping chitin in an empty cavern two screens away would
+           be a slow leak of the one material the boss summon needs.
+
+           Bosses are exempt, on the same reasoning that keeps them out of the
+           spawn cap: she is summoned rather than found, the fight is a thing
+           you chose to start, and having her evaporate because you backed down
+           a corridor would be worse than losing to her. */
+        if (!ENT_DEFS[e.type].isBoss) {
+            const float dx = e.centreX() - p.centreX();
+            const float dy = e.centreY() - p.centreY();
+            if (dx * dx + dy * dy >
+                (float)(ENT_DESPAWN_DIST * ENT_DESPAWN_DIST)) {
+                e.type = ENT_NONE;
+                e.hp   = 0;
+                continue;
+            }
+        }
+
         const EntityDef& d = ENT_DEFS[e.type];
         if (e.hurtFlash > 0) --e.hurtFlash;
         if (e.touchTimer > 0) --e.touchTimer;

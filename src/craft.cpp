@@ -214,7 +214,13 @@ const Recipe RECIPES[] = {
       ITEM_MOD_BLAST, 1, "Blast Module", STATION_ANVIL },
     { { { (ItemId)MAT_COPPER, 2 }, { (ItemId)MAT_IRON, 1 }, { ITEM_NONE, 0 } },
       ITEM_THERMOCOUPLE, 1, "Thermocouple", STATION_ANVIL },
-    { { { (ItemId)MAT_COPPER, 2 }, { (ItemId)MAT_IRON, 1 }, { ITEM_NONE, 0 } },
+    /* Copper alone, no iron. The clock is the thing that makes electricity DO
+       anything -- without a pulse on a period, a circuit is a wire you poke by
+       hand -- so it sits at the point where a player is first curious about
+       wiring, which is when they have copper and have not yet smelted iron.
+       Charging iron for it put the entire automation branch behind the metal
+       ladder's second rung for no reason anyone could feel. */
+    { { { (ItemId)MAT_COPPER, 3 }, { ITEM_NONE, 0 }, { ITEM_NONE, 0 } },
       ITEM_CLOCK, 1, "Clock", STATION_ANVIL },
     { { { (ItemId)MAT_IRON, 3 }, { (ItemId)MAT_COPPER, 1 }, { ITEM_NONE, 0 } },
       ITEM_PLACER, 1, "Placer", STATION_ANVIL },

@@ -3862,9 +3862,27 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
            the SIMULATION undid, which is the case nothing else would notice:
            a wall melted through, a floor washed out, a fire that ate the
            ceiling. */
-        roomsTick(g_world);
-        devTick(g_world);
-        treesTick(g_world);
+        /* --- these advance exactly when the WORLD does -------------------
+           Gated on the same condition as g_world.step() above, and they were
+           not, which made pausing actively destructive rather than merely
+           incomplete.
+
+           devTick is the whole of electricity: it steps every spark, fires
+           every clock, and calls sparkCrowdHeat, which puts HEAT into the grid
+           where fronts are dense. Running that while the world is frozen is the
+           worst of both -- the clocks go on emitting, the crowd goes on
+           heating, and updateHeat is not running to spread or shed any of it,
+           so it piles up in one cell without limit. Reported from play as
+           pausing the game and coming back to a melted circuit.
+
+           The frame-advance case runs them too, deliberately: single-stepping
+           exists to watch a mechanism work, and a step that moved the sand but
+           not the sparks would be useless for the one thing it is for. */
+        if (steppedThisFrame || (!g_paused && !g_menuOpen)) {
+            roomsTick(g_world);
+            devTick(g_world);
+            treesTick(g_world);
+        }
 
         /* Creatures run AFTER the character has moved, so contact damage is
            tested against where the player actually ended up this frame rather

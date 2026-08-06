@@ -195,8 +195,35 @@ void entSpawnTick(World& w, const Player& p, int camX, int camY);
    that way: this one sets the DENSITY a cave settles at, and SPAWN_COOL in
    entity.cpp sets how long it takes to get there. Seven still fills a chamber;
    ten was starting to read as a horde in the corridors, which are the tight
-   spaces where touch damage has nowhere for you to go. */
+   spaces where touch damage has nowhere for you to go.
+
+   A CAP WITH NO DESPAWN IS A BUDGET YOU SPEND ONCE. See ENT_DESPAWN_DIST --
+   without it this number does not mean "how many are around you", it means
+   "how many will ever exist", and the whole rest of the world is empty. */
 static const int ENT_MAX_ALIVE = 7;
+
+/* --- how far away a creature stops existing --------------------------------
+   Nothing despawned. Creatures were created and then lived forever, which
+   sounds harmless next to a cap of seven and is precisely what makes the cap
+   catastrophic: stand in one dark spot until seven spawn, walk away, and those
+   seven hold the entire world's budget for the rest of the session. Reported
+   from play as exploring the caves and meeting nothing at all -- which is
+   exactly right, because every creature the world was allowed to have was
+   standing in a chamber somewhere behind the player.
+
+   The number has to clear the SPAWN rectangle or the two rules fight. Spawning
+   happens inside the light field -- the view plus LIGHT_MARGIN on every side --
+   so the farthest a creature can legally appear is about half of
+   LIGHT_W = 512 + 170, some 341 cells horizontally, plus the slack of standing
+   at the edge of the view rather than its centre. Despawning nearer than that
+   would delete things the spawner had just placed, which is a busy loop that
+   also never puts a creature in front of you.
+
+   700 is comfortably past it, and is a little over one screen width beyond the
+   far edge of what is drawn: far enough that nothing ever vanishes where you
+   could see it happen, close enough that walking away from a fight for a few
+   seconds genuinely frees the budget. */
+static const int ENT_DESPAWN_DIST = 700;
 
 /* How long a boss stays committed to a charge. Long enough to see it start,
    decide, and be somewhere else -- a lunge you cannot read is just damage that

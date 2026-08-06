@@ -993,11 +993,23 @@ static void initStrength() {
     g_matStrength[MAT_STATION_CHEM]     = STR_SOFT;
     g_matStrength[MAT_STATION_ASSEMBLY] = STR_METAL;
     g_matStrength[MAT_STATION_FORGE]    = STR_METAL;
-    /* Breakable, at rock's tier. A spring is a feature of the world you find
-       and use in place, not a machine you relocate -- see g_matDropsAs, which
-       deliberately gives it no drop, so mining one destroys it rather than
-       handing you a portable infinite water supply. */
-    g_matStrength[MAT_SPRING]           = STR_ROCK;
+    /* SEALED, at the layer barriers' tier, which no tool in the game beats yet.
+
+       It was STR_ROCK, on the reasoning that a spring is a feature you use in
+       place and that giving it no drop was enough -- mining one would destroy
+       it rather than hand you a portable infinite water supply. That argument
+       is sound and it answers the wrong question. The problem is not carrying a
+       spring away, it is that a spring is an INFINITE SOURCE sitting in a world
+       where water is otherwise a finite thing you move around, and one you can
+       open with a starting drill is one you can plumb into anything within the
+       first hour.
+
+       So it joins MAT_STRATUM at STR_SEALED, and that is deliberately the same
+       gate rather than a new one: whenever a tool arrives that opens the layer
+       barriers, springs become workable in the same breath. Late-game plumbing
+       is a fine reward; early-game infinite water is not a reward, it is the
+       end of a resource. */
+    g_matStrength[MAT_SPRING]           = STR_SEALED;
     /* Loose, like the other powders -- the starting shot clears it. */
     g_matStrength[MAT_CHITIN]           = STR_LOOSE;
 
