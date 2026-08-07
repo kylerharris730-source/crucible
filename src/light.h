@@ -88,6 +88,23 @@ static const int LIGHT_MARGIN = 32;                /* in SAMPLES, not cells */
 static const int LIGHT_W = VIEW_CELLS_W / LIGHT_CELL + 2 * LIGHT_MARGIN;
 static const int LIGHT_H = VIEW_CELLS_H / LIGHT_CELL + 2 * LIGHT_MARGIN;
 
+/* The same coverage in WORLD CELLS, for code that reasons about the AREA the
+   light field spans rather than about samples.
+
+   Two of these exist because the field stopped being one sample per cell, and
+   everything that used LIGHT_W or LIGHT_MARGIN as a distance silently changed
+   meaning when it did. The spawner was one: it draws candidate sites from the
+   lit rectangle so that creatures appear off screen but near enough to matter,
+   and reading a sample count as a cell count shrank that ring from 127 cells to
+   32, hard against the edge of the view -- creatures arriving in front of the
+   player instead of somewhere behind the dark.
+
+   Anything asking "how far does the lit area reach" wants these. Anything
+   indexing g_light wants the ones above. */
+static const int LIGHT_MARGIN_CELLS = LIGHT_MARGIN * LIGHT_CELL;
+static const int LIGHT_CELLS_W      = VIEW_CELLS_W + 2 * LIGHT_MARGIN_CELLS;
+static const int LIGHT_CELLS_H      = VIEW_CELLS_H + 2 * LIGHT_MARGIN_CELLS;
+
 /* Row-major over the padded rectangle whose top-left cell is
    (g_lightAnchorX, g_lightAnchorY). Use lightRow() to get at the part of it
    the renderer wants; the padding is scaffolding, not output. */

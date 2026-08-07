@@ -153,7 +153,12 @@ static inline void sampleBlock(const World& w, int wx, int wy,
                        ? (u8)MAT_WALL : w.cells[y * SIM_W + x].mat;
             const int l = g_matLight[m];
             if (l > e) e = l;
-            /* The lattice, still: every other cell on each axis. */
+            /* Occlusion keeps the 2x2 lattice; only emission needed the whole
+               block. Reading all sixteen for this too was tried and reverted --
+               it cost 1.07 -> 1.25 ms and fixed nothing measurable. The case it
+               was aimed at, a one-cell door not blocking light, is bound by the
+               RESOLUTION rather than by the sampling: one opaque cell is a
+               sixteenth of its block whether you look at it or not. */
             if ((ox & 1) && (oy & 1)) {
                 a += g_matOpacity[m];
                 h += g_matSheer[m];
