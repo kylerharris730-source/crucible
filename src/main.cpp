@@ -1436,6 +1436,11 @@ static void makeWorld() {
        picture of somewhere that no longer exists. */
     mapClear();
     generateWorld(g_world);
+    /* Generation writes cells straight into the grid and reset() has just
+       emptied the dirty lists, so there is no record of anything having
+       changed -- the lighting would happily go on reusing a field describing
+       the world this one replaced. */
+    lightInvalidate();
     giveStartingKit();
     /* Generation rebuilds every cell, so any room that existed described a
        building that no longer does. Nothing else clears them: a room outlives
@@ -3824,7 +3829,15 @@ static void drawPanel(HDC hdc) {
         }
     }
     sprintf(s, "%.0f fps", g_fps);                         drawText(hdc, 10, sy + 20, RGB(150, 200, 150), s);
-    sprintf(s, "sim %.2f ms", g_simMs);                    drawText(hdc, 10, sy + 36, RGB(170, 178, 190), s);
+    /* Lighting sits beside the sim time because it is the other half of the
+       frame, and for a long time it was the larger half without ever saying so.
+       What it did matters as much as what it cost: the same millisecond figure
+       means something quite different after a recut than after a patch. */
+    if (!g_lightOn)                        sprintf(s, "sim %.2f ms   light off", g_simMs);
+    else if (g_lightWork == LIGHT_REUSED)  sprintf(s, "sim %.2f ms   light reuse", g_simMs);
+    else if (g_lightWork == LIGHT_PATCHED) sprintf(s, "sim %.2f ms   light %d%%", g_simMs, g_lightWorkPct);
+    else                                   sprintf(s, "sim %.2f ms   light recut", g_simMs);
+    drawText(hdc, 10, sy + 36, RGB(170, 178, 190), s);
     /* The save total shares the cells line rather than taking one of its own.
        A line of its own at sy+84 ran off the bottom edge of the window -- the
        stats block already finishes about ten pixels from it. */
@@ -4132,7 +4145,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         /* Light is computed for this camera position and consumed immediately
            by renderView. The two must agree about where the camera is, which
            is why this sits here and not up beside the sim step. */
-        if (g_lightOn) lightCompute(g_world, g_camX, g_camY);
+        if (g_lightOn) lightUpdate(g_world, g_camX, g_camY);
         g_cellCount = renderView(g_world, g_pixels, g_view, g_camX, g_camY, g_lightOn);
         /* Reveal AFTER rendering, so the map records the frame you actually
            saw rather than the one before it, and only while the world is

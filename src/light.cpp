@@ -3,6 +3,16 @@
 
 u8   g_light[LIGHT_W * LIGHT_H];
 bool g_lightOn = true;
+int  g_lightOfsX = LIGHT_MARGIN;
+int  g_lightOfsY = LIGHT_MARGIN;
+
+/* --- a rectangle of the light buffer ---------------------------------------
+   Buffer coordinates, inclusive on all four sides, empty when x1 < x0. Every
+   pass below takes one, because every pass can now be asked to redo a part of
+   the field rather than all of it. */
+struct LRect { int x0, y0, x1, y1; };
+static inline bool lrEmpty(const LRect& r) { return r.x1 < r.x0 || r.y1 < r.y0; }
+static const LRect LR_ALL = { 0, 0, LIGHT_W - 1, LIGHT_H - 1 };
 
 /* Per-cell attenuation, gathered once so the sweeps never touch Cell again.
    Worth its own array rather than reading g_matOpacity[cells[i].mat] inside the
@@ -251,12 +261,24 @@ static void findBoundaries(const World& w, int wx0, int lx0, int lx1) {
    switchback to light around. */
 static const int LIGHT_PASSES = 2;
 
-static void sweepForward() {
-    for (int ly = 1; ly < LIGHT_H; ++ly) {
+/* --- sweeping a REGION rather than the field --------------------------------
+   `r` is the set of cells this sweep may WRITE. Everything it reads outside r
+   is a boundary condition, and for a partial update those cells hold last
+   frame's finished light -- which is exactly right, because a partial update is
+   only ever run over a region far enough around the change that the light on
+   its rim provably did not move. See lightUpdate.
+
+   The clamps are the same ones the full-field version had hard-coded: the
+   forward sweep cannot do row 0 or either edge column because it reads up and
+   left, and the backward sweep cannot do the last row for the mirror reason. */
+static void sweepForward(const LRect& r) {
+    const int x0 = imax(r.x0, 1), x1 = imin(r.x1, LIGHT_W - 2);
+    const int y0 = imax(r.y0, 1), y1 = imin(r.y1, LIGHT_H - 1);
+    for (int ly = y0; ly <= y1; ++ly) {
         u8*       L  = g_light + ly * LIGHT_W;
         const u8* U  = L - LIGHT_W;
         const u8* A  = g_att + ly * LIGHT_W;
-        for (int lx = 1; lx < LIGHT_W - 1; ++lx) {
+        for (int lx = x0; lx <= x1; ++lx) {
             const int a = A[lx];
             const int d = a + (a >> 1);
             int v = L[lx], t;
@@ -269,12 +291,14 @@ static void sweepForward() {
     }
 }
 
-static void sweepBackward() {
-    for (int ly = LIGHT_H - 2; ly >= 0; --ly) {
+static void sweepBackward(const LRect& r) {
+    const int x0 = imax(r.x0, 1), x1 = imin(r.x1, LIGHT_W - 2);
+    const int y0 = imax(r.y0, 0), y1 = imin(r.y1, LIGHT_H - 2);
+    for (int ly = y1; ly >= y0; --ly) {
         u8*       L = g_light + ly * LIGHT_W;
         const u8* D = L + LIGHT_W;
         const u8* A = g_att + ly * LIGHT_W;
-        for (int lx = LIGHT_W - 2; lx >= 1; --lx) {
+        for (int lx = x1; lx >= x0; --lx) {
             const int a = A[lx];
             const int d = a + (a >> 1);
             int v = L[lx], t;
@@ -338,11 +362,22 @@ static const int SOLID_SOAK_ATT = LIGHT_MAX / SOLID_SOAK;
 
    Seeding and merging are folded INTO the two sweeps rather than being loops of
    their own, which is worth the slight awkwardness: written as four separate
-   walks over the field this pass measured 1.12 ms, and four walks over 378 k
-   cells is mostly the walking. A sweep visits every cell exactly once in an
+   walks over the field this pass measured 1.12 ms, and four walks over 489 k
+   cells is mostly the walking. (That figure, and the others quoted in this
+   file, are for a whole-field solve on the machine they were taken on; what a
+   frame actually costs now depends on how much of the field it touches -- see
+   lightUpdate.) A sweep visits every cell exactly once in an
    order that only ever reads already-finalised neighbours, so there is nowhere
    a separate pass can see anything these two cannot. */
-static void solidSoak() {
+/* `sr` is the region the soak is SOLVED over, `wr` the region it is allowed to
+   write back into g_light. For a full field the two are the same thing. For a
+   partial update they are not, and the gap between them is what keeps the pass
+   honest: the soak's rim has to be seeded with a guess (air keeps its light,
+   material starts at nothing), and a solid cell on the rim seeded at nothing is
+   simply wrong. That error decays at SOLID_SOAK_ATT and is gone within
+   SOLID_SOAK cells, so lightUpdate hands over an `sr` grown by SOLID_SOAK past
+   `wr` and the wrong values never reach anything that gets written back. */
+static void solidSoak(const LRect& sr, const LRect& wr) {
     /* Forward, and the seed. Air takes the light the main sweeps gave it and
        keeps it -- so a lamp lights the rock around it and a sunlit hillside
        lights its own stone, with no second notion of where light comes from.
@@ -352,20 +387,39 @@ static void solidSoak() {
        frame's values, and starting from them would make the soak accumulate
        over time instead of being recomputed -- the exact bug the whole
        recompute-every-frame design exists to avoid. */
-    /* Row 0 first, and it MUST be first: the sweep starts at row 1 and reads the
-       row above it, so seeding row 0 afterwards would feed the whole field one
+    /* The rim first, and it MUST be first: the sweep starts one row in and reads
+       the row above it, so seeding afterwards would feed the whole region one
        row of LAST frame's values. */
-    for (int lx = 0; lx < LIGHT_W; ++lx)
-        g_soak[lx] = g_solid[lx] ? 0 : g_light[lx];
+#define SOAK_SEED(lx, ly) do { const int _i = (ly) * LIGHT_W + (lx); \
+        g_soak[_i] = g_solid[_i] ? 0 : g_light[_i]; } while (0)
+    for (int lx = sr.x0; lx <= sr.x1; ++lx) {
+        SOAK_SEED(lx, sr.y0);
+        if (sr.y1 < LIGHT_H - 1) SOAK_SEED(lx, sr.y1);
+    }
+    for (int ly = sr.y0; ly <= sr.y1; ++ly) {
+        SOAK_SEED(sr.x0, ly);
+        SOAK_SEED(sr.x1, ly);
+    }
+#undef SOAK_SEED
 
-    for (int ly = 1; ly < LIGHT_H; ++ly) {
+    /* The region the two passes actually solve: inside the rim on every side a
+       rim exists on. A side flush against the edge of the BUFFER has no rim --
+       there is nothing outside it to hold fixed -- so the passes own those rows
+       and columns themselves, which is what the full-field case has always
+       done. The two passes then differ only in the one row each cannot reach:
+       forward reads the row above, so it cannot start at row 0; backward reads
+       the row below, so it cannot finish on the last one. */
+    const int ix0 = imax(sr.x0 + (sr.x0 > 0), 1);
+    const int ix1 = imin(sr.x1 - (sr.x1 < LIGHT_W - 1), LIGHT_W - 2);
+    const int ry0 = sr.y0 + (sr.y0 > 0);
+    const int ry1 = sr.y1 - (sr.y1 < LIGHT_H - 1);
+
+    for (int ly = imax(ry0, 1); ly <= ry1; ++ly) {
         u8*       K = g_soak  + ly * LIGHT_W;
         const u8* U = K - LIGHT_W;
         const u8* L = g_light + ly * LIGHT_W;
         const u8* S = g_solid + ly * LIGHT_W;
-        K[0] = S[0] ? 0 : L[0];
-        K[LIGHT_W - 1] = S[LIGHT_W - 1] ? 0 : L[LIGHT_W - 1];
-        for (int lx = 1; lx < LIGHT_W - 1; ++lx) {
+        for (int lx = ix0; lx <= ix1; ++lx) {
             if (!S[lx]) { K[lx] = L[lx]; continue; }
             const int a = SOLID_SOAK_ATT, d = a + (a >> 1);
             int v = 0, t;
@@ -380,12 +434,14 @@ static void solidSoak() {
        the whole safety property of this pass: an open cell is never written, so
        nothing the soak carried through a wall can light the space on the other
        side of it. */
-    for (int ly = LIGHT_H - 2; ly >= 0; --ly) {
+    for (int ly = imin(ry1, LIGHT_H - 2); ly >= ry0; --ly) {
         u8*       K = g_soak  + ly * LIGHT_W;
         const u8* D = K + LIGHT_W;
         u8*       L = g_light + ly * LIGHT_W;
         const u8* S = g_solid + ly * LIGHT_W;
-        for (int lx = LIGHT_W - 2; lx >= 1; --lx) {
+        const bool wrow = (ly >= wr.y0 && ly <= wr.y1);
+        const int  wa = imax(wr.x0, ix0), wb = imin(wr.x1, ix1);
+        for (int lx = ix1; lx >= ix0; --lx) {
             if (!S[lx]) continue;                  /* air holds its seed */
             const int a = SOLID_SOAK_ATT, d = a + (a >> 1);
             int v = K[lx], t;
@@ -394,7 +450,7 @@ static void solidSoak() {
             t = (int)D[lx + 1] - d; if (t > v) v = t;
             t = (int)D[lx - 1] - d; if (t > v) v = t;
             K[lx] = (u8)v;
-            if (v > L[lx]) L[lx] = (u8)v;
+            if (wrow && lx >= wa && lx <= wb && v > L[lx]) L[lx] = (u8)v;
         }
     }
 }
@@ -482,9 +538,24 @@ static void sunSoak(const World& w, int wx0, int wy0, int lx0, int lx1) {
     }
 }
 
-void lightCompute(const World& w, int camX, int camY) {
-    const int wx0 = camX - LIGHT_MARGIN;
-    const int wy0 = camY - LIGHT_MARGIN;
+/* --- one lighting solve ------------------------------------------------------
+   `wr` is the region of the buffer this is allowed to change. Pass LR_ALL and
+   it is the original whole-field recompute. Pass something smaller and it is a
+   patch: everything outside wr keeps the light it already had, and is used as
+   the boundary the patched region propagates from.
+
+   The gather is the one pass that does NOT simply shrink to wr, and the reason
+   is the sun. Each of the five rays is carried down the buffer row by row, so
+   what a ray is worth at row N depends on every row above it -- a strip in the
+   middle of the field cannot be gathered without first knowing what the rays
+   arriving at its top row have already been through. So when there is any
+   skylight at all the gather still walks the whole field to carry the rays, and
+   only its WRITES to g_light are held inside wr. Underground, where no column
+   sees the sky, there are no rays to carry and the gather shrinks with
+   everything else -- which is why depth is the cheaper case to patch.
+
+   (wx0, wy0) is the world cell the buffer's (0,0) corresponds to. */
+static void lightSolve(const World& w, int wx0, int wy0, LRect wr) {
 
     /* The horizontal span actually inside the world, so the gather loop below
        carries no bounds test -- the same trick renderView uses. */
@@ -498,7 +569,7 @@ void lightCompute(const World& w, int camX, int camY) {
 
     /* Seed every ray at the top row. A ray that entered through the SIDE of the
        rectangle has no top-row cell of its own, so those source slots take the
-       nearest edge column's answer -- the rectangle's own edge is 85 cells
+       nearest edge column's answer -- the rectangle's own edge is LIGHT_MARGIN cells
        outside the view, and replicating one column's sky state is a far smaller
        error than starting those rays dark, which would draw dim vertical bands
        down both sides of the screen. */
@@ -532,31 +603,78 @@ void lightCompute(const World& w, int camX, int camY) {
 
     /* One pass gathers emission and attenuation and carries the rays down at
        the same time. The rays genuinely want a column walk, but doing it that
-       way is a strided read of the world 554 cells long per column; carrying
+       way is a strided read of the world LIGHT_H cells long per column; carrying
        them row by row gets the identical answer out of memory the gather is
        already touching. */
-    for (int ly = 0; ly < LIGHT_H; ++ly) {
+    /* --- what the sun does to the size of a patch ---------------------------
+       A change does not only alter light within one source's reach of itself.
+       If any column sees the sky, it also alters which RAYS get past it, and a
+       ray is a line running to the bottom of the buffer -- so the region whose
+       answer moves is not a ball around the change, it is a wedge hanging below
+       it, spreading a column per row because that is the steepest ray's slope.
+
+       Getting this wrong does not look like a rounding error. The gather
+       recomputes the ray sums over the whole field either way; holding the
+       WRITES inside a region that does not cover the wedge leaves the cells
+       below it holding light from before the change, and nothing revisits them
+       -- a hard-edged 45-degree wedge of stale shading, pinned to the world,
+       that survives until something forces a recut. It showed up as exactly
+       that: a wedge whose edge tracked the camera at the pan speed.
+
+       So the region grows to the wedge here rather than at the call site: this
+       is where anySky is known, and a caller that has to remember to widen its
+       own request is a caller that will one day forget. When the wedge swallows
+       the field the solve is simply a full one, which is the honest price of
+       changing something high up in daylight. */
+    if (anySky && !lrEmpty(wr) && (wr.y1 < LIGHT_H - 1 || wr.x0 > 0 || wr.x1 < LIGHT_W - 1)) {
+        const int drop = LIGHT_H - 1 - wr.y0;   /* rows a ray can still fall */
+        wr.y1 = LIGHT_H - 1;
+        wr.x0 = imax(0, wr.x0 - drop);
+        wr.x1 = imin(LIGHT_W - 1, wr.x1 + drop);
+    }
+    g_lightWorkPct = (int)(((long long)(wr.x1 - wr.x0 + 1) * (wr.y1 - wr.y0 + 1) * 100)
+                           / ((long long)LIGHT_W * LIGHT_H));
+
+    /* Rows the gather has to walk at all. With rays to carry that is every row,
+       whatever wr says; without them, only the rows wr covers. */
+    const int gy0 = anySky ? 0 : imax(0, wr.y0);
+    const int gy1 = anySky ? LIGHT_H - 1 : imin(LIGHT_H - 1, wr.y1);
+
+    for (int ly = gy0; ly <= gy1; ++ly) {
         const int wy = wy0 + ly;
         u8* L = g_light + ly * LIGHT_W;
         u8* A = g_att   + ly * LIGHT_W;
         u8* S = g_sky   + ly * LIGHT_W;
         u8* O = g_solid + ly * LIGHT_W;
 
+        /* The span of this row whose g_light the solve owns. Outside it the
+           buffer holds a finished value from an earlier solve that is still
+           correct, and overwriting it with bare emission would erase exactly
+           the boundary a patch needs to propagate from. The other three arrays
+           are pure functions of the cell and get rewritten either way -- doing
+           so costs nothing and keeps them trivially consistent. */
+        const bool wrow = (ly >= wr.y0 && ly <= wr.y1);
+        const int  wa   = wrow ? imax(wr.x0, 0) : 0;
+        const int  wb   = wrow ? imin(wr.x1, LIGHT_W - 1) : -1;
+
         /* Off the world counts as SOLID, not air. It is the one place the two
            choices differ visibly: as air it would seed the soak field with a
            border of darkness that then held, since air holds its seed, and draw
            a dark line down the edge of a world-edge view. */
         if (wy < 0 || wy >= SIM_H) {
-            memset(L, 0, LIGHT_W);
+            if (wb >= wa) memset(L + wa, 0, wb - wa + 1);
             memset(S, 0, LIGHT_W);
             memset(A, 255, LIGHT_W);        /* the void swallows light */
             memset(O, 1, LIGHT_W);
             continue;
         }
-        if (lx0 > 0)       { memset(L, 0, lx0); memset(S, 0, lx0); memset(A, 255, lx0);
-                             memset(O, 1, lx0); }
-        if (lx1 < LIGHT_W) { memset(L + lx1, 0, LIGHT_W - lx1); memset(S + lx1, 0, LIGHT_W - lx1);
-                             memset(A + lx1, 255, LIGHT_W - lx1); memset(O + lx1, 1, LIGHT_W - lx1); }
+        if (lx0 > 0)       { memset(S, 0, lx0); memset(A, 255, lx0); memset(O, 1, lx0);
+                             const int e = imin(lx0 - 1, wb);
+                             if (e >= wa) memset(L + wa, 0, e - wa + 1); }
+        if (lx1 < LIGHT_W) { memset(S + lx1, 0, LIGHT_W - lx1); memset(A + lx1, 255, LIGHT_W - lx1);
+                             memset(O + lx1, 1, LIGHT_W - lx1);
+                             const int b = imax(lx1, wa);
+                             if (wb >= b) memset(L + b, 0, wb - b + 1); }
 
         const Cell* row = w.cells + wy * SIM_W + wx0;
 
@@ -567,7 +685,10 @@ void lightCompute(const World& w, int camX, int camY) {
            five already-zero slots, 1.9 M scattered writes a frame to achieve
            nothing. Measured 4.80 ms against the surface's 3.69 before this. */
         if (!anySky) {
-            for (int lx = lx0; lx < lx1; ++lx) {
+            /* No rays, so nothing carries between cells and the loop can be cut
+               down to the region being solved -- the whole reason a patch
+               underground is so much cheaper than one at the surface. */
+            for (int lx = imax(lx0, wa); lx <= imin(lx1 - 1, wb); ++lx) {
                 const u8 m = row[lx].mat;
                 L[lx] = g_matLight[m];
                 A[lx] = g_matOpacity[m];
@@ -661,13 +782,13 @@ void lightCompute(const World& w, int camX, int camY) {
                 }
             }
             S[lx] = sky;
-            L[lx] = lit;
+            if (lx >= wa && lx <= wb) L[lx] = lit;
         }
     }
 
     for (int p = 0; p < LIGHT_PASSES; ++p) {
-        sweepForward();
-        sweepBackward();
+        sweepForward(wr);
+        sweepBackward(wr);
     }
 
     /* Both soaks run AFTER the sweeps, and that ordering is the whole mechanism
@@ -675,6 +796,260 @@ void lightCompute(const World& w, int camX, int camY) {
        order does not matter: each writes only to material, each takes the
        brighter of what it found and what is already there, and neither reads
        what the other wrote. */
-    solidSoak();
+    LRect sr = { imax(0, wr.x0 - SOLID_SOAK), imax(0, wr.y0 - SOLID_SOAK),
+                 imin(LIGHT_W - 1, wr.x1 + SOLID_SOAK),
+                 imin(LIGHT_H - 1, wr.y1 + SOLID_SOAK) };
+    solidSoak(sr, wr);
+    /* sunSoak walks each column from the top of the buffer down, because that
+       is what "how far has daylight got into the ground by here" means, so it
+       cannot be cut down to a band in the middle. Run whole, it stays correct
+       during a patch for free: it only ever raises a solid cell toward the
+       skylight above it, and outside wr both that skylight and the cell's
+       current value are the ones it produced last time, so the max is a no-op
+       there. Idempotence is what makes running it wide harmless. */
     if (anySky) sunSoak(w, wx0, wy0, lx0, lx1);
+}
+
+/* ==========================================================================
+   Reusing a field
+   ========================================================================== */
+
+/* --- what the field remembers between frames ------------------------------
+   The buffer's own position in the world, so a field can outlive the frame it
+   was computed on (see g_lightOfsX in light.h), plus enough to know when it has
+   stopped being true. */
+int  g_lightWork = LIGHT_RECUT;
+int  g_lightWorkPct = 100;
+
+static bool g_haveField = false;
+static int  g_anchorX = 0, g_anchorY = 0;   /* world cell of buffer (0,0) */
+static int  g_dayAt   = -1;                 /* dayLight() when it was solved */
+
+/* World cells known to have changed since the field was solved, accumulated
+   across every frame the field is reused. Inclusive; empty when x1 < x0. */
+static int  g_dirtyX0 = 0, g_dirtyY0 = 0, g_dirtyX1 = -1, g_dirtyY1 = -1;
+static int  g_stale = 0;                    /* frames since the last solve */
+
+/* How many frames a field may be reused while the world under it is moving.
+
+   Not a quality knob so much as an admission about what lighting is for. A
+   shadow arriving a frame late is not detectable at 60 Hz -- the thing casting
+   it has moved one cell -- and the pass costs more than the whole rest of the
+   frame put together, so paying it every frame buys nothing anybody can see.
+   Two was picked by halving the cost and looking for the seam; there is none.
+   Four begins to show on fast-moving fire, where the lit region visibly steps.
+
+   A field with nothing dirty under it is not on this clock at all: it is reused
+   until something actually changes, which is most of the time in a built room
+   with the machines switched off. */
+static const int LIGHT_PERIOD = 2;
+
+/* How far the camera may wander from the anchor before the field is recut.
+
+   The margin is exactly one source's reach (see LIGHT_MARGIN), so a field whose
+   camera has drifted d cells has only LIGHT_MARGIN - d of margin left on the
+   trailing edge, and a source out in that shortfall is missing from the edge
+   column. At 8 the worst a missing source can be worth is 8 * air attenuation =
+   16 of 255, in the outermost column of the view only, and it is gone the next
+   time the field is cut. Below about 4 the recuts cost more than they save;
+   above about 16 you can see a lamp fade in at the screen edge. */
+static const int LIGHT_DRIFT = 8;
+
+/* Patching stops being a bargain once the patch approaches the size of the
+   field: the region is solved with a rim around it and the soaks reach further
+   still, so a patch over most of the buffer does more work than simply cutting
+   a new one. Measured, the crossover is around three quarters. */
+static const int LIGHT_PATCH_MAX_PCT = 70;
+
+void lightInvalidate() { g_haveField = false; }
+
+void lightCompute(const World& w, int camX, int camY) {
+    g_anchorX = camX - LIGHT_MARGIN;
+    g_anchorY = camY - LIGHT_MARGIN;
+    g_lightOfsX = LIGHT_MARGIN;
+    g_lightOfsY = LIGHT_MARGIN;
+    lightSolve(w, g_anchorX, g_anchorY, LR_ALL);
+    g_lightWork = LIGHT_RECUT;
+    g_lightWorkPct = 100;
+    g_haveField = true;
+    g_dayAt = dayLight();
+    g_dirtyX1 = -1; g_dirtyY1 = -1;
+    g_dirtyX0 = 0;  g_dirtyY0 = 0;
+    g_stale = 0;
+}
+
+/* Fold everything the simulation has disturbed inside the field into the
+   running dirty box.
+
+   The signal is the simulation's OWN chunk rectangles, not a second set of
+   marks maintained beside them, and that choice is the safety of the whole
+   scheme. Every material change in this engine is followed by a dirtyPoint --
+   it has to be, or the cell would not be looked at again and the simulation
+   itself would break -- so reading those rects cannot miss a change. A private
+   list of "cells that changed appearance" would be a second invariant to keep,
+   maintained at a dozen call sites, and the failure mode of forgetting one is a
+   shadow that never lifts: exactly the bug this file's header warns about, and
+   one that would survive to release because it needs a specific material doing
+   a specific thing to show up at all.
+
+   The price is that it is conservative. A chunk stays dirty while heat moves
+   through it even though heat changes no cell's appearance, so a hot rock keeps
+   its neighbourhood on the recompute clock. That costs frames; the alternative
+   costs correctness. */
+/* Fold a world rectangle into the running dirty box, clipped to the field. */
+static void lightMarkDirty(int x0, int y0, int x1, int y1) {
+    const int fx1 = g_anchorX + LIGHT_W - 1, fy1 = g_anchorY + LIGHT_H - 1;
+    if (x0 < g_anchorX) x0 = g_anchorX;
+    if (y0 < g_anchorY) y0 = g_anchorY;
+    if (x1 > fx1) x1 = fx1;
+    if (y1 > fy1) y1 = fy1;
+    if (x1 < x0 || y1 < y0) return;
+    if (g_dirtyX1 < g_dirtyX0) { g_dirtyX0 = x0; g_dirtyY0 = y0; g_dirtyX1 = x1; g_dirtyY1 = y1; }
+    else {
+        if (x0 < g_dirtyX0) g_dirtyX0 = x0;
+        if (y0 < g_dirtyY0) g_dirtyY0 = y0;
+        if (x1 > g_dirtyX1) g_dirtyX1 = x1;
+        if (y1 > g_dirtyY1) g_dirtyY1 = y1;
+    }
+}
+
+static void lightAccumulateDirty(const World& w) {
+    const int fx1 = g_anchorX + LIGHT_W - 1, fy1 = g_anchorY + LIGHT_H - 1;
+    const int cx0 = imax(0, g_anchorX >> CHUNK_SHIFT), cx1 = imin(CHUNKS_X - 1, fx1 >> CHUNK_SHIFT);
+    const int cy0 = imax(0, g_anchorY >> CHUNK_SHIFT), cy1 = imin(CHUNKS_Y - 1, fy1 >> CHUNK_SHIFT);
+
+    for (int cy = cy0; cy <= cy1; ++cy)
+        for (int cx = cx0; cx <= cx1; ++cx) {
+            const Chunk& c = w.next[cy * CHUNKS_X + cx];
+            if (c.minX > c.maxX) continue;
+            lightMarkDirty(c.minX, c.minY, c.maxX, c.maxY);
+        }
+}
+
+/* --- moving the field without rebuilding it --------------------------------
+   The camera wanders out of the drift tolerance several times a second while
+   walking, and re-cutting the field each time is a full solve -- which showed
+   up exactly as you would expect: a mean frame of 7.6 ms with 29.6 ms spikes
+   through it, which at 60 Hz is a dropped frame every few steps rather than a
+   fast game.
+
+   But almost all of that field is still true. Sliding the buffer to the new
+   anchor keeps the overlap -- which for a step or two of camera movement is
+   better than 99% of it -- and leaves only a thin strip along the leading edge
+   that has never been solved. That strip goes into the dirty box like any other
+   change, and the ordinary patch below deals with it.
+
+   Four arrays move: the light itself and the three the gather fills in beside
+   it. g_soak does not, because every solve reseeds it inside the region it is
+   about to use and never reads a value from outside. */
+static void lightScroll(int nx, int ny) {
+    const int dx = nx - g_anchorX, dy = ny - g_anchorY;
+    if (dx == 0 && dy == 0) return;
+    const int ax = dx < 0 ? -dx : dx, ay = dy < 0 ? -dy : dy;
+    if (ax >= LIGHT_W || ay >= LIGHT_H) { g_haveField = false; return; }
+
+    const int keepW = LIGHT_W - ax, keepH = LIGHT_H - ay;
+    const int dstX = imax(0, -dx), srcX = imax(0, dx);
+    const int dstY = imax(0, -dy), srcY = imax(0, dy);
+
+    u8* const planes[4] = { g_light, g_att, g_sky, g_solid };
+    for (int p = 0; p < 4; ++p) {
+        u8* A = planes[p];
+        /* Rows are copied away from the overlap, so a move that shifts within
+           the same buffer never reads a row it has already overwritten. */
+        if (dstY <= srcY)
+            for (int r = 0; r < keepH; ++r)
+                memmove(A + (dstY + r) * LIGHT_W + dstX, A + (srcY + r) * LIGHT_W + srcX, keepW);
+        else
+            for (int r = keepH - 1; r >= 0; --r)
+                memmove(A + (dstY + r) * LIGHT_W + dstX, A + (srcY + r) * LIGHT_W + srcX, keepW);
+    }
+
+    g_anchorX = nx; g_anchorY = ny;
+
+    /* The strips that slid in hold whatever the arrays happened to contain, so
+       they are dirty in the strongest sense: not stale, never solved at all. */
+    const int fx1 = nx + LIGHT_W - 1, fy1 = ny + LIGHT_H - 1;
+    if (dx > 0)      lightMarkDirty(fx1 - dx + 1, ny, fx1, fy1);
+    else if (dx < 0) lightMarkDirty(nx, ny, nx - dx - 1, fy1);
+    if (dy > 0)      lightMarkDirty(nx, fy1 - dy + 1, fx1, fy1);
+    else if (dy < 0) lightMarkDirty(nx, ny, fx1, ny - dy - 1);
+}
+
+/* --- one frame of lighting --------------------------------------------------
+   Three outcomes, cheapest first.
+
+   REUSE. Nothing under the field has changed, or it has but the field is not
+   yet due. The buffer is left alone and only the view's offset into it moves.
+
+   PATCH. Something changed, in a region small enough to be worth isolating.
+   Light reaches at most LIGHT_MARGIN cells (that is what the margin IS), so a
+   change confined to a box can only have altered the field within that box
+   grown by LIGHT_MARGIN -- everything beyond is provably the same value it
+   already holds. Solving that grown box with its rim pinned to what is already
+   there gives the same answer a full solve would, for a fraction of the area.
+
+   RECUT. The camera has moved far enough that the buffer needs repositioning,
+   the sun has moved so every column changed at once, or the dirty box has grown
+   big enough that patching it is no longer a saving. */
+void lightUpdate(const World& w, int camX, int camY) {
+    if (!g_haveField) { lightCompute(w, camX, camY); return; }
+
+    /* The sun moves every column at once, so there is nothing local about it and
+       nothing to patch. It only ticks a step every couple of seconds. */
+    if (dayLight() != g_dayAt) { lightCompute(w, camX, camY); return; }
+
+    {   /* Drifted far enough that the margin on the trailing edge has worn
+           thin: slide the field back under the camera, keeping the overlap. */
+        const int driftX = camX - g_anchorX - LIGHT_MARGIN;
+        const int driftY = camY - g_anchorY - LIGHT_MARGIN;
+        if (driftX < -LIGHT_DRIFT || driftX > LIGHT_DRIFT ||
+            driftY < -LIGHT_DRIFT || driftY > LIGHT_DRIFT) {
+            lightScroll(camX - LIGHT_MARGIN, camY - LIGHT_MARGIN);
+            if (!g_haveField) { lightCompute(w, camX, camY); return; }
+            /* The strip that just slid in has never been solved, so it is not
+               merely stale and must not wait for the reuse clock. Left to wait,
+               a second scroll can arrive first -- which is not just a longer lag
+               but a wrong answer that sticks, because by then the rim the patch
+               would have propagated from has itself moved. */
+            g_stale = LIGHT_PERIOD;
+        }
+    }
+
+    /* The buffer stays where it is; the view slides within it. Assume reuse --
+       the two paths below that do work say so themselves. */
+    const int ofsX = camX - g_anchorX, ofsY = camY - g_anchorY;
+    g_lightOfsX = ofsX;
+    g_lightOfsY = ofsY;
+    g_lightWork = LIGHT_REUSED;
+    g_lightWorkPct = 0;
+
+    lightAccumulateDirty(w);
+    ++g_stale;
+    if (g_dirtyX1 < g_dirtyX0) return;          /* nothing has moved: reuse */
+    if (g_stale < LIGHT_PERIOD) return;         /* due, but not yet */
+
+    /* The dirty box in buffer coordinates, grown by one source's reach. */
+    LRect wr = { g_dirtyX0 - g_anchorX - LIGHT_MARGIN, g_dirtyY0 - g_anchorY - LIGHT_MARGIN,
+                 g_dirtyX1 - g_anchorX + LIGHT_MARGIN, g_dirtyY1 - g_anchorY + LIGHT_MARGIN };
+    if (wr.x0 < 0) wr.x0 = 0;
+    if (wr.y0 < 0) wr.y0 = 0;
+    if (wr.x1 > LIGHT_W - 1) wr.x1 = LIGHT_W - 1;
+    if (wr.y1 > LIGHT_H - 1) wr.y1 = LIGHT_H - 1;
+    if (lrEmpty(wr)) { g_stale = 0; g_dirtyX1 = -1; return; }
+
+    const long long area = (long long)(wr.x1 - wr.x0 + 1) * (wr.y1 - wr.y0 + 1);
+    /* Recut rather than patch. lightCompute re-anchors on the camera and sets
+       the offset itself, so nothing here may write g_lightOfs* afterwards. */
+    if (area * 100 >= (long long)LIGHT_W * LIGHT_H * LIGHT_PATCH_MAX_PCT) {
+        lightCompute(w, camX, camY);
+        return;
+    }
+
+    lightSolve(w, g_anchorX, g_anchorY, wr);
+    g_lightWork = LIGHT_PATCHED;
+    g_lightWorkPct = (int)(area * 100 / ((long long)LIGHT_W * LIGHT_H));
+    g_stale = 0;
+    g_dirtyX1 = -1; g_dirtyY1 = -1;
+    g_dirtyX0 = 0;  g_dirtyY0 = 0;
 }
