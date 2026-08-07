@@ -1044,13 +1044,31 @@ static const double LIGHT_GAMMA = 0.85;
    pitch black" belongs: zero light means zero light, and how dark you choose
    to draw it is a separate question with a separate answer.
 
-   16% rather than the 10% it started at, because "under the soil is dark" was
-   a fair complaint about a picture with no information in it. At this level
-   unlit rock still reads as rock -- you can tell stone from a shaft you are
-   about to fall down, and aim your first lamp -- while a lit room is
-   unmistakably a different place. Any higher and there is no reason to carry a
-   lamp at all. */
-static const int LIGHT_MIN_SHADE = 40;
+   6%, down from 16%, and the reason is that 16% was answering the wrong
+   question. It was raised from 10% because "under the soil is dark" was a fair
+   complaint -- but lifting the floor does not make an unlit cave READABLE, it
+   makes it a uniform grey wash, and the wash turned out to cost more than the
+   darkness ever did.
+
+   At 16% you could make out every ore vein and the full shape of every cave
+   through solid stone. That is bright enough to give the layout away and far
+   too dim to be pleasant, so the underground read as murky AND held no
+   surprises: there was nothing to discover by lighting it, because you could
+   already see it, and a lamp changed a dark grey picture into a slightly less
+   dark grey one. Both halves of that came from this one number, which is why it
+   never looked like a single fault.
+
+   At 6% unlit rock is nearly black and a lit tunnel is unmistakably a different
+   place. What you get back is the thing the lighting is FOR: the ore in a wall
+   is genuinely hidden until something lights it, and carrying a lamp is how you
+   find out what is down there. The cost is that the first minute underground,
+   before anything is placed, is dark -- which is the correct price, and is
+   exactly what the lamp is for.
+
+   Note this is not "make it darker". The mid-tones are untouched; only the
+   bottom of the range moved. Lit space is as bright as it ever was, and the
+   whole change is in how far apart lit and unlit sit. */
+static const int LIGHT_MIN_SHADE = 16;
 
 /* --- background colours ----------------------------------------------------
    What a material looks like when it is BEHIND you rather than in front: the

@@ -54,9 +54,39 @@
    only thing here that costs area, so it is the number to look at if lighting
    ever needs to be cheaper: air's attenuation and this must move together, or
    lamps will start popping into existence at the edge of the screen. */
-static const int LIGHT_MARGIN = 127;
-static const int LIGHT_W = VIEW_CELLS_W + 2 * LIGHT_MARGIN;
-static const int LIGHT_H = VIEW_CELLS_H + 2 * LIGHT_MARGIN;
+/* --- the field is COARSER than the world -----------------------------------
+   One light sample per LIGHT_CELL x LIGHT_CELL block of world, smoothed back up
+   when it is applied. This is the single biggest thing about the cost of
+   lighting, so it is worth being clear about why it is not a compromise.
+
+   Light here is a diffuse field: it is produced by two raster sweeps that
+   spread it outward at a couple of units per cell, and by soaks that fade over
+   fifteen or twenty. Nothing in it can change abruptly between one cell and the
+   next -- by construction, the sharpest edge it can hold is the attenuation of
+   a single step. Sampling something that smooth once per cell is measuring a
+   gentle slope with a micrometer: the answer is 16x the work and carries almost
+   no information the coarse version does not.
+
+   At 4, the field is 192x160 = 30,720 samples where it was 766x638 = 488,708.
+   The costs that dominated -- four sweeps and two soaks over the whole field --
+   fall with the area.
+
+   What is genuinely lost is detail below the block size: a one-cell crack no
+   longer throws a crisp shadow, and a lamp's pool of light has a softer edge.
+   Neither is something the old field rendered convincingly anyway, because the
+   display mapping smooths that range out regardless.
+
+   The margin stays exactly one source's reach, as it always has -- it is just
+   counted in samples now. Air attenuates 2 per CELL, so 8 per sample step, and
+   LIGHT_MAX / 8 is 32 samples, which is the same 128 world cells the old
+   127-cell margin covered. The invariant in the paragraph above is unchanged;
+   only its units moved. */
+static const int LIGHT_SHIFT = 2;
+static const int LIGHT_CELL  = 1 << LIGHT_SHIFT;   /* world cells per sample */
+
+static const int LIGHT_MARGIN = 32;                /* in SAMPLES, not cells */
+static const int LIGHT_W = VIEW_CELLS_W / LIGHT_CELL + 2 * LIGHT_MARGIN;
+static const int LIGHT_H = VIEW_CELLS_H / LIGHT_CELL + 2 * LIGHT_MARGIN;
 
 /* Row-major over the padded rectangle whose top-left cell is
    (g_lightAnchorX, g_lightAnchorY). Use lightRow() to get at the part of it
@@ -79,6 +109,14 @@ extern u8 g_light[LIGHT_W * LIGHT_H];
    the trailing edge has worn thin enough for a source just off-screen to be
    missing, and the field is re-cut. */
 extern int g_lightOfsX, g_lightOfsY;
+
+/* Where the view's top-left cell sits in the world, and where the field's
+   sample (0,0) does. The anchor is always a multiple of LIGHT_CELL: the sample
+   grid is pinned to the WORLD, not to the camera, so that walking does not slide
+   the sample points under the terrain. Unpinned, every block boundary would
+   crawl across the scene and the shading would visibly crawl with it. */
+extern int g_lightViewX, g_lightViewY;
+extern int g_lightAnchorX, g_lightAnchorY;
 
 /* Whether lighting is applied at all. Off restores the flat, fully-lit look,
    which is what the sandbox half of this program wants -- you cannot inspect a
@@ -154,11 +192,20 @@ extern int g_lightWorkPct;   /* share of the field solved, 0..100 */
    meaningful set of changed chunks. */
 void lightInvalidate();
 
-/* The first light value of view row vy, so the render loop can walk it with
-   the same linear stride it walks everything else. */
-static inline const u8* lightRow(int vy) {
-    return g_light + (vy + g_lightOfsY) * LIGHT_W + g_lightOfsX;
-}
+/* Brightness at one view cell, interpolated between the four samples around it.
+
+   The interpolation is not decoration -- without it the shading is delivered in
+   4x4 blocks and the eye finds every one of them. Blocks are far more visible
+   than the detail the coarse field gave up, because a straight edge that has no
+   counterpart in the world reads as a fault in the picture, while a soft shadow
+   just reads as a soft shadow. */
+u8 lightAt(int vx, int vy);
+
+/* The whole of view row vy, smoothed up to one value per cell, so the render
+   loop can walk it with the same linear stride it walks everything else. The
+   row is built once and cached; calling it for the row being drawn costs one
+   pass over 512 bytes rather than a bilinear sample per pixel. */
+const u8* lightRow(int vy);
 
 /* Brightness at one view cell, for things drawn ON TOP of the world after
    renderView has run -- the character, the tool in their hand. Without this
@@ -167,7 +214,7 @@ static inline const u8* lightRow(int vy) {
    brightest thing on screen. Bounds are the caller's problem, since every one
    of them is already clipping to the view to write a pixel at all. */
 static inline u32 viewShade(int vx, int vy) {
-    return g_lightShade[lightRow(vy)[vx]];
+    return g_lightShade[lightAt(vx, vy)];
 }
 
 /* Multiply a packed 0xRRGGBB colour by a 0..255 brightness. Two multiplies for
