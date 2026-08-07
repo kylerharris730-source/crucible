@@ -1787,14 +1787,21 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
            character to control it is the obvious binding for something else,
            and every player will try it. The panel button still pauses too. */
         case 'P': g_paused = !g_paused; break;
-        /* Q for the full map, Z for the corner one. Not M, which every game
-           with a map uses and which is taken here by the copper brush -- moving
-           an existing binding to get the nicer letter is not this feature's
-           call to make.
+        /* T for the full map, Z for the corner one.
+
+           Q first, and Q was wrong: it is already held for brush resize and the
+           brush outline, through GetAsyncKeyState rather than a case label --
+           so a scan of `case` labels reported it free and pressing it did both
+           things at once. Held keys and pressed keys are two registers of
+           bindings in this file and only one of them is greppable; check both.
+
+           Not M either, which every game with a map uses and which is taken
+           here by the copper brush. Moving an existing binding to get the nicer
+           letter is available if wanted, but it is not this feature's call.
 
            Opening the full map re-centres it on the player: a map you have to
            find yourself on every time is a map you stop opening. */
-        case 'Q': g_mapOpen = !g_mapOpen; if (g_mapOpen) g_mapPanned = false; break;
+        case 'T': g_mapOpen = !g_mapOpen; if (g_mapOpen) g_mapPanned = false; break;
         case 'Z': g_miniOn = !g_miniOn; break;
         case VK_OEM_PERIOD: g_stepOnce = true; break;
         case VK_OEM_4: changeSize(-1); break;  /* [ */
