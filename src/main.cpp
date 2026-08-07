@@ -173,7 +173,7 @@ static RECT g_sizeDec, g_sizeInc, g_sizeBox;
 static RECT g_speedRect[N_SPEED];
 
 /* GDI objects, all created once -- object churn per frame is not free. */
-static HBRUSH g_panelBg, g_btnBg, g_btnBgHot, g_btnBgSel, g_borderBrush, g_accentBrush;
+static HBRUSH g_panelBg, g_btnBg, g_btnBgHot, g_btnBgSel, g_borderBrush, g_accentBrush, g_warnBrush;
 static HBRUSH g_swatchBrush[N_BRUSH];
 
 /* --- item icons -----------------------------------------------------------
@@ -576,6 +576,23 @@ static int  g_toolPackSlot  = -1;   /* which inventory slot the bench is showing
    goes in them, whereas an absent tool bench tells you nothing is missing. */
 static RECT g_eqRect[EQ_COUNT];
 
+/* --- the trash ------------------------------------------------------------
+   Somewhere to put things you do not want. Sitting on the end of the equipment
+   row because that is where the slots that are not the pack already live.
+
+   It HOLDS what you last put in rather than swallowing it, which is the whole
+   design: dropping the wrong stack into a void is unrecoverable and happens to
+   everyone, and a slot that keeps one thing costs nothing and makes the mistake
+   undoable. Putting something else in is what finally destroys the last thing --
+   so it is a bin you can reach back into until the next time you use it.
+
+   Deliberately NOT saved. The contents are already discarded as far as the
+   player is concerned; persisting them would make the bin a fortieth inventory
+   slot that survives sessions, which is the opposite of throwing something
+   away. */
+static RECT      g_trashRect;
+static ItemStack g_trash;
+
 /* --- the camera ----------------------------------------------------------
    Top-left cell of the visible window. Kept as floats so the follow can be
    smoothed, and truncated to whole cells for every use -- a camera at a
@@ -973,6 +990,7 @@ static void layoutCreative() {
     if (signalPicker) {
         for (int i = 0; i < INV_SLOTS; ++i) SetRectEmpty(&g_packRect[i]);
         for (int i = 0; i < EQ_COUNT; ++i) SetRectEmpty(&g_eqRect[i]);
+        SetRectEmpty(&g_trashRect);
         for (int i = 0; i < TOOL_SLOTS_MAX; ++i) SetRectEmpty(&g_toolSlotRect[i]);
     }
     for (int i = 0; i < INV_SLOTS; ++i) {
@@ -990,6 +1008,11 @@ static void layoutCreative() {
     const int eqY = packY + packH;
     if (!signalPicker) for (int i = 0; i < EQ_COUNT; ++i)
         SetRect(&g_eqRect[i], x0 + pad + i * 40, eqY, x0 + pad + i * 40 + 34, eqY + 34);
+    /* A gap of half a slot before it, so it reads as separate from the things
+       you are wearing rather than as a fifth equipment slot. */
+    if (signalPicker) SetRectEmpty(&g_trashRect);
+    else SetRect(&g_trashRect, x0 + pad + EQ_COUNT * 40 + 20, eqY,
+                 x0 + pad + EQ_COUNT * 40 + 54, eqY + 34);
 
     /* Module slots: square, and noticeably bigger than a grid row, because they
        are the one place on this screen where the arrangement carries meaning
@@ -1258,6 +1281,38 @@ static bool handleCreativeClick(int mx, int my, bool remove) {
 
     if (g_signalPickerDevice < 0) for (int i = 0; i < EQ_COUNT; ++i)
         if (inRect(g_eqRect[i], mx, my)) { equipClick(i, remove); layoutCreative(); return true; }
+
+    /* The bin is an ORDINARY slot, clicked with the same slotClick every other
+       slot uses -- which is what makes taking something back out work without a
+       line of code for it. What makes it a bin is only that nothing refills it
+       and nothing saves it.
+
+       One thing it must do that a plain slot does not: return the tool instance
+       of whatever it displaces. Dropping a multitool in and then a second item
+       on top would otherwise leak the handle, and the pool is 32 deep -- the
+       symptom is the 33rd multitool of a session arriving inert, with nothing
+       anywhere connecting it to a bin. */
+    if (g_signalPickerDevice < 0 && inRect(g_trashRect, mx, my)) {
+        if (g_drag.empty()) {
+            /* Empty hand: take back whatever is in there. This is the whole
+               recovery affordance and it is an ordinary pick-up. */
+            if (!g_trash.empty()) { g_drag = g_trash; g_trash = ItemStack(); }
+        } else {
+            /* Holding something: it goes in, and WHATEVER WAS THERE IS GONE.
+               Not a swap, which is what reusing slotClick gave and which quietly
+               made this a one-slot pocket -- put stone in, put dirt in, and the
+               stone came back to your hand. Nothing was ever destroyed, so it
+               was not a bin at all.
+
+               Destroying on displacement is what makes "until you next use it"
+               the recovery window: one undo, always available, never two. */
+            if (g_trash.inst) toolInstFree(g_trash.inst);
+            g_trash = g_drag;
+            g_drag  = ItemStack();
+        }
+        layoutCreative();
+        return true;
+    }
 
     if (g_signalPickerDevice < 0 && g_toolPackSlot >= 0 && g_inv.slot[g_toolPackSlot].inst) {
         ToolInst& ti = g_toolInst[g_inv.slot[g_toolPackSlot].inst];
@@ -3316,6 +3371,24 @@ static void drawCreative(HDC hdc) {
                 DrawTextA(hdc, EQ_NAMES[i], -1, &tr, DT_CENTER | DT_TOP | DT_SINGLELINE);
             }
         }
+
+        /* The bin. Framed in the warning colour when it holds something, which
+           is the whole recovery affordance: a lit bin says "the thing you just
+           threw away is still in here". */
+        {
+            RECT r = g_trashRect;
+            const bool hot = inRect(r, g_mx, g_my);
+            FillRect(hdc, &r, hot ? g_btnBgHot : g_btnBg);
+            FrameRect(hdc, &r, g_trash.empty() ? g_borderBrush : g_warnBrush);
+            if (!g_trash.empty()) {
+                RECT ir = r; ir.left += 2; ir.top += 2; ir.right -= 2; ir.bottom -= 2;
+                drawItemIcon(hdc, ir, g_trash.item);
+            } else {
+                SetTextColor(hdc, RGB(110, 116, 128));
+                RECT tr = r; tr.top += 10;
+                DrawTextA(hdc, "Bin", -1, &tr, DT_CENTER | DT_TOP | DT_SINGLELINE);
+            }
+        }
     }
 
     /* --- the tool bench --- */
@@ -3940,6 +4013,10 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     g_btnBgSel    = CreateSolidBrush(RGB(58, 64, 82));
     g_borderBrush = CreateSolidBrush(RGB(88, 94, 108));
     g_accentBrush = CreateSolidBrush(RGB(226, 190, 90));
+    /* The bin's frame when it is holding something. Warm red rather than the
+       accent gold, because it means "this is about to be lost", not "this is
+       equipped". */
+    g_warnBrush   = CreateSolidBrush(RGB(200, 96, 76));
     buildIcons();
 
     /* Swatch colours come from each material's own palette (a dry, mid-tint
