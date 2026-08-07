@@ -3,23 +3,40 @@
 
 /* --- lighting --------------------------------------------------------------
 
-   How bright each visible cell is. Computed fresh every frame, for the view
-   and a margin around it, and thrown away -- there is no per-cell light stored
-   in the world at all.
+   How bright each visible cell is. Computed for the view and a margin around
+   it, and held in a buffer the size of that rectangle -- there is still no
+   per-cell light stored in the WORLD, which is the part that matters.
 
    That is the central decision here, and it is the same one the renderer and
-   the simulation already made for their own reasons. A stored light field
+   the simulation already made for their own reasons. A world-sized light field
    would be another 12 MB array beside cells/temp/bg, and worse, it would have
-   to be KEPT CORRECT: every dug cell, every falling grain of sand and every
-   flame that flickers out changes what is lit, so the world would need an
-   incremental relight with a dirty queue of its own, and the bug where a
-   shadow forgets to lift is exactly the kind that survives to release. Light
-   is a pure function of the cells around it, so recomputing it is both simpler
-   and self-healing: whatever the world looks like this frame is what you see.
+   to be kept correct everywhere at once, including in the thousands of chunks
+   nobody is looking at. Light is a pure function of the cells around it, so
+   deriving it from the world near the camera is both simpler and self-healing.
 
-   The cost of that is paid once per frame over a fixed area, so like
-   renderView it does not grow with the world. See lightCompute for the
-   measured figure.
+   --- what is reused, and what that cost ---
+   This used to be recomputed in full every frame, which is the cheapest thing
+   to be sure of and was also, measured, ninety percent of the frame -- more
+   than the simulation, the renderer and everything else put together. It is now
+   reused where the world has not moved and patched where it has; see
+   lightUpdate for the three cases and what decides between them.
+
+   The reason the original said "recompute it every frame" was a real one and it
+   has not gone away: the failure mode of an incremental relight is a shadow
+   that forgets to lift, and that is a bug which survives to release, because it
+   needs one specific thing to have happened in one specific place to show up at
+   all. Two things hold it off. The dirty region comes from the SIMULATION's own
+   chunk rectangles rather than from a second set of marks kept up to date by
+   hand, so it cannot miss a change that the simulation itself did not also miss
+   (see lightAccumulateDirty). And the claim that a patch equals a full solve is
+   checked rather than argued: run the same world twice, once patched and once
+   recomputed, and compare the visible field cell for cell.
+
+   That check has already earned its keep. It caught a patch region that was
+   right for lamps and wrong for the sun -- daylight travels down the buffer in
+   straight rays, so a change high up moves the answer in a wedge hanging below
+   it, not in a ball around it, and the cells outside the region kept their old
+   shading permanently. See the note in lightSolve.
 
    --- the margin ---
    Light is computed over a rectangle LARGER than the view, because a source
@@ -37,14 +54,86 @@
    only thing here that costs area, so it is the number to look at if lighting
    ever needs to be cheaper: air's attenuation and this must move together, or
    lamps will start popping into existence at the edge of the screen. */
-static const int LIGHT_MARGIN = 127;
-static const int LIGHT_W = VIEW_CELLS_W + 2 * LIGHT_MARGIN;
-static const int LIGHT_H = VIEW_CELLS_H + 2 * LIGHT_MARGIN;
+/* --- the field is COARSER than the world -----------------------------------
+   One light sample per LIGHT_CELL x LIGHT_CELL block of world, smoothed back up
+   when it is applied. This is the single biggest thing about the cost of
+   lighting, so it is worth being clear about why it is not a compromise.
+
+   Light here is a diffuse field: it is produced by two raster sweeps that
+   spread it outward at a couple of units per cell, and by soaks that fade over
+   fifteen or twenty. Nothing in it can change abruptly between one cell and the
+   next -- by construction, the sharpest edge it can hold is the attenuation of
+   a single step. Sampling something that smooth once per cell is measuring a
+   gentle slope with a micrometer: the answer is 16x the work and carries almost
+   no information the coarse version does not.
+
+   At 4, the field is 192x160 = 30,720 samples where it was 766x638 = 488,708.
+   The costs that dominated -- four sweeps and two soaks over the whole field --
+   fall with the area.
+
+   What is genuinely lost is detail below the block size: a one-cell crack no
+   longer throws a crisp shadow, and a lamp's pool of light has a softer edge.
+   Neither is something the old field rendered convincingly anyway, because the
+   display mapping smooths that range out regardless.
+
+   The margin stays exactly one source's reach, as it always has -- it is just
+   counted in samples now. Air attenuates 2 per CELL, so 8 per sample step, and
+   LIGHT_MAX / 8 is 32 samples, which is the same 128 world cells the old
+   127-cell margin covered. The invariant in the paragraph above is unchanged;
+   only its units moved. */
+static const int LIGHT_SHIFT = 2;
+static const int LIGHT_CELL  = 1 << LIGHT_SHIFT;   /* world cells per sample */
+
+static const int LIGHT_MARGIN = 32;                /* in SAMPLES, not cells */
+static const int LIGHT_W = VIEW_CELLS_W / LIGHT_CELL + 2 * LIGHT_MARGIN;
+static const int LIGHT_H = VIEW_CELLS_H / LIGHT_CELL + 2 * LIGHT_MARGIN;
+
+/* The same coverage in WORLD CELLS, for code that reasons about the AREA the
+   light field spans rather than about samples.
+
+   Two of these exist because the field stopped being one sample per cell, and
+   everything that used LIGHT_W or LIGHT_MARGIN as a distance silently changed
+   meaning when it did. The spawner was one: it draws candidate sites from the
+   lit rectangle so that creatures appear off screen but near enough to matter,
+   and reading a sample count as a cell count shrank that ring from 127 cells to
+   32, hard against the edge of the view -- creatures arriving in front of the
+   player instead of somewhere behind the dark.
+
+   Anything asking "how far does the lit area reach" wants these. Anything
+   indexing g_light wants the ones above. */
+static const int LIGHT_MARGIN_CELLS = LIGHT_MARGIN * LIGHT_CELL;
+static const int LIGHT_CELLS_W      = VIEW_CELLS_W + 2 * LIGHT_MARGIN_CELLS;
+static const int LIGHT_CELLS_H      = VIEW_CELLS_H + 2 * LIGHT_MARGIN_CELLS;
 
 /* Row-major over the padded rectangle whose top-left cell is
-   (camX - LIGHT_MARGIN, camY - LIGHT_MARGIN). Use lightRow() to get at the
-   part of it the renderer wants; the padding is scaffolding, not output. */
+   (g_lightAnchorX, g_lightAnchorY). Use lightRow() to get at the part of it
+   the renderer wants; the padding is scaffolding, not output. */
 extern u8 g_light[LIGHT_W * LIGHT_H];
+
+/* --- the field is anchored to the WORLD, not to the camera -----------------
+   Where view cell (0,0) currently sits inside the buffer. It is LIGHT_MARGIN
+   on the frame the field is computed, and drifts from there as the camera
+   moves under a field that is being reused.
+
+   That indirection is the whole reason a field can outlive the frame it was
+   computed on. Anchored to the camera, reusing last frame's field after the
+   player took a step would shade every cell with the value belonging to the
+   cell beside it -- the light would visibly slide against the world. Anchored
+   to the world, a reused field is in exactly the right PLACE and merely
+   slightly out of date, which is a difference you cannot see at 60 Hz.
+
+   The drift is bounded by LIGHT_DRIFT (see light.cpp): past that the margin on
+   the trailing edge has worn thin enough for a source just off-screen to be
+   missing, and the field is re-cut. */
+extern int g_lightOfsX, g_lightOfsY;
+
+/* Where the view's top-left cell sits in the world, and where the field's
+   sample (0,0) does. The anchor is always a multiple of LIGHT_CELL: the sample
+   grid is pinned to the WORLD, not to the camera, so that walking does not slide
+   the sample points under the terrain. Unpinned, every block boundary would
+   crawl across the scene and the shading would visibly crawl with it. */
+extern int g_lightViewX, g_lightViewY;
+extern int g_lightAnchorX, g_lightAnchorY;
 
 /* Whether lighting is applied at all. Off restores the flat, fully-lit look,
    which is what the sandbox half of this program wants -- you cannot inspect a
@@ -90,13 +179,50 @@ int dayLight();
    what time it is. */
 bool isNight();
 
+/* Recompute the whole field, from nothing, for this camera. Unconditional: it
+   is what lightUpdate falls back on, and what a headless harness wants when it
+   is asking "what does this scene look like" rather than driving a game loop. */
 void lightCompute(const World& w, int camX, int camY);
 
-/* The first light value of view row vy, so the render loop can walk it with
-   the same linear stride it walks everything else. */
-static inline const u8* lightRow(int vy) {
-    return g_light + (vy + LIGHT_MARGIN) * LIGHT_W + LIGHT_MARGIN;
-}
+/* One frame's worth of lighting: reuse, patch, or recut as the scene demands.
+   This is what the game loop calls. See the note above it in light.cpp for
+   what it will and will not do.
+
+   Must be called every frame even when it is expected to do nothing, because
+   part of its job is to keep track of what the simulation has disturbed since
+   the field was last computed. Skipping a call loses that frame's changes and
+   the field goes quietly stale. */
+void lightUpdate(const World& w, int camX, int camY);
+
+/* What lightUpdate did on the frame just gone, and over how much of the field.
+   Reported for the same reason activeChunks is: lighting is the most expensive
+   thing in the frame, what it costs now depends on how much of it was avoided,
+   and a stats line that says "24 ms" without saying "because it recut" tells
+   you the price and not the reason. */
+enum { LIGHT_REUSED, LIGHT_PATCHED, LIGHT_RECUT };
+extern int g_lightWork;      /* one of the above */
+extern int g_lightWorkPct;   /* share of the field solved, 0..100 */
+
+/* Throw the field away. Anything that changes the world wholesale behind the
+   simulation's back -- loading a save, regenerating -- has to say so, because
+   the dirty tracking works in chunk rects and a world that was REPLACED has no
+   meaningful set of changed chunks. */
+void lightInvalidate();
+
+/* Brightness at one view cell, interpolated between the four samples around it.
+
+   The interpolation is not decoration -- without it the shading is delivered in
+   4x4 blocks and the eye finds every one of them. Blocks are far more visible
+   than the detail the coarse field gave up, because a straight edge that has no
+   counterpart in the world reads as a fault in the picture, while a soft shadow
+   just reads as a soft shadow. */
+u8 lightAt(int vx, int vy);
+
+/* The whole of view row vy, smoothed up to one value per cell, so the render
+   loop can walk it with the same linear stride it walks everything else. The
+   row is built once and cached; calling it for the row being drawn costs one
+   pass over 512 bytes rather than a bilinear sample per pixel. */
+const u8* lightRow(int vy);
 
 /* Brightness at one view cell, for things drawn ON TOP of the world after
    renderView has run -- the character, the tool in their hand. Without this
@@ -105,7 +231,7 @@ static inline const u8* lightRow(int vy) {
    brightest thing on screen. Bounds are the caller's problem, since every one
    of them is already clipping to the view to write a pixel at all. */
 static inline u32 viewShade(int vx, int vy) {
-    return g_lightShade[lightRow(vy)[vx]];
+    return g_lightShade[lightAt(vx, vy)];
 }
 
 /* Multiply a packed 0xRRGGBB colour by a 0..255 brightness. Two multiplies for

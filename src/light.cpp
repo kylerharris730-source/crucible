@@ -3,6 +3,18 @@
 
 u8   g_light[LIGHT_W * LIGHT_H];
 bool g_lightOn = true;
+int  g_lightOfsX = LIGHT_MARGIN;
+int  g_lightOfsY = LIGHT_MARGIN;
+int  g_lightViewX = 0, g_lightViewY = 0;
+int  g_lightAnchorX = 0, g_lightAnchorY = 0;
+
+/* --- a rectangle of the light buffer ---------------------------------------
+   Buffer coordinates, inclusive on all four sides, empty when x1 < x0. Every
+   pass below takes one, because every pass can now be asked to redo a part of
+   the field rather than all of it. */
+struct LRect { int x0, y0, x1, y1; };
+static inline bool lrEmpty(const LRect& r) { return r.x1 < r.x0 || r.y1 < r.y0; }
+static const LRect LR_ALL = { 0, 0, LIGHT_W - 1, LIGHT_H - 1 };
 
 /* Per-cell attenuation, gathered once so the sweeps never touch Cell again.
    Worth its own array rather than reading g_matOpacity[cells[i].mat] inside the
@@ -30,6 +42,149 @@ static u8 g_soak[LIGHT_W * LIGHT_H];
    the difference between smoke dimming a room and smoke turning it to night. */
 static inline bool lightOpen(u8 m) {
     return m == MAT_EMPTY || MATS[m].kind == KIND_GAS || g_matSheer[m] != 0;
+}
+
+/* --- putting a coarse field back onto the screen ----------------------------
+   Bilinear between the four samples surrounding a view cell. The sample grid is
+   pinned to world positions that are multiples of LIGHT_CELL, so a cell's
+   position between samples is just its low bits, and walking sideways slides
+   the weights smoothly instead of jumping the sample points.
+
+   The half-cell shift is what centres it: sample s stands for the block of
+   cells [s*LIGHT_CELL, s*LIGHT_CELL + LIGHT_CELL), whose middle is half a block
+   in. Without the shift the whole field is displaced half a block up and left,
+   which does not look like an offset -- it looks like the shadows do not line
+   up with the things casting them. */
+static inline int lightBiasedX(int vx) {
+    return (g_lightViewX + vx - g_lightAnchorX) * 2 - (LIGHT_CELL - 1);
+}
+static inline int lightBiasedY(int vy) {
+    return (g_lightViewY + vy - g_lightAnchorY) * 2 - (LIGHT_CELL - 1);
+}
+
+u8 lightAt(int vx, int vy) {
+    const int fx = lightBiasedX(vx), fy = lightBiasedY(vy);
+    int sx = fx >> (LIGHT_SHIFT + 1), sy = fy >> (LIGHT_SHIFT + 1);
+    const int tx = fx - (sx << (LIGHT_SHIFT + 1));
+    const int ty = fy - (sy << (LIGHT_SHIFT + 1));
+    sx = imax(0, imin(sx, LIGHT_W - 2));
+    sy = imax(0, imin(sy, LIGHT_H - 2));
+    const u8* p = g_light + sy * LIGHT_W + sx;
+    const int top = (int)p[0] * ((LIGHT_CELL * 2) - tx) + (int)p[1] * tx;
+    const int bot = (int)p[LIGHT_W] * ((LIGHT_CELL * 2) - tx) + (int)p[LIGHT_W + 1] * tx;
+    return (u8)((top * ((LIGHT_CELL * 2) - ty) + bot * ty)
+                >> (2 * (LIGHT_SHIFT + 1)));
+}
+
+/* One view row, smoothed up once and handed to the renderer as a plain array so
+   its inner loop stays a linear byte walk. Two horizontal lerps per row and one
+   vertical blend per cell, rather than a full bilinear per pixel. */
+const u8* lightRow(int vy) {
+    static u8 row[VIEW_CELLS_W];
+    static int cached = -1, cachedX = -1, cachedY = -1;
+    if (cached == vy && cachedX == g_lightViewX && cachedY == g_lightViewY) return row;
+    cached = vy; cachedX = g_lightViewX; cachedY = g_lightViewY;
+
+    const int fy = lightBiasedY(vy);
+    int sy = fy >> (LIGHT_SHIFT + 1);
+    const int ty = fy - (sy << (LIGHT_SHIFT + 1));
+    sy = imax(0, imin(sy, LIGHT_H - 2));
+    const u8* up = g_light + sy * LIGHT_W;
+    const u8* dn = up + LIGHT_W;
+    const int full = LIGHT_CELL * 2;
+
+    for (int vx = 0; vx < VIEW_CELLS_W; ++vx) {
+        const int fx = lightBiasedX(vx);
+        int sx = fx >> (LIGHT_SHIFT + 1);
+        const int tx = fx - (sx << (LIGHT_SHIFT + 1));
+        sx = imax(0, imin(sx, LIGHT_W - 2));
+        const int top = (int)up[sx] * (full - tx) + (int)up[sx + 1] * tx;
+        const int bot = (int)dn[sx] * (full - tx) + (int)dn[sx + 1] * tx;
+        row[vx] = (u8)((top * (full - ty) + bot * ty) >> (2 * (LIGHT_SHIFT + 1)));
+    }
+    return row;
+}
+
+/* --- reading the world at sample resolution ---------------------------------
+   One sample stands for a LIGHT_CELL x LIGHT_CELL block, and the three things
+   the solve needs from it are not summarised the same way, because they answer
+   different questions.
+
+   Emission takes the MAXIMUM: a single torch cell in the block means the block
+   emits. Averaging would dim a lamp by the sixteen cells of air around it and a
+   torch would barely register.
+
+   Attenuation takes the MEAN, scaled by how many cells a step now crosses. That
+   is what makes partial occlusion work: a block half filled with rock stops
+   roughly half as much light as a solid one, which is how a coarse field
+   represents a thin wall at all.
+
+   Solidity asks whether the block is mostly material, because the soak passes
+   want "is this rock" rather than "how much light gets through it".
+
+   The occluding half is read on a 2x2 lattice rather than all sixteen cells.
+   Sixteen reads per sample is the same traffic over the world as the per-cell
+   field did, which would have thrown away most of the saving; four catches
+   anything two cells across, and below that the coarse field has nothing to
+   say about how much light gets through.
+
+   EMISSION is different, and the difference is not a matter of degree. Sampling
+   is a statement that missing something costs a little accuracy -- true of an
+   occluder, where the block still attenuates roughly right. A source you fail
+   to look at is not slightly wrong, it is ABSENT: there is no light to be
+   inaccurate about. Measured on the lattice alone, twelve of the sixteen places
+   a lamp can sit in a block lit nothing at all, and which twelve depended on
+   nothing but its coordinates.
+
+   That is worse than it sounds, because the single-cell sources MOVE. A torch
+   is a 14x14 device and always covers a sampled offset, so it looked fine; fire
+   and embers are one cell and drift, so they would wink in and out as they
+   crossed the lattice.
+
+   So emission scans the whole block and the rest keeps its lattice. */
+static inline void sampleBlock(const World& w, int wx, int wy,
+                               u8* emit, u8* att, u8* solid, u8* sheer) {
+    int e = 0, a = 0, s = 0, h = 0;
+    for (int oy = 0; oy < LIGHT_CELL; ++oy) {
+        const int y = wy + oy;
+        for (int ox = 0; ox < LIGHT_CELL; ++ox) {
+            const int x = wx + ox;
+            const u8 m = (x < 0 || x >= SIM_W || y < 0 || y >= SIM_H)
+                       ? (u8)MAT_WALL : w.cells[y * SIM_W + x].mat;
+            const int l = g_matLight[m];
+            if (l > e) e = l;
+            /* Occlusion keeps the 2x2 lattice; only emission needed the whole
+               block. Reading all sixteen for this too was tried and reverted --
+               it cost 1.07 -> 1.25 ms and fixed nothing measurable. The case it
+               was aimed at, a one-cell door not blocking light, is bound by the
+               RESOLUTION rather than by the sampling: one opaque cell is a
+               sixteenth of its block whether you look at it or not. */
+            if ((ox & 1) && (oy & 1)) {
+                a += g_matOpacity[m];
+                h += g_matSheer[m];
+                s += lightOpen(m) ? 0 : 1;
+            }
+        }
+    }
+    const int n = (LIGHT_CELL / 2) * (LIGHT_CELL / 2);
+    *emit  = (u8)e;
+    /* Mean per cell, times the cells one sample step crosses. */
+    int perStep = (a * LIGHT_CELL) / n;
+    /* A block that emits does not get to smother itself. Per cell, materials.cpp
+       already forces every light source transparent for exactly this reason; at
+       block resolution the averaging quietly undid it, because a lamp set into
+       rock shares its block with the rock and inherited its opacity. The lamp
+       then attenuated its own light before any of it left the block, which
+       showed up as a source lighting a couple of cells and stopping. */
+    if (e && perStep > 3 * LIGHT_CELL) perStep = 3 * LIGHT_CELL;
+    *att   = (u8)(perStep > 255 ? 255 : perStep);
+    *solid = (u8)(s * 2 >= n);
+    /* Sheer is a fraction removed per cell, so a step across LIGHT_CELL of them
+       removes correspondingly more. Scaled rather than compounded: the exact
+       form is 1-(1-x)^LIGHT_CELL, and over the range foliage actually uses the
+       two differ by less than a shade. */
+    const int hs = (h * LIGHT_CELL) / n;
+    *sheer = (u8)(hs > 255 ? 255 : hs);
 }
 
 /* --- skylight, from more than one direction --------------------------------
@@ -194,7 +349,7 @@ static void findBoundaries(const World& w, int wx0, int lx0, int lx1) {
     int lastCx = -1;
     i32 lastY = 0;
     for (int lx = lx0; lx < lx1; ++lx) {
-        const int cx = (wx0 + lx) >> CHUNK_SHIFT;
+        const int cx = (wx0 + (lx << LIGHT_SHIFT)) >> CHUNK_SHIFT;
         if (cx != lastCx) {
             lastCx = cx;
             lastY = SIM_H;
@@ -251,12 +406,24 @@ static void findBoundaries(const World& w, int wx0, int lx0, int lx1) {
    switchback to light around. */
 static const int LIGHT_PASSES = 2;
 
-static void sweepForward() {
-    for (int ly = 1; ly < LIGHT_H; ++ly) {
+/* --- sweeping a REGION rather than the field --------------------------------
+   `r` is the set of cells this sweep may WRITE. Everything it reads outside r
+   is a boundary condition, and for a partial update those cells hold last
+   frame's finished light -- which is exactly right, because a partial update is
+   only ever run over a region far enough around the change that the light on
+   its rim provably did not move. See lightUpdate.
+
+   The clamps are the same ones the full-field version had hard-coded: the
+   forward sweep cannot do row 0 or either edge column because it reads up and
+   left, and the backward sweep cannot do the last row for the mirror reason. */
+static void sweepForward(const LRect& r) {
+    const int x0 = imax(r.x0, 1), x1 = imin(r.x1, LIGHT_W - 2);
+    const int y0 = imax(r.y0, 1), y1 = imin(r.y1, LIGHT_H - 1);
+    for (int ly = y0; ly <= y1; ++ly) {
         u8*       L  = g_light + ly * LIGHT_W;
         const u8* U  = L - LIGHT_W;
         const u8* A  = g_att + ly * LIGHT_W;
-        for (int lx = 1; lx < LIGHT_W - 1; ++lx) {
+        for (int lx = x0; lx <= x1; ++lx) {
             const int a = A[lx];
             const int d = a + (a >> 1);
             int v = L[lx], t;
@@ -269,12 +436,14 @@ static void sweepForward() {
     }
 }
 
-static void sweepBackward() {
-    for (int ly = LIGHT_H - 2; ly >= 0; --ly) {
+static void sweepBackward(const LRect& r) {
+    const int x0 = imax(r.x0, 1), x1 = imin(r.x1, LIGHT_W - 2);
+    const int y0 = imax(r.y0, 0), y1 = imin(r.y1, LIGHT_H - 2);
+    for (int ly = y1; ly >= y0; --ly) {
         u8*       L = g_light + ly * LIGHT_W;
         const u8* D = L + LIGHT_W;
         const u8* A = g_att + ly * LIGHT_W;
-        for (int lx = LIGHT_W - 2; lx >= 1; --lx) {
+        for (int lx = x1; lx >= x0; --lx) {
             const int a = A[lx];
             const int d = a + (a >> 1);
             int v = L[lx], t;
@@ -327,7 +496,7 @@ static void sweepBackward() {
    acts as a fixed source and can never GAIN from the soak. Without that, light
    would pool in air at the soak's low attenuation and creep along corridors it
    has no business in. */
-static const int SOLID_SOAK     = 20;    /* cells of material light reads into */
+static const int SOLID_SOAK     = 20 / LIGHT_CELL;   /* SAMPLES light reads into */
 static const int SOLID_SOAK_ATT = LIGHT_MAX / SOLID_SOAK;
 
 /* One forward/backward pair, where the main sweeps use two. The second pair
@@ -338,11 +507,22 @@ static const int SOLID_SOAK_ATT = LIGHT_MAX / SOLID_SOAK;
 
    Seeding and merging are folded INTO the two sweeps rather than being loops of
    their own, which is worth the slight awkwardness: written as four separate
-   walks over the field this pass measured 1.12 ms, and four walks over 378 k
-   cells is mostly the walking. A sweep visits every cell exactly once in an
+   walks over the field this pass measured 1.12 ms, and four walks over 489 k
+   cells is mostly the walking. (That figure, and the others quoted in this
+   file, are for a whole-field solve on the machine they were taken on; what a
+   frame actually costs now depends on how much of the field it touches -- see
+   lightUpdate.) A sweep visits every cell exactly once in an
    order that only ever reads already-finalised neighbours, so there is nowhere
    a separate pass can see anything these two cannot. */
-static void solidSoak() {
+/* `sr` is the region the soak is SOLVED over, `wr` the region it is allowed to
+   write back into g_light. For a full field the two are the same thing. For a
+   partial update they are not, and the gap between them is what keeps the pass
+   honest: the soak's rim has to be seeded with a guess (air keeps its light,
+   material starts at nothing), and a solid cell on the rim seeded at nothing is
+   simply wrong. That error decays at SOLID_SOAK_ATT and is gone within
+   SOLID_SOAK cells, so lightUpdate hands over an `sr` grown by SOLID_SOAK past
+   `wr` and the wrong values never reach anything that gets written back. */
+static void solidSoak(const LRect& sr, const LRect& wr) {
     /* Forward, and the seed. Air takes the light the main sweeps gave it and
        keeps it -- so a lamp lights the rock around it and a sunlit hillside
        lights its own stone, with no second notion of where light comes from.
@@ -352,20 +532,39 @@ static void solidSoak() {
        frame's values, and starting from them would make the soak accumulate
        over time instead of being recomputed -- the exact bug the whole
        recompute-every-frame design exists to avoid. */
-    /* Row 0 first, and it MUST be first: the sweep starts at row 1 and reads the
-       row above it, so seeding row 0 afterwards would feed the whole field one
+    /* The rim first, and it MUST be first: the sweep starts one row in and reads
+       the row above it, so seeding afterwards would feed the whole region one
        row of LAST frame's values. */
-    for (int lx = 0; lx < LIGHT_W; ++lx)
-        g_soak[lx] = g_solid[lx] ? 0 : g_light[lx];
+#define SOAK_SEED(lx, ly) do { const int _i = (ly) * LIGHT_W + (lx); \
+        g_soak[_i] = g_solid[_i] ? 0 : g_light[_i]; } while (0)
+    for (int lx = sr.x0; lx <= sr.x1; ++lx) {
+        SOAK_SEED(lx, sr.y0);
+        if (sr.y1 < LIGHT_H - 1) SOAK_SEED(lx, sr.y1);
+    }
+    for (int ly = sr.y0; ly <= sr.y1; ++ly) {
+        SOAK_SEED(sr.x0, ly);
+        SOAK_SEED(sr.x1, ly);
+    }
+#undef SOAK_SEED
 
-    for (int ly = 1; ly < LIGHT_H; ++ly) {
+    /* The region the two passes actually solve: inside the rim on every side a
+       rim exists on. A side flush against the edge of the BUFFER has no rim --
+       there is nothing outside it to hold fixed -- so the passes own those rows
+       and columns themselves, which is what the full-field case has always
+       done. The two passes then differ only in the one row each cannot reach:
+       forward reads the row above, so it cannot start at row 0; backward reads
+       the row below, so it cannot finish on the last one. */
+    const int ix0 = imax(sr.x0 + (sr.x0 > 0), 1);
+    const int ix1 = imin(sr.x1 - (sr.x1 < LIGHT_W - 1), LIGHT_W - 2);
+    const int ry0 = sr.y0 + (sr.y0 > 0);
+    const int ry1 = sr.y1 - (sr.y1 < LIGHT_H - 1);
+
+    for (int ly = imax(ry0, 1); ly <= ry1; ++ly) {
         u8*       K = g_soak  + ly * LIGHT_W;
         const u8* U = K - LIGHT_W;
         const u8* L = g_light + ly * LIGHT_W;
         const u8* S = g_solid + ly * LIGHT_W;
-        K[0] = S[0] ? 0 : L[0];
-        K[LIGHT_W - 1] = S[LIGHT_W - 1] ? 0 : L[LIGHT_W - 1];
-        for (int lx = 1; lx < LIGHT_W - 1; ++lx) {
+        for (int lx = ix0; lx <= ix1; ++lx) {
             if (!S[lx]) { K[lx] = L[lx]; continue; }
             const int a = SOLID_SOAK_ATT, d = a + (a >> 1);
             int v = 0, t;
@@ -380,12 +579,14 @@ static void solidSoak() {
        the whole safety property of this pass: an open cell is never written, so
        nothing the soak carried through a wall can light the space on the other
        side of it. */
-    for (int ly = LIGHT_H - 2; ly >= 0; --ly) {
+    for (int ly = imin(ry1, LIGHT_H - 2); ly >= ry0; --ly) {
         u8*       K = g_soak  + ly * LIGHT_W;
         const u8* D = K + LIGHT_W;
         u8*       L = g_light + ly * LIGHT_W;
         const u8* S = g_solid + ly * LIGHT_W;
-        for (int lx = LIGHT_W - 2; lx >= 1; --lx) {
+        const bool wrow = (ly >= wr.y0 && ly <= wr.y1);
+        const int  wa = imax(wr.x0, ix0), wb = imin(wr.x1, ix1);
+        for (int lx = ix1; lx >= ix0; --lx) {
             if (!S[lx]) continue;                  /* air holds its seed */
             const int a = SOLID_SOAK_ATT, d = a + (a >> 1);
             int v = K[lx], t;
@@ -394,7 +595,7 @@ static void solidSoak() {
             t = (int)D[lx + 1] - d; if (t > v) v = t;
             t = (int)D[lx - 1] - d; if (t > v) v = t;
             K[lx] = (u8)v;
-            if (v > L[lx]) L[lx] = (u8)v;
+            if (wrow && lx >= wa && lx <= wb && v > L[lx]) L[lx] = (u8)v;
         }
     }
 }
@@ -431,7 +632,7 @@ static void solidSoak() {
    SUN_SOAK of the surface has dim rock around it and a dark interior. It is a
    rare shape, the values involved are low, and the alternative is letting the
    soak into the sweeps, which is exactly the leak this pass exists to avoid. */
-static const int SUN_SOAK     = 15;    /* cells of ground daylight reaches */
+static const int SUN_SOAK     = 16 / LIGHT_CELL;     /* SAMPLES daylight reaches */
 static const int SUN_SOAK_ATT = LIGHT_MAX / SUN_SOAK;
 
 /* No state machine any more, and losing it fixed a bug that had nothing to do
@@ -452,21 +653,21 @@ static const int SUN_SOAK_ATT = LIGHT_MAX / SUN_SOAK;
    slab's own shadow and below a roofed room is nothing. Daylight still cannot
    reach through a floor, because the air under the floor has no skylight to
    re-seed from -- the property survives without a rule enforcing it. */
-static void sunSoak(const World& w, int wx0, int wy0, int lx0, int lx1) {
+static void sunSoak(int wy0, int lx0, int lx1) {
     static u8 soak[LIGHT_W];
     for (int lx = lx0; lx < lx1; ++lx) soak[lx] = 0;
 
     for (int ly = 0; ly < LIGHT_H; ++ly) {
-        const int wy = wy0 + ly;
+        const int wy = wy0 + (ly << LIGHT_SHIFT);
         if (wy < 0) continue;
         if (wy >= SIM_H) break;
 
-        const Cell* row = w.cells + wy * SIM_W + wx0;
         u8*       L   = g_light + ly * LIGHT_W;
         const u8* SKY = g_sky   + ly * LIGHT_W;
+        const u8* O   = g_solid + ly * LIGHT_W;
 
         for (int lx = lx0; lx < lx1; ++lx) {
-            if (lightOpen(row[lx].mat)) {
+            if (!O[lx]) {
                 /* Seeded from SKYLIGHT ONLY, not from the light in the buffer.
                    Total light would let a lamp soak fifteen cells of rock,
                    which contradicts the five that walls are tuned to pass and
@@ -482,15 +683,29 @@ static void sunSoak(const World& w, int wx0, int wy0, int lx0, int lx1) {
     }
 }
 
-void lightCompute(const World& w, int camX, int camY) {
-    const int wx0 = camX - LIGHT_MARGIN;
-    const int wy0 = camY - LIGHT_MARGIN;
+/* --- one lighting solve ------------------------------------------------------
+   `wr` is the region of the buffer this is allowed to change. Pass LR_ALL and
+   it is the original whole-field recompute. Pass something smaller and it is a
+   patch: everything outside wr keeps the light it already had, and is used as
+   the boundary the patched region propagates from.
 
-    /* The horizontal span actually inside the world, so the gather loop below
-       carries no bounds test -- the same trick renderView uses. */
+   The gather is the one pass that does NOT simply shrink to wr, and the reason
+   is the sun. Each of the five rays is carried down the buffer row by row, so
+   what a ray is worth at row N depends on every row above it -- a strip in the
+   middle of the field cannot be gathered without first knowing what the rays
+   arriving at its top row have already been through. So when there is any
+   skylight at all the gather still walks the whole field to carry the rays, and
+   only its WRITES to g_light are held inside wr. Underground, where no column
+   sees the sky, there are no rays to carry and the gather shrinks with
+   everything else -- which is why depth is the cheaper case to patch.
+
+   (wx0, wy0) is the world cell the buffer's (0,0) corresponds to. */
+static void lightSolve(const World& w, int wx0, int wy0, LRect wr) {
+
+    /* The horizontal span actually inside the world, in SAMPLES. */
     int lx0 = 0, lx1 = LIGHT_W;
-    if (wx0 < 0)               lx0 = -wx0;
-    if (wx0 + lx1 > SIM_W)     lx1 = SIM_W - wx0;
+    if (wx0 < 0)                              lx0 = (-wx0 + LIGHT_CELL - 1) >> LIGHT_SHIFT;
+    if (wx0 + (lx1 << LIGHT_SHIFT) > SIM_W)   lx1 = (SIM_W - wx0) >> LIGHT_SHIFT;
     if (lx0 > LIGHT_W) lx0 = LIGHT_W;
     if (lx1 < lx0)     lx1 = lx0;
 
@@ -498,7 +713,7 @@ void lightCompute(const World& w, int camX, int camY) {
 
     /* Seed every ray at the top row. A ray that entered through the SIDE of the
        rectangle has no top-row cell of its own, so those source slots take the
-       nearest edge column's answer -- the rectangle's own edge is 85 cells
+       nearest edge column's answer -- the rectangle's own edge is LIGHT_MARGIN cells
        outside the view, and replicating one column's sky state is a far smaller
        error than starting those rays dark, which would draw dim vertical bands
        down both sides of the screen. */
@@ -511,7 +726,7 @@ void lightCompute(const World& w, int camX, int camY) {
            at zero anyway. */
         const int depth = wy0 - g_boundY[lx];
         if (depth > 0 && ((depth * SUN_FADE_Q8) >> 8) >= LIGHT_MAX) continue;
-        if (!openAbove(w, wx0 + lx, wy0)) continue;
+        if (!openAbove(w, wx0 + (lx << LIGHT_SHIFT), wy0)) continue;
         /* Night is applied HERE, at the source, rather than to the finished
            light value. Scaling the seed means everything downstream -- the
            per-ray attenuation, the sheer canopy multiply, the depth fade, the
@@ -532,33 +747,78 @@ void lightCompute(const World& w, int camX, int camY) {
 
     /* One pass gathers emission and attenuation and carries the rays down at
        the same time. The rays genuinely want a column walk, but doing it that
-       way is a strided read of the world 554 cells long per column; carrying
+       way is a strided read of the world LIGHT_H cells long per column; carrying
        them row by row gets the identical answer out of memory the gather is
        already touching. */
-    for (int ly = 0; ly < LIGHT_H; ++ly) {
-        const int wy = wy0 + ly;
+    /* --- what the sun does to the size of a patch ---------------------------
+       A change does not only alter light within one source's reach of itself.
+       If any column sees the sky, it also alters which RAYS get past it, and a
+       ray is a line running to the bottom of the buffer -- so the region whose
+       answer moves is not a ball around the change, it is a wedge hanging below
+       it, spreading a column per row because that is the steepest ray's slope.
+
+       Getting this wrong does not look like a rounding error. The gather
+       recomputes the ray sums over the whole field either way; holding the
+       WRITES inside a region that does not cover the wedge leaves the cells
+       below it holding light from before the change, and nothing revisits them
+       -- a hard-edged 45-degree wedge of stale shading, pinned to the world,
+       that survives until something forces a recut. It showed up as exactly
+       that: a wedge whose edge tracked the camera at the pan speed.
+
+       So the region grows to the wedge here rather than at the call site: this
+       is where anySky is known, and a caller that has to remember to widen its
+       own request is a caller that will one day forget. When the wedge swallows
+       the field the solve is simply a full one, which is the honest price of
+       changing something high up in daylight. */
+    if (anySky && !lrEmpty(wr) && (wr.y1 < LIGHT_H - 1 || wr.x0 > 0 || wr.x1 < LIGHT_W - 1)) {
+        const int drop = LIGHT_H - 1 - wr.y0;   /* rows a ray can still fall */
+        wr.y1 = LIGHT_H - 1;
+        wr.x0 = imax(0, wr.x0 - drop);
+        wr.x1 = imin(LIGHT_W - 1, wr.x1 + drop);
+    }
+    g_lightWorkPct = (int)(((long long)(wr.x1 - wr.x0 + 1) * (wr.y1 - wr.y0 + 1) * 100)
+                           / ((long long)LIGHT_W * LIGHT_H));
+
+    /* Rows the gather has to walk at all. With rays to carry that is every row,
+       whatever wr says; without them, only the rows wr covers. */
+    const int gy0 = anySky ? 0 : imax(0, wr.y0);
+    const int gy1 = anySky ? LIGHT_H - 1 : imin(LIGHT_H - 1, wr.y1);
+
+    for (int ly = gy0; ly <= gy1; ++ly) {
+        const int wy = wy0 + (ly << LIGHT_SHIFT);
         u8* L = g_light + ly * LIGHT_W;
         u8* A = g_att   + ly * LIGHT_W;
         u8* S = g_sky   + ly * LIGHT_W;
         u8* O = g_solid + ly * LIGHT_W;
+
+        /* The span of this row whose g_light the solve owns. Outside it the
+           buffer holds a finished value from an earlier solve that is still
+           correct, and overwriting it with bare emission would erase exactly
+           the boundary a patch needs to propagate from. The other three arrays
+           are pure functions of the cell and get rewritten either way -- doing
+           so costs nothing and keeps them trivially consistent. */
+        const bool wrow = (ly >= wr.y0 && ly <= wr.y1);
+        const int  wa   = wrow ? imax(wr.x0, 0) : 0;
+        const int  wb   = wrow ? imin(wr.x1, LIGHT_W - 1) : -1;
 
         /* Off the world counts as SOLID, not air. It is the one place the two
            choices differ visibly: as air it would seed the soak field with a
            border of darkness that then held, since air holds its seed, and draw
            a dark line down the edge of a world-edge view. */
         if (wy < 0 || wy >= SIM_H) {
-            memset(L, 0, LIGHT_W);
+            if (wb >= wa) memset(L + wa, 0, wb - wa + 1);
             memset(S, 0, LIGHT_W);
             memset(A, 255, LIGHT_W);        /* the void swallows light */
             memset(O, 1, LIGHT_W);
             continue;
         }
-        if (lx0 > 0)       { memset(L, 0, lx0); memset(S, 0, lx0); memset(A, 255, lx0);
-                             memset(O, 1, lx0); }
-        if (lx1 < LIGHT_W) { memset(L + lx1, 0, LIGHT_W - lx1); memset(S + lx1, 0, LIGHT_W - lx1);
-                             memset(A + lx1, 255, LIGHT_W - lx1); memset(O + lx1, 1, LIGHT_W - lx1); }
-
-        const Cell* row = w.cells + wy * SIM_W + wx0;
+        if (lx0 > 0)       { memset(S, 0, lx0); memset(A, 255, lx0); memset(O, 1, lx0);
+                             const int e = imin(lx0 - 1, wb);
+                             if (e >= wa) memset(L + wa, 0, e - wa + 1); }
+        if (lx1 < LIGHT_W) { memset(S + lx1, 0, LIGHT_W - lx1); memset(A + lx1, 255, LIGHT_W - lx1);
+                             memset(O + lx1, 1, LIGHT_W - lx1);
+                             const int b = imax(lx1, wa);
+                             if (wb >= b) memset(L + b, 0, wb - b + 1); }
 
         /* No column of this rectangle can see the sky at all -- deep
            underground, which is most of the game. Skipping the rays here is
@@ -567,12 +827,16 @@ void lightCompute(const World& w, int camX, int camY) {
            five already-zero slots, 1.9 M scattered writes a frame to achieve
            nothing. Measured 4.80 ms against the surface's 3.69 before this. */
         if (!anySky) {
-            for (int lx = lx0; lx < lx1; ++lx) {
-                const u8 m = row[lx].mat;
-                L[lx] = g_matLight[m];
-                A[lx] = g_matOpacity[m];
+            /* No rays, so nothing carries between cells and the loop can be cut
+               down to the region being solved -- the whole reason a patch
+               underground is so much cheaper than one at the surface. */
+            for (int lx = imax(lx0, wa); lx <= imin(lx1 - 1, wb); ++lx) {
+                u8 emit, att, solid, sheer;
+                sampleBlock(w, wx0 + (lx << LIGHT_SHIFT), wy, &emit, &att, &solid, &sheer);
+                L[lx] = emit;
+                A[lx] = att;
                 S[lx] = 0;
-                O[lx] = (u8)!lightOpen(m);
+                O[lx] = solid;
             }
             continue;
         }
@@ -583,13 +847,14 @@ void lightCompute(const World& w, int camX, int camY) {
         for (int r = 0; r < SUN_RAYS; ++r) off[r] = (RAY_HALF[r] * ly) / 2;
 
         for (int lx = lx0; lx < lx1; ++lx) {
-            const u8 m = row[lx].mat;
-            u8 lit = g_matLight[m];
-            A[lx] = g_matOpacity[m];
+            u8 emit, att, solid, blockSheer;
+            sampleBlock(w, wx0 + (lx << LIGHT_SHIFT), wy, &emit, &att, &solid, &blockSheer);
+            u8 lit = emit;
+            A[lx] = att;
             u8 sky = 0;
-            O[lx] = (u8)!lightOpen(m);
+            O[lx] = solid;
 
-            if (!lightOpen(m)) {
+            if (solid) {
                 /* Solid: every ray passing through this cell ends here, and
                    stays ended, because a ray is a straight line from the sky.
 
@@ -614,7 +879,7 @@ void lightCompute(const World& w, int camX, int camY) {
                    subtraction would kill the two weakest rays (weight 34) five
                    times sooner than the vertical one and a canopy would go
                    flat-shadowed rather than soft. */
-                const u8 sheer = g_matSheer[m];
+                const u8 sheer = blockSheer;
                 if (sheer) {
                     const int keep = 256 - (int)sheer;
                     for (int r = 0; r < SUN_RAYS; ++r) {
@@ -651,7 +916,7 @@ void lightCompute(const World& w, int camX, int camY) {
                    Scaled by the same daylight the rays carry, so a covered
                    porch still goes dark at night, and capped well below full
                    sun -- it is bounced light, not a second sun. */
-                const int wx = wx0 + lx;
+                const int wx = wx0 + (lx << LIGHT_SHIFT);
                 if (sky < SKY_AMBIENT && wx >= 0 && wx < SIM_W
                     && wy >= 0 && wy < SIM_H
                     && !w.bgPlaced(wx, wy) && w.bgAt(wx, wy) == MAT_EMPTY) {
@@ -661,13 +926,13 @@ void lightCompute(const World& w, int camX, int camY) {
                 }
             }
             S[lx] = sky;
-            L[lx] = lit;
+            if (lx >= wa && lx <= wb) L[lx] = lit;
         }
     }
 
     for (int p = 0; p < LIGHT_PASSES; ++p) {
-        sweepForward();
-        sweepBackward();
+        sweepForward(wr);
+        sweepBackward(wr);
     }
 
     /* Both soaks run AFTER the sweeps, and that ordering is the whole mechanism
@@ -675,6 +940,62 @@ void lightCompute(const World& w, int camX, int camY) {
        order does not matter: each writes only to material, each takes the
        brighter of what it found and what is already there, and neither reads
        what the other wrote. */
-    solidSoak();
-    if (anySky) sunSoak(w, wx0, wy0, lx0, lx1);
+    LRect sr = { imax(0, wr.x0 - SOLID_SOAK), imax(0, wr.y0 - SOLID_SOAK),
+                 imin(LIGHT_W - 1, wr.x1 + SOLID_SOAK),
+                 imin(LIGHT_H - 1, wr.y1 + SOLID_SOAK) };
+    solidSoak(sr, wr);
+    /* sunSoak walks each column from the top of the buffer down, because that
+       is what "how far has daylight got into the ground by here" means, so it
+       cannot be cut down to a band in the middle. Run whole, it stays correct
+       during a patch for free: it only ever raises a solid cell toward the
+       skylight above it, and outside wr both that skylight and the cell's
+       current value are the ones it produced last time, so the max is a no-op
+       there. Idempotence is what makes running it wide harmless. */
+    if (anySky) sunSoak(wy0, lx0, lx1);
+}
+
+/* ==========================================================================
+   One frame of lighting
+   ========================================================================== */
+
+/* The field is recomputed every frame, from nothing.
+
+   It did not used to be. There was a layer here that reused the field when the
+   world had not moved, patched the part that had, slid the buffer under a
+   moving camera, and cut a new one when none of that would do. It worked and it
+   was measured -- but it existed to avoid a 21 ms solve, and solving at sample
+   resolution costs about a tenth of that. Once the expensive thing is cheap,
+   the machinery for avoiding it is just machinery.
+
+   Deleting it bought back more than speed. Every patch rested on an argument
+   about how far a change could possibly have reached, and an argument like that
+   is a standing obligation: it has to be re-checked whenever attenuation, the
+   sun, or a material's opacity changes, and when it is wrong the symptom is
+   stale shading welded to the world rather than anything that announces itself.
+   Recomputing has no such obligation. Whatever the world looks like this frame
+   is what you see, which is the property the original design was built around
+   and the reason it is worth having back. */
+int  g_lightWork = LIGHT_RECUT;
+int  g_lightWorkPct = 100;
+
+/* Sample (0,0) is pinned to a world position that is a multiple of LIGHT_CELL,
+   so the sample grid never slides under the terrain as the camera moves. An
+   arithmetic shift rather than a mask, so it still rounds downward left of the
+   world origin. */
+static inline int lightAlign(int v) { return (v >> LIGHT_SHIFT) << LIGHT_SHIFT; }
+
+void lightInvalidate() { }
+
+void lightCompute(const World& w, int camX, int camY) {
+    g_lightViewX = camX;
+    g_lightViewY = camY;
+    g_lightAnchorX = lightAlign(camX - LIGHT_MARGIN * LIGHT_CELL);
+    g_lightAnchorY = lightAlign(camY - LIGHT_MARGIN * LIGHT_CELL);
+    g_lightOfsX = (camX - g_lightAnchorX) >> LIGHT_SHIFT;
+    g_lightOfsY = (camY - g_lightAnchorY) >> LIGHT_SHIFT;
+    lightSolve(w, g_lightAnchorX, g_lightAnchorY, LR_ALL);
+}
+
+void lightUpdate(const World& w, int camX, int camY) {
+    lightCompute(w, camX, camY);
 }

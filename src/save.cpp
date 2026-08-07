@@ -582,6 +582,11 @@ bool saveRead(const char* path, World& w) {
        load and it is what stops sand hanging in mid-air where the save caught
        it between frames. */
     w.dirtyArea(0, 0, SIM_W - 1, SIM_H - 1);
+    /* The line above would force a recut on its own, since a whole-world dirty
+       box is far past the size worth patching. Saying so outright is cheaper
+       than deducing it, and it does not depend on that reasoning staying true
+       if the dirtying above is ever narrowed. */
+    lightInvalidate();
     statSort();
     if (g_lostMats) sprintf(g_err, "%d material(s) in the save no longer exist", g_lostMats);
     return true;

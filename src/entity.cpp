@@ -767,8 +767,12 @@ void entSpawnTick(World& w, const Player& p, int camX, int camY) {
            screen -- rather than sampling the margin's four arms directly, which
            needs a case per arm and biases toward the corners where two arms
            overlap. */
-        const int lx = (int)(rngNext() % (u32)LIGHT_W) - LIGHT_MARGIN;
-        const int ly = (int)(rngNext() % (u32)LIGHT_H) - LIGHT_MARGIN;
+        /* In CELLS. LIGHT_W and LIGHT_MARGIN are sample counts now, and using
+           them here quietly shrank the ring creatures appear in from 127 cells
+           to 32 -- close enough to the view edge that they walked straight into
+           it. See LIGHT_CELLS_W in light.h. */
+        const int lx = (int)(rngNext() % (u32)LIGHT_CELLS_W) - LIGHT_MARGIN_CELLS;
+        const int ly = (int)(rngNext() % (u32)LIGHT_CELLS_H) - LIGHT_MARGIN_CELLS;
         if (lx >= 0 && lx < VIEW_CELLS_W && ly >= 0 && ly < VIEW_CELLS_H) continue;
 
         const int x = camX + lx, y = camY + ly;
