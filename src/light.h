@@ -182,6 +182,37 @@ bool isNight();
 /* Recompute the whole field, from nothing, for this camera. Unconditional: it
    is what lightUpdate falls back on, and what a headless harness wants when it
    is asking "what does this scene look like" rather than driving a game loop. */
+/* --- light from things that are not cells ----------------------------------
+
+   Emission is read out of the GRID: g_matLight per material, gathered per
+   block. Anything that lights the world without being a cell is therefore
+   invisible to it -- and the overlays are exactly the things you would most
+   want to glow. A drone following you through a cave is the case this exists
+   for.
+
+   The alternatives were worse in instructive ways. Having the drone STAMP a
+   lamp cell under itself each frame would light correctly and then edit the
+   world sixty times a second: chunks permanently dirty, the falling-sand rules
+   fighting a cell that teleports, and a drone crossing rock quietly carving a
+   tunnel through it. Making the drone a placed device is not a follower at all.
+
+   So: a small registry, cleared and refilled each frame by whoever owns the
+   thing, folded into the emission field after the gather and before the sweeps.
+   The sweeps do not care where a source came from, which is the whole reason
+   this is cheap -- it is one write per source, not a second lighting model.
+
+   Cleared every frame rather than tracked, because a follower's position is not
+   a thing worth keeping in step: it is easier to say where it is now than to
+   remember where it was and correct for the difference. */
+static const int MAX_DYN_LIGHTS = 32;
+
+void lightClearDynamic();
+/* Ignored silently when the registry is full, on the same reasoning as the
+   spark and mote pools: past a few dozen sources nobody can tell which one
+   went missing, and dropping the excess is better than growing an array in the
+   middle of a frame. */
+void lightAddDynamic(int wx, int wy, u8 level);
+
 void lightCompute(const World& w, int camX, int camY);
 
 /* One frame's worth of lighting: reuse, patch, or recut as the scene demands.
