@@ -897,7 +897,19 @@ static void initStrength() {
     g_matStrength[MAT_DIRT]        = STR_LOOSE;
     g_matStrength[MAT_GRASS]       = STR_LOOSE;
 
-    g_matStrength[MAT_TORCH]       = STR_LOOSE;
+    /* STR_SOFT, not STR_LOOSE, and the difference is one number that made the
+       basic weapon delete your lighting.
+
+       The Shot Module's power is exactly STR_LOOSE, and the break test is
+       `strength > power` -- so at STR_LOOSE a torch was destroyed by the first
+       thing every player owns, and destroyed WHOLE: a torch is a 14x14 device,
+       so breaking one of its cells fails devIntact and dissolves the lot. Firing
+       down a corridor took out the light you had just placed to see it.
+
+       A torch is a stick with a flame on it, so wood's tier is the honest home
+       for it, and it puts torches beside MAT_LAMP where they belong. A drill
+       still takes one down; a stray shot no longer does. */
+    g_matStrength[MAT_TORCH]       = STR_SOFT;
 
     /* --- the pod, and NOT the leaves ------------------------------------
        A crown starts about two hundred cells up and the tool reaches
