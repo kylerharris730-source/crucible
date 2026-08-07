@@ -140,6 +140,7 @@ static void writeMatTable(FILE* f) {
    cannot fall, burn, block, or be mistaken for something valuable. */
 static u8  g_remap[256];
 static int g_lostMats = 0;
+static int g_savedMatCount = 0;
 
 static bool readMatTable(FILE* f, u64 len) {
     for (int i = 0; i < 256; ++i) g_remap[i] = MAT_EMPTY;
@@ -148,6 +149,7 @@ static bool readMatTable(FILE* f, u64 len) {
 
     u16 n;
     if (fread(&n, sizeof(n), 1, f) != 1) return false;
+    g_savedMatCount = n;
     for (int i = 0; i < (int)n; ++i) {
         u8 id, len8;
         if (fread(&id, 1, 1, f) != 1) return false;
@@ -183,6 +185,32 @@ static bool readMatTable(FILE* f, u64 len) {
     }
     fseek(f, end, SEEK_SET);
     return true;
+}
+
+/* Items deliberately start immediately after MAT_COUNT. Material ids are saved
+   by name, but the non-material tail used to be read raw; appending a material
+   therefore shifted every tool, drone and device item by one on load. Keep the
+   material half name-mapped and move the item tail by the boundary change. */
+static ItemId remapSavedItem(ItemId old) {
+    if (old == ITEM_NONE) return ITEM_NONE;
+    if (old < g_savedMatCount) return (ItemId)g_remap[old];
+    const int now = (int)old + MAT_COUNT - g_savedMatCount;
+    return (now >= MAT_COUNT && now < ITEM_COUNT) ? (ItemId)now : ITEM_NONE;
+}
+
+static void remapInventoryItems() {
+    for (int i = 0; i < INV_SLOTS; ++i) g_inv.slot[i].item = remapSavedItem(g_inv.slot[i].item);
+    for (int i = 0; i < EQ_COUNT; ++i) g_inv.equip[i].item = remapSavedItem(g_inv.equip[i].item);
+    for (int d = 0; d < 3; ++d)
+        for (int i = 0; i < Inventory::DRONE_MODULE_SLOTS_MAX; ++i)
+            g_inv.droneModule[d][i].item = remapSavedItem(g_inv.droneModule[d][i].item);
+}
+
+static void remapToolItems() {
+    for (int i = 0; i < MAX_TOOL_INST; ++i) {
+        for (int s = 0; s < TOOL_SLOTS_MAX; ++s) g_toolInst[i].slot[s] = remapSavedItem(g_toolInst[i].slot[s]);
+        g_toolInst[i].payload.item = remapSavedItem(g_toolInst[i].payload.item);
+    }
 }
 
 /* ==========================================================================
@@ -293,7 +321,18 @@ bool saveWrite(const char* path, const World& w) {
     {
         SectionWriter s; s.begin(f, "DEVS", "machines");
         fwrite(g_devices, sizeof(Device), MAX_DEVICES, f);
-        fwrite(g_sparks,  sizeof(Spark),  MAX_SPARKS,  f);
+        /* A spark is an in-flight simulation front, not durable machine state.
+           Its pulse-mark field is deliberately not saved, so restoring a front
+           alone lets it revisit a wire as a new pulse and turn a clean reload
+           into an overload. Devices and their stored contents persist; current
+           simply dissipates at the save boundary. */
+        s.end();
+    }
+    {
+        SectionWriter s; s.begin(f, "TORC", "torch fixtures");
+        const i32 count = torchCount();
+        fwrite(&count, sizeof(count), 1, f);
+        if (count > 0) fwrite(torchData(), sizeof(TorchFixture), count, f);
         s.end();
     }
     {
@@ -421,6 +460,7 @@ bool saveRead(const char* path, World& w) {
        older build simply arrives without the parts that did not exist. */
     w.reset();
     devClear(); sparkClear(); roomsClear(w); treesClear();
+    g_inv.clear();
 
     bool haveMats = false;
     for (;;) {
@@ -477,7 +517,10 @@ bool saveRead(const char* path, World& w) {
             if (len == sizeof(Player)) fread(&g_player, sizeof(Player), 1, f);
             statAdd("character", len + 12);
         } else if (tag == fourcc("INVN")) {
-            if (len == sizeof(Inventory)) fread(&g_inv, sizeof(Inventory), 1, f);
+            /* Inventory grows by appending durable state (such as drone chip
+               bays). Older saves are a valid prefix, so retain their pack and
+               equipment rather than discarding all of it on a size change. */
+            if (len <= sizeof(Inventory)) { fread(&g_inv, 1, (size_t)len, f); remapInventoryItems(); }
             statAdd("inventory", len + 12);
         } else if (tag == fourcc("MAPX")) {
             if (len == (u64)sizeof(g_map)) {
@@ -497,23 +540,38 @@ bool saveRead(const char* path, World& w) {
             }
             statAdd("explored map", len + 12);
         } else if (tag == fourcc("TOOL")) {
-            if (len == sizeof(ToolInst) * MAX_TOOL_INST)
+            if (len == sizeof(ToolInst) * MAX_TOOL_INST) {
                 fread(g_toolInst, sizeof(ToolInst), MAX_TOOL_INST, f);
+                remapToolItems();
+            }
             statAdd("tool loadouts", len + 12);
         } else if (tag == fourcc("DEVS")) {
-            if (len == sizeof(Device) * MAX_DEVICES + sizeof(Spark) * MAX_SPARKS) {
+            if (len == sizeof(Device) * MAX_DEVICES ||
+                len == sizeof(Device) * MAX_DEVICES + sizeof(Spark) * MAX_SPARKS) {
                 fread(g_devices, sizeof(Device), MAX_DEVICES, f);
-                fread(g_sparks,  sizeof(Spark),  MAX_SPARKS,  f);
                 for (int i = 0; i < MAX_DEVICES; ++i)
                     if (g_devices[i].used) g_devices[i].mat = g_remap[g_devices[i].mat];
             }
             statAdd("machines", len + 12);
+        } else if (tag == fourcc("TORC")) {
+            i32 count = 0;
+            if (len >= sizeof(count)) {
+                fread(&count, sizeof(count), 1, f);
+                const int available = (int)((len - sizeof(count)) / sizeof(TorchFixture));
+                if (count >= 0 && count <= available) {
+                    TorchFixture* fixtures = count ? new TorchFixture[count] : 0;
+                    if (count) fread(fixtures, sizeof(TorchFixture), count, f);
+                    torchLoad(fixtures, count);
+                    delete[] fixtures;
+                }
+            }
+            statAdd("torch fixtures", len + 12);
         } else if (tag == fourcc("CIRC")) {
             if (len == sizeof(CircuitDeviceConfig) * MAX_DEVICES +
                        sizeof(CircuitWire) * MAX_CIRCUIT_WIRES) {
                 fread(g_circuitConfig, sizeof(CircuitDeviceConfig), MAX_DEVICES, f);
                 fread(g_circuitWires, sizeof(CircuitWire), MAX_CIRCUIT_WIRES, f);
-                circuitRemapMaterials(g_remap);
+                circuitRemapMaterials(g_remap, g_savedMatCount);
             } else {
                 /* The first circuit build had endpoint-only wires. Upgrade
                    them to port 0 links so a save made yesterday keeps every
@@ -530,7 +588,7 @@ bool saveRead(const char* path, World& w) {
                         g_circuitWires[i].a = old[i].a; g_circuitWires[i].b = old[i].b;
                         g_circuitWires[i].used = old[i].used;
                     }
-                    circuitRemapMaterials(g_remap);
+                    circuitRemapMaterials(g_remap, g_savedMatCount);
                 }
             }
             statAdd("circuit wires", len + 12);
@@ -563,6 +621,15 @@ bool saveRead(const char* path, World& w) {
     }
 
     fclose(f);
+    /* Torch fixtures used to occupy machine slots. Migrate old saves after all
+       sections have been read; current saves supply TORC and therefore contain
+       no such records. */
+    for (int i = 0; i < MAX_DEVICES; ++i) {
+        if (g_devices[i].used && g_devices[i].type == DEV_TORCH) {
+            torchAdd(g_devices[i].x, g_devices[i].y);
+            g_devices[i].used = false;
+        }
+    }
     circuitInitMissingConfigs();
     /* Put the inventory and the tool pool back in agreement. Needed for every
        save written before the TOOL section existed, where the pack names
@@ -571,6 +638,9 @@ bool saveRead(const char* path, World& w) {
        tool that fires exactly once and then never again, which is about as
        far from its cause as a symptom can get. */
     toolInstReconcile(g_inv);
+    /* Older saves included sparks in DEVS. Ignore them too: a reload begins
+       with passive wires and devices, never a half-restored electrical front. */
+    sparkClear();
     /* Whatever was chasing you is gone. Creatures are not saved (entity.h), so
        the ones still in the array are from the world that was open a moment
        ago -- leaving them would strand them inside whatever terrain now

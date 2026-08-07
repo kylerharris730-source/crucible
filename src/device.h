@@ -133,6 +133,9 @@ enum DeviceType {
     DEV_CHEM,
     DEV_ASSEMBLY,
     DEV_FORGE,
+    /* A bed is furniture with one state owned by the player, not a machine:
+       right-clicking it starts resting, which advances only the day clock. */
+    DEV_BED,
     DEV_COUNT
 };
 
@@ -415,6 +418,17 @@ extern CircuitDeviceConfig g_circuitConfig[MAX_DEVICES];
    transfer pauses rather than racing an invisible second copy of that stack. */
 extern bool g_logisticsUiOpen;
 
+/* A torch has no machine state, ports, buffers, or tick. Keep those decorative
+   fixtures out of the deliberately small machine table: a long tunnel should
+   never run out of automation slots just because it is well lit. */
+struct TorchFixture { i32 x, y; };
+int  torchCount();
+const TorchFixture* torchData();
+void torchLoad(const TorchFixture* fixtures, int count);
+void torchAdd(i32 x, i32 y);
+int  torchAt(int cx, int cy);       /* fixture index, or -1 */
+bool torchRemoveAt(int index);
+
 /* Where a footprint lands for a click at (cx, cy): centred on the click, so the
    machine appears under the cursor rather than down and to the right of it. */
 static inline int devOriginX(int cx) { return cx - DEV_W / 2; }
@@ -432,6 +446,10 @@ Device* devAt(int cx, int cy);
    returns false if it would overlap another device, if anything solid is in the
    way, or if the list is full. On success the footprint becomes MAT_DEVICE. */
 bool devPlace(World& w, u8 type, int cx, int cy);
+
+/* Torches are visual fixtures rather than physical cells, so fluids can share
+   their footprint. Their light is registered with the light pass. */
+void devRegisterLights();
 
 /* Take one away, clearing its cells back to empty. */
 void devRemove(World& w, Device* d);
@@ -465,6 +483,6 @@ int  circuitInputPort(int deviceIndex, int port, int signal);
 void circuitSetOutput(int deviceIndex, int signal, int value);
 void circuitPrepareInputs();
 void circuitDraw(u32* px, int camX, int camY, bool lit, int selectedDevice, int selectedPort);
-void circuitRemapMaterials(const u8* remap);
+void circuitRemapMaterials(const u8* remap, int savedMatCount);
 /* Applies sensible defaults to machines loaded from a pre-circuit save. */
 void circuitInitMissingConfigs();

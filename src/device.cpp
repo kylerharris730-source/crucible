@@ -2,12 +2,15 @@
 #include "door.h"
 #include "sprite.h"
 #include "light.h"
+#include "light.h"
 #include "projectile.h"
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>   /* fabsf, for the shed spark's fall */
+#include <vector>
 
 Device g_devices[MAX_DEVICES];
+static std::vector<TorchFixture> g_torches;
 
 Spark g_sparks[MAX_SPARKS];
 
@@ -188,14 +191,21 @@ void circuitPrepareInputs() {
     memset(g_circuitOutput, 0, sizeof(g_circuitOutput));
 }
 
-void circuitRemapMaterials(const u8* remap) {
-    if (!remap) return;
+void circuitRemapMaterials(const u8* remap, int savedMatCount) {
+    if (!remap || savedMatCount <= 0) return;
+    const int shift = MAT_COUNT - savedMatCount;
     for (int i = 0; i < MAX_DEVICES; ++i) {
         CircuitDeviceConfig& c = g_circuitConfig[i];
-        if (c.signal < MAT_COUNT) c.signal = remap[c.signal];
-        if (c.signalA < MAT_COUNT) c.signalA = remap[c.signalA];
-        if (c.signalB < MAT_COUNT) c.signalB = remap[c.signalB];
-        if (c.signalOut < MAT_COUNT) c.signalOut = remap[c.signalOut];
+        u8* signals[4] = { &c.signal, &c.signalA, &c.signalB, &c.signalOut };
+        for (int s = 0; s < 4; ++s) {
+            const u8 old = *signals[s];
+            if (old < savedMatCount) *signals[s] = remap[old];
+            /* Numbered circuit channels begin immediately after materials.
+               When a material is appended, their raw IDs move with that
+               boundary; treating old Sig 1 as the new material was what made
+               loaded circuits emit nonsense. */
+            else if (old < savedMatCount + 9) *signals[s] = (u8)(old + shift);
+        }
     }
 }
 
@@ -272,6 +282,9 @@ const DeviceInfo DEVS[DEV_COUNT] = {
     { "Chemistry Bench", "", "", 0, 0, 0, 0, SPR_CHEMSTN, MAT_STATION_CHEM, false },
     { "Assembly Table", "", "", 0, 0, 0, 0, SPR_ASSEMBLY, MAT_STATION_ASSEMBLY, false },
     { "Blast Furnace", "", "", 0, 0, 0, 0, SPR_FORGESTN, MAT_STATION_FORGE, false },
+    /* Platform cells make the bed furniture you can stand on or pass across,
+       rather than a 14-cell wall. The art supplies its body and mattress. */
+    { "Bed", "", "", 0, 0, 0, 0, SPR_BED, MAT_PLATFORM, false },
 };
 
 int sparkCount() {
@@ -699,12 +712,38 @@ void sparkDraw(u32* px, int camX, int camY) {
 int devCount() {
     int n = 0;
     for (int i = 0; i < MAX_DEVICES; ++i) if (g_devices[i].used) ++n;
-    return n;
+    return n + (int)g_torches.size();
 }
 
+int torchCount() { return (int)g_torches.size(); }
+const TorchFixture* torchData() { return g_torches.empty() ? 0 : &g_torches[0]; }
+void torchLoad(const TorchFixture* fixtures, int count) {
+    g_torches.clear();
+    if (fixtures && count > 0) g_torches.assign(fixtures, fixtures + count);
+}
+void torchAdd(i32 x, i32 y) { const TorchFixture fixture = { x, y }; g_torches.push_back(fixture); }
+
+int torchAt(int cx, int cy) {
+    for (int i = 0; i < (int)g_torches.size(); ++i) {
+        const TorchFixture& t = g_torches[i];
+        if (cx >= t.x && cx < t.x + DEV_W && cy >= t.y && cy < t.y + DEV_H) return i;
+    }
+    return -1;
+}
+
+bool torchRemoveAt(int index) {
+    if (index < 0 || index >= (int)g_torches.size()) return false;
+    g_torches[index] = g_torches.back();
+    g_torches.pop_back();
+    return true;
+}
+
+static void logisticsMarkDirty();
 void devClear() {
     for (int i = 0; i < MAX_DEVICES; ++i) g_devices[i].used = false;
+    g_torches.clear();
     circuitClear();
+    logisticsMarkDirty();
 }
 
 Device* devAt(int cx, int cy) {
@@ -718,6 +757,7 @@ Device* devAt(int cx, int cy) {
 }
 
 static bool isLogistics(u8 type);
+static void logisticsMarkDirty();
 
 bool devPlace(World& w, u8 type, int cx, int cy) {
     if (type >= DEV_COUNT) return false;
@@ -753,6 +793,11 @@ bool devPlace(World& w, u8 type, int cx, int cy) {
         if (x0 < o.x + DEV_W && o.x < x0 + DEV_W &&
             y0 < o.y + DEV_H && o.y < y0 + DEV_H) return false;
     }
+    for (int i = 0; i < (int)g_torches.size(); ++i) {
+        const TorchFixture& t = g_torches[i];
+        if (x0 < t.x + DEV_W && t.x < x0 + DEV_W &&
+            y0 < t.y + DEV_H && t.y < y0 + DEV_H) return false;
+    }
 
     /* And nothing solid may be in the way. Powders and liquids ARE allowed to be
        displaced -- you should be able to bolt a machine into a heap of sand or a
@@ -763,6 +808,14 @@ bool devPlace(World& w, u8 type, int cx, int cy) {
             const u8 k = MATS[w.at(x, y).mat].kind;
             if (k == KIND_STATIC) return false;
         }
+
+    /* A fixture is all position and no machine state. It intentionally does
+       not consume a circuit/device slot, so a network can be lit without an
+       unrelated machine limit becoming a torch limit. */
+    if (type == DEV_TORCH) {
+        torchAdd(x0, y0);
+        return true;
+    }
 
     int slot = -1;
     for (int i = 0; i < MAX_DEVICES; ++i) if (!g_devices[i].used) { slot = i; break; }
@@ -790,6 +843,7 @@ bool devPlace(World& w, u8 type, int cx, int cy) {
 
     for (int y = y0; y < y0 + DEV_H; ++y)
         for (int x = x0; x < x0 + DEV_W; ++x) w.setCell(x, y, DEVS[type].cellMat);
+    if (isLogistics(type)) logisticsMarkDirty();
     return true;
 }
 
@@ -799,8 +853,15 @@ void devRemove(World& w, Device* d) {
     for (int y = d->y; y < d->y + DEV_H; ++y)
         for (int x = d->x; x < d->x + DEV_W; ++x)
             if (w.at(x, y).mat == DEVS[d->type].cellMat) w.setCell(x, y, MAT_EMPTY);
+    const bool wasLogistics = isLogistics(d->type);
     d->used = false;
     circuitRemoveDevice(index);
+    if (wasLogistics) logisticsMarkDirty();
+}
+
+void devRegisterLights() {
+    for (int i = 0; i < (int)g_torches.size(); ++i)
+        lightAddDynamic(g_torches[i].x + DEV_W / 2, g_torches[i].y + DEV_H / 2, 235);
 }
 
 /* Mean temperature over the device's own cells, in stored units. Averaged rather
@@ -823,6 +884,9 @@ static int devTemp(const World& w, const Device& d) {
    196 cells -- because this runs for every device every frame and any real breach
    takes out a corner or the middle almost immediately. */
 static bool devIntact(const World& w, const Device& d) {
+    /* A torch is a fixture with no physical footprint: it deliberately remains
+       intact while water or a falling powder occupies the cells behind it. */
+    if (d.type == DEV_TORCH) return true;
     const int xs[5] = { d.x, d.x + DEV_W - 1, d.x, d.x + DEV_W - 1, d.x + DEV_W / 2 };
     const int ys[5] = { d.y, d.y, d.y + DEV_H - 1, d.y + DEV_H - 1, d.y + DEV_H / 2 };
     for (int k = 0; k < 5; ++k)
@@ -864,7 +928,9 @@ static bool pipeSends(u8 type) {
     return type == DEV_CHEST || type == DEV_DRAIN || type == DEV_PIPE || type == DEV_CROSSOVER;
 }
 static bool pipeReceives(u8 type) {
-    return type == DEV_PIPE || type == DEV_CROSSOVER || type == DEV_SPOUT;
+    /* Conduits are topology only. A logistics item may finish at a spout, but
+       it can never be deposited in a pipe on the way there. */
+    return type == DEV_SPOUT;
 }
 
 /* Two footprints are joined only when they share a complete cell edge.  Corner
@@ -886,48 +952,110 @@ static bool pipeJoined(const Device& a, const Device& b, bool* vertical) {
    dependency is the whole point; a flag the sim consults belongs to the sim. */
 bool g_logisticsUiOpen = false;
 
-static void lane(Device& d, bool vertical, u8** mat, i32** count) {
-    if (d.type == DEV_CROSSOVER && !vertical) { *mat = &d.mat2; *count = &d.count2; }
-    else { *mat = &d.mat; *count = &d.count; }
+/* Pipe topology is a cache, not per-frame simulation. Rebuilding does the one
+   bounded graph walk after a player changes plumbing; a long bridge through
+   sleeping chunks is then just a component id on its two loaded endpoints. */
+static i16  g_pipeComponent[MAX_DEVICES];
+static bool g_pipeTopologyDirty = true;
+static void logisticsMarkDirty() { g_pipeTopologyDirty = true; }
+
+static void logisticsRebuild() {
+    if (!g_pipeTopologyDirty) return;
+    g_pipeTopologyDirty = false;
+    for (int i = 0; i < MAX_DEVICES; ++i) g_pipeComponent[i] = -1;
+    int component = 0, queue[MAX_DEVICES];
+    for (int root = 0; root < MAX_DEVICES; ++root) {
+        if (!g_devices[root].used || !isLogistics(g_devices[root].type) || g_pipeComponent[root] >= 0) continue;
+        int head = 0, tail = 0;
+        queue[tail++] = root; g_pipeComponent[root] = (i16)component;
+        while (head < tail) {
+            const int i = queue[head++];
+            for (int j = 0; j < MAX_DEVICES; ++j) {
+                if (g_pipeComponent[j] >= 0 || !g_devices[j].used || !isLogistics(g_devices[j].type)) continue;
+                bool vertical = false;
+                if (!pipeJoined(g_devices[i], g_devices[j], &vertical)) continue;
+                g_pipeComponent[j] = (i16)component;
+                queue[tail++] = j;
+            }
+        }
+        ++component;
+    }
+    /* Pipes no longer own material. Saves from the previous model may still
+       have stock sitting in their little pipe buffers, so flush that stock
+       straight into compatible spouts in the same component before clearing
+       the obsolete state. Nothing already in the player's build vanishes just
+       because the transport model got simpler. */
+    for (int i = 0; i < MAX_DEVICES; ++i) {
+        Device& d = g_devices[i];
+        if (!d.used || (d.type != DEV_PIPE && d.type != DEV_CROSSOVER)) continue;
+        u8* mats[2] = { &d.mat, &d.mat2 };
+        i32* counts[2] = { &d.count, &d.count2 };
+        const int lanes = d.type == DEV_CROSSOVER ? 2 : 1;
+        for (int lane = 0; lane < lanes; ++lane) {
+            for (int j = 0; j < MAX_DEVICES && *counts[lane] > 0; ++j) {
+                Device& dst = g_devices[j];
+                if (!dst.used || dst.type != DEV_SPOUT || g_pipeComponent[j] != g_pipeComponent[i]) continue;
+                const int cap = DEV_CAP;
+                if (dst.count > 0 && dst.mat != *mats[lane]) continue;
+                const int n = imin((int)*counts[lane], cap - (int)dst.count);
+                if (n <= 0) continue;
+                dst.mat = *mats[lane]; dst.count += n; *counts[lane] -= n;
+            }
+            if (*counts[lane] == 0) *mats[lane] = MAT_EMPTY;
+        }
+        /* If every compatible spout is full, the remaining legacy stock stays
+           only until capacity opens; ordinary pipeTick below flushes it. New
+           pipes are born empty and are never used as storage. */
+        d.pipeFrom = -1;
+    }
 }
 
-/* A pipe moves four items per frame.  It is intentionally a simple push system:
-   networks do not need a global flood-fill or per-frame graph allocation, and a
-   line of pipes visibly fills from the chest toward the consumer. */
-static void pipeTick() {
+static void pipeTick(const World& w) {
     if (g_logisticsUiOpen) return;
-    static const int PIPE_RATE = 4;
+    logisticsRebuild();
+    static const int PIPE_RATE = 4; /* throughput belongs to endpoints, not distance */
     for (int i = 0; i < MAX_DEVICES; ++i) {
         Device& src = g_devices[i];
-        if (!src.used || !pipeSends(src.type)) continue;
+        if (!src.used || !pipeSends(src.type) || !w.electricalLive(src.x + DEV_W / 2, src.y + DEV_H / 2)) continue;
+        int left = PIPE_RATE;
         for (int j = 0; j < MAX_DEVICES; ++j) {
-            if (i == j || j == src.pipeFrom) continue;
+            if (i == j || g_pipeComponent[i] < 0 || g_pipeComponent[i] != g_pipeComponent[j]) continue;
             Device& dst = g_devices[j];
-            if (!dst.used || !pipeReceives(dst.type)) continue;
-            bool vertical = false;
-            if (!pipeJoined(src, dst, &vertical)) continue;
-            u8 *sm, *dm; i32 *sc, *dc;
-            lane(src, vertical, &sm, &sc); lane(dst, vertical, &dm, &dc);
+            if (!dst.used || !pipeReceives(dst.type) || !w.electricalLive(dst.x + DEV_W / 2, dst.y + DEV_H / 2)) continue;
             const int cap = dst.type == DEV_CHEST ? CHEST_CAP : DEV_CAP;
-            if (*sc <= 0 || (*dc > 0 && *dm != *sm) || *dc >= cap) continue;
-            const int n = imin(PIPE_RATE, imin((int)*sc, cap - (int)*dc));
-            *dm = *sm; *dc += n; *sc -= n;
-            if (*sc == 0) *sm = MAT_EMPTY;
-            dst.pipeFrom = (i16)i;
-            break;
+            if (src.count <= 0 || (dst.count > 0 && dst.mat != src.mat) || dst.count >= cap) continue;
+            const int n = imin(left, imin((int)src.count, cap - (int)dst.count));
+            dst.mat = src.mat; dst.count += n; src.count -= n;
+            if (src.count == 0) src.mat = MAT_EMPTY;
+            if ((left -= n) == 0 || src.count == 0) break;
         }
+    }
+}
+
+static void devDrainSide(World& w, Device& d, int face, int* taken) {
+    Device probe = d; probe.face = (u8)face;
+    for (int i = 0; i < DEV_W && *taken < 4; ++i) {
+        int x, y; devFaceCell(probe, i, &x, &y);
+        if (x < PLAY_X0 || x > PLAY_X1 || y < PLAY_Y0 || y > PLAY_Y1) continue;
+        const u8 m = w.at(x, y).mat;
+        if (m == MAT_EMPTY || m == MAT_WALL || m == MAT_DEVICE || (d.value && m != d.value)) continue;
+        if (!devTakeInto(d, m)) return;
+        w.setCell(x, y, MAT_EMPTY); ++*taken;
     }
 }
 
 static void devDrain(World& w, Device& d) {
     int taken = 0;
-    for (int i = 0; i < DEV_W && taken < 4; ++i) {
-        int x, y; devFaceCell(d, i, &x, &y);
-        if (x < PLAY_X0 || x > PLAY_X1 || y < PLAY_Y0 || y > PLAY_Y1) continue;
-        const u8 m = w.at(x, y).mat;
-        if (m == MAT_EMPTY || m == MAT_WALL || m == MAT_DEVICE || (d.value && m != d.value)) continue;
-        if (!devTakeInto(d, m)) break;
-        w.setCell(x, y, MAT_EMPTY); ++taken;
+    /* Aim is the normal, predictable intake edge. A drain set beside a pool
+       should not become inert merely because its saved/default face points at
+       the floor, though, so a dry face falls back to the other three edges.
+       The filter still applies, and a working aimed edge never borrows from a
+       neighbour, preserving deliberate one-sided setups. */
+    devDrainSide(w, d, d.face, &taken);
+    if (taken > 0) return;
+    for (int face = 0; face < 4 && taken < 4; ++face) {
+        if (face == d.face) continue;
+        devDrainSide(w, d, face, &taken);
     }
 }
 
@@ -1222,7 +1350,7 @@ void devTick(World& w) {
            with one, so a signal can never accumulate. */
         d.poked = false;
     }
-    pipeTick();
+    pipeTick(w);
 }
 
 static void circuitTerminal(const Device& d, int port, int camX, int camY, int* x, int* y) {
@@ -1268,6 +1396,19 @@ void circuitDraw(u32* px, int camX, int camY, bool lit, int selectedDevice, int 
 
 void devDraw(const World& w, u32* px, int camX, int camY, bool lit) {
     (void)w;
+    /* Fixtures are drawn separately from machines because they deliberately
+       have no Device record to tick, wire, or occupy a circuit slot. */
+    const u32* torchArt = g_sprite[DEVS[DEV_TORCH].sprite];
+    for (int i = 0; i < (int)g_torches.size(); ++i) {
+        const int bx = g_torches[i].x - camX, by = g_torches[i].y - camY;
+        if (bx + DEV_W <= 0 || by + DEV_H <= 0 || bx >= VIEW_CELLS_W || by >= VIEW_CELLS_H) continue;
+        for (int yy = 0; yy < DEV_H; ++yy) for (int xx = 0; xx < DEV_W; ++xx) {
+            const u32 c = torchArt[yy * SPR_W + xx];
+            const int vx = bx + xx, vy = by + yy;
+            if (c == 0 || vx < 0 || vx >= VIEW_CELLS_W || vy < 0 || vy >= VIEW_CELLS_H) continue;
+            px[vy * VIEW_CELLS_W + vx] = lit ? shadeColor(c, viewShade(vx, vy)) : c;
+        }
+    }
     for (int i = 0; i < MAX_DEVICES; ++i) {
         const Device& d = g_devices[i];
         if (!d.used) continue;

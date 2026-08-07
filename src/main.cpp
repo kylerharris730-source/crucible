@@ -20,6 +20,7 @@
 #include "craft.h"
 #include "map.h"
 #include "entity.h"
+#include "drone.h"
 #include "save.h"
 
 /* The window is a fixed-size left-hand tool panel plus the sim viewport. The
@@ -48,6 +49,11 @@ static const double FRAME_SECONDS = 1.0 / 60.0;
 static const int STATS_TOP = VIEW_H - 92;
 
 static u32         g_pixels[VIEW_CELLS_W * VIEW_CELLS_H];
+/* GDI honours the DIB's row stride, not the source rectangle's width.  A zoom
+   crop therefore needs compact rows of its own; passing a narrower source
+   rectangle over g_pixels would make its second row begin halfway through the
+   first rendered row. */
+static u32         g_zoomPixels[VIEW_CELLS_W * VIEW_CELLS_H];
 static BITMAPINFO  g_bmi;
 static HFONT       g_font;
 static bool        g_running = true;
@@ -160,6 +166,11 @@ enum ActionId { ACT_OVERWRITE, ACT_LAYER, ACT_WIRE, ACT_CIRCUIT, ACT_VIEW, ACT_L
    honestly in the ms/frame readout, which times all the substeps together. */
 static const int SPEEDS[]  = { 1, 2, 4 };
 static const int N_SPEED   = (int)(sizeof(SPEEDS) / sizeof(SPEEDS[0]));
+/* The framebuffer remains its original size.  Zooming crops a smaller piece of
+   it and scales that crop into the same viewport, so lighting and rendering
+   retain their fixed, inexpensive buffers. */
+static const int ZOOMS[]   = { 1, 2, 4 };
+static const int N_ZOOM    = (int)(sizeof(ZOOMS) / sizeof(ZOOMS[0]));
 
 /* Layout rects, filled once by layoutPanel().  The palette combines ordinary
    brushes and machines: sandbox play should not require turning the character
@@ -171,6 +182,7 @@ static RECT g_paletteArea, g_paletteScrollTrack, g_paletteScrollThumb;
 static RECT g_actRect[N_ACT];
 static RECT g_sizeDec, g_sizeInc, g_sizeBox;
 static RECT g_speedRect[N_SPEED];
+static RECT g_zoomRect[N_ZOOM];
 
 /* GDI objects, all created once -- object churn per frame is not free. */
 static HBRUSH g_panelBg, g_btnBg, g_btnBgHot, g_btnBgSel, g_borderBrush, g_accentBrush, g_warnBrush;
@@ -317,7 +329,7 @@ static void drawItemTooltip(HDC hdc) {
 
 /* UI/input state */
 static bool g_uiCapture = false;   /* the click landed on the panel, not the sim */
-static bool g_overwrite = true;    /* false = brush only fills empty space */
+static bool g_overwrite = false;   /* false = placement only fills empty space */
 static int  g_view      = VIEW_NORMAL;
 static bool g_lmb = false, g_rmb = false;
 /* One spawn per click rather than one per frame. Every other left-click action
@@ -409,10 +421,14 @@ static int  g_mapPanX = 0, g_mapPanY = 0;
 static bool g_mapPanned = false;
 static bool g_stepOnce = false;
 static int  g_speedIdx = 0;      /* index into SPEEDS */
+static int  g_zoomIdx = 0;       /* index into ZOOMS; zoom-in only */
 /* The character can be switched off, because the sandbox this grew out of is
    still worth having on its own -- and because a figure standing in the middle
    of a scene you are trying to draw is a nuisance. */
 static bool g_playerOn = true;
+/* Index rather than a Device pointer: removing or rebuilding a bed cannot
+   leave rest state pointing at recycled device storage. -1 is awake. */
+static int  g_restBed = -1;
 /* The pause menu. Escape opens it rather than quitting outright -- an unprompted
    Escape-to-quit is fine in a toy you are drawing in, and hostile in a game you
    have built something in. Quitting now takes a deliberate second action. */
@@ -575,6 +591,7 @@ static int  g_toolPackSlot  = -1;   /* which inventory slot the bench is showing
    unlike the bench -- an empty equipment row tells you the slots exist and what
    goes in them, whereas an absent tool bench tells you nothing is missing. */
 static RECT g_eqRect[EQ_COUNT];
+static RECT g_droneModuleRect[MAX_DRONES][Inventory::DRONE_MODULE_SLOTS_MAX];
 
 /* --- the trash ------------------------------------------------------------
    Somewhere to put things you do not want. Sitting on the end of the equipment
@@ -608,6 +625,11 @@ static ItemStack g_trash;
 static const int SIM_MARGIN = 192;   /* cells beyond the view that still tick */
 static float g_camXf = 0.0f, g_camYf = 0.0f;
 static int   g_camX  = 0,    g_camY  = 0;
+
+static int zoomFactor() { return ZOOMS[g_zoomIdx]; }
+static int viewCellsW() { return VIEW_CELLS_W / zoomFactor(); }
+static int viewCellsH() { return VIEW_CELLS_H / zoomFactor(); }
+static int cellPixels() { return SCALE * zoomFactor(); }
 
 /* stats */
 static double g_fps = 0.0, g_simMs = 0.0;
@@ -711,7 +733,7 @@ static int currentReach() { return PLAYER_REACH + g_inv.reachBonus(); }
    The size control is left free to run past the current cap rather than being
    clamped at the source, so the number you set survives picking up a better
    tool and immediately means more. */
-static ToolSpec digSpec() { return miningSpec(g_inv.held()); }
+static ToolSpec digSpec() { return miningSpec(g_inv); }
 static int digRadius()    { return imin(g_brushRadius, digSpec().maxRadius); }
 static int buildRadius()  { return g_brushRadius; }
 
@@ -781,7 +803,7 @@ static void layoutPanel() {
     /* The scrollable two-column catalog deliberately has a fixed visible
        height.  Materials and devices therefore compete for neither panel
        height nor readability as the catalog grows. */
-    const int rowCount  = PALETTE_VISIBLE_ROWS + 2 + N_ACT; /* + size, speed */
+    const int rowCount  = PALETTE_VISIBLE_ROWS + 3 + N_ACT; /* + size, speed, zoom */
 
     int pitch = (statsTop - top - sepTotal) / rowCount;
     if (pitch > 30) pitch = 30;
@@ -842,6 +864,16 @@ static void layoutPanel() {
         const int x0 = pad + (w * i) / N_SPEED;
         const int x1 = pad + (w * (i + 1)) / N_SPEED;
         SetRect(&g_speedRect[i], x0, y, x1 - 3, y + h);
+    }
+    y += pitch;
+
+    /* Zoom has the same three, directly-selectable values as simulation speed.
+       Showing them together makes clear that speed advances time while zoom
+       only changes how much world is visible. */
+    for (int i = 0; i < N_ZOOM; ++i) {
+        const int x0 = pad + (w * i) / N_ZOOM;
+        const int x1 = pad + (w * (i + 1)) / N_ZOOM;
+        SetRect(&g_zoomRect[i], x0, y, x1 - 3, y + h);
     }
     y += pitch + 6;
 
@@ -953,11 +985,17 @@ static void layoutCreative() {
 
     const int benchH = g_toolSlotCount ? 62 : 0;
     const int equipH = signalPicker ? 0 : 62;
+    bool hasDrone = false;
+    if (!signalPicker) for (int i = 0; i < MAX_DRONES; ++i) {
+        const int eq = i == 0 ? EQ_LIGHT_DRONE : (i == 1 ? EQ_DRONE_A : EQ_DRONE_B);
+        if (!g_inv.equip[eq].empty()) { hasDrone = true; break; }
+    }
+    const int droneModuleH = hasDrone ? 62 : 0;
     const int paletteH = visRows * (ch + gap);
     const int packH    = signalPicker ? 0 : 22 + INV_ROWS * (ps + pgap) + 10;
     const int barW     = 10;
     const int w = pad * 2 + CRE_COLS * cw + (CRE_COLS - 1) * gap + barW + 6;
-    const int h = pad + 56 + paletteH + 10 + packH + equipH + benchH + 38;
+    const int h = pad + 56 + paletteH + 10 + packH + equipH + droneModuleH + benchH + 38;
     const int cx = PANEL_W + VIEW_W / 2, cy = VIEW_H / 2;
     const int x0 = cx - w / 2, y0 = cy - h / 2;
     SetRect(&g_crePanel, x0, y0, x0 + w, y0 + h);
@@ -990,6 +1028,8 @@ static void layoutCreative() {
     if (signalPicker) {
         for (int i = 0; i < INV_SLOTS; ++i) SetRectEmpty(&g_packRect[i]);
         for (int i = 0; i < EQ_COUNT; ++i) SetRectEmpty(&g_eqRect[i]);
+        for (int d = 0; d < MAX_DRONES; ++d)
+            for (int i = 0; i < Inventory::DRONE_MODULE_SLOTS_MAX; ++i) SetRectEmpty(&g_droneModuleRect[d][i]);
         SetRectEmpty(&g_trashRect);
         for (int i = 0; i < TOOL_SLOTS_MAX; ++i) SetRectEmpty(&g_toolSlotRect[i]);
     }
@@ -1006,6 +1046,8 @@ static void layoutCreative() {
     }
 
     const int eqY = packY + packH;
+    for (int d = 0; d < MAX_DRONES; ++d)
+        for (int i = 0; i < Inventory::DRONE_MODULE_SLOTS_MAX; ++i) SetRectEmpty(&g_droneModuleRect[d][i]);
     if (!signalPicker) for (int i = 0; i < EQ_COUNT; ++i)
         SetRect(&g_eqRect[i], x0 + pad + i * 40, eqY, x0 + pad + i * 40 + 34, eqY + 34);
     /* A gap of half a slot before it, so it reads as separate from the things
@@ -1014,10 +1056,21 @@ static void layoutCreative() {
     else SetRect(&g_trashRect, x0 + pad + EQ_COUNT * 40 + 20, eqY,
                  x0 + pad + EQ_COUNT * 40 + 54, eqY + 34);
 
+    const int droneY = eqY + equipH;
+    if (!signalPicker) for (int d = 0; d < MAX_DRONES; ++d) {
+        const int eq = d == 0 ? EQ_LIGHT_DRONE : (d == 1 ? EQ_DRONE_A : EQ_DRONE_B);
+        if (g_inv.equip[eq].empty()) continue;
+        /* Current chassis all expose one socket. The other two rects remain
+           empty until an upgraded chassis unlocks them, so the UI cannot
+           accidentally accept a future slot early. */
+        const int bayX = x0 + pad + eq * 40;
+        SetRect(&g_droneModuleRect[d][0], bayX, droneY, bayX + 34, droneY + 34);
+    }
+
     /* Module slots: square, and noticeably bigger than a grid row, because they
        are the one place on this screen where the arrangement carries meaning
        (slot order decides which module is the shot). */
-    const int by2 = eqY + equipH;
+    const int by2 = eqY + equipH + droneModuleH;
     for (int i = 0; !signalPicker && i < g_toolSlotCount; ++i) {
         const int bx = x0 + pad + i * 40;
         SetRect(&g_toolSlotRect[i], bx, by2, bx + 34, by2 + 34);
@@ -1115,10 +1168,22 @@ static bool slotClick(ItemStack& st, bool right) {
    is not a rule anybody should have to be told. */
 static bool equipClick(int eqSlot, bool right) {
     ItemStack& eq = g_inv.equip[eqSlot];
+    const int droneBay = eqSlot == EQ_LIGHT_DRONE ? 0 : eqSlot == EQ_DRONE_A ? 1 : eqSlot == EQ_DRONE_B ? 2 : -1;
+    if (droneBay >= 0 && !eq.empty()) {
+        for (int i = 0; i < Inventory::DRONE_MODULE_SLOTS_MAX; ++i)
+            if (!g_inv.droneModule[droneBay][i].empty()) return false;
+    }
     if (!g_drag.empty() && !equipFits(g_drag.item, eqSlot)) return false;
     /* Never split into or out of a worn slot: you wear one of a thing. */
     if (right) return false;
     return slotClick(eq, false);
+}
+
+static bool droneModuleClick(int droneBay, int slot, bool right) {
+    if (right) return false;
+    ItemStack& st = g_inv.droneModule[droneBay][slot];
+    if (!g_drag.empty() && (ITEMS[g_drag.item].kind != ITEMK_DRONE_MODULE || g_drag.count != 1)) return false;
+    return slotClick(st, false);
 }
 
 /* A module slot holds a bare ItemId rather than a stack, so the same rules are
@@ -1282,6 +1347,10 @@ static bool handleCreativeClick(int mx, int my, bool remove) {
     if (g_signalPickerDevice < 0) for (int i = 0; i < EQ_COUNT; ++i)
         if (inRect(g_eqRect[i], mx, my)) { equipClick(i, remove); layoutCreative(); return true; }
 
+    if (g_signalPickerDevice < 0) for (int d = 0; d < MAX_DRONES; ++d)
+        for (int i = 0; i < Inventory::DRONE_MODULE_SLOTS_MAX; ++i)
+            if (inRect(g_droneModuleRect[d][i], mx, my)) { droneModuleClick(d, i, remove); layoutCreative(); return true; }
+
     /* The bin is an ORDINARY slot, clicked with the same slotClick every other
        slot uses -- which is what makes taking something back out work without a
        line of code for it. What makes it a bin is only that nothing refills it
@@ -1330,6 +1399,7 @@ static bool handleCreativeClick(int mx, int my, bool remove) {
             slotClick(ti.payload, remove);
             return true;
         }
+
     }
 
     for (int i = 0; i < g_creCount; ++i) {
@@ -1409,14 +1479,14 @@ static bool handleCreativeClick(int mx, int my, bool remove) {
 static void updateCamera(bool snap) {
     float tx = g_camXf, ty = g_camYf;
     if (g_playerOn) {
-        tx = g_player.centreX() - VIEW_CELLS_W * 0.5f;
-        ty = g_player.centreY() - VIEW_CELLS_H * 0.5f;
+        tx = g_player.centreX() - viewCellsW() * 0.5f;
+        ty = g_player.centreY() - viewCellsH() * 0.5f;
     }
 
     /* Clamp the TARGET, not the eased position, so easing never has to chase a
        point outside the world and stall against the edge. */
-    const float maxX = (float)(SIM_W - VIEW_CELLS_W);
-    const float maxY = (float)(SIM_H - VIEW_CELLS_H);
+    const float maxX = (float)(SIM_W - viewCellsW());
+    const float maxY = (float)(SIM_H - viewCellsH());
     if (tx < 0.0f) tx = 0.0f;
     if (tx > maxX) tx = maxX;
     if (ty < 0.0f) ty = 0.0f;
@@ -1424,7 +1494,7 @@ static void updateCamera(bool snap) {
 
     const float dx = tx - g_camXf, dy = ty - g_camYf;
     const float far2 = dx * dx + dy * dy;
-    if (snap || far2 > (float)(VIEW_CELLS_W * VIEW_CELLS_W)) {
+    if (snap || far2 > (float)(viewCellsW() * viewCellsW())) {
         g_camXf = tx; g_camYf = ty;
     } else {
         const float EASE = 0.16f;
@@ -1445,8 +1515,8 @@ static void updateCamera(bool snap) {
    without some way to get about. */
 static void panCamera(float dx, float dy) {
     g_camXf += dx; g_camYf += dy;
-    const float maxX = (float)(SIM_W - VIEW_CELLS_W);
-    const float maxY = (float)(SIM_H - VIEW_CELLS_H);
+    const float maxX = (float)(SIM_W - viewCellsW());
+    const float maxY = (float)(SIM_H - viewCellsH());
     if (g_camXf < 0.0f) g_camXf = 0.0f;
     if (g_camXf > maxX) g_camXf = maxX;
     if (g_camYf < 0.0f) g_camYf = 0.0f;
@@ -1456,6 +1526,22 @@ static void panCamera(float dx, float dy) {
 
 static void cycleView()      { g_view = (g_view + 1) % VIEW_COUNT; }
 static void changeSize(int d){ g_brushRadius = imax(1, imin(64, g_brushRadius + d)); }
+static void changeZoom(int d) {
+    const int oldW = viewCellsW(), oldH = viewCellsH();
+    const int next = imax(0, imin(N_ZOOM - 1, g_zoomIdx + d));
+    if (next == g_zoomIdx) return;
+
+    /* Preserve the point at the centre of the screen when freely panning.
+       With the character enabled updateCamera() then deliberately recentres on
+       the character, which is the less surprising anchor while walking. */
+    const float cx = g_camXf + oldW * 0.5f, cy = g_camYf + oldH * 0.5f;
+    g_zoomIdx = next;
+    g_camXf = cx - viewCellsW() * 0.5f;
+    g_camYf = cy - viewCellsH() * 0.5f;
+    updateCamera(g_playerOn);
+    sprintf(g_saveMsg, "Zoom %dx  (+/-)", zoomFactor());
+    g_saveMsgFrames = 120;
+}
 
 /* What a new character starts holding.
 
@@ -1480,6 +1566,7 @@ static void makeWorld() {
        them -- they have to be dropped explicitly or a fresh world arrives haunted
        by the last one's contraptions. Same reason roomsClear() exists. */
     devClear();
+    g_restBed = -1;
     sparkClear();
     /* Creatures are transient (see entity.h) but they are not automatically
        gone: they live in a global array beside the grid, exactly like devices,
@@ -1539,6 +1626,9 @@ static bool handlePanelClick(int mx, int my) {
     for (int i = 0; i < N_SPEED; ++i) {
         if (inRect(g_speedRect[i], mx, my)) { g_speedIdx = i; return true; }
     }
+    for (int i = 0; i < N_ZOOM; ++i) {
+        if (inRect(g_zoomRect[i], mx, my)) { changeZoom(i - g_zoomIdx); return true; }
+    }
     if (inRect(g_sizeDec, mx, my)) { changeSize(-1); return true; }
     if (inRect(g_sizeInc, mx, my)) { changeSize(+1); return true; }
     if (inRect(g_actRect[ACT_OVERWRITE], mx, my)) { g_overwrite = !g_overwrite; return true; }
@@ -1556,8 +1646,8 @@ static bool handlePanelClick(int mx, int my) {
         /* Into the middle of the VIEW, not the middle of the world -- switching
            the character on should put them where you are looking. */
         if (g_playerOn) {
-            g_player.reset((float)(g_camX + VIEW_CELLS_W / 2),
-                           (float)(g_camY + VIEW_CELLS_H / 2));
+            g_player.reset((float)(g_camX + viewCellsW() / 2),
+                           (float)(g_camY + viewCellsH() / 2));
             updateCamera(true);
         }
         return true;
@@ -1661,10 +1751,27 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             const Aim a = currentAim();
             Device* d = devAt(a.x, a.y);
             if (d) {
+                const int idx = (int)(d - g_devices);
+                if (d->type == DEV_BED) {
+                    /* A bed is used from beside it, rather than as a remote
+                       clock control. The loose box covers standing on either
+                       side and on top, but not reaching across a room. */
+                    const float px = g_player.centreX(), py = g_player.centreY();
+                    const bool atBed = px >= d->x - 4 && px <= d->x + DEV_W + 4 &&
+                                       py >= d->y - 8 && py <= d->y + DEV_H + 8;
+                    if (g_restBed == idx) {
+                        g_restBed = -1;
+                    } else if (g_playerOn && atBed) {
+                        g_restBed = idx;
+                    } else {
+                        sprintf(g_saveMsg, "Stand by the bed to rest");
+                        g_saveMsgFrames = 120;
+                    }
+                    break;
+                }
                 if (d->type == DEV_CHEST) { openChest((int)(d - g_devices)); break; }
                 if (d->type == DEV_PULSE_BUTTON) { d->poked = true; break; }
                 /* Toggle: clicking the same machine again closes it. */
-                const int idx = (int)(d - g_devices);
                 g_devPanel = (g_devPanel == idx) ? -1 : idx;
             } else if (doorToggle(g_world, a.x, a.y)) {
                 /* A door is the other thing you poke rather than dig, and it
@@ -1858,6 +1965,8 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
            find yourself on every time is a map you stop opening. */
         case 'T': g_mapOpen = !g_mapOpen; if (g_mapOpen) g_mapPanned = false; break;
         case 'Z': g_miniOn = !g_miniOn; break;
+        case VK_OEM_PLUS: case VK_ADD:      changeZoom(+1); break;
+        case VK_OEM_MINUS: case VK_SUBTRACT: changeZoom(-1); break;
         case VK_OEM_PERIOD: g_stepOnce = true; break;
         case VK_OEM_4: changeSize(-1); break;  /* [ */
         case VK_OEM_6: changeSize(+1); break;  /* ] */
@@ -1887,8 +1996,8 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                on the release rather than the press: with the key doing two jobs
                there is nothing to act on until it is known which one it was. */
             if (!g_lineDrew && g_mx >= PANEL_W && !g_menuOpen && !g_creativeOpen)
-                g_player.reset((float)((g_mx - PANEL_W) / SCALE + g_camX),
-                               (float)(g_my / SCALE + g_camY));
+                g_player.reset((float)((g_mx - PANEL_W) / cellPixels() + g_camX),
+                               (float)(g_my / cellPixels() + g_camY));
             g_lineKey = false;
             g_lineDrew = false;
             /* A drag still in progress when R comes up is committed rather than
@@ -1921,8 +2030,8 @@ static Aim currentAim() {
     Aim a;
     /* Window pixel -> view cell -> WORLD cell. Everything downstream of here
        works in world cells, because that is what the tools act on. */
-    a.ghostX = (g_mx - PANEL_W) / SCALE + g_camX;
-    a.ghostY = g_my / SCALE + g_camY;
+    a.ghostX = (g_mx - PANEL_W) / cellPixels() + g_camX;
+    a.ghostY = g_my / cellPixels() + g_camY;
     a.x = a.ghostX; a.y = a.ghostY;
     a.clamped = false;
 
@@ -2021,7 +2130,11 @@ static void fireTool(const Aim& aim) {
        rather than trusted from the resolved ToolShot, which only reports
        there being SOME payload loaded, not how much. */
     int payload = MAT_EMPTY;
-    if (s.payloadMat != MAT_EMPTY && ti.payload.count > 0) {
+    if (h.item == ITEM_GLOW_FLARE) {
+        /* A flare is a sealed glowfluid ampoule, not an ammunition launcher:
+           every shot carries its own light charge and deposits it at impact. */
+        payload = MAT_GLOWFLUID;
+    } else if (s.payloadMat != MAT_EMPTY && ti.payload.count > 0) {
         payload = s.payloadMat;
         if (--ti.payload.count == 0) { ti.payload.item = ITEM_NONE; ti.payload.inst = 0; }
     }
@@ -2177,6 +2290,25 @@ static void applyBrush() {
         return;
     }
 
+    /* Overwrite is construction at mining pace, not a creative erase brush.
+       It lets a player plug a flooded tunnel with the material in hand, but
+       every occupied cell still needs to be breakable by their best carried
+       miner and is limited by that miner's bite and cooldown. Empty cells keep
+       the normal fast placement behaviour around the replacement work. */
+    if (g_survival && g_playerOn && g_lmb && !g_rmb && !g_bgLayer && g_overwrite
+        && !g_inv.held().empty() && ITEMS[g_inv.held().item].kind == ITEMK_MATERIAL) {
+        const ToolSpec d = digSpec();
+        if (g_digCool <= 0) {
+            const int replaced = overwriteFrom(g_world, g_inv, aim.x, aim.y,
+                                               digRadius(), d.cellsPerBite, d.power);
+            if (replaced > 0) g_digCool = d.cooldown;
+        }
+        placeFrom(g_world, g_inv, aim.x, aim.y, buildRadius());
+        roomsNotifyEdit(g_world, aim.x, aim.y);
+        g_pmx = aim.x; g_pmy = aim.y;
+        return;
+    }
+
     int x0 = g_pmx, y0 = g_pmy;
     int x1 = aim.x, y1 = aim.y;
     int steps = imax(abs(x1 - x0), abs(y1 - y0));
@@ -2282,11 +2414,11 @@ static RECT g_devpBox, g_devpDec, g_devpInc, g_devpTake, g_devpTurn, g_devpClose
 static void layoutDevPanel(const Device& d) {
     /* Sit it just above and right of the machine, in screen pixels. */
     const int h = circuitIsCombinator(d.type) ? DEVP_CIRCUIT_H : DEVP_H;
-    int px = PANEL_W + (d.x + DEV_W - g_camX) * SCALE + 8;
-    int py = (d.y - g_camY) * SCALE - h - 6;
-    if (px + DEVP_W > WIN_W - 6) px = PANEL_W + (d.x - g_camX) * SCALE - DEVP_W - 8;
+    int px = PANEL_W + (d.x + DEV_W - g_camX) * cellPixels() + 8;
+    int py = (d.y - g_camY) * cellPixels() - h - 6;
+    if (px + DEVP_W > WIN_W - 6) px = PANEL_W + (d.x - g_camX) * cellPixels() - DEVP_W - 8;
     if (px < PANEL_W + 6)        px = PANEL_W + 6;
-    if (py < 6)                  py = (d.y + DEV_H - g_camY) * SCALE + 6;
+    if (py < 6)                  py = (d.y + DEV_H - g_camY) * cellPixels() + 6;
     if (py + h > WIN_H - 6) py = WIN_H - 6 - h;
 
     SetRect(&g_devpBox, px, py, px + DEVP_W, py + h);
@@ -2850,6 +2982,29 @@ static void drawHeldTool(u32* px, const Aim& aim, bool lit) {
     }
 }
 
+/* Celestials are a backdrop overlay, not cells: they never collide, shadow, or
+   move with the terrain. Their path is tied to the same saved clock that drives
+   skylight, so dawn cannot show a moon while the lighting says noon. */
+static void drawCelestials(u32* px) {
+    const float turn = (float)g_worldTime / (float)DAY_LENGTH;
+    const bool sun = turn < 0.5f;
+    const float leg = sun ? turn * 2.0f : (turn - 0.5f) * 2.0f;
+    const int cx = (int)(leg * (float)(VIEW_CELLS_W + 120)) - 60;
+    const float arc = 1.0f - (leg * 2.0f - 1.0f) * (leg * 2.0f - 1.0f);
+    const int cy = 172 - (int)(arc * 130.0f);
+    const int r = sun ? 13 : 10;
+    const u32 col = sun ? 0xFFF0A0 : 0xC9D8FF;
+    for (int y = cy - r; y <= cy + r; ++y) for (int x = cx - r; x <= cx + r; ++x) {
+        const int dx = x - cx, dy = y - cy;
+        if (dx * dx + dy * dy > r * r || x < 0 || x >= VIEW_CELLS_W || y < 0 || y >= VIEW_CELLS_H) continue;
+        const int wx = g_camX + x, wy = g_camY + y;
+        if (wx < 0 || wx >= SIM_W || wy < 0 || wy >= SIM_H) continue;
+        if (g_world.zoneAt(wx, wy) != ZONE_SKY || g_world.at(wx, wy).mat != MAT_EMPTY ||
+            g_world.bgAt(wx, wy) != MAT_EMPTY) continue;
+        px[y * VIEW_CELLS_W + x] = col;
+    }
+}
+
 /* A crosshair, drawn in SCREEN pixels rather than cells. Drawing it into the
    sim buffer would scale it with SCALE and put it on 2px steps, and a cursor
    that lands only on even pixels feels loose in a way that is hard to place. */
@@ -2942,7 +3097,7 @@ static void drawFilterReticle(HDC hdc, int x, int y) {
    to their centres. That half-cell matters at small sizes: a size-one brush is
    visibly a three-cell disc, and the outline should promise exactly that. */
 static void drawBrushOutline(HDC hdc, int x, int y, int radius) {
-    const int r = radius * SCALE + SCALE / 2;
+    const int r = radius * cellPixels() + cellPixels() / 2;
     HPEN pen = CreatePen(PS_DOT, 1, RGB(114, 156, 196));
     HGDIOBJ oldPen = SelectObject(hdc, pen);
     HGDIOBJ oldBrush = SelectObject(hdc, GetStockObject(HOLLOW_BRUSH));
@@ -3083,11 +3238,11 @@ static void drawCursor(HDC hdc) {
 
     const Aim aim = g_wireMode ? currentWireAim() : currentAim();
     /* Where the tool acts -- inside the reach limit. */
-    const int ax = PANEL_W + (aim.x - g_camX) * SCALE + SCALE / 2;
-    const int ay = (aim.y - g_camY) * SCALE + SCALE / 2;
+    const int ax = PANEL_W + (aim.x - g_camX) * cellPixels() + cellPixels() / 2;
+    const int ay = (aim.y - g_camY) * cellPixels() + cellPixels() / 2;
     /* Where the mouse actually is. */
-    const int gx = PANEL_W + (aim.ghostX - g_camX) * SCALE + SCALE / 2;
-    const int gy = (aim.ghostY - g_camY) * SCALE + SCALE / 2;
+    const int gx = PANEL_W + (aim.ghostX - g_camX) * cellPixels() + cellPixels() / 2;
+    const int gy = (aim.ghostY - g_camY) * cellPixels() + cellPixels() / 2;
 
     /* Q is already the size modifier. Holding it also reveals the exact disc
        the next brush action will affect, which makes large heat/terrain edits
@@ -3105,8 +3260,8 @@ static void drawCursor(HDC hdc) {
         const Device& from = g_devices[g_circuitWireFrom];
         const int tx = from.x + (circuitHasSeparatePorts(from.type) && g_circuitWireFromPort ? DEV_W - 2 : 1);
         const int ty = from.y + DEV_H / 2;
-        const int fx = PANEL_W + (tx - g_camX) * SCALE + SCALE / 2;
-        const int fy = (ty - g_camY) * SCALE + SCALE / 2;
+        const int fx = PANEL_W + (tx - g_camX) * cellPixels() + cellPixels() / 2;
+        const int fy = (ty - g_camY) * cellPixels() + cellPixels() / 2;
 
         HPEN edge = CreatePen(PS_SOLID, 3, RGB(0, 0, 0));
         HGDIOBJ oldPen = SelectObject(hdc, edge);
@@ -3153,8 +3308,8 @@ static void drawCursor(HDC hdc) {
        alike. A ring at the anchor says which end is pinned, which is the only
        thing about a line drag that is not obvious from watching it. */
     if (g_lineOn) {
-        const int lx = PANEL_W + (g_lineX - g_camX) * SCALE + SCALE / 2;
-        const int ly = (g_lineY - g_camY) * SCALE + SCALE / 2;
+        const int lx = PANEL_W + (g_lineX - g_camX) * cellPixels() + cellPixels() / 2;
+        const int ly = (g_lineY - g_camY) * cellPixels() + cellPixels() / 2;
 
         HPEN edge = CreatePen(PS_SOLID, 3, RGB(0, 0, 0));
         HGDIOBJ o = SelectObject(hdc, edge);
@@ -3170,8 +3325,8 @@ static void drawCursor(HDC hdc) {
     }
 
     if (g_wireOn) {
-        const int wx = PANEL_W + (g_wireX - g_camX) * SCALE + SCALE / 2;
-        const int wy = (g_wireY - g_camY) * SCALE + SCALE / 2;
+        const int wx = PANEL_W + (g_wireX - g_camX) * cellPixels() + cellPixels() / 2;
+        const int wy = (g_wireY - g_camY) * cellPixels() + cellPixels() / 2;
         HPEN edge = CreatePen(PS_SOLID, 3, RGB(0, 0, 0));
         HGDIOBJ o = SelectObject(hdc, edge);
         MoveToEx(hdc, wx, wy, NULL); LineTo(hdc, ax, ay);
@@ -3387,6 +3542,34 @@ static void drawCreative(HDC hdc) {
                 SetTextColor(hdc, RGB(110, 116, 128));
                 RECT tr = r; tr.top += 10;
                 DrawTextA(hdc, "Bin", -1, &tr, DT_CENTER | DT_TOP | DT_SINGLELINE);
+            }
+        }
+
+        /* Drone chips are deliberately beneath their chassis row: player gear
+           stays above, companion gear stays below, and the labels identify the
+           bay even when two identical drones are equipped. */
+        bool anyDroneChipSlot = false;
+        for (int d = 0; d < MAX_DRONES; ++d) if (!IsRectEmpty(&g_droneModuleRect[d][0])) anyDroneChipSlot = true;
+        if (anyDroneChipSlot) {
+            RECT dr = g_crePanel;
+            dr.left = g_eqRect[0].left; dr.top = g_droneModuleRect[0][0].top - 20;
+            SetTextColor(hdc, RGB(150, 156, 168));
+            DrawTextA(hdc, "DRONE CHIPS  --  remove chips before moving a drone", -1, &dr,
+                      DT_LEFT | DT_TOP | DT_SINGLELINE);
+            for (int d = 0; d < MAX_DRONES; ++d) {
+                RECT r = g_droneModuleRect[d][0];
+                if (IsRectEmpty(&r)) continue;
+                const ItemStack& chip = g_inv.droneModule[d][0];
+                const bool hot = inRect(r, g_mx, g_my);
+                FillRect(hdc, &r, hot ? g_btnBgHot : g_btnBg);
+                FrameRect(hdc, &r, chip.empty() ? g_borderBrush : g_accentBrush);
+                if (!chip.empty()) {
+                    RECT ir = r; ir.left += 2; ir.top += 2; ir.right -= 2; ir.bottom -= 2;
+                    drawItemIcon(hdc, ir, chip.item);
+                } else {
+                    RECT tr = r; tr.top += 10;
+                    DrawTextA(hdc, "Chip", -1, &tr, DT_CENTER | DT_TOP | DT_SINGLELINE);
+                }
             }
         }
     }
@@ -3688,12 +3871,19 @@ static void drawCraft(HDC hdc) {
         DrawTextA(hdc, right, -1, &meas, DT_CALCRECT | DT_SINGLELINE);
         const int rightW = meas.right - meas.left;
 
+        /* The output count belongs alongside its name, not its ingredients:
+           crafting is where you decide whether another lamp or drone is worth
+           making, and the useful answer is how many of THAT result you already
+           own. Equipment is intentionally excluded because it is worn, not in
+           the available inventory that a new craft will enter. */
+        char output[112];
+        sprintf(output, "%s  [%d]", rc.label, g_inv.countOf(rc.out));
         SetTextColor(hdc, can ? RGB(226, 232, 244) : RGB(104, 110, 122));
         RECT t = r; t.left = sw.right + 8;
         /* Ellipsised rather than simply clipped, so a truncated name reads as
            truncated instead of as a different item. */
         t.right = imax(t.left, r.right - 8 - rightW - 8);
-        DrawTextA(hdc, rc.label, -1, &t, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        DrawTextA(hdc, output, -1, &t, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 
         SetTextColor(hdc, stationMissing ? RGB(190, 150, 110)
                                          : (can ? RGB(150, 190, 140) : RGB(190, 120, 110)));
@@ -3852,6 +4042,16 @@ static void drawPanel(HDC hdc) {
         FrameRect(hdc, &rr, sel ? g_accentBrush : g_borderBrush);
         SetTextColor(hdc, sel ? RGB(255, 236, 180) : RGB(214, 216, 224));
         DrawTextA(hdc, sp, -1, &rr, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    }
+
+    for (int i = 0; i < N_ZOOM; ++i) {
+        char zp[12]; sprintf(zp, "Zoom %dx", ZOOMS[i]);
+        RECT rr = g_zoomRect[i];
+        const bool sel = (i == g_zoomIdx);
+        FillRect(hdc, &rr, sel ? g_btnBgSel : (inRect(rr, g_mx, g_my) ? g_btnBgHot : g_btnBg));
+        FrameRect(hdc, &rr, sel ? g_accentBrush : g_borderBrush);
+        SetTextColor(hdc, sel ? RGB(255, 236, 180) : RGB(214, 216, 224));
+        DrawTextA(hdc, zp, -1, &rr, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     }
 
     /* toggles / actions, with live state in the label */
@@ -4112,8 +4312,8 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
            place -- state is kept, it simply does not advance -- which is what
            bounds the cost of a world this size. See setLiveWindow(). */
         g_world.setLiveWindow(g_camX - SIM_MARGIN, g_camY - SIM_MARGIN,
-                              g_camX + VIEW_CELLS_W  + SIM_MARGIN,
-                              g_camY + VIEW_CELLS_H + SIM_MARGIN);
+                              g_camX + viewCellsW()  + SIM_MARGIN,
+                              g_camY + viewCellsH() + SIM_MARGIN);
 
         LARGE_INTEGER tA, tB;
         QueryPerformanceCounter(&tA);
@@ -4140,7 +4340,17 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
            let you walk around a frozen world, which reads as a bug. Input is
            polled rather than event-driven because held keys are the whole
            interface here, and WM_KEYDOWN repeat rates are a user setting. */
-        if (g_playerOn && !g_menuOpen && !g_creativeOpen && !g_craftOpen && g_chestOpen < 0
+        if (g_restBed >= 0 && (!g_devices[g_restBed].used ||
+                               g_devices[g_restBed].type != DEV_BED))
+            g_restBed = -1;       /* bed removed while resting */
+        /* Any movement key wakes the player before the movement input is read.
+           Right-clicking the bed also wakes them; neither route needs a hidden
+           sleep-only key to remember. */
+        if (g_restBed >= 0 && ((GetAsyncKeyState('A') & 0x8000) || (GetAsyncKeyState('D') & 0x8000) ||
+                               (GetAsyncKeyState('W') & 0x8000) || (GetAsyncKeyState('S') & 0x8000) ||
+                               (GetAsyncKeyState(VK_SPACE) & 0x8000)))
+            g_restBed = -1;
+        if (g_playerOn && g_restBed < 0 && !g_menuOpen && !g_creativeOpen && !g_craftOpen && g_chestOpen < 0
             && !g_mapOpen && (!g_paused || steppedThisFrame)) {
             PlayerInput in;
             in.left  = (GetAsyncKeyState('A') & 0x8000) || (GetAsyncKeyState(VK_LEFT)  & 0x8000);
@@ -4157,6 +4367,12 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
             g_player.speedMul = 1.0f + (float)g_inv.speedBonus() / 100.0f;
             g_player.resist   = g_inv.tempResist();
             g_player.update(g_world, in);
+            /* Re-publish after movement before asking doors to close: the
+               closing guard must see the body's current position, not where it
+               stood at the start of this frame. Only this player path calls
+               doorAuto, so creatures cannot operate player doors. */
+            g_player.occupy(g_world);
+            doorAuto(g_world, g_player);
         }
 
         /* After the character has moved, so the camera never lags a frame
@@ -4213,7 +4429,11 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
            simulation, and having 4x quietly mean "and also make it night four
            times faster" would be a surprise nobody asked for. */
         if (!g_paused && !g_menuOpen && !g_creativeOpen && !g_craftOpen && g_chestOpen < 0) {
-            dayAdvance();
+            /* Rest moves the sun and moon four times as quickly, but leaves
+               world simulation, machines, and enemies at normal speed. A bed
+               is a way to wait through a night, not a 4x simulation switch. */
+            const int daySteps = g_restBed >= 0 ? 4 : 1;
+            for (int i = 0; i < daySteps; ++i) dayAdvance();
             /* Creatures MOVE whenever there is a character for them to move
                relative to, but they only APPEAR on their own in survival. The
                split matters for the spawn eggs: those are a debug tool reached
@@ -4221,7 +4441,8 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
                frozen in place until you switched modes would be useless for the
                one job it has. Sandbox stays free of unasked-for wildlife. */
             if (g_playerOn) {
-                entTick(g_world, g_player);
+                entTick(g_world, g_player, g_inv);
+                droneTick(g_world, g_player, g_inv);
                 if (g_survival) entSpawnTick(g_world, g_player, g_camX, g_camY);
             }
         }
@@ -4229,8 +4450,12 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         /* Light is computed for this camera position and consumed immediately
            by renderView. The two must agree about where the camera is, which
            is why this sits here and not up beside the sim step. */
+        lightClearDynamic();
+        droneRegisterLights();
+        devRegisterLights();
         if (g_lightOn) lightUpdate(g_world, g_camX, g_camY);
         g_cellCount = renderView(g_world, g_pixels, g_view, g_camX, g_camY, g_lightOn);
+        drawCelestials(g_pixels);
         /* Reveal AFTER rendering, so the map records the frame you actually
            saw rather than the one before it, and only while the world is
            running -- standing on a pause screen should not fill in terrain. */
@@ -4249,6 +4474,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
            the projectile hitting it, and after the player so a creature in
            front of you cannot hide the character you are steering. */
         entDraw(g_pixels, g_camX, g_camY, g_lightOn);
+        droneDraw(g_pixels, g_camX, g_camY, g_lightOn);
         sparkDraw(g_pixels, g_camX, g_camY);
         /* After the fronts, so a mote falling in front of a lit wire is drawn
            over it rather than under. */
@@ -4271,11 +4497,32 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
 
         /* Compose off-screen: sim into the viewport, then the panel, then out
            to the window in one BitBlt. */
-        StretchDIBits(g_backDC, PANEL_W, 0, VIEW_W, VIEW_H, 0, 0, VIEW_CELLS_W, VIEW_CELLS_H,
-                      g_pixels, &g_bmi, DIB_RGB_COLORS, SRCCOPY);
+        /* The full map is its own screen, not a piece of the world: keep it at
+           its native scale while the world behind it may be zoomed. */
+        const int blitW = g_mapOpen ? VIEW_CELLS_W : viewCellsW();
+        const int blitH = g_mapOpen ? VIEW_CELLS_H : viewCellsH();
+        const u32* blitPixels = g_pixels;
+        BITMAPINFO blitBmi = g_bmi;
+        if (blitW != VIEW_CELLS_W || blitH != VIEW_CELLS_H) {
+            for (int y = 0; y < blitH; ++y)
+                memcpy(g_zoomPixels + y * blitW, g_pixels + y * VIEW_CELLS_W,
+                       (size_t)blitW * sizeof(u32));
+            blitPixels = g_zoomPixels;
+            blitBmi.bmiHeader.biWidth = blitW;
+            blitBmi.bmiHeader.biHeight = -blitH;
+        }
+        StretchDIBits(g_backDC, PANEL_W, 0, VIEW_W, VIEW_H, 0, 0, blitW, blitH,
+                      blitPixels, &blitBmi, DIB_RGB_COLORS, SRCCOPY);
         g_hoverItem = ITEM_NONE;
         drawPanel(g_backDC);
         if (g_survival && g_playerOn) drawHotbar(g_backDC);
+        if (g_restBed >= 0) {
+            RECT rest = { PANEL_W + 16, VIEW_H - 34, WIN_W - 16, VIEW_H - 14 };
+            SetBkMode(g_backDC, TRANSPARENT);
+            SetTextColor(g_backDC, RGB(226, 190, 90));
+            DrawTextA(g_backDC, "RESTING  -  time passes 4x  -  move or right-click bed to wake", -1,
+                      &rest, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        }
         drawDevPanel(g_backDC);
         /* No reticle over the map -- it points at world cells, and the map is
            not showing world cells. */

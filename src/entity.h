@@ -153,6 +153,18 @@ struct Entity {
 
 extern Entity g_entities[MAX_ENTITIES];
 
+/* Collectible drops are overlays too. Unlike a material cell they cannot flow
+   into a torch or become buried by sand, and an inventory can collect them
+   without the player having to aim a mining action at the exact resting cell. */
+static const int MAX_PICKUPS = 96;
+struct Pickup {
+    ItemId item;
+    i16    count;
+    float  x, y, vx, vy;
+    bool   used;
+};
+extern Pickup g_pickups[MAX_PICKUPS];
+
 /* Every creature removed. Called on world generation and on load -- see the
    note above about entities being transient. */
 void entReset();
@@ -165,7 +177,7 @@ int  entSpawn(const World& w, int type, float cx, float cy);
 
 /* One step for every live creature: senses, movement, contact damage, and
    whatever the archetype does to the world. */
-void entTick(World& w, Player& p);
+void entTick(World& w, Player& p, Inventory& inv);
 
 /* Hurt whatever creature covers this cell, if any. Returns true if something
    was hit, so a projectile can spend itself on a body rather than sailing
@@ -175,10 +187,15 @@ bool entDamageAt(int x, int y, int damage);
 /* Area damage, for explosions. Returns how many creatures were hit. */
 int  entDamageDisc(int cx, int cy, int radius, int damage);
 
+/* Disc damage with a gentle radial push. Used by close-range companions: the
+   hit is intentionally small, but creating space is tangible protection. */
+int  entDamageKnockbackDisc(int cx, int cy, int radius, int damage, float knockback);
+
 /* How many are alive right now, for the spawner's cap and for the HUD. */
 int  entAliveCount();
 
 void entDraw(u32* px, int camX, int camY, bool lit);
+int  pickupCount();
 
 /* --- the spawner -----------------------------------------------------------
    Called once a frame with the camera rectangle. Everything about WHERE a

@@ -1,4 +1,5 @@
 #include "door.h"
+#include "player.h"
 #include <string.h>
 
 static const int DOOR_SIDE = DOOR_REACH * 2 + 1;
@@ -12,6 +13,32 @@ static i32 g_dfound[DOOR_MAX_CELLS];
 
 static const int DDX[4] = { 0, 0, -1, 1 };
 static const int DDY[4] = { -1, 1, 0, 0 };
+
+/* A player-sized doorway needs a little anticipation: opening only after the
+   body overlaps a closed door would be too late because collision has already
+   stopped the walk. Four cells gives the door a beat to respond without making
+   it feel as though doors across a room are moving on their own. */
+static const int DOOR_AUTO_MARGIN = 4;
+static const int AUTO_DOOR_MAX = 32;
+static i32 g_autoDoor[AUTO_DOOR_MAX];
+static int g_autoDoorN = 0;
+
+static bool playerNearOpenDoor(const World& w, const Player& p) {
+    const int x0 = imax(PLAY_X0, p.left() - DOOR_AUTO_MARGIN);
+    const int x1 = imin(PLAY_X1, p.right() + DOOR_AUTO_MARGIN);
+    const int y0 = imax(PLAY_Y0, p.top() - DOOR_AUTO_MARGIN);
+    const int y1 = imin(PLAY_Y1, p.bottom() + DOOR_AUTO_MARGIN);
+    for (int y = y0; y <= y1; ++y)
+        for (int x = x0; x <= x1; ++x)
+            if (w.at(x, y).mat == MAT_DOOR_OPEN) return true;
+    return false;
+}
+
+static void rememberAutoDoor(int idx) {
+    for (int i = 0; i < g_autoDoorN; ++i)
+        if (g_autoDoor[i] == idx) return;
+    if (g_autoDoorN < AUTO_DOOR_MAX) g_autoDoor[g_autoDoorN++] = idx;
+}
 
 int doorToggle(World& w, int sx, int sy) {
     if (sx < PLAY_X0 || sx > PLAY_X1 || sy < PLAY_Y0 || sy > PLAY_Y1) return 0;
@@ -84,4 +111,33 @@ int doorToggle(World& w, int sx, int sy) {
         w.swapMat(idx % SIM_W, idx / SIM_W, target);
     }
     return n;
+}
+
+void doorAuto(World& w, const Player& p) {
+    /* First open every closed door in the approach box. Opening one connected
+       patch changes it all to MAT_DOOR_OPEN, so subsequent cells from that
+       patch naturally skip it rather than immediately toggling it back. */
+    const int x0 = imax(PLAY_X0, p.left() - DOOR_AUTO_MARGIN);
+    const int x1 = imin(PLAY_X1, p.right() + DOOR_AUTO_MARGIN);
+    const int y0 = imax(PLAY_Y0, p.top() - DOOR_AUTO_MARGIN);
+    const int y1 = imin(PLAY_Y1, p.bottom() + DOOR_AUTO_MARGIN);
+    for (int y = y0; y <= y1; ++y) {
+        for (int x = x0; x <= x1; ++x) {
+            if (w.at(x, y).mat != MAT_DOOR) continue;
+            if (doorToggle(w, x, y) > 0) rememberAutoDoor(y * SIM_W + x);
+        }
+    }
+
+    /* A door only closes after the whole player has left the approach box.
+       doorToggle additionally refuses to close through the published player
+       collision box, so this remains safe even on a long or oddly-shaped door.
+       The records are deliberately tiny: they are not world state, just the
+       handful of doors one player can have walked through recently. */
+    if (playerNearOpenDoor(w, p)) return;
+    for (int i = 0; i < g_autoDoorN; ++i) {
+        const int idx = g_autoDoor[i];
+        const int x = idx % SIM_W, y = idx / SIM_W;
+        if (w.at(x, y).mat == MAT_DOOR_OPEN) doorToggle(w, x, y);
+    }
+    g_autoDoorN = 0;
 }

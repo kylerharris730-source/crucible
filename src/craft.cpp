@@ -32,6 +32,12 @@ const Recipe RECIPES[] = {
     { { { (ItemId)MAT_WOOD, 2 }, { ITEM_NONE, 0 }, { ITEM_NONE, 0 } },
       (ItemId)MAT_DOOR, 1, "Door", STATION_HAND },
 
+    /* A bed is early shelter: wood makes the frame and flax the bedding. It is
+       hand-crafted because the benefit is preparing for the first night, not
+       reaching the first station. */
+    { { { (ItemId)MAT_WOOD, 6 }, { (ItemId)MAT_FLAX, 6 }, { ITEM_NONE, 0 } },
+      ITEM_BED, 1, "Bed", STATION_HAND },
+
     /* --- birch --------------------------------------------------------------
        One recipe, not a second copy of all four. Birch logs convert to ordinary
        wood at one for one, and everything downstream is unchanged.
@@ -77,20 +83,8 @@ const Recipe RECIPES[] = {
     { { { (ItemId)MAT_GRASS, 1 }, { ITEM_NONE, 0 }, { ITEM_NONE, 0 } },
       ITEM_GRASS_SEED, 2, "2 Grass Seed", STATION_HAND },
 
-    /* --- every crop seed, out of grass ------------------------------------
-       A STOPGAP, and worth labelling as one. Wheat, flax and cotton grow from
-       seed and drop seed, which is a closed loop with no way in: a world that
-       generates only oak has no wheat anywhere, so the entire agricultural
-       branch was unreachable in survival unless you already had some.
-
-       Grass is the placeholder source because it is the one plant that spreads
-       on its own, so it is renewable without being free. The real answer is
-       that these should GENERATE -- meadows of wild wheat and flax, the way oak
-       generates -- and when they do, these three rows should go. */
-    { { { (ItemId)MAT_GRASS, 2 }, { ITEM_NONE, 0 }, { ITEM_NONE, 0 } },
-      (ItemId)MAT_WHEAT_SEED, 1, "Wheat Seed from Grass", STATION_HAND },
-    { { { (ItemId)MAT_GRASS, 2 }, { ITEM_NONE, 0 }, { ITEM_NONE, 0 } },
-      (ItemId)MAT_FLAX_SEED, 1, "Flax Seed from Grass", STATION_HAND },
+    /* Wild wheat and flax now generate in meadows, so only cotton retains the
+       grass conversion until its own biome/source exists. */
     { { { (ItemId)MAT_GRASS, 2 }, { ITEM_NONE, 0 }, { ITEM_NONE, 0 } },
       (ItemId)MAT_COTTON_SEED, 1, "Cotton Seed from Grass", STATION_HAND },
 
@@ -226,6 +220,25 @@ const Recipe RECIPES[] = {
       ITEM_PLACER, 1, "Placer", STATION_ANVIL },
     { { { (ItemId)MAT_IRON, 3 }, { (ItemId)MAT_COPPER, 1 }, { ITEM_NONE, 0 } },
       ITEM_MINER, 1, "Miner", STATION_ANVIL },
+    /* The first minions are deliberately iron-tier: they are useful companions,
+       not an endgame automation prize. The light is cheap utility; the attack
+       frame costs extra copper because it is a weapon with its own firing rig. */
+    { { { (ItemId)MAT_IRON, 4 }, { (ItemId)MAT_GLASS, 1 }, { ITEM_NONE, 0 } },
+      ITEM_LIGHT_DRONE, 1, "Light Drone", STATION_ANVIL },
+    { { { (ItemId)MAT_IRON, 5 }, { (ItemId)MAT_COPPER, 3 }, { ITEM_NONE, 0 } },
+      ITEM_ATTACK_DRONE, 1, "Attack Drone", STATION_ANVIL },
+    { { { (ItemId)MAT_IRON, 3 }, { (ItemId)MAT_COPPER, 2 }, { ITEM_NONE, 0 } },
+      ITEM_PICKUP_DRONE, 1, "Pickup Drone", STATION_ANVIL },
+    { { { (ItemId)MAT_IRON, 5 }, { (ItemId)MAT_GLASS, 2 }, { ITEM_NONE, 0 } },
+      ITEM_SHIELD_DRONE, 1, "Shield Drone", STATION_ANVIL },
+    { { { (ItemId)MAT_COPPER, 3 }, { (ItemId)MAT_RUBBER, 1 }, { ITEM_NONE, 0 } },
+      ITEM_OVERCLOCK_CHIP, 1, "Overclock Chip", STATION_ANVIL },
+    { { { (ItemId)MAT_COPPER, 4 }, { (ItemId)MAT_GLASS, 1 }, { ITEM_NONE, 0 } },
+      ITEM_TWIN_CONTROLLER, 1, "Twin Controller", STATION_ANVIL },
+    { { { (ItemId)MAT_CHITIN, 4 }, { (ItemId)MAT_COPPER, 2 }, { ITEM_NONE, 0 } },
+      ITEM_GARLIC_FIELD_CHIP, 1, "Garlic Field Chip", STATION_ANVIL },
+    { { { (ItemId)MAT_GLOWFLUID, 2 }, { (ItemId)MAT_GLASS, 1 }, { ITEM_NONE, 0 } },
+      ITEM_GLOW_FLARE, 1, "Glowflare", STATION_CHEM },
     { { { (ItemId)MAT_COPPER, 2 }, { (ItemId)MAT_IRON, 1 }, { ITEM_NONE, 0 } },
       ITEM_SPOUT, 1, "Spout", STATION_ANVIL },
     { { { (ItemId)MAT_COPPER, 2 }, { (ItemId)MAT_IRON, 1 }, { ITEM_NONE, 0 } },

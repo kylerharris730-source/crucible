@@ -207,6 +207,12 @@ int projUpdate(World& w) {
 
             const u8 m = w.at(cx, cy).mat;
             if (m == MAT_EMPTY) continue;
+            /* A torch is mounted scenery, not cover. It is deliberately
+               passable to people already; making a bullet spend itself on its
+               one-cell flame turned a carefully lit tunnel into accidental
+               target practice. Keep blast damage physical, but ordinary shots
+               neither break nor stop on a torch. */
+            if (m == MAT_TORCH) continue;
 
             const int strength = g_matStrength[m];
             if (strength == STR_NOTHING) continue;   /* gases: fly straight through */

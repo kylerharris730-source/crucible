@@ -299,6 +299,7 @@ static const int   CAVE_ROOF     = 40;
 static const int   CAVE_ROCK     = 12;
 /* Deepest a cave may reach, clear of the world's border wall. */
 static void generateTrees(World& w);
+static void generateWildCrops(World& w);
 
 static const int   CAVE_FLOOR_Y  = SIM_H - 60;
 /* How far a worm turns off its base heading, in radians. Held well under a
@@ -1385,6 +1386,7 @@ void generateWorld(World& w) {
     generateStrata(w);
 
     generateTrees(w);
+    generateWildCrops(w);
 
     /* --- zones ------------------------------------------------------------
        A chunk is underground only if it is ENTIRELY below the ground, using
@@ -1542,6 +1544,30 @@ static void generateTrees(World& w) {
         }
     }
     g_treesPlanted = planted;
+}
+
+/* Crops need a way into survival before farming becomes a closed loop. Sparse
+   meadow clumps make wheat and flax discoverable without turning grassland into
+   a carpet of crops. treeGrowNow already owns each mature plant's geometry. */
+static void generateWildCrops(World& w) {
+    static const int FIELD_SPACING = 190;
+    for (int i = 0; i * FIELD_SPACING < SIM_W; ++i) {
+        const u32 h = hash1(i, 0xF1E1Du);
+        if ((h & 3u) == 0) continue;
+        const int cx = i * FIELD_SPACING + FIELD_SPACING / 2
+                     + (int)(h % 101u) - 50;
+        const int species = (h & 4u) ? PLANT_WHEAT : PLANT_FLAX;
+        for (int q = -3; q <= 3; ++q) {
+            const int x = cx + q * 7 + (int)(hash1(i * 17 + q, 0xC0A5u) % 5u) - 2;
+            if (x <= PLAY_X0 + 2 || x >= PLAY_X1 - 2) continue;
+            const int y = g_surfaceY[x];
+            if (w.at(x, y).mat != MAT_GRASS) continue;
+            bool clear = true;
+            for (int yy = y - 38; yy < y; ++yy)
+                if (yy < PLAY_Y0 || w.at(x, yy).mat != MAT_EMPTY) { clear = false; break; }
+            if (clear) treeGrowNow(w, x, y - 1, hash1(x, 0xB10Bu), species);
+        }
+    }
 }
 
 void worldSpawnPoint(float* outX, float* outY) {

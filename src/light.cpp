@@ -1,5 +1,6 @@
 #include "light.h"
 #include <string.h>
+#include <vector>
 
 u8   g_light[LIGHT_W * LIGHT_H];
 bool g_lightOn = true;
@@ -702,15 +703,14 @@ static void sunSoak(int wy0, int lx0, int lx1) {
    (wx0, wy0) is the world cell the buffer's (0,0) corresponds to. */
 /* See the note in light.h. Position in WORLD cells; the solve converts. */
 struct DynLight { int x, y; u8 level; };
-static DynLight g_dyn[MAX_DYN_LIGHTS];
-static int      g_nDyn = 0;
+static std::vector<DynLight> g_dyn;
 
-void lightClearDynamic() { g_nDyn = 0; }
+void lightClearDynamic() { g_dyn.clear(); }
 
 void lightAddDynamic(int wx, int wy, u8 level) {
-    if (g_nDyn >= MAX_DYN_LIGHTS || level == 0) return;
-    g_dyn[g_nDyn].x = wx; g_dyn[g_nDyn].y = wy; g_dyn[g_nDyn].level = level;
-    ++g_nDyn;
+    if (level == 0) return;
+    const DynLight source = { wx, wy, level };
+    g_dyn.push_back(source);
 }
 
 static void lightSolve(const World& w, int wx0, int wy0, LRect wr) {
@@ -947,7 +947,7 @@ static void lightSolve(const World& w, int wx0, int wy0, LRect wr) {
        the gather, so a drone lights the block it is standing in, and BEFORE the
        sweeps, so its light spreads by exactly the same machinery a torch's
        does. Nothing downstream can tell the difference, which is the point. */
-    for (int i = 0; i < g_nDyn; ++i) {
+    for (size_t i = 0; i < g_dyn.size(); ++i) {
         const int sx = (g_dyn[i].x - wx0) >> LIGHT_SHIFT;
         const int sy = (g_dyn[i].y - wy0) >> LIGHT_SHIFT;
         if (sx < wr.x0 || sx > wr.x1 || sy < wr.y0 || sy > wr.y1) continue;

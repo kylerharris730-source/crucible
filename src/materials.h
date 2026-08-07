@@ -354,6 +354,10 @@ enum MatId {
        item ids share the material id space to begin with. */
     MAT_CHITIN,
 
+    /* A dense luminous liquid. Appended so old saved material ids retain their
+       meaning; it sinks through water but is otherwise an ordinary fluid. */
+    MAT_GLOWFLUID,
+
     MAT_COUNT
 };
 

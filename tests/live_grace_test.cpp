@@ -2,8 +2,12 @@
 #include "materials.h"
 #include "room.h"
 #include "device.h"
+#include "door.h"
+#include "projectile.h"
 #include "item.h"
 #include "sprite.h"
+#include "drone.h"
+#include "entity.h"
 #include <stdio.h>
 
 /* This used to define g_logisticsUiOpen itself, because device.cpp read a flag
@@ -43,11 +47,187 @@ int main() {
     }
     static World w;  /* World is deliberately large; keep this off the stack. */
     w.reset();
+    Inventory droneInv; droneInv.clear();
+    droneInv.equip[EQ_LIGHT_DRONE].item = ITEM_LIGHT_DRONE;
+    droneInv.equip[EQ_LIGHT_DRONE].count = 1;
+    droneInv.equip[EQ_DRONE_A].item = ITEM_ATTACK_DRONE;
+    droneInv.equip[EQ_DRONE_A].count = 1;
+    Player dronePlayer; dronePlayer.reset(500.0f, 500.0f);
+    droneReset(); droneTick(w, dronePlayer, droneInv);
+    if (droneCount() != 2 || !equipFits(ITEM_ATTACK_DRONE, EQ_DRONE_B)) {
+        fprintf(stderr, "drone equipment did not create its companions\n"); return 27;
+    }
+    /* A pickup drone is a real utility companion: it collects a distant
+       collectible through its own range, not by pretending the player walked
+       there or by turning the drop back into a world cell. */
+    entReset(); droneInv.clear();
+    droneInv.equip[EQ_DRONE_A].item = ITEM_PICKUP_DRONE;
+    droneInv.equip[EQ_DRONE_A].count = 1;
+    g_pickups[0].used = true; g_pickups[0].item = (ItemId)MAT_CHITIN;
+    g_pickups[0].count = 1; g_pickups[0].x = 550.0f; g_pickups[0].y = 500.0f;
+    droneReset(); droneTick(w, dronePlayer, droneInv);
+    if (g_pickups[0].used || droneInv.countOf((ItemId)MAT_CHITIN) != 1 ||
+        !equipFits(ITEM_SHIELD_DRONE, EQ_DRONE_B)) {
+        fprintf(stderr, "pickup or shield drone equipment failed\n"); return 36;
+    }
+    /* Chips belong to individual drone bays. A shield pulse both makes close
+       enemies give ground and lets its installed garlic field add local AOE. */
+    droneInv.clear(); entReset();
+    droneInv.equip[EQ_DRONE_A].item = ITEM_SHIELD_DRONE;
+    droneInv.equip[EQ_DRONE_A].count = 1;
+    droneInv.droneModule[1][0].item = ITEM_GARLIC_FIELD_CHIP;
+    droneInv.droneModule[1][0].count = 1;
+    const int shieldTarget = entSpawn(w, ENT_MITE, 520.0f, 500.0f);
+    if (shieldTarget < 0) { fprintf(stderr, "could not spawn shield test target\n"); return 37; }
+    const int shieldHp = g_entities[shieldTarget].hp;
+    droneReset(); droneTick(w, dronePlayer, droneInv);
+    if (g_entities[shieldTarget].hp >= shieldHp || g_entities[shieldTarget].vx <= 0.0f) {
+        fprintf(stderr, "shield drone did not pulse damage and knockback\n"); return 38;
+    }
+    /* Mining capability belongs to the best miner carried, not the selected
+       hotbar slot; holding building material must not make an auger disappear. */
+    Inventory mineInv; mineInv.clear();
+    mineInv.add(ITEM_DRILL, 1); mineInv.add(ITEM_LANCE, 1);
+    const ToolSpec bestMine = miningSpec(mineInv);
+    if (bestMine.cellsPerBite != ITEMS[ITEM_LANCE].mineBite ||
+        bestMine.cooldown != ITEMS[ITEM_LANCE].mineCooldown) {
+        fprintf(stderr, "best carried miner was not selected\n"); return 31;
+    }
+    /* Overwrite gives the displaced material back before consuming the held
+       replacement, so sealing a cell cannot silently delete what was there. */
+    Inventory replaceInv; replaceInv.clear(); replaceInv.add((ItemId)MAT_WOOD, 1);
+    w.setCell(200, 200, MAT_STONE);
+    if (overwriteFrom(w, replaceInv, 200, 200, 0, 1, STR_HARD) != 1 ||
+        w.at(200, 200).mat != MAT_WOOD || replaceInv.countOf((ItemId)MAT_STONE) != 1) {
+        fprintf(stderr, "overwrite did not replace and collect material\n"); return 32;
+    }
+    w.reset();
     if (!devPlace(w, DEV_PIPE, 140, 140) || playerSolid(w, 140, 140) ||
         playerSolid(w, 140, 140, SOLID_FLOOR)) {
         fprintf(stderr, "item pipe blocks player movement\n"); return 24;
     }
+    /* A logistics network is topology, not a procession of tiny inventories.
+       Keep only the two endpoints alive; the forty pipe segments between them
+       deliberately sit in sleeping chunks and must still transfer at once. */
     devClear(); w.reset();
+    const int netY = 500, sourceX = 210, pipeN = 40, sinkX = sourceX + (pipeN + 1) * DEV_W;
+    if (!devPlace(w, DEV_CHEST, sourceX, netY)) { fprintf(stderr, "could not place logistics source\n"); return 42; }
+    for (int n = 1; n <= pipeN; ++n)
+        if (!devPlace(w, DEV_PIPE, sourceX + n * DEV_W, netY)) { fprintf(stderr, "could not place logistics bridge\n"); return 43; }
+    if (!devPlace(w, DEV_SPOUT, sinkX, netY)) { fprintf(stderr, "could not place logistics sink\n"); return 44; }
+    Device* netSource = devAt(sourceX, netY);
+    Device* netSink = devAt(sinkX, netY);
+    if (!netSource || !netSink) { fprintf(stderr, "could not find logistics endpoints\n"); return 45; }
+    netSource->mat = MAT_FUEL; netSource->count = 12;
+    w.keepAlive[((netSource->y + DEV_H / 2) >> CHUNK_SHIFT) * CHUNKS_X + ((netSource->x + DEV_W / 2) >> CHUNK_SHIFT)] = 1;
+    w.keepAlive[((netSink->y + DEV_H / 2) >> CHUNK_SHIFT) * CHUNKS_X + ((netSink->x + DEV_W / 2) >> CHUNK_SHIFT)] = 1;
+    devTick(w);
+    if (netSink->count != 4 || netSink->mat != MAT_FUEL || netSource->count != 8) {
+        fprintf(stderr, "sleeping pipe bridge did not transfer directly\n"); return 46;
+    }
+    /* Drains prefer their aim, but a dry saved/default aim must not leave a
+       basin-side water drain inert when the matching liquid touches another
+       edge. This is the common "machine below a reservoir" build. */
+    devClear(); w.reset();
+    if (!devPlace(w, DEV_DRAIN, 600, 600)) { fprintf(stderr, "could not place fallback drain\n"); return 47; }
+    Device* fallbackDrain = devAt(600, 600);
+    if (!fallbackDrain) { fprintf(stderr, "could not find fallback drain\n"); return 48; }
+    fallbackDrain->value = MAT_WATER;
+    for (int i = 0; i < DEV_W; ++i) {
+        int x2, y2; Device up = *fallbackDrain; up.face = 1; devFaceCell(up, i, &x2, &y2); w.setCell(x2, y2, MAT_WATER);
+        Device down = *fallbackDrain; down.face = 0; devFaceCell(down, i, &x2, &y2); w.setCell(x2, y2, MAT_STONE);
+    }
+    w.setLiveWindow(570, 570, 630, 630); devTick(w);
+    if (fallbackDrain->mat != MAT_WATER || fallbackDrain->count != 4) {
+        fprintf(stderr, "dry-faced drain did not fall back to adjacent water\n"); return 49;
+    }
+    devClear(); w.reset();
+    /* Doors are player convenience, not an enemy ability: approaching opens
+       one and leaving lets it become solid again. */
+    const int doorX = 410, doorY = 400;
+    w.setCell(doorX, doorY, MAT_DOOR);
+    Player doorPlayer; doorPlayer.reset(406.0f, 400.0f);
+    doorPlayer.occupy(w);
+    doorAuto(w, doorPlayer);
+    if (w.at(doorX, doorY).mat != MAT_DOOR_OPEN) {
+        fprintf(stderr, "player approach did not open door\n"); return 28;
+    }
+    doorPlayer.reset(450.0f, 450.0f);
+    doorPlayer.occupy(w);
+    doorAuto(w, doorPlayer);
+    if (w.at(doorX, doorY).mat != MAT_DOOR) {
+        fprintf(stderr, "door did not close after player cleared it\n"); return 29;
+    }
+    /* Torches are light fixtures, not bullet cover: a basic shot passes
+       through without destroying either the torch or itself. */
+    projClear(); w.reset();
+    w.setCell(110, 100, MAT_TORCH);
+    projSpawn(100.5f, 100.5f, 12.0f, 0.0f, 0, 1, 10, 0xFFFFFF, 0,
+              MAT_EMPTY, 0, false, 0.0f);
+    projUpdate(w);
+    if (w.at(110, 100).mat != MAT_TORCH || projCount() != 1) {
+        fprintf(stderr, "shot did not pass through torch\n"); return 30;
+    }
+    /* A torch is now a fixture: it can be installed under water without
+       consuming the pool, and its footprint cannot catch falling loot. */
+    devClear(); w.reset();
+    const int torchX = 350, torchY = 350;
+    for (int y = torchY - 7; y < torchY + 7; ++y)
+        for (int x2 = torchX - 7; x2 < torchX + 7; ++x2) w.setCell(x2, y, MAT_WATER);
+    if (!devPlace(w, DEV_TORCH, torchX, torchY) || w.at(torchX, torchY).mat != MAT_WATER) {
+        fprintf(stderr, "underwater torch displaced its water\n"); return 39;
+    }
+    w.setLiveWindow(320, 320, 380, 380); devTick(w);
+    if (devCount() != 1) { fprintf(stderr, "underwater torch did not remain intact\n"); return 40; }
+    /* Decorative fixtures must not consume the 128-machine automation budget.
+       A fully lit base can have hundreds of torches without the 129th silently
+       failing to place or causing the existing ones to disappear. */
+    for (int ty = 0; ty < 10; ++ty) for (int tx = 0; tx < 20; ++tx)
+        if (!devPlace(w, DEV_TORCH, 600 + tx * DEV_W, 600 + ty * DEV_H)) {
+            fprintf(stderr, "torch fixture unexpectedly hit a machine cap\n"); return 42;
+        }
+    if (torchCount() != 201 || devCount() != 201) {
+        fprintf(stderr, "torch fixture count was not retained\n"); return 43;
+    }
+    devClear();
+    w.reset();
+    w.setLiveWindow(380, 380, 450, 450);
+    w.setCell(410, 401, MAT_STONE);
+    w.setCell(410, 400, MAT_WATER);
+    w.setCell(410, 399, MAT_GLOWFLUID);
+    w.step();
+    if (w.at(410, 400).mat != MAT_GLOWFLUID) {
+        fprintf(stderr, "glowfluid did not sink through water\n"); return 41;
+    }
+    w.reset();
+    /* Chitin is a collectible overlay now: killing a mite creates no material
+       cell, and moving into range collects the drop without mining it. */
+    entReset();
+    Player lootPlayer; lootPlayer.reset(600.0f, 600.0f);
+    Inventory lootInv; lootInv.clear();
+    const int lootMite = entSpawn(w, ENT_MITE, 300.0f, 300.0f);
+    if (lootMite < 0) { fprintf(stderr, "could not spawn loot test mite\n"); return 33; }
+    g_entities[lootMite].hp = 0;
+    entTick(w, lootPlayer, lootInv);
+    if (pickupCount() != 1 || w.at(300, 300).mat == MAT_CHITIN) {
+        fprintf(stderr, "chitin did not become a pickup\n"); return 34;
+    }
+    lootPlayer.reset(300.0f, 300.0f);
+    entTick(w, lootPlayer, lootInv);
+    if (pickupCount() != 0 || lootInv.countOf((ItemId)MAT_CHITIN) < 1) {
+        fprintf(stderr, "chitin pickup was not collected\n"); return 35;
+    }
+    /* Land enemies must not materialise inside water or glowfluid. The public
+       spawn gate is tested too, so future callers cannot bypass the spawner's
+       site check. */
+    entReset(); w.reset();
+    const EntityDef& waterMite = ENT_DEFS[ENT_MITE];
+    for (int yy = 500; yy < 500 + waterMite.h; ++yy)
+        for (int xx = 500; xx < 500 + waterMite.w; ++xx) w.setCell(xx, yy, MAT_WATER);
+    if (entSpawn(w, ENT_MITE, 500.0f, 500.0f) >= 0) {
+        fprintf(stderr, "enemy spawned underwater\n"); return 44;
+    }
+    w.reset();
     const int x = 64, startY = 80;
     w.setLiveWindow(32, 32, 95, 95);
     w.setCell(x, startY, MAT_WATER);

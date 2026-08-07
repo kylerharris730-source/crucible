@@ -833,6 +833,11 @@ MatInfo MATS[MAT_COUNT] = {
      Light: density 90 puts it under sand, so it settles on top of anything
      mineral rather than sinking through a heap. */
   { "Chitin", KIND_POWDER,  90,  70,   40,   0,   0,   0,  0,   14,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY, degC(120), MAT_FIRE, 0,  0x9A7A4E, 0x6E5434, 0x9A7A4E, 0x6E5434, 0 },
+
+  /* Heavier than water (90 to its 100 in this table's inverse ordering), so a poured glowfluid charge sinks
+     through a pool and settles at the bottom. It has no heat reaction: it is
+     a lighting/building material, not another route around the metal ladder. */
+  { "Glowfluid", KIND_LIQUID,  90, 0, 0, 8, 0, 0, 0, 150, 0, 0, 0, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, 0x8CE8B8, 0x3CA878, 0x8CE8B8, 0x3CA878, 0 },
 };
 
 u32 g_colorLut[MAT_COUNT * 256];
@@ -1125,7 +1130,10 @@ static void initLight() {
            a lamp sat just outside the frame. */
         case KIND_EMPTY:  g_matOpacity[m] = 2;  break;
         case KIND_GAS:    g_matOpacity[m] = 5;  break;
-        case KIND_LIQUID: g_matOpacity[m] = 12; break;
+        /* Water used to stop a torch at ~21 cells. At 8 it carries useful
+           light roughly 32 cells: still murkier than air, but an underwater
+           tunnel is navigable and a submerged torch earns its place. */
+        case KIND_LIQUID: g_matOpacity[m] = 8;  break;
         default:          g_matOpacity[m] = 38; break;
         }
     }
@@ -1174,6 +1182,7 @@ static void initLight() {
     g_matLight[MAT_EMBER]     = 150;
     g_matLight[MAT_FIRE]     = 200;
     g_matLight[MAT_LAVA]     = 190;
+    g_matLight[MAT_GLOWFLUID] = 175;
     g_matLight[MAT_IRON_MELT]   = 170;
     g_matLight[MAT_COPPER_MELT] = 170;
     /* Cold fire is light too. It burns nothing, but a blue flame you cannot

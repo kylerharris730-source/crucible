@@ -854,6 +854,36 @@ static const char* ART_FLINT[SPR_H] = {
     "..............",
 };
 
+/* A glass ampoule with a bright liquid core. The halo reads as a light source
+   at hotbar size; the narrow neck keeps it from looking like another potion. */
+static const char* ART_FLARE[SPR_H] = {
+    "..............",
+    "......W.......",
+    ".....WWW......",
+    "......W.......",
+    ".....GGG......",
+    "....GLLLG.....",
+    "....GLLLG.....",
+    "....GLLLG.....",
+    "....GLLLG.....",
+    ".....GGG......",
+    "......G.......",
+    ".....GGG......",
+    "..............",
+    "..............",
+};
+
+/* The fallback for named objects that do not yet merit a bespoke silhouette.
+   It is deliberately a parcel/tag rather than a colour square, so every
+   non-material item has an object-shaped icon while dedicated art can arrive
+   incrementally without leaving UI regressions behind. */
+static const char* ART_ITEM_GENERIC[SPR_H] = {
+    "..............", "....BBBBBB....", "...BWWWWWWB...", "...BWGGGGWB...",
+    "...BWGGGGWB...", "...BWGGGGWB...", "...BWGGGGWB...", "...BWGGGGWB...",
+    "...BWGGGGWB...", "...BWGGGGWB...", "...BWWWWWWB...", "....BBBBBB....",
+    "..............", "..............",
+};
+
 /* The starter weapon. Keeps the house diagonal every tool icon uses -- handle
    at the bottom left, working end at the top right -- because the hotbar reads
    as a set and one item lying the other way looks like a mistake.
@@ -909,6 +939,25 @@ static const char* ART_BENCH[SPR_H] = {
     "..#........#..",
     "..##......##..",
     "..............",
+    "..............",
+};
+
+/* Low, wide furniture rather than another upright machine: pale flax bedding
+   sits inside a rough wood frame, with the raised headboard on the left. */
+static const char* ART_BED[SPR_H] = {
+    "..............",
+    ".##...........",
+    ".##AAAAAAAAA..",
+    ".##AAAAAAAAA..",
+    ".##AAAAAAAAA..",
+    ".##AAAAAAAAA..",
+    ".##AAAAAAAAA..",
+    ".##AAAAAAAAA..",
+    ".##AAAAAAAAA..",
+    ".############.",
+    ".#..........#.",
+    ".#..........#.",
+    ".#..........#.",
     "..............",
 };
 
@@ -1019,8 +1068,11 @@ void initSprites() {
     expand(SPR_MINE4,     ART_MINE4);
     expand(SPR_SEED,      ART_SEED);
     expand(SPR_FLINT,     ART_FLINT);
+    expand(SPR_FLARE,     ART_FLARE);
+    expand(SPR_ITEM_GENERIC, ART_ITEM_GENERIC);
     expand(SPR_BOLTER,    ART_BOLTER);
     expand(SPR_BENCH,     ART_BENCH);
+    expand(SPR_BED,       ART_BED);
     expand(SPR_ANVIL,     ART_ANVIL);
     expand(SPR_CHEMSTN,   ART_CHEMSTN);
     expand(SPR_ASSEMBLY,  ART_ASSEMBLY);

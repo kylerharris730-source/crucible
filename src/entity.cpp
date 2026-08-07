@@ -2,10 +2,27 @@
 #include "sprite.h"
 #include "light.h"
 #include "projectile.h"
+#include "worldgen.h"
 #include <string.h>
 #include <math.h>
 
 Entity g_entities[MAX_ENTITIES];
+Pickup g_pickups[MAX_PICKUPS];
+
+/* The first boss opens the first geological seal everywhere, not merely at the
+   arena. A cleared local hole would turn progression into remembering where a
+   particular fight happened; defeating her should make layer two part of the
+   world from that point on. The first band wobbles by under 60 cells, so this
+   generous local-stone window clears it without touching the layer-two seal. */
+static void unlockLayerTwo(World& w) {
+    for (int x = PLAY_X0; x <= PLAY_X1; ++x) {
+        const int mid = g_stoneY[x] + LAYER1_DEPTH;
+        for (int y = imax(PLAY_Y0, mid - 100); y <= imin(PLAY_Y1, mid + 100); ++y) {
+            if (w.at(x, y).mat == MAT_STRATUM) w.setCell(x, y, MAT_EMPTY);
+            if ((w.bgAt(x, y) & BG_MAT_MASK) == MAT_STRATUM) w.clearBg(x, y);
+        }
+    }
+}
 
 /* Gravity and terminal velocity, matching player.cpp's own figures rather than
    being tuned separately. Creatures and the character fall through the same
@@ -161,6 +178,7 @@ static int g_spawnCool = 0;
 
 void entReset() {
     memset(g_entities, 0, sizeof(g_entities));
+    memset(g_pickups, 0, sizeof(g_pickups));
     /* Or a new world inherits the last one's cooldown -- which would be a
        silent, unreproducible delay of up to SPAWN_COOL frames on the first
        spawn after every Clear, and a test that ran a second scenario would
@@ -174,6 +192,63 @@ int entAliveCount() {
     return n;
 }
 
+int pickupCount() {
+    int n = 0;
+    for (int i = 0; i < MAX_PICKUPS; ++i) if (g_pickups[i].used) ++n;
+    return n;
+}
+
+/* One stack, rather than one overlay per chitin plate: an enemy that drops
+   three chitin should look like a satisfying little prize, not three pixels
+   trying to occupy the same space and a third of the fixed pool. */
+static bool pickupSpawn(ItemId item, int count, float x, float y) {
+    for (int i = 0; i < MAX_PICKUPS; ++i) {
+        Pickup& p = g_pickups[i];
+        if (p.used) continue;
+        p.used = true; p.item = item; p.count = (i16)count;
+        p.x = x; p.y = y;
+        p.vx = ((float)(int)(rngNext() % 101u) - 50.0f) / 100.0f;
+        p.vy = -1.2f - (float)(rngNext() % 40u) / 100.0f;
+        return true;
+    }
+    return false;
+}
+
+static void pickupTick(World& w, const Player& player, Inventory& inv) {
+    static const float PICKUP_RADIUS = 20.0f;
+    for (int i = 0; i < MAX_PICKUPS; ++i) {
+        Pickup& p = g_pickups[i];
+        if (!p.used) continue;
+
+        const float dx = player.centreX() - p.x, dy = player.centreY() - p.y;
+        if (dx * dx + dy * dy <= PICKUP_RADIUS * PICKUP_RADIUS) {
+            const int left = inv.add(p.item, p.count);
+            p.count = (i16)left;
+            if (p.count == 0) { p.used = false; continue; }
+        }
+
+        /* Pickup physics is intentionally a POINT: these are loose items, not
+           creatures. They settle on ordinary floor, but g_matPassable keeps a
+           torch from being an invisible shelf that traps chitin forever. */
+        p.vy += ENT_GRAVITY;
+        if (p.vy > ENT_MAX_FALL) p.vy = ENT_MAX_FALL;
+        const int nx = (int)(p.x + p.vx), ny = (int)(p.y + p.vy);
+        if (!playerSolid(w, nx, (int)p.y, SOLID_ANY)) p.x += p.vx;
+        else p.vx = 0.0f;
+        if (!playerSolid(w, (int)p.x, ny, SOLID_FLOOR)) p.y += p.vy;
+        else p.vy = 0.0f;
+    }
+}
+
+/* Enemies are land/air creatures, not swimmers. A single liquid cell through a
+   body is enough to make the site submerged, including dense glowfluid. */
+static bool liquidBox(const World& w, int bx, int by, int bw, int bh) {
+    for (int y = by; y < by + bh; ++y)
+        for (int x = bx; x < bx + bw; ++x)
+            if (MATS[w.at(x, y).mat].kind == KIND_LIQUID) return true;
+    return false;
+}
+
 int entSpawn(const World& w, int type, float cx, float cy) {
     if (type <= ENT_NONE || type >= ENT_COUNT) return -1;
     const EntityDef& d = ENT_DEFS[type];
@@ -185,6 +260,7 @@ int entSpawn(const World& w, int type, float cx, float cy) {
        caller is a loop that can simply try somewhere else. */
     if (bx < PLAY_X0 || by < PLAY_Y0 || bx + d.w > PLAY_X1 || by + d.h > PLAY_Y1) return -1;
     if (solidBox(w, bx, by, d.w, d.h)) return -1;
+    if (liquidBox(w, bx, by, d.w, d.h)) return -1;
 
     for (int i = 0; i < MAX_ENTITIES; ++i) {
         Entity& e = g_entities[i];
@@ -200,7 +276,7 @@ int entSpawn(const World& w, int type, float cx, float cy) {
 }
 
 /* --- death -----------------------------------------------------------------
-   Drops go into the WORLD as cells rather than straight into the pack, which is
+   Most drops go into the WORLD as cells rather than straight into the pack, which is
    a deliberate difference from how mining works. digInto banks its yield
    because you asked for it and are standing there; a creature dies wherever it
    happened to be, often over a drop or in a pool, and teleporting its remains
@@ -215,10 +291,22 @@ static void entDie(World& w, Entity& e) {
        drop, so a pack too full to hold the Forge Core still counts as having
        beaten her -- the loot is on the floor either way, and "you won but the
        game did not notice" is the worst possible outcome of a boss fight. */
-    if (d.isBoss) g_bossesBeaten |= BOSS_LAYER1;
+    if (d.isBoss) {
+        const bool firstWin = (g_bossesBeaten & BOSS_LAYER1) == 0;
+        g_bossesBeaten |= BOSS_LAYER1;
+        if (firstWin) unlockLayerTwo(w);
+    }
     if (d.dropItem != ITEM_NONE && d.dropMax > 0) {
         int n = d.dropMin + (int)(rngNext() % (u32)(d.dropMax - d.dropMin + 1));
         const int cx = (int)e.centreX(), cy = (int)e.centreY();
+        /* Chitin is a collectible, not falling-sand debris. It therefore
+           cannot get caught on a torch, and comes to the player like a classic
+           game drop once they are nearby. Other drops retain their existing
+           physical-cell behavior (especially the Forge Core). */
+        if (d.dropItem == (ItemId)MAT_CHITIN && pickupSpawn(d.dropItem, n, (float)cx, (float)cy)) {
+            e.type = ENT_NONE;
+            return;
+        }
         for (int r = 0; r <= 6 && n > 0; ++r) {
             for (int dy = -r; dy <= r && n > 0; ++dy) {
                 for (int dx = -r; dx <= r && n > 0; ++dx) {
@@ -601,7 +689,7 @@ static void broodTick(World& w, Entity& e, const Player& p) {
     }
 }
 
-void entTick(World& w, Player& p) {
+void entTick(World& w, Player& p, Inventory& inv) {
     for (int i = 0; i < MAX_ENTITIES; ++i) {
         Entity& e = g_entities[i];
         if (e.type == ENT_NONE) continue;
@@ -683,6 +771,24 @@ void entTick(World& w, Player& p) {
 
         if (e.hp <= 0) entDie(w, e);
     }
+    pickupTick(w, p, inv);
+}
+
+int entDamageKnockbackDisc(int cx, int cy, int radius, int damage, float knockback) {
+    int hit = 0;
+    const float r2 = (float)(radius * radius);
+    for (int i = 0; i < MAX_ENTITIES; ++i) {
+        Entity& e = g_entities[i];
+        if (!e.alive()) continue;
+        float dx = e.centreX() - (float)cx, dy = e.centreY() - (float)cy;
+        const float d2 = dx * dx + dy * dy;
+        if (d2 > r2) continue;
+        e.hp -= damage; e.hurtFlash = 6;
+        const float len = sqrtf(d2);
+        if (len > 0.01f) { e.vx += dx * knockback / len; e.vy += dy * knockback / len; }
+        ++hit;
+    }
+    return hit;
 }
 
 /* --- the spawner -----------------------------------------------------------
@@ -825,6 +931,7 @@ void entSpawnTick(World& w, const Player& p, int camX, int camY) {
            spawn in a chimney and spend their life falling. */
         const int bx = x - d.w / 2, by = y - d.h / 2;
         if (solidBox(w, bx, by, d.w, d.h)) continue;
+        if (liquidBox(w, bx, by, d.w, d.h)) continue;
         if (!d.flies && !solidBox(w, bx, by + d.h, d.w, 1, SOLID_FLOOR)) continue;
 
         if (entSpawn(w, type, (float)x, (float)y) >= 0) {
@@ -881,5 +988,21 @@ void entDraw(u32* px, int camX, int camY, bool lit) {
                 px[vy * VIEW_CELLS_W + vx] = out;
             }
         }
+    }
+
+    /* Draw pickups after creatures: a freshly dropped chitin plate should be
+       visible at a corpse's feet instead of hiding beneath its last frame. */
+    for (int i = 0; i < MAX_PICKUPS; ++i) {
+        const Pickup& p = g_pickups[i];
+        if (!p.used) continue;
+        const int x = (int)p.x - camX, y = (int)p.y - camY;
+        if (x < 1 || x >= VIEW_CELLS_W - 1 || y < 1 || y >= VIEW_CELLS_H - 1) continue;
+        u32 c = ITEMS[p.item].colour;
+        if (lit) c = shadeColor(c, viewShade(x, y));
+        px[y * VIEW_CELLS_W + x] = c;
+        px[y * VIEW_CELLS_W + x - 1] = c;
+        px[y * VIEW_CELLS_W + x + 1] = c;
+        px[(y - 1) * VIEW_CELLS_W + x] = c;
+        px[(y + 1) * VIEW_CELLS_W + x] = c;
     }
 }

@@ -518,6 +518,13 @@ void initItems() {
     ITEMS[ITEM_FORGESTN].colour     = MATS[MAT_STATION_FORGE].dryA;
     ITEMS[ITEM_FORGESTN].sprite     = SPR_FORGESTN;
 
+    ITEMS[ITEM_BED].name       = "Bed";
+    ITEMS[ITEM_BED].kind       = ITEMK_DEVICE;
+    ITEMS[ITEM_BED].deviceType = DEV_BED;
+    ITEMS[ITEM_BED].maxStack   = 16;
+    ITEMS[ITEM_BED].colour     = 0xC8B070;
+    ITEMS[ITEM_BED].sprite     = SPR_BED;
+
     ITEMS[ITEM_CHEST].name       = "Chest";
     ITEMS[ITEM_CHEST].kind       = ITEMK_DEVICE;
     ITEMS[ITEM_CHEST].deviceType = DEV_CHEST;
@@ -628,6 +635,65 @@ void initItems() {
     ITEMS[ITEM_FORGE_CORE].maxStack = 16;
     ITEMS[ITEM_FORGE_CORE].colour   = 0xE07A32;
 
+    /* Drones are worn companions. The light occupies its own utility bay so
+       illumination never competes with combat, while attack drones share two
+       interchangeable bays ready for future slot-expanding equipment. */
+    ITEMS[ITEM_LIGHT_DRONE].name      = "Light Drone";
+    ITEMS[ITEM_LIGHT_DRONE].kind      = ITEMK_WORN;
+    ITEMS[ITEM_LIGHT_DRONE].equipSlot = EQ_LIGHT_DRONE;
+    ITEMS[ITEM_LIGHT_DRONE].maxStack  = 1;
+    ITEMS[ITEM_LIGHT_DRONE].colour    = 0x9DEBFF;
+
+    ITEMS[ITEM_ATTACK_DRONE].name      = "Attack Drone";
+    ITEMS[ITEM_ATTACK_DRONE].kind      = ITEMK_WORN;
+    ITEMS[ITEM_ATTACK_DRONE].equipSlot = EQ_DRONE_A;
+    ITEMS[ITEM_ATTACK_DRONE].maxStack  = 1;
+    ITEMS[ITEM_ATTACK_DRONE].colour    = 0xE8A76C;
+
+    ITEMS[ITEM_PICKUP_DRONE].name      = "Pickup Drone";
+    ITEMS[ITEM_PICKUP_DRONE].kind      = ITEMK_WORN;
+    ITEMS[ITEM_PICKUP_DRONE].equipSlot = EQ_DRONE_A;
+    ITEMS[ITEM_PICKUP_DRONE].maxStack  = 1;
+    ITEMS[ITEM_PICKUP_DRONE].colour    = 0x8CE8B0;
+
+    ITEMS[ITEM_SHIELD_DRONE].name      = "Shield Drone";
+    ITEMS[ITEM_SHIELD_DRONE].kind      = ITEMK_WORN;
+    ITEMS[ITEM_SHIELD_DRONE].equipSlot = EQ_DRONE_A;
+    ITEMS[ITEM_SHIELD_DRONE].maxStack  = 1;
+    ITEMS[ITEM_SHIELD_DRONE].colour    = 0x86B8FF;
+
+    ITEMS[ITEM_OVERCLOCK_CHIP].name      = "Overclock Chip";
+    ITEMS[ITEM_OVERCLOCK_CHIP].kind      = ITEMK_DRONE_MODULE;
+    ITEMS[ITEM_OVERCLOCK_CHIP].maxStack  = 1;
+    ITEMS[ITEM_OVERCLOCK_CHIP].colour    = 0xF0B85C;
+    ITEMS[ITEM_OVERCLOCK_CHIP].sprite    = SPR_MOD_SHOT;
+
+    ITEMS[ITEM_TWIN_CONTROLLER].name      = "Twin Controller";
+    ITEMS[ITEM_TWIN_CONTROLLER].kind      = ITEMK_DRONE_MODULE;
+    ITEMS[ITEM_TWIN_CONTROLLER].maxStack  = 1;
+    ITEMS[ITEM_TWIN_CONTROLLER].colour    = 0xC080EE;
+    ITEMS[ITEM_TWIN_CONTROLLER].sprite    = SPR_CIRCUIT_CONSTANT;
+
+    ITEMS[ITEM_GARLIC_FIELD_CHIP].name     = "Garlic Field Chip";
+    ITEMS[ITEM_GARLIC_FIELD_CHIP].kind     = ITEMK_DRONE_MODULE;
+    ITEMS[ITEM_GARLIC_FIELD_CHIP].maxStack = 1;
+    ITEMS[ITEM_GARLIC_FIELD_CHIP].colour   = 0xB8E67C;
+    ITEMS[ITEM_GARLIC_FIELD_CHIP].sprite   = SPR_MOD_BLAST;
+
+    ITEMS[ITEM_GLOW_FLARE].name       = "Glowflare";
+    ITEMS[ITEM_GLOW_FLARE].kind       = ITEMK_TOOL;
+    ITEMS[ITEM_GLOW_FLARE].maxStack   = 1;
+    ITEMS[ITEM_GLOW_FLARE].toolSlots  = 0;
+    ITEMS[ITEM_GLOW_FLARE].baseDelay  = 24;
+    ITEMS[ITEM_GLOW_FLARE].power      = 0;
+    ITEMS[ITEM_GLOW_FLARE].damage     = 1;
+    ITEMS[ITEM_GLOW_FLARE].pierce     = 1;
+    ITEMS[ITEM_GLOW_FLARE].shotSpeed  = 4.0f;
+    ITEMS[ITEM_GLOW_FLARE].shotColour = 0x9AF4BE;
+    ITEMS[ITEM_GLOW_FLARE].colour     = 0x9AF4BE;
+    ITEMS[ITEM_GLOW_FLARE].sprite     = SPR_FLARE;
+
+
     /* The starter weapon. A TOOL with no module slots, which is what makes it
        the floor of the ladder rather than a rung on it -- there is nothing to
        socket into it and never will be, so the only way to shoot harder is to
@@ -732,9 +798,14 @@ void initItems() {
 
        maxStack 1 rather than a real stack: these are a debug convenience, and a
        slot holding ninety-nine of them is a slot you have to clear out. */
+    /* Materials remain colour swatches because their world colour is useful
+       information. Every named object gets an actual fallback silhouette until
+       it has bespoke pixel art, so the UI never regresses to colour-only icons. */
+    for (int i = MAT_COUNT; i < ITEM_COUNT; ++i)
+        if (ITEMS[i].maxStack && ITEMS[i].sprite == SPR_NONE) ITEMS[i].sprite = SPR_ITEM_GENERIC;
 }
 
-const char* const EQ_NAMES[EQ_COUNT] = { "Feet", "Back", "Trinket", "Trinket", "Head", "Body" };
+const char* const EQ_NAMES[EQ_COUNT] = { "Feet", "Back", "Trinket", "Trinket", "Head", "Body", "Light Drone", "Drone", "Drone" };
 
 /* Returning a tool's instance to the pool when the tool leaves the pack. Miss
    this and the pool leaks: pick up and drop a multitool 32 times and the next
@@ -748,6 +819,8 @@ void Inventory::clear() {
     memset(slot, 0, sizeof(slot));
     for (int i = 0; i < EQ_COUNT; ++i) releaseStack(equip[i]);
     memset(equip, 0, sizeof(equip));
+    memset(droneModule, 0, sizeof(droneModule));
+    memset(droneLevel, 0, sizeof(droneLevel));
     selected = 0;
 }
 
@@ -870,7 +943,8 @@ bool equipFits(ItemId item, int eqSlot) {
     const ItemDef& d = ITEMS[item];
     if (d.kind != ITEMK_WORN || d.equipSlot >= EQ_COUNT) return false;
     if (d.equipSlot == (u8)eqSlot) return true;
-    return d.equipSlot == EQ_TRINKET_A && eqSlot == EQ_TRINKET_B;
+    return (d.equipSlot == EQ_TRINKET_A && eqSlot == EQ_TRINKET_B) ||
+           (d.equipSlot == EQ_DRONE_A && eqSlot == EQ_DRONE_B);
 }
 
 int Inventory::packWorn(int eqSlot) const {
@@ -934,21 +1008,28 @@ FlightSpec flightSpec(const Inventory& inv) {
     return best;
 }
 
-ToolSpec miningSpec(const ItemStack& held) {
-    if (!held.empty()) {
-        const ItemDef& d = ITEMS[held.item];
-        if (d.kind == ITEMK_MINING && d.mineRadius > 0) {
-            ToolSpec s;
-            s.name         = d.name;
-            s.maxRadius    = d.mineRadius;
-            s.cellsPerBite = d.mineBite;
-            s.cooldown     = d.mineCooldown;
-            s.plantsOnly   = d.minePlantsOnly != 0;
-            s.power        = d.minePower;
-            return s;
-        }
+ToolSpec miningSpec(const Inventory& inv) {
+    ToolSpec best = HAND;
+    for (int i = 0; i < INV_SLOTS; ++i) {
+        if (inv.slot[i].empty()) continue;
+        const ItemDef& d = ITEMS[inv.slot[i].item];
+        /* A sickle is a specialist harvesting tool, not an upgrade for stone.
+           Keep it available when held in the future, but never let it hide a
+           real miner merely because it happens to have a large radius. */
+        if (d.kind != ITEMK_MINING || d.mineRadius == 0 || d.minePlantsOnly) continue;
+        const int bestRate = best.cellsPerBite * d.mineCooldown;
+        const int thisRate = d.mineBite * best.cooldown;
+        if (d.minePower < best.power) continue;
+        if (d.minePower == best.power && thisRate < bestRate) continue;
+        if (d.minePower == best.power && thisRate == bestRate && d.mineRadius <= best.maxRadius) continue;
+        best.name         = d.name;
+        best.maxRadius    = d.mineRadius;
+        best.cellsPerBite = d.mineBite;
+        best.cooldown     = d.mineCooldown;
+        best.plantsOnly   = false;
+        best.power        = d.minePower;
     }
-    return HAND;
+    return best;
 }
 
 int Inventory::firstToolSlot() const {
@@ -1044,6 +1125,16 @@ int digInto(World& w, Inventory& inv, int cx, int cy, int r, int maxCells,
         if (maxCells > 0 && dug >= maxCells) break;
         const int x = cx + g_disc[i].dx, y = cy + g_disc[i].dy;
         if (x < PLAY_X0 || x > PLAY_X1 || y < PLAY_Y0 || y > PLAY_Y1) continue;
+        /* A torch is now a non-physical fixture so water can occupy its cells.
+           It therefore has no material for the ordinary dig rule to see; mine
+           the device itself, return its item, and leave the water untouched. */
+        const int fixture = torchAt(x, y);
+        if (fixture >= 0) {
+            if (inv.add(ITEM_TORCH_DEV, 1) != 0) continue;
+            torchRemoveAt(fixture);
+            ++dug;
+            continue;
+        }
         const u8 m = w.at(x, y).mat;
         if (m == MAT_EMPTY) continue;
         /* The harvesting tool passes over everything that did not grow, and
@@ -1101,6 +1192,34 @@ int placeFrom(World& w, Inventory& inv, int cx, int cy, int r, int maxCells) {
         if (w.blocksCell(x, y)) continue;
         const ItemId want = h.item;
         if (inv.take(want, 1) != 1) return put;      /* ran out mid-disc */
+        w.setCell(x, y, (u8)want);
+        ++put;
+    }
+    return put;
+}
+
+int overwriteFrom(World& w, Inventory& inv, int cx, int cy, int r, int maxCells, int power) {
+    ItemStack& h = inv.held();
+    if (h.empty() || ITEMS[h.item].kind != ITEMK_MATERIAL) return 0;
+
+    int put = 0;
+    const int n = g_discEnd[imax(0, imin(r, DISC_MAX_R))];
+    for (int i = 0; i < n; ++i) {
+        if (put >= maxCells || h.empty()) break;
+        const int x = cx + g_disc[i].dx, y = cy + g_disc[i].dy;
+        if (x < PLAY_X0 || x > PLAY_X1 || y < PLAY_Y0 || y > PLAY_Y1) continue;
+        if (w.blocksCell(x, y) || devAt(x, y)) continue;
+        const u8 old = w.at(x, y).mat;
+        if (old == MAT_EMPTY || (int)g_matStrength[old] > power) continue;
+
+        /* Deposit the displaced item first. A full inventory leaves the old
+           cell untouched, which is the only order that cannot turn a full pack
+           into silent deletion. Open doors and other state-cells already map to
+           their honest item through g_matDropsAs. */
+        const ItemId drop = (ItemId)g_matDropsAs[old];
+        if (drop != ITEM_NONE && inv.add(drop, 1) != 0) continue;
+        const ItemId want = h.item;
+        if (inv.take(want, 1) != 1) break;
         w.setCell(x, y, (u8)want);
         ++put;
     }

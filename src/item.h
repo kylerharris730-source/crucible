@@ -172,6 +172,18 @@ enum {
     ITEM_CHEMSTN,
     ITEM_ASSEMBLY,
     ITEM_FORGESTN,
+    ITEM_BED,
+    /* Friendly overlays rather than placed machines: equipped drones follow the
+       player, so they need slots on the character instead of a block in hand. */
+    ITEM_LIGHT_DRONE,
+    ITEM_ATTACK_DRONE,
+    ITEM_PICKUP_DRONE,
+    ITEM_SHIELD_DRONE,
+    /* Drone-control chips live in a drone's own loadout, never on the player. */
+    ITEM_OVERCLOCK_CHIP,
+    ITEM_TWIN_CONTROLLER,
+    ITEM_GARLIC_FIELD_CHIP,
+    ITEM_GLOW_FLARE,
     ITEM_COUNT
 };
 
@@ -179,6 +191,7 @@ enum ItemKind {
     ITEMK_MATERIAL = 0,   /* stacks; one unit is one cell of world */
     ITEMK_TOOL,           /* unique, carries its own state */
     ITEMK_MODULE,         /* slots into a tool to change what it does */
+    ITEMK_DRONE_MODULE,   /* installed in a specific companion's internal bay */
     /* --- ITEMK_WORN ------------------------------------------------------
        Goes in an equipment slot and does its job from there. It used to be
        ITEMK_CARRIED and work from anywhere in the pack, which was honestly
@@ -541,6 +554,12 @@ enum EquipSlot {
        what index 2 and 3 mean in every existing save. */
     EQ_HEAD,
     EQ_BODY,
+    /* Drone bays are deliberately separate from trinkets: a light is utility,
+       and combat companions are a build choice rather than jewellery. One light
+       bay is fixed; the two attack bays are the first expandable minion budget. */
+    EQ_LIGHT_DRONE,
+    EQ_DRONE_A,
+    EQ_DRONE_B,
     EQ_COUNT
 };
 
@@ -561,6 +580,14 @@ struct Inventory {
        container with its own rules for the first item that does. */
     ItemStack equip[EQ_COUNT];
     int       selected;
+
+    /* A drone chassis has its own small loadout. The index is the bay rather
+       than the visual follower, so slot 0 is always the light bay and 1/2 are
+       the two general bays. Present chassis have one socket; higher chassis
+       levels can expose more without changing the saved shape. */
+    static const int DRONE_MODULE_SLOTS_MAX = 3;
+    ItemStack droneModule[3][DRONE_MODULE_SLOTS_MAX];
+    u8        droneLevel[3];
 
     void clear();
 
@@ -712,7 +739,10 @@ extern const ToolSpec HAND;
 /* What you are digging with right now: the held item's own numbers if it is a
    mining tool, otherwise HAND. Resolved on demand rather than cached, so
    swapping hotbar slots takes effect on the same frame. */
-ToolSpec miningSpec(const ItemStack& held);
+/* The best ordinary miner carried in the pack. Mining tools are capabilities,
+   not weapons: once found, their digging rate is available without occupying a
+   hotbar slot. Plant-only tools never displace a real miner. */
+ToolSpec miningSpec(const Inventory& inv);
 
 /* --- what you can fly with ------------------------------------------------
    The best single piece of equipped flight gear, never the sum of two. Same
@@ -794,6 +824,10 @@ int digInto(World& w, Inventory& inv, int cx, int cy, int r, int maxCells = 0,
    the stack runs out. Returns how many cells were filled. Never overwrites
    existing material and never places inside an occupied entity box. */
 int placeFrom(World& w, Inventory& inv, int cx, int cy, int r, int maxCells = 0);
+/* Replace occupied cells with the held material. The displaced drop is banked
+   before the held stack is charged, and the cell budget/power are supplied by
+   the active mining capability so overwrite cannot outpace digging. */
+int overwriteFrom(World& w, Inventory& inv, int cx, int cy, int r, int maxCells, int power);
 
 /* --- the same two verbs, on the background layer ---------------------------
    Deliberately separate functions rather than a flag on the ones above. The

@@ -1,6 +1,8 @@
 #pragma once
 #include "world.h"
 
+struct Player;
+
 /* --- doors -----------------------------------------------------------------
 
    A door is not an object. It is any connected patch of door material, and
@@ -55,3 +57,8 @@ static inline bool isDoor(u8 m) { return m == MAT_DOOR || m == MAT_DOOR_OPEN; }
    door -- and a patch left half-open by some earlier edit normalises the first
    time anyone uses it, instead of staying striped for ever. */
 int doorToggle(World& w, int x, int y);
+
+/* Opens a closed door as the player approaches and closes doors it opened once
+   the player has cleared the doorway. Enemies never call this: their contact
+   with a door remains ordinary solid collision. */
+void doorAuto(World& w, const Player& p);

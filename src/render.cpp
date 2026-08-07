@@ -38,7 +38,11 @@ static inline u32 backdrop(const World& w, int wx, int wy, int i, bool* openSky)
        terrain of any shape gets the backdrop generation gave it rather than one
        inferred from how high it happens to be. */
     const int cx = wx >> CHUNK_SHIFT, cy = wy >> CHUNK_SHIFT;
-    const u32 sky = g_skyLut[wy < SKY_BAND ? (wy < 0 ? 0 : wy) : SKY_BAND - 1];
+    const u32 daySky = g_skyLut[wy < SKY_BAND ? (wy < 0 ? 0 : wy) : SKY_BAND - 1];
+    /* Lighting already makes night dim; tinting the backdrop as well makes it
+       read as night before the player has a roof over their head. The moon and
+       sun are drawn later as distant overlays, so this remains just the sky. */
+    const u32 sky = lerpColor(0x07101F, daySky, dayLight());
 
     if (w.zone[cy * CHUNKS_X + cx] == ZONE_SKY) { *openSky = true; return sky; }
 

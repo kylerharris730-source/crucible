@@ -204,13 +204,9 @@ bool isNight();
    Cleared every frame rather than tracked, because a follower's position is not
    a thing worth keeping in step: it is easier to say where it is now than to
    remember where it was and correct for the difference. */
-static const int MAX_DYN_LIGHTS = 32;
-
 void lightClearDynamic();
-/* Ignored silently when the registry is full, on the same reasoning as the
-   spark and mote pools: past a few dozen sources nobody can tell which one
-   went missing, and dropping the excess is better than growing an array in the
-   middle of a frame. */
+/* The registry grows for this frame's sources. Moving followers and persistent
+   fixtures share the same light solve without imposing a source-count cap. */
 void lightAddDynamic(int wx, int wy, u8 level);
 
 void lightCompute(const World& w, int camX, int camY);
