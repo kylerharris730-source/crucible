@@ -122,24 +122,45 @@ const u8* lightRow(int vy) {
    Solidity asks whether the block is mostly material, because the soak passes
    want "is this rock" rather than "how much light gets through it".
 
-   The block is read on a 2x2 lattice rather than all sixteen cells. Sixteen
-   reads per sample is the same traffic over the world as the per-cell field
-   did, which would have thrown away most of the saving; four catches anything
-   two cells across, and below that the coarse field has nothing to say. */
+   The occluding half is read on a 2x2 lattice rather than all sixteen cells.
+   Sixteen reads per sample is the same traffic over the world as the per-cell
+   field did, which would have thrown away most of the saving; four catches
+   anything two cells across, and below that the coarse field has nothing to
+   say about how much light gets through.
+
+   EMISSION is different, and the difference is not a matter of degree. Sampling
+   is a statement that missing something costs a little accuracy -- true of an
+   occluder, where the block still attenuates roughly right. A source you fail
+   to look at is not slightly wrong, it is ABSENT: there is no light to be
+   inaccurate about. Measured on the lattice alone, twelve of the sixteen places
+   a lamp can sit in a block lit nothing at all, and which twelve depended on
+   nothing but its coordinates.
+
+   That is worse than it sounds, because the single-cell sources MOVE. A torch
+   is a 14x14 device and always covers a sampled offset, so it looked fine; fire
+   and embers are one cell and drift, so they would wink in and out as they
+   crossed the lattice.
+
+   So emission scans the whole block and the rest keeps its lattice. */
 static inline void sampleBlock(const World& w, int wx, int wy,
                                u8* emit, u8* att, u8* solid, u8* sheer) {
     int e = 0, a = 0, s = 0, h = 0;
-    for (int oy = 1; oy < LIGHT_CELL; oy += 2)
-        for (int ox = 1; ox < LIGHT_CELL; ox += 2) {
-            const int x = wx + ox, y = wy + oy;
+    for (int oy = 0; oy < LIGHT_CELL; ++oy) {
+        const int y = wy + oy;
+        for (int ox = 0; ox < LIGHT_CELL; ++ox) {
+            const int x = wx + ox;
             const u8 m = (x < 0 || x >= SIM_W || y < 0 || y >= SIM_H)
                        ? (u8)MAT_WALL : w.cells[y * SIM_W + x].mat;
             const int l = g_matLight[m];
             if (l > e) e = l;
-            a += g_matOpacity[m];
-            h += g_matSheer[m];
-            s += lightOpen(m) ? 0 : 1;
+            /* The lattice, still: every other cell on each axis. */
+            if ((ox & 1) && (oy & 1)) {
+                a += g_matOpacity[m];
+                h += g_matSheer[m];
+                s += lightOpen(m) ? 0 : 1;
+            }
         }
+    }
     const int n = (LIGHT_CELL / 2) * (LIGHT_CELL / 2);
     *emit  = (u8)e;
     /* Mean per cell, times the cells one sample step crosses. */
