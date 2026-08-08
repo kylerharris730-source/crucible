@@ -131,6 +131,7 @@ static const BrushDef BRUSHES[] = {
     { MAT_NITROGEN,"Liquid N2"},
     { MAT_ACID,    "Acid"     },
     { MAT_GLOWFLUID,"Glowfluid"},
+    { MAT_WAX,     "Wax"      },
     /* Mercury only. Its vapour and frozen forms are still fully simulated -- a
        mercury pool boiled past 150 C still gives off vapour, and chilled past
        -30 C still freezes solid -- they are just not PLACEABLE. They are

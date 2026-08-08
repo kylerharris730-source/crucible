@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
+#include <string.h>
 
 /* One row per material, in enum order. The zero-heavy columns read cleanly if
    you think of them as "off unless set": most materials have no phase changes.
@@ -839,14 +840,19 @@ MatInfo MATS[MAT_COUNT] = {
      mineral rather than sinking through a heap. */
   { "Chitin", KIND_POWDER,  90,  70,   40,   0,   0,   0,  0,   14,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY, degC(120), MAT_FIRE, 0,  0x9A7A4E, 0x6E5434, 0x9A7A4E, 0x6E5434, 0 },
 
-  /* Heavier than water (90 to its 100 in this table's inverse ordering), so a poured glowfluid charge sinks
+  /* Heavier than water, so a poured glowfluid charge sinks
      through a pool and settles at the bottom. It has no heat reaction: it is
      a lighting/building material, not another route around the metal ladder. */
-  { "Glowfluid", KIND_LIQUID,  90, 0, 0, 8, 0, 0, 0, 150, 0, 0, 0, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, 0x8CE8B8, 0x3CA878, 0x8CE8B8, 0x3CA878, 0 },
+  { "Glowfluid", KIND_LIQUID, 140, 0, 0, 8, 0, 0, 0, 150, 0, 0, 0, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, 0x8CE8B8, 0x3CA878, 0x8CE8B8, 0x3CA878, 0 },
   /* Filters remain solid material cells; world.cpp lets the permitted flow
      kinds hop across them while powders stay caught on the mesh. */
   { "Sieve", KIND_STATIC, 255, 0, 0, 0, 0, 0, 0, 60, 0, 0, 0, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, 0x9CA8A8, 0x687878, 0x9CA8A8, 0x687878, 0 },
   { "GasSieve", KIND_STATIC, 255, 0, 0, 0, 0, 0, 0, 60, 0, 0, 0, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, 0xB49CE0, 0x7860A0, 0xB49CE0, 0x7860A0, 0 },
+  /* Slightly heavier than water at room temperature, but deliberately very
+     expansive: around 60 C it crosses water's density and starts rising.
+     Viscous enough to travel as slow amber bodies instead of spraying like
+     water. Cohesion is a later, independently testable tuning layer. */
+  { "Wax", KIND_LIQUID, 104, 0, 0, 3, 150, 0, 0, 55, 1, 0, 0, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, 0xE4B84E, 0xA66A24, 0xE4B84E, 0xA66A24, 0 },
 };
 
 u32 g_colorLut[MAT_COUNT * 256];
@@ -873,6 +879,7 @@ u8  g_matConducts[MAT_COUNT];
 u8  g_matWetInto[MAT_COUNT];
 u8  g_matWetBy[MAT_COUNT];
 u8  g_matAlloyWith[MAT_COUNT];
+u8  g_matThermalExpansionQ8[MAT_COUNT];
 u8  g_matAlloysTo[MAT_COUNT];
 u8  g_bgHeat[MAT_COUNT];
 u8  g_bgRetain[MAT_COUNT];
@@ -1786,6 +1793,16 @@ static void initUnseen() {
 }
 
 void initMaterials() {
+    /* Ordinary fluids expand subtly; wax is exaggerated on purpose so its
+       density crosses water's inside an achievable lamp temperature band.
+       Kept outside MatInfo to avoid another mostly-zero initializer column. */
+    memset(g_matThermalExpansionQ8, 0, sizeof(g_matThermalExpansionQ8));
+    for (int m = 0; m < MAT_COUNT; ++m) {
+        if (MATS[m].kind == KIND_LIQUID) g_matThermalExpansionQ8[m] = 1;
+        if (MATS[m].kind == KIND_GAS)    g_matThermalExpansionQ8[m] = 4;
+    }
+    g_matThermalExpansionQ8[MAT_WAX] = 26;
+
     initStrength();
     initPassable();
     initClimb();

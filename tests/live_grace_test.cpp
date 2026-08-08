@@ -779,6 +779,58 @@ int main() {
                 convBelowT, convAboveT, ctrlAboveT); return 49;
     }
 
+    /* Fixed-point thermal density gives lamp wax a real buoyancy inversion:
+       it is heavier than water when cool and lighter at working temperature.
+       The sealed one-cell column removes lateral flow from the measurement, so
+       rising and falling can only come from parcel density. */
+    const int waterDensity = materialDensityQ8(MAT_WATER, degC(20));
+    if (materialDensityQ8(MAT_WAX, degC(20)) <= waterDensity ||
+        materialDensityQ8(MAT_WAX, degC(90)) >= waterDensity) {
+        fprintf(stderr, "wax density does not cross water across its working range\n"); return 91;
+    }
+    w.reset();
+    const int lampX = 660, lampTop = 600, lampBottom = 621;
+    w.setLiveWindow(lampX - 4, lampTop - 4, lampX + 4, lampBottom + 4);
+    for (int y = lampTop - 1; y <= lampBottom; ++y) {
+        w.setCell(lampX - 1, y, MAT_STONE);
+        w.setCell(lampX + 1, y, MAT_STONE);
+    }
+    w.setCell(lampX, lampBottom, MAT_STONE);
+    for (int y = lampTop; y < lampBottom; ++y) w.setCell(lampX, y, MAT_WATER);
+    w.setCell(lampX, lampBottom - 1, MAT_WAX);
+    const int waxStartY = lampBottom - 1;
+    int waxY = waxStartY;
+    for (int tick = 0; tick < 12; ++tick) {
+        for (int y = lampTop; y < lampBottom; ++y)
+            if (w.at(lampX, y).mat == MAT_WAX) { waxY = y; break; }
+        w.temp[waxY * SIM_W + lampX] = degC(90);
+        w.dirtyPoint(lampX, waxY);
+        w.step();
+    }
+    for (int y = lampTop; y < lampBottom; ++y)
+        if (w.at(lampX, y).mat == MAT_WAX) { waxY = y; break; }
+    if (waxY >= waxStartY - 7) {
+        fprintf(stderr, "heated wax did not convect upward through water (%d -> %d)\n",
+                waxStartY, waxY); return 92;
+    }
+    const int waxHighY = waxY;
+    for (int tick = 0; tick < 18; ++tick) {
+        for (int y = lampTop; y < lampBottom; ++y)
+            if (w.at(lampX, y).mat == MAT_WAX) { waxY = y; break; }
+        w.temp[waxY * SIM_W + lampX] = degC(20);
+        w.dirtyPoint(lampX, waxY);
+        w.step();
+    }
+    int waxCount = 0;
+    for (int y = lampTop; y < lampBottom; ++y) {
+        if (w.at(lampX, y).mat != MAT_WAX) continue;
+        waxY = y; ++waxCount;
+    }
+    if (waxCount != 1 || waxY <= waxHighY + 7) {
+        fprintf(stderr, "cooled wax did not sink back through water (%d -> %d, count %d)\n",
+                waxHighY, waxY, waxCount); return 93;
+    }
+
     /* Water's short reach makes a horizontal heat front advance three cells in
        one frame. Frame zero scans right-to-left, so local neighbor conduction
        alone cannot relay heat away from the left endpoint during this step. */

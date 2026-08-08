@@ -761,7 +761,7 @@ private:
     void updateHeat(int x, int y);
     void updateMoisture(int x, int y);
     void updateEvaporation(int x, int y);
-    void updateConvection(int x, int y);
+    bool updateConvection(int x, int y);
     void updatePowder(int x, int y);
     void updateLiquid(int x, int y);
     void updateGas(int x, int y);

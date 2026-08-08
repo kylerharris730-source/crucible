@@ -54,6 +54,11 @@ static const int NB_DY[4] = { -1,  1,  0,  0 };
 static const int NB8_DX[8] = {  0,  0, -1,  1, -1,  1, -1,  1 };
 static const int NB8_DY[8] = { -1,  1,  0,  0, -1, -1,  1,  1 };
 
+/* A quarter of one legacy density point. Fixed-point thermal density would
+   otherwise make two almost-identical parcels swap every time heat jitters by
+   one degree, turning a calm interface into permanent pixel vibration. */
+static const int DENSITY_SWAP_EPS_Q8 = 64;
+
 /* Divide a heat transfer by 2^shift to get the temperature change a material of
    that thermal mass actually feels, carrying the remainder stochastically so
    small transfers average out correctly instead of truncating to nothing.
@@ -324,11 +329,15 @@ bool World::tryMove(int sx, int sy, int tx, int ty) {
         if (!throughFoliage) {
         if (tm.kind != KIND_LIQUID && tm.kind != KIND_GAS) return false;
         const MatInfo& sm = MATS[s.mat];
+        const int sourceDensity = materialDensityQ8(s.mat, temp[si]);
+        const int targetDensity = materialDensityQ8(t.mat, temp[ti]);
         /* Gases invert the density test: they displace anything *heavier*,
            which is how steam bubbles up through water. */
-        if (sm.kind == KIND_GAS) { if (tm.density <= sm.density) return false; }
+        if (sm.kind == KIND_GAS) {
+            if (targetDensity <= sourceDensity + DENSITY_SWAP_EPS_Q8) return false;
+        }
         else {
-            if (tm.density >= sm.density) return false;
+            if (sourceDensity <= targetDensity + DENSITY_SWAP_EPS_Q8) return false;
             /* Gas owns the swap with liquid, on the gas cell's turn. Letting
                liquid push a gas target sounds symmetric but is not under an
                in-place scan: neighbouring water cells can relay one stamped
@@ -534,30 +543,44 @@ void World::updatePowder(int x, int y) {
     tryMove(x, y, x - dx, y + 1);
 }
 
-/* Temperature-only convection for every fluid. It is intentionally limited to
-   two cells of the SAME material: conduction already handles heat crossing a
-   water/lava or gas/liquid boundary, while exchanging parcels across that
-   boundary without moving their materials would be false mixing.
+/* Buoyant parcel convection. Same-material pairs retain the old four-degree
+   threshold, but now exchange the whole parcel (cell identity plus heat) rather
+   than teleporting temperature. Different liquids/gases exchange when the
+   lower parcel's effective thermal density is meaningfully lighter.
 
-   Alternating non-overlapping row pairs prevents a hot parcel from racing up
-   several cells during one bottom-to-top scan. Position/frame parity replaces
-   an RNG roll, so convection adds no RNG consumption and cannot alter the
-   established movement silhouette of a fluid body. */
-void World::updateConvection(int x, int y) {
+   Alternating non-overlapping row pairs prevents one hot parcel from racing up
+   several cells during a bottom-to-top scan. No RNG is consumed, preserving
+   the deterministic movement silhouette. */
+bool World::updateConvection(int x, int y) {
     const int i = y * SIM_W + x;
     const u8 mat = cells[i].mat;
     const u8 kind = MATS[mat].kind;
     if ((kind != KIND_LIQUID && kind != KIND_GAS) ||
-        (((u32)y ^ frame) & 1u) != 0u) return;
+        (((u32)y ^ frame) & 1u) != 0u) return false;
 
     const int above = i - SIM_W;
-    if (cells[above].mat != mat || (int)temp[i] <= (int)temp[above] + 4) return;
+    const u8 aboveMat = cells[above].mat;
+    if (MATS[aboveMat].kind != kind) return false;
+    if (aboveMat == mat) {
+        if ((int)temp[i] <= (int)temp[above] + 4) return false;
+    } else {
+        const int belowDensity = materialDensityQ8(mat, temp[i]);
+        const int aboveDensity = materialDensityQ8(aboveMat, temp[above]);
+        if (belowDensity + DENSITY_SWAP_EPS_Q8 >= aboveDensity) return false;
+    }
 
-    const u8 parcel = temp[i];
+    Cell parcel = cells[i];
+    cells[i] = cells[above];
+    cells[above] = parcel;
+    const u8 parcelTemp = temp[i];
     temp[i] = temp[above];
-    temp[above] = parcel;
+    temp[above] = parcelTemp;
+    const u8 st = (u8)(stamp() << STAMP_SHIFT);
+    cells[i].flags = (u8)((cells[i].flags & F_DIR) | st);
+    cells[above].flags = (u8)((cells[above].flags & F_DIR) | st);
     dirtyPoint(x, y);
     dirtyPoint(x, y - 1);
+    return true;
 }
 
 void World::updateLiquid(int x, int y) {
@@ -565,7 +588,7 @@ void World::updateLiquid(int x, int y) {
     const MatInfo& m = MATS[c.mat];
 
     if (tryMove(x, y, x, y + 1)) return;
-    updateConvection(x, y);
+    if (updateConvection(x, y)) return;
 
     /* Viscosity. For a liquid the `jitter` byte is a chance out of 255 that the
        cell simply refuses to flow sideways this frame -- see the note on the
@@ -677,7 +700,7 @@ void World::updateGas(int x, int y) {
 
     /* A mirror of updateLiquid with the vertical sense flipped. */
     if (tryMove(x, y, x, y - 1)) return;
-    updateConvection(x, y);
+    if (updateConvection(x, y)) return;
 
     int dx = (c.flags & F_DIR) ? 1 : -1;
     if (tryMove(x, y, x + dx, y - 1)) return;
