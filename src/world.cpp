@@ -263,14 +263,28 @@ static bool filterAllows(u8 filter, u8 moving) {
     return false;
 }
 
-/* A sieve occupant packs one gas provenance bit above its material id. This is
-   the only current reason the material table must remain below 128 entries;
-   pressure itself still has the full byte while the gas is in an ordinary
-   cell. If the catalog approaches this bound, sieve occupants need a sidecar
-   rather than silently stealing another bit. */
+/* A reactive powder may briefly share its cell with the gas that transforms
+   it. This is deliberately narrower than generic porosity: Coal accepts Steam
+   because that exact pair is already registered as Coal -> Fuel, while fire,
+   mercury vapour, and gases with no powder reaction remain ordinary cells.
+   Every accepted occupant is therefore guaranteed to be consumed on the
+   powder's next turn rather than becoming a second long-lived simulation
+   layer hidden in Cell::moisture. */
+static bool reactivePowderAllowsGas(u8 powder, u8 moving) {
+    return MATS[powder].kind == KIND_POWDER &&
+           g_matWetInto[powder] != MAT_EMPTY &&
+           g_matWetBy[powder] == moving &&
+           moving < MAT_COUNT && MATS[moving].kind == KIND_GAS;
+}
+
+/* A sieve or reactive-powder occupant packs one gas provenance bit above its
+   material id. This is the only current reason the material table must remain
+   below 128 entries; pressure itself still has the full byte while the gas is
+   in an ordinary cell. If the catalog approaches this bound, sparse occupants
+   need a sidecar rather than silently stealing another bit. */
 static_assert(MAT_COUNT <= 128,
-              "sieve occupants reserve bit 7 for gas volume provenance");
-static inline u8 filterMat(u8 packed) { return (u8)(packed & GAS_EXCESS_MASK); }
+              "sparse occupants reserve bit 7 for gas volume provenance");
+static inline u8 occupantMat(u8 packed) { return (u8)(packed & GAS_EXCESS_MASK); }
 
 bool World::tryMove(int sx, int sy, int tx, int ty) {
     /* Nothing moves into an occupied entity box -- see the note in world.h.
@@ -294,13 +308,14 @@ bool World::tryMove(int sx, int sy, int tx, int ty) {
     Cell& s = cells[si];
     Cell& t = cells[ti];
 
-    /* Filters are fixed mesh cells with one sparse occupant slot in moisture.
-       A permitted fluid enters that slot while the sieve remains the cell's
-       material, then advances through the mesh one cell per frame. This is what
-       lets steam inside a sieve actually touch coal resting on its surface.
-       Powders never enter this branch. */
-    if (filterAllows(t.mat, s.mat)) {
-        if (t.moisture) return false;   /* one fluid parcel per mesh cell */
+    /* Filters and reactive powders have one sparse occupant slot in moisture.
+       A permitted fluid enters while the host remains the cell's material.
+       Filter occupants advance through connected mesh; a reactive-powder
+       occupant is consumed into its registered product on the next turn. */
+    const bool enteringFilter = filterAllows(t.mat, s.mat);
+    const bool enteringReactivePowder = reactivePowderAllowsGas(t.mat, s.mat);
+    if (enteringFilter || enteringReactivePowder) {
+        if (t.moisture) return false;   /* one occupant parcel per host cell */
         const bool gas = MATS[s.mat].kind == KIND_GAS;
         const u8 volumeOnly = gas ? (u8)(s.moisture & GAS_VOLUME_ONLY) : 0;
         const u8 excess = gas ? (u8)(s.moisture & GAS_EXCESS_MASK) : 0;
@@ -317,7 +332,12 @@ bool World::tryMove(int sx, int sy, int tx, int ty) {
             temp[si] = AMBIENT_TEMP;
         }
         const u8 st = (u8)(stamp() << STAMP_SHIFT);
-        t.flags = (u8)((s.flags & F_DIR) | st);
+        /* A sieve borrows bit zero for its occupant's flow direction. A powder
+           owns that same bit as F_FALL, so preserve the powder's state while
+           the steam waits for its reaction turn. */
+        const u8 targetLow = enteringFilter ? (u8)(s.flags & F_DIR)
+                                            : (u8)(t.flags & F_FALL);
+        t.flags = (u8)(targetLow | st);
         s.flags = (u8)((s.flags & F_DIR) | st);
         dirtyPoint(sx, sy); dirtyPoint(tx, ty);
         return true;
@@ -403,7 +423,7 @@ bool World::moveFilterFluid(int sx, int sy, int tx, int ty) {
     Cell& s = cells[si];
     Cell& t = cells[ti];
     const u8 packed = s.moisture;
-    const u8 moving = filterMat(packed);
+    const u8 moving = occupantMat(packed);
     if (!moving) return false;
 
     if (filterAllows(t.mat, moving)) {
@@ -431,7 +451,7 @@ void World::updateFilterFluid(int x, int y) {
     const int i = y * SIM_W + x;
     Cell& c = cells[i];
     const u8 packed = c.moisture;
-    const u8 moving = filterMat(packed);
+    const u8 moving = occupantMat(packed);
     if (!moving) return;
 
     /* Contact reactions see through the mesh. This is table-driven in the same
@@ -920,10 +940,16 @@ void World::updateGas(int x, int y) {
             if (nx < PLAY_X0 || nx > PLAY_X1) break;
             const Cell& n = cells[y * SIM_W + nx];
             if (n.mat != MAT_EMPTY) {
-                if (filterAllows(n.mat, c.mat)) {
+                if (filterAllows(n.mat, c.mat) ||
+                    reactivePowderAllowsGas(n.mat, c.mat)) {
                     const int beyond = nx + dx;
-                    if (beyond >= PLAY_X0 && beyond <= PLAY_X1 &&
-                        cells[y * SIM_W + beyond].mat == MAT_EMPTY) moveToX = nx;
+                    /* Mesh traversal still wants an exit beyond the filter.
+                       Reactive powder is itself the destination: Steam only
+                       needs to touch Coal to be consumed into Fuel. */
+                    if (reactivePowderAllowsGas(n.mat, c.mat) ||
+                        (beyond >= PLAY_X0 && beyond <= PLAY_X1 &&
+                         cells[y * SIM_W + beyond].mat == MAT_EMPTY))
+                        moveToX = nx;
                     break;
                 }
                 if (n.mat == c.mat) { moveFromX = nx; continue; }
@@ -1580,6 +1606,18 @@ void World::updateCell(int x, int y) {
         return;
     }
 
+    /* Reactive powders have one equally sparse gas-occupant state. Unlike a
+       sieve this is never long-lived: the admission rule above only accepts
+       the exact gas named by wetBy, so consuming the occupant and converting
+       the powder is unconditional here. It runs before ignition for the same
+       reason the adjacent slaking rule does -- 115 C Steam must make Fuel, not
+       light the Coal before the wet reaction gets a chance. */
+    if (c.moisture && reactivePowderAllowsGas(c.mat, occupantMat(c.moisture))) {
+        const u8 into = g_matWetInto[c.mat];
+        convert(x, y, into);          /* also clears the consumed gas occupant */
+        return;
+    }
+
     /* --- a seed that has come to rest ---------------------------------
        Reported, not acted on: whether this becomes a tree is tree.cpp's
        business and depends on a table this file has no reason to know about.
@@ -1642,11 +1680,25 @@ void World::updateCell(int x, int y) {
             const int j = ny * SIM_W + nx;
             if (cells[j].mat != g_matWetBy[c.mat]) continue;
             convert(x, y, g_matWetInto[c.mat]);
-            /* The steam is consumed. That is what stops fuel being free -- it costs
-               a boiler, which costs water and a heat source, which is why there is
-               a lake and why coal is the thing you find first. */
-            spawnCell(nx, ny, MAT_EMPTY);
-            dirtyPoint(nx, ny);
+            /* One reagent VOLUME is consumed. For an ordinary Steam cell that
+               means removing the cell, as before. A compressed cell also owns
+               hidden expansion volumes, though, and deleting it wholesale
+               would let one Coal contact erase an entire boiler charge. Spend
+               one excess unit first and leave the visible owner/provenance
+               volume in place; only the last unit becomes Empty. */
+            Cell& reagent = cells[j];
+            const u8 reagentExcess = MATS[reagent.mat].kind == KIND_GAS
+                                   ? (u8)(reagent.moisture & GAS_EXCESS_MASK) : 0;
+            if (reagentExcess) {
+                reagent.moisture = (u8)((reagent.moisture & GAS_VOLUME_ONLY) |
+                                        (reagentExcess - 1));
+                reagent.flags = (u8)((reagent.flags & F_DIR) |
+                                     (stamp() << STAMP_SHIFT));
+                dirtyPoint(nx, ny);
+            } else {
+                spawnCell(nx, ny, MAT_EMPTY);
+                dirtyPoint(nx, ny);
+            }
             return;
         }
     }

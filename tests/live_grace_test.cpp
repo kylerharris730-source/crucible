@@ -973,6 +973,50 @@ int main() {
         return 101;
     }
 
+    /* Steam can occupy the Coal cell itself. Four stored volumes percolate up
+       a supported column one by one, and each is consumed into exactly one
+       Fuel cell; the Coal pile is never pushed or swapped as a shortcut. */
+    w.reset();
+    const int poreX = 900, poreBottom = 720, poreCount = 4;
+    w.setLiveWindow(poreX - 5, poreBottom - poreCount - 5,
+                    poreX + 5, poreBottom + 5);
+    for (int y = poreBottom - poreCount - 2; y <= poreBottom + 1; ++y) {
+        w.setCell(poreX - 1, y, MAT_STONE);
+        w.setCell(poreX + 1, y, MAT_STONE);
+    }
+    w.setCell(poreX, poreBottom + 1, MAT_STONE);
+    for (int y = poreBottom - poreCount; y < poreBottom; ++y)
+        w.setCell(poreX, y, MAT_COAL);
+    w.setCell(poreX, poreBottom, MAT_STEAM);
+    w.cells[poreBottom * SIM_W + poreX].moisture = poreCount - 1;
+    w.temp[poreBottom * SIM_W + poreX] = degC(120);
+    w.dirtyPoint(poreX, poreBottom);
+
+    bool sawOccupiedCoal = false;
+    for (int tick = 0; tick < 40; ++tick) {
+        for (int y = poreBottom - poreCount - 2; y <= poreBottom; ++y) {
+            Cell& pc = w.cells[y * SIM_W + poreX];
+            if (pc.mat == MAT_STEAM) {
+                w.temp[y * SIM_W + poreX] = degC(120);
+                w.dirtyPoint(poreX, y);
+            }
+            if (pc.mat == MAT_COAL && (pc.moisture & GAS_EXCESS_MASK) == MAT_STEAM)
+                sawOccupiedCoal = true;
+        }
+        w.step();
+    }
+    int poreCoal = 0, poreFuel = 0, poreSteam = 0;
+    for (int y = poreBottom - poreCount - 2; y <= poreBottom + 1; ++y) {
+        const Cell& pc = w.at(poreX, y);
+        if (pc.mat == MAT_COAL) ++poreCoal;
+        if (pc.mat == MAT_FUEL) ++poreFuel;
+        if (pc.mat == MAT_STEAM) ++poreSteam;
+    }
+    if (!sawOccupiedCoal || poreCoal != 0 || poreFuel != poreCount || poreSteam != 0) {
+        fprintf(stderr, "steam did not percolate through coal (%d occupied, %d coal, %d fuel, %d steam)\n",
+                sawOccupiedCoal ? 1 : 0, poreCoal, poreFuel, poreSteam); return 104;
+    }
+
     /* Pressure lifts a connected water column immediately instead of waiting
        for the original steam cell to bubble through it one pixel per frame. */
     w.reset();

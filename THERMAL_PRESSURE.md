@@ -53,13 +53,25 @@ stamped so it cannot relay again during the same in-place simulation scan.
 Regression coverage verifies both a 23-cell-deep lift and a bent liquid path,
 including exact liquid volume and pressure-unit conservation.
 
-## 4. Permeable powders
+## 4. Permeable reactive powders — implemented
 
 The visible grid has no sub-cell pore space, so Steam cannot physically pass a
 fully occupied Coal pile without an explicit permeability abstraction. Coal
 will temporarily co-occupy one gas parcel, similar to a Sieve, allowing Steam
 to percolate and trigger the existing Coal-to-Fuel contact reaction. Low
 pressure must not throw the pile around.
+
+Permeability is deliberately derived from the existing powder/gas reaction
+pair rather than granted to every powder. Coal accepts Steam because its table
+already names Steam as the consumed input for Fuel; unrelated gases cannot get
+trapped inside it. Compressed gas emits one provenance-preserving volume into
+the Coal and retains the remaining pressure, exactly as it does for a Sieve.
+The transient occupant is material-name-remapped across save/load.
+
+Regression coverage feeds four stored Steam volumes through a supported
+four-cell Coal column and verifies that the co-occupied state occurs, the pile
+is not pressure-shoved, and the result is exactly four Fuel with no Coal or
+Steam left over.
 
 ## 5. General pressure pushing
 

@@ -388,7 +388,8 @@ struct Cell {
     u8 mat;
     /* Kind-specific payload:
        - porous solids: absorbed moisture
-       - sieve: sparse fluid occupant id, plus GAS_VOLUME_ONLY when applicable
+       - sieve/reactive powder: sparse fluid occupant id, plus
+         GAS_VOLUME_ONLY when applicable
        - gas: low 7 bits are unexpanded pressure units; high bit marks an
          expansion-only volume with no condensation mass token
        - Clone: latched material id
