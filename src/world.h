@@ -386,9 +386,13 @@ static const int PRESSURE_MAX   = 10;
 
 struct Cell {
     u8 mat;
-    /* Absorbed moisture for porous materials. Sieve cells have zero capacity,
-       so they reuse this byte as a sparse fluid-occupant material id: the mesh
-       remains `mat`, while one permitted liquid/gas can coexist inside it. */
+    /* Kind-specific payload:
+       - porous solids: absorbed moisture
+       - sieve: sparse fluid occupant id, plus GAS_VOLUME_ONLY when applicable
+       - gas: low 7 bits are unexpanded pressure units; high bit marks an
+         expansion-only volume with no condensation mass token
+       - Clone: latched material id
+       Keeping these meanings kind-exclusive avoids another 38 MB world plane. */
     u8 moisture;
     u8 tint;      /* fixed per-cell colour jitter */
     u8 flags;
@@ -397,6 +401,13 @@ struct Cell {
 /* flags bit 0 is a liquid's remembered flow direction, so water keeps
    streaming one way instead of jittering in place. */
 static const u8 F_DIR = 0x01;
+
+/* Gas pressure encoding in Cell::moisture. A normal/painted gas cell has one
+   condensation mass token and value 0. Expansion daughters carry the high bit
+   and vanish when cooled; this lets one Water cell expand to six Steam cells
+   and still condense back to exactly one Water cell. */
+static const u8 GAS_VOLUME_ONLY = 0x80;
+static const u8 GAS_EXCESS_MASK = 0x7F;
 
 /* --- the same bit, for powders ---------------------------------------------
    Set on a powder cell that FELL STRAIGHT DOWN on the frame just gone. It is
@@ -765,9 +776,11 @@ private:
     void updatePowder(int x, int y);
     void updateLiquid(int x, int y);
     void updateGas(int x, int y);
+    bool updateGasPressure(int x, int y);
     void updateFilterFluid(int x, int y);
     bool moveFilterFluid(int sx, int sy, int tx, int ty);
     void convert(int x, int y, u8 mat);
+    void phaseChange(int x, int y, u8 mat);
     bool tryMove(int sx, int sy, int tx, int ty);
 };
 

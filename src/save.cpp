@@ -492,9 +492,14 @@ bool saveRead(const char* path, World& w) {
                    name just like the foreground plane; ordinary moisture is a
                    scalar and must remain untouched. */
                 const u8 raw = g_plane[i];
-                w.cells[i].moisture = ((w.cells[i].mat == MAT_SIEVE ||
-                                        w.cells[i].mat == MAT_GAS_SIEVE) && raw)
-                                      ? g_remap[raw] : raw;
+                if ((w.cells[i].mat == MAT_SIEVE ||
+                     w.cells[i].mat == MAT_GAS_SIEVE) && raw) {
+                    const u8 volumeOnly = raw & GAS_VOLUME_ONLY;
+                    const u8 occupant = raw & GAS_EXCESS_MASK;
+                    w.cells[i].moisture = (u8)(g_remap[occupant] | volumeOnly);
+                } else {
+                    w.cells[i].moisture = raw;
+                }
             }
             statAdd("cell moisture", len + 12);
         } else if (tag == fourcc("TEMP")) {

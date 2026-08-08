@@ -18,16 +18,24 @@ Regression coverage holds a Wax parcel at 90 C until it rises through a sealed
 Water column, cools it to 20 C, and verifies that it sinks again with exactly
 one Wax cell remaining.
 
-## 2. Compressed gas mass
+## 2. Compressed gas volume — implemented
 
 An occupied gas cell represents one volume unit and stores a bounded number of
-extra mass units. Boiling creates multiple Steam units. Excess first expands
-into open space; if sealed, it remains as pressure and equalizes through
-connected gas. This must reuse kind-specific cell storage rather than add a
-world-sized pressure plane.
+unexpanded volume units. Boiling Water creates one owner Steam parcel carrying
+five extra units. Excess expands locally one adjacent cell per frame; if sealed,
+it remains as pressure and equalizes through connected gas. The kind-specific
+`Cell::moisture` payload stores this without adding a 38 MB pressure plane.
 
-Condensation must account for excess mass instead of deleting it: a compressed
-Steam parcel may condense several Water cells over time.
+Expansion daughters carry a volume-only provenance bit. On cooling, daughters
+collapse to Empty and the single owner condenses to Water, preserving the round
+trip `1 Water -> 6 Steam volumes -> 1 Water`. Gas-sieve occupancy packs and
+restores that provenance bit as well. This temporarily constrains material ids
+to seven bits; reaching 128 materials should replace packed sieve occupants
+with a sidecar rather than steal another bit.
+
+Regression coverage verifies open expansion, sealed retention, connected
+equalization, condensation conservation, reopening a sleeping chamber, and
+sieve provenance.
 
 ## 3. Liquid displacement
 

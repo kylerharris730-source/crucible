@@ -510,6 +510,10 @@ static inline int materialDensityQ8(u8 mat, u8 temperature) {
     return density;
 }
 
+/* Total free-space cells represented when one liquid cell boils into this gas.
+   One means legacy one-for-one conversion; Steam deliberately expands. */
+extern u8 g_matGasExpansion[MAT_COUNT];
+
 /* Cell -> pixel, precomputed. Indexed by
       (mat << 8) | (moisture & 0xF0) | (tint >> 4)
    which is 16 wetness levels x 16 tint levels per material. */

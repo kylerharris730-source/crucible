@@ -255,6 +255,15 @@ static bool filterAllows(u8 filter, u8 moving) {
     return false;
 }
 
+/* A sieve occupant packs one gas provenance bit above its material id. This is
+   the only current reason the material table must remain below 128 entries;
+   pressure itself still has the full byte while the gas is in an ordinary
+   cell. If the catalog approaches this bound, sieve occupants need a sidecar
+   rather than silently stealing another bit. */
+static_assert(MAT_COUNT <= 128,
+              "sieve occupants reserve bit 7 for gas volume provenance");
+static inline u8 filterMat(u8 packed) { return (u8)(packed & GAS_EXCESS_MASK); }
+
 bool World::tryMove(int sx, int sy, int tx, int ty) {
     /* Nothing moves into an occupied entity box -- see the note in world.h.
        First test in the function and first comparison of the box test, so the
@@ -284,11 +293,21 @@ bool World::tryMove(int sx, int sy, int tx, int ty) {
        Powders never enter this branch. */
     if (filterAllows(t.mat, s.mat)) {
         if (t.moisture) return false;   /* one fluid parcel per mesh cell */
-        t.moisture = s.mat;
+        const bool gas = MATS[s.mat].kind == KIND_GAS;
+        const u8 volumeOnly = gas ? (u8)(s.moisture & GAS_VOLUME_ONLY) : 0;
+        const u8 excess = gas ? (u8)(s.moisture & GAS_EXCESS_MASK) : 0;
+        /* A compressed parcel emits one expansion volume into the mesh rather
+           than moving all its stored pressure into a one-cell occupant slot. */
+        t.moisture = (u8)(s.mat | (gas ? GAS_VOLUME_ONLY : 0));
         temp[ti] = temp[si];
-        s.mat = MAT_EMPTY;
-        s.moisture = 0;
-        temp[si] = AMBIENT_TEMP;
+        if (excess) {
+            s.moisture = (u8)(volumeOnly | (excess - 1));
+        } else {
+            t.moisture = (u8)(s.mat | volumeOnly);
+            s.mat = MAT_EMPTY;
+            s.moisture = 0;
+            temp[si] = AMBIENT_TEMP;
+        }
         const u8 st = (u8)(stamp() << STAMP_SHIFT);
         t.flags = (u8)((s.flags & F_DIR) | st);
         s.flags = (u8)((s.flags & F_DIR) | st);
@@ -375,16 +394,18 @@ bool World::moveFilterFluid(int sx, int sy, int tx, int ty) {
     const int si = sy * SIM_W + sx, ti = ty * SIM_W + tx;
     Cell& s = cells[si];
     Cell& t = cells[ti];
-    const u8 moving = s.moisture;
+    const u8 packed = s.moisture;
+    const u8 moving = filterMat(packed);
     if (!moving) return false;
 
     if (filterAllows(t.mat, moving)) {
         if (t.moisture) return false;
-        t.moisture = moving;
+        t.moisture = packed;
     } else {
         if (t.mat != MAT_EMPTY || blocksCell(tx, ty)) return false;
         t.mat = moving;
-        t.moisture = 0;
+        t.moisture = MATS[moving].kind == KIND_GAS
+                   ? (u8)(packed & GAS_VOLUME_ONLY) : 0;
     }
 
     s.moisture = 0;
@@ -401,7 +422,8 @@ bool World::moveFilterFluid(int sx, int sy, int tx, int ty) {
 void World::updateFilterFluid(int x, int y) {
     const int i = y * SIM_W + x;
     Cell& c = cells[i];
-    const u8 moving = c.moisture;
+    const u8 packed = c.moisture;
+    const u8 moving = filterMat(packed);
     if (!moving) return;
 
     /* Contact reactions see through the mesh. This is table-driven in the same
@@ -669,9 +691,68 @@ void World::updateLiquid(int x, int y) {
     /* Boxed in both ways: nothing was dirtied, so this pool can go to sleep. */
 }
 
+/* Spend or redistribute one compressed gas parcel's excess volume. Expansion
+   is local and visible: one adjacent cell per frame, never a flood fill and
+   never a teleport to a distant opening. If the parcel is sealed, its excess
+   remains in the cell and costs nothing once equalized; changing a boundary
+   dirties the neighbourhood and wakes it again. */
+bool World::updateGasPressure(int x, int y) {
+    const int i = y * SIM_W + x;
+    Cell& c = cells[i];
+    const u8 excess = (u8)(c.moisture & GAS_EXCESS_MASK);
+    if (!excess) return false;
+
+    const int dir = (c.flags & F_DIR) ? 1 : -1;
+    const int dx[4] = { 0, dir, -dir, 0 };
+    const int dy[4] = { -1, 0, 0, 1 };
+    for (int k = 0; k < 4; ++k) {
+        const int nx = x + dx[k], ny = y + dy[k];
+        const int ni = ny * SIM_W + nx;
+        Cell& n = cells[ni];
+        if (n.mat != MAT_EMPTY || blocksCell(nx, ny)) continue;
+        n.mat = c.mat;
+        n.moisture = GAS_VOLUME_ONLY;
+        n.tint = (u8)rngBits(8);
+        const u8 st = (u8)(stamp() << STAMP_SHIFT);
+        n.flags = (u8)((c.flags & F_DIR) | st);
+        c.flags = (u8)((c.flags & F_DIR) | st);
+        temp[ni] = temp[i];
+        c.moisture = (u8)((c.moisture & GAS_VOLUME_ONLY) | (excess - 1));
+        dirtyPoint(x, y); dirtyPoint(nx, ny);
+        return true;
+    }
+
+    /* No free volume here. Move pressure toward the least-compressed adjacent
+       parcel of the same gas so a connected pocket can reach an opening at its
+       edge. Stamp the receiver to prevent one unit relaying across a room in a
+       single bottom-to-top scan. */
+    int best = -1, bestExcess = 256;
+    for (int k = 0; k < 4; ++k) {
+        const int nx = x + NB_DX[k], ny = y + NB_DY[k];
+        const int ni = ny * SIM_W + nx;
+        const Cell& n = cells[ni];
+        if (n.mat != c.mat) continue;
+        const int nExcess = n.moisture & GAS_EXCESS_MASK;
+        if (nExcess < bestExcess) { bestExcess = nExcess; best = ni; }
+    }
+    if (best < 0 || (int)excess <= bestExcess + 1) return false;
+
+    Cell& n = cells[best];
+    const int give = imax(1, ((int)excess - bestExcess) / 2);
+    c.moisture = (u8)((c.moisture & GAS_VOLUME_ONLY) | ((int)excess - give));
+    n.moisture = (u8)((n.moisture & GAS_VOLUME_ONLY) | (bestExcess + give));
+    const u8 st = (u8)(stamp() << STAMP_SHIFT);
+    n.flags = (u8)((n.flags & F_DIR) | st);
+    dirtyPoint(x, y);
+    dirtyPoint(best % SIM_W, best / SIM_W);
+    return true;
+}
+
 void World::updateGas(int x, int y) {
     Cell& c = cells[y * SIM_W + x];
     const MatInfo& m = MATS[c.mat];
+
+    if (updateGasPressure(x, y)) return;
 
     /* A submerged bubble gets one upward step per turn, but that step may be
        diagonal. This widens a plume naturally without restoring the old bug:
@@ -984,6 +1065,20 @@ void World::updateHeat(int x, int y) {
     dirtyPoint(x, y);
 }
 
+/* Table-driven phase conversion plus gas expansion charge. `convert` remains
+   the right operation for chemistry and combustion; only a LIQUID becoming a
+   GAS owns the volume increase that later becomes pressure. */
+void World::phaseChange(int x, int y, u8 mat) {
+    Cell& c = cells[y * SIM_W + x];
+    const u8 from = c.mat;
+    const bool expands = MATS[from].kind == KIND_LIQUID &&
+                         MATS[mat].kind == KIND_GAS;
+    convert(x, y, mat);
+    if (!expands) return;
+    const int volumes = imax(1, (int)g_matGasExpansion[mat]);
+    c.moisture = (u8)imin((int)GAS_EXCESS_MASK, volumes - 1);
+}
+
 /* ======================================================================
    Moisture: absorption, percolation, drainage
 
@@ -1229,7 +1324,7 @@ void World::updateEvaporation(int x, int y) {
     const u32 chance = 2u + (u32)(over * over);
     if ((rngNext() & 0xFFFF) >= chance) return;
 
-    convert(x, y, m.boilsTo);
+    phaseChange(x, y, m.boilsTo);
     temp[i] = latentDrain((int)temp[i]);
 }
 
@@ -1398,7 +1493,7 @@ void World::updateCell(int x, int y) {
         u8 into = m.boilsTo;
         if (g_matSmeltYield[c.mat] && !rngChance(g_matSmeltYield[c.mat]))
             into = MAT_SLAG_MELT;
-        convert(x, y, into);
+        phaseChange(x, y, into);
         /* Boiling absorbs latent heat. Without this a single hot cell flashes
            an entire pool to steam in one frame instead of simmering. */
         temp[i] = latentDrain(t);
@@ -1480,7 +1575,15 @@ void World::updateCell(int x, int y) {
         }
     }
     if (m.coolTemp && t < (int)m.coolTemp) {
-        convert(x, y, m.coolsTo);   /* fire burns out, steam condenses, lava sets */
+        /* Expansion-only gas volumes carry pressure but no condensation mass
+           token. They collapse to empty; exactly one owner parcel from the
+           original liquid returns to liquid, so 1 Water -> 6 Steam -> 1 Water
+           rather than multiplying matter on the round trip. */
+        if (m.kind == KIND_GAS && MATS[m.coolsTo].kind == KIND_LIQUID &&
+            (c.moisture & GAS_VOLUME_ONLY))
+            convert(x, y, MAT_EMPTY);
+        else
+            phaseChange(x, y, m.coolsTo); /* fire dies, steam condenses, lava sets */
         return;
     }
     /* Expiry on a timer rather than by temperature. Only cold fire uses this,

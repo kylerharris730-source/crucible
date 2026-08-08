@@ -880,6 +880,7 @@ u8  g_matWetInto[MAT_COUNT];
 u8  g_matWetBy[MAT_COUNT];
 u8  g_matAlloyWith[MAT_COUNT];
 u8  g_matThermalExpansionQ8[MAT_COUNT];
+u8  g_matGasExpansion[MAT_COUNT];
 u8  g_matAlloysTo[MAT_COUNT];
 u8  g_bgHeat[MAT_COUNT];
 u8  g_bgRetain[MAT_COUNT];
@@ -1802,6 +1803,11 @@ void initMaterials() {
         if (MATS[m].kind == KIND_GAS)    g_matThermalExpansionQ8[m] = 4;
     }
     g_matThermalExpansionQ8[MAT_WAX] = 26;
+
+    for (int m = 0; m < MAT_COUNT; ++m) g_matGasExpansion[m] = 1;
+    g_matGasExpansion[MAT_STEAM] = 6;
+    g_matGasExpansion[MAT_MERCURY_GAS] = 6;
+    g_matGasExpansion[MAT_COLDFIRE] = 4;
 
     initStrength();
     initPassable();

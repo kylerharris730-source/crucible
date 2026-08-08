@@ -831,6 +831,148 @@ int main() {
                 waxHighY, waxY, waxCount); return 93;
     }
 
+    /* Boiling stores expansion locally, then releases one visible gas volume
+       per frame. Five daughters are volume-only; the one owner token is what
+       lets all six Steam cells condense back to exactly one Water cell. */
+    w.reset();
+    const int pressureX = 760, pressureY = 640;
+    w.setLiveWindow(pressureX - 40, pressureY - 40,
+                    pressureX + 40, pressureY + 20);
+    w.setCell(pressureX, pressureY, MAT_WATER);
+    w.temp[pressureY * SIM_W + pressureX] = degC(215);
+    w.dirtyPoint(pressureX, pressureY);
+    w.step();
+    if (w.at(pressureX, pressureY).mat != MAT_STEAM ||
+        (w.at(pressureX, pressureY).moisture & GAS_EXCESS_MASK) != 5 ||
+        (w.at(pressureX, pressureY).moisture & GAS_VOLUME_ONLY)) {
+        fprintf(stderr, "boiling water did not store five expansion volumes\n"); return 94;
+    }
+    for (int tick = 0; tick < 12; ++tick) w.step();
+    int pressureSteamCount = 0, ownerCount = 0, excessSum = 0;
+    for (int y = pressureY - 40; y <= pressureY + 10; ++y)
+        for (int x = pressureX - 40; x <= pressureX + 40; ++x) {
+            const Cell& pc = w.at(x, y);
+            if (pc.mat != MAT_STEAM) continue;
+            ++pressureSteamCount;
+            excessSum += pc.moisture & GAS_EXCESS_MASK;
+            if (!(pc.moisture & GAS_VOLUME_ONLY)) ++ownerCount;
+        }
+    if (pressureSteamCount != 6 || ownerCount != 1 || excessSum != 0) {
+        fprintf(stderr, "steam did not expand to six conserved volumes (%d steam, %d owner, %d excess)\n",
+                pressureSteamCount, ownerCount, excessSum); return 95;
+    }
+    for (int y = pressureY - 40; y <= pressureY + 10; ++y)
+        for (int x = pressureX - 40; x <= pressureX + 40; ++x)
+            if (w.at(x, y).mat == MAT_STEAM) {
+                w.temp[y * SIM_W + x] = degC(0);
+                w.dirtyPoint(x, y);
+            }
+    w.step();
+    int condensedWater = 0, remainingSteam = 0;
+    for (int y = pressureY - 40; y <= pressureY + 10; ++y)
+        for (int x = pressureX - 40; x <= pressureX + 40; ++x) {
+            if (w.at(x, y).mat == MAT_WATER) ++condensedWater;
+            if (w.at(x, y).mat == MAT_STEAM) ++remainingSteam;
+        }
+    if (condensedWater != 1 || remainingSteam != 0) {
+        fprintf(stderr, "expanded steam did not condense back to one water (%d/%d)\n",
+                condensedWater, remainingSteam); return 96;
+    }
+
+    /* With no free volume, pressure remains stored and the chunk may sleep;
+       opening the chamber later will dirty and wake the compressed parcel. */
+    w.reset();
+    w.setLiveWindow(pressureX - 4, pressureY - 4, pressureX + 4, pressureY + 4);
+    for (int oy = -1; oy <= 1; ++oy) for (int ox = -1; ox <= 1; ++ox)
+        if (ox || oy) w.setCell(pressureX + ox, pressureY + oy, MAT_STONE);
+    w.setCell(pressureX, pressureY, MAT_WATER);
+    w.temp[pressureY * SIM_W + pressureX] = degC(215);
+    w.dirtyPoint(pressureX, pressureY);
+    w.step();
+    for (int tick = 0; tick < 7; ++tick) {
+        w.temp[pressureY * SIM_W + pressureX] = degC(120);
+        w.dirtyPoint(pressureX, pressureY);
+        w.step();
+    }
+    if (w.at(pressureX, pressureY).mat != MAT_STEAM ||
+        (w.at(pressureX, pressureY).moisture & GAS_EXCESS_MASK) != 5) {
+        fprintf(stderr, "sealed steam did not retain its pressure (mat %u moisture %u temp %u)\n",
+                w.at(pressureX, pressureY).mat, w.at(pressureX, pressureY).moisture,
+                w.temp[pressureY * SIM_W + pressureX]); return 97;
+    }
+    w.setCell(pressureX, pressureY - 1, MAT_EMPTY);
+    for (int tick = 0; tick < 8; ++tick) {
+        for (int y = pressureY - 12; y <= pressureY + 2; ++y)
+            for (int x = pressureX - 12; x <= pressureX + 12; ++x)
+                if (w.at(x, y).mat == MAT_STEAM) {
+                    w.temp[y * SIM_W + x] = degC(120);
+                    w.dirtyPoint(x, y);
+                }
+        w.step();
+    }
+    pressureSteamCount = excessSum = 0;
+    for (int y = pressureY - 12; y <= pressureY + 2; ++y)
+        for (int x = pressureX - 12; x <= pressureX + 12; ++x)
+            if (w.at(x, y).mat == MAT_STEAM) {
+                ++pressureSteamCount;
+                excessSum += w.at(x, y).moisture & GAS_EXCESS_MASK;
+            }
+    if (pressureSteamCount != 6 || excessSum != 0) {
+        fprintf(stderr, "opened chamber did not release stored steam (%d/%d)\n",
+                pressureSteamCount, excessSum); return 98;
+    }
+
+    /* Connected sealed gas shares pressure without creating or deleting it. */
+    w.reset();
+    for (int y = pressureY - 1; y <= pressureY + 1; ++y)
+        for (int x = pressureX - 1; x <= pressureX + 2; ++x)
+            w.setCell(x, y, MAT_STONE);
+    w.setCell(pressureX, pressureY, MAT_STEAM);
+    w.setCell(pressureX + 1, pressureY, MAT_STEAM);
+    w.cells[pressureY * SIM_W + pressureX].moisture = 6;
+    w.temp[pressureY * SIM_W + pressureX] = degC(120);
+    w.temp[pressureY * SIM_W + pressureX + 1] = degC(120);
+    w.setLiveWindow(pressureX - 4, pressureY - 4, pressureX + 5, pressureY + 4);
+    for (int tick = 0; tick < 3; ++tick) w.step();
+    const int leftPressure = w.at(pressureX, pressureY).moisture & GAS_EXCESS_MASK;
+    const int rightPressure = w.at(pressureX + 1, pressureY).moisture & GAS_EXCESS_MASK;
+    if (leftPressure + rightPressure != 6 ||
+        (leftPressure > rightPressure ? leftPressure - rightPressure
+                                      : rightPressure - leftPressure) > 1) {
+        fprintf(stderr, "sealed gas did not equalize pressure (%d/%d)\n",
+                leftPressure, rightPressure); return 99;
+    }
+
+    /* Sieve transit preserves whether a gas cell is an expansion-only volume;
+       otherwise passing through a mesh would manufacture condensation mass. */
+    w.reset();
+    w.setLiveWindow(pressureX - 4, pressureY - 6, pressureX + 4, pressureY + 4);
+    w.setCell(pressureX, pressureY - 1, MAT_GAS_SIEVE);
+    w.setCell(pressureX - 1, pressureY, MAT_STONE);
+    w.setCell(pressureX + 1, pressureY, MAT_STONE);
+    w.setCell(pressureX, pressureY, MAT_STEAM);
+    w.cells[pressureY * SIM_W + pressureX].moisture = GAS_VOLUME_ONLY;
+    w.temp[pressureY * SIM_W + pressureX] = degC(215);
+    w.step();
+    if (!(w.at(pressureX, pressureY - 1).moisture & GAS_VOLUME_ONLY)) {
+        fprintf(stderr, "gas sieve did not pack expansion provenance on entry (%u/%u)\n",
+                w.at(pressureX, pressureY - 1).mat,
+                w.at(pressureX, pressureY - 1).moisture); return 100;
+    }
+    w.step();
+    bool volumeExited = false;
+    for (int y = pressureY - 5; y < pressureY; ++y)
+        for (int x = pressureX - 4; x <= pressureX + 4; ++x)
+            if (w.at(x, y).mat == MAT_STEAM &&
+                (w.at(x, y).moisture & GAS_VOLUME_ONLY)) volumeExited = true;
+    if (!volumeExited) {
+        fprintf(stderr, "gas sieve lost expansion-volume provenance (below %u/%u sieve %u/%u above %u/%u)\n",
+                w.at(pressureX, pressureY).mat, w.at(pressureX, pressureY).moisture,
+                w.at(pressureX, pressureY - 1).mat, w.at(pressureX, pressureY - 1).moisture,
+                w.at(pressureX, pressureY - 2).mat, w.at(pressureX, pressureY - 2).moisture);
+        return 101;
+    }
+
     /* Water's short reach makes a horizontal heat front advance three cells in
        one frame. Frame zero scans right-to-left, so local neighbor conduction
        alone cannot relay heat away from the left endpoint during this step. */
