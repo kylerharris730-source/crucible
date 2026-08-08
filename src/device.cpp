@@ -217,6 +217,38 @@ void circuitRemapMaterials(const u8* remap, int savedMatCount) {
    are cleared too, rather than allowing an old and newly-issued id to collide. */
 static u16 g_pulseMark[SIM_W * SIM_H];
 static u16 g_nextPulse = 1;
+
+/* --- how many fronts each pulse still has alive ----------------------------
+   The mark above records WHICH wave last claimed a cell; this records whether
+   that wave still exists. Together they are the difference between "a wave has
+   been through here" and "a wave is going through here", and only the second of
+   those is a reason to refuse another wave.
+
+   32 KB of counters indexed by pulse id, maintained at the one place a front is
+   born and the one place it dies. Nothing ever scans it. */
+static u16 g_pulseFronts[0x4000];
+
+/* --- what a mark records ----------------------------------------------------
+   A claim is a pulse id and the DIRECTION the front was travelling when it made
+   the claim, packed into the one u16 the mark table already costs. Fourteen bits
+   of id and two of direction; sparks only ever step along an axis, so four
+   directions is all there is to record.
+
+   The direction is what tells a wave meeting another wave HEAD-ON apart from a
+   wave CATCHING one up, and those two want opposite answers. Head-on the two
+   must stop -- that is the whole fix. But a second pulse chasing the first down
+   the same wire is ordinary use, and a clock faster than the wire is long would
+   otherwise have every pulse after the first swallowed at the terminal, which
+   looks exactly like a clock that has stopped working. */
+static const u16 PULSE_ID_MASK = 0x3FFF;
+static const int PULSE_DIR_SHIFT = 14;
+
+static inline int dirIndex(int dx, int dy) {
+    if (dx > 0) return 0;
+    if (dx < 0) return 1;
+    return dy > 0 ? 2 : 3;
+}
+
 static u32 g_sparkFrame = 0;
 static int g_nextSparkSlot = 0;
 /* Kept sparse each tick through g_sparkTouched below: a runaway blob only
@@ -305,6 +337,7 @@ void sparkClear() {
        the last one's loose ends. */
     shedClear();
     memset(g_pulseMark, 0, sizeof(g_pulseMark));
+    memset(g_pulseFronts, 0, sizeof(g_pulseFronts));
     memset(g_sparkLoad, 0, sizeof(g_sparkLoad));
     g_nextPulse = 1;
     g_sparkFrame = 0;
@@ -315,7 +348,7 @@ static u16 nextPulse() {
     /* Zero is the unvisited stamp. Before we would reuse an id, stop the tiny
        set of active fronts and begin a fresh generation; otherwise an old front
        could mistake a new mark for its own and re-enter a loop. */
-    if (g_nextPulse == 0xFFFFu) sparkClear();
+    if (g_nextPulse >= PULSE_ID_MASK) sparkClear();
     return g_nextPulse++;
 }
 
@@ -330,6 +363,7 @@ static bool sparkAddFront(int x, int y, int dx, int dy, u16 pulse) {
         s.x = x; s.y = y;
         s.dx = (i16)dx; s.dy = (i16)dy;
         s.pulse = pulse;
+        if (g_pulseFronts[pulse] != 0xFFFFu) ++g_pulseFronts[pulse];
         s.stepped = g_sparkFrame;
         s.cycleX = (i16)x; s.cycleY = (i16)y;
         s.cycleSteps = 0;
@@ -444,16 +478,48 @@ static bool sparkStep(World& w, Spark& s) {
 
         if (!conducts(w, nx, ny)) continue;
         const int mark = ny * SIM_W + nx;
-        if (g_pulseMark[mark] == s.pulse) {
-            /* Wire, and this wave is already in it -- a sibling front got here
-               first. Remembering that is what tells a wire END apart from a
-               wire that merely got NARROWER, which are the same event from
-               inside this front and completely different from outside it. See
-               the note at the bottom of this function. */
+        const u16 claim = g_pulseMark[mark];
+        /* --- occupied wire, by this wave or by another one ------------------
+           Two cases that have to be refused for two different reasons, and the
+           second one used to be allowed.
+
+           It is MY wave: a sibling front got here first. Refusing is what fills
+           a thick wire's cross-section exactly once, and what makes a ring
+           safe -- fronts going opposite ways round it meet and stop.
+
+           It is ANOTHER wave that is still travelling. This was permitted,
+           because a mark only ever meant "my pulse has been here", and the
+           result was that two waves meeting head-on passed straight THROUGH
+           each other. In a one-cell wire that merely looks odd. In a wire two
+           or more cells thick it is catastrophic, and measurably so: each wave
+           finds the other's trail unclaimed as far as it is concerned, floods
+           back down it, and the sideways branching that should fill the section
+           once instead refills it every frame. Measured on a 200x2 wire, four
+           fronts became four hundred at a steady +4 per frame, until crowd heat
+           cooked the copper to its arc point and blew the wire apart. Every
+           thickness above one did it; only the one-cell case, which has nowhere
+           to branch, survived.
+
+           So the test is not "whose mark is this" but "is that wave still
+           going". A finished wave leaves its mark behind as a record, and the
+           next pulse is free to travel over it -- which is what keeps a wire
+           reusable, and what stops this from being a wire that only ever works
+           once. */
+        const u16 claimId = (u16)(claim & PULSE_ID_MASK);
+        const bool blocked = claimId
+            && (claimId == s.pulse                     /* my own wave's trail */
+                || (g_pulseFronts[claimId]             /* another, still going */
+                    && (int)(claim >> PULSE_DIR_SHIFT)
+                       != dirIndex(cand[k][0], cand[k][1])));
+        if (blocked) {
+            /* Either way the wave carries on through that cell without this
+               front, so this is not an open end and must not shed. See the note
+               at the bottom of this function. */
             handedOn = true;
             continue;
         }
-        g_pulseMark[mark] = s.pulse;
+        g_pulseMark[mark] = (u16)(s.pulse
+                              | ((u16)dirIndex(cand[k][0], cand[k][1]) << PULSE_DIR_SHIFT));
 
         if (!travelled) {
             /* Keep this front for the preferred direction. Other exits become
@@ -1122,7 +1188,7 @@ static bool circuitCompare(int a, int b, int op) {
 bool sparkAdd(int x, int y, int dx, int dy) {
     if (x < PLAY_X0 || x > PLAY_X1 || y < PLAY_Y0 || y > PLAY_Y1) return false;
     const u16 pulse = nextPulse();
-    g_pulseMark[y * SIM_W + x] = pulse;
+    g_pulseMark[y * SIM_W + x] = (u16)(pulse | ((u16)dirIndex(dx, dy) << PULSE_DIR_SHIFT));
     return sparkAddFront(x, y, dx, dy, pulse);
 }
 
@@ -1205,7 +1271,11 @@ void devTick(World& w) {
         Spark& s = g_sparks[i];
         if (!s.used || !w.electricalLive(s.x, s.y) || s.stepped == g_sparkFrame) continue;
         for (int step = 0; step < SPARK_SPEED; ++step) {
-            if (!sparkStep(w, s)) { s.used = false; break; }
+            if (!sparkStep(w, s)) {
+                s.used = false;
+                if (g_pulseFronts[s.pulse]) --g_pulseFronts[s.pulse];
+                break;
+            }
         }
         s.stepped = g_sparkFrame;
     }

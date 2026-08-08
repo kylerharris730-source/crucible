@@ -222,12 +222,22 @@ static const int CHEST_CAP = 100000;
    also sends a front down every perpendicular branch, so a wire network behaves
    like a short travelling wave rather than a single marble choosing a route.
 
-   Every conductor cell keeps the id of the last pulse that reached it. A pulse
-   may enter a cell once, never twice. That gives forks their expected behaviour
-   while making rings harmless: when fronts meet on the far side of a loop, the
-   second one simply stops. The mark is outside Cell on purpose, so electricity
-   still never dirties the material simulation. The fixed front array remains the
-   backstop for a very large, wildly branching circuit. */
+   Every conductor cell keeps the id of the last pulse that reached it, and the
+   direction that pulse was going. A pulse may enter a cell once, never twice.
+   That gives forks their expected behaviour while making rings harmless: when
+   fronts meet on the far side of a loop, the second one simply stops.
+
+   A cell claimed by a DIFFERENT wave is refused too, unless that wave has
+   finished or was heading the same way -- so a pulse may follow another down a
+   wire but may never cut across one or run into one. Without that last rule two
+   waves meeting head-on passed straight through each other, each finding the
+   other's trail unclaimed as far as its own id was concerned, and in any wire
+   thicker than a single cell the result was a front count that grew every frame
+   until the wire cooked itself apart. See the note in sparkStep.
+
+   The mark is outside Cell on purpose, so electricity still never dirties the
+   material simulation. The fixed front array remains the backstop for a very
+   large, wildly branching circuit. */
 
 /* Cells a spark advances per frame. One, so a circuit is something you can watch
    work -- at 60 Hz a 100-cell run of wire takes under two seconds, which is fast
