@@ -973,6 +973,69 @@ int main() {
         return 101;
     }
 
+    /* Pressure lifts a connected water column immediately instead of waiting
+       for the original steam cell to bubble through it one pixel per frame. */
+    w.reset();
+    const int liftX = 820, liftY = 700, liftDepth = 24;
+    w.setLiveWindow(liftX - 4, liftY - liftDepth - 4, liftX + 4, liftY + 4);
+    for (int y = liftY - liftDepth; y <= liftY; ++y) {
+        w.setCell(liftX - 1, y, MAT_STONE);
+        w.setCell(liftX + 1, y, MAT_STONE);
+    }
+    w.setCell(liftX, liftY + 1, MAT_STONE);
+    for (int y = liftY - liftDepth + 1; y < liftY; ++y)
+        w.setCell(liftX, y, MAT_WATER);
+    w.setCell(liftX, liftY, MAT_STEAM);
+    w.cells[liftY * SIM_W + liftX].moisture = 5;
+    w.temp[liftY * SIM_W + liftX] = degC(120);
+    w.dirtyPoint(liftX, liftY);
+    w.step();
+    int liftedWater = 0, liftedSteam = 0, liftedExcess = 0;
+    for (int y = liftY - liftDepth; y <= liftY; ++y) {
+        if (w.at(liftX, y).mat == MAT_WATER) ++liftedWater;
+        if (w.at(liftX, y).mat == MAT_STEAM) {
+            ++liftedSteam;
+            liftedExcess += w.at(liftX, y).moisture & GAS_EXCESS_MASK;
+        }
+    }
+    if (liftedWater != liftDepth - 1 || liftedSteam != 2 || liftedExcess != 4 ||
+        w.at(liftX, liftY - liftDepth).mat != MAT_WATER) {
+        fprintf(stderr, "steam pressure did not lift deep water (%d water, %d steam, %d excess, top %u)\n",
+                liftedWater, liftedSteam, liftedExcess,
+                w.at(liftX, liftY - liftDepth).mat); return 102;
+    }
+
+    /* The bounded liquid search follows a bent connected path to its outlet;
+       this catches implementations that only special-case a vertical column. */
+    w.reset();
+    const int bendX = 860, bendY = 700;
+    w.setLiveWindow(bendX - 6, bendY - 7, bendX + 9, bendY + 4);
+    for (int y = bendY - 4; y <= bendY + 1; ++y)
+        for (int x = bendX - 2; x <= bendX + 6; ++x)
+            w.setCell(x, y, MAT_STONE);
+    const int pathX[5] = { bendX, bendX, bendX + 1, bendX + 2, bendX + 3 };
+    const int pathY[5] = { bendY - 1, bendY - 2, bendY - 2, bendY - 2, bendY - 2 };
+    for (int k = 0; k < 5; ++k) w.setCell(pathX[k], pathY[k], MAT_WATER);
+    w.setCell(bendX + 4, bendY - 2, MAT_EMPTY);
+    w.setCell(bendX, bendY, MAT_STEAM);
+    w.cells[bendY * SIM_W + bendX].moisture = 5;
+    w.temp[bendY * SIM_W + bendX] = degC(120);
+    w.dirtyPoint(bendX, bendY);
+    w.step();
+    int bentWater = 0, bentSteam = 0;
+    for (int y = bendY - 4; y <= bendY; ++y)
+        for (int x = bendX - 1; x <= bendX + 4; ++x) {
+            if (w.at(x, y).mat == MAT_WATER) ++bentWater;
+            if (w.at(x, y).mat == MAT_STEAM) ++bentSteam;
+        }
+    if (bentWater != 5 || bentSteam != 2 ||
+        w.at(bendX + 4, bendY - 2).mat != MAT_WATER ||
+        w.at(bendX, bendY - 1).mat != MAT_STEAM) {
+        fprintf(stderr, "steam pressure did not follow bent liquid outlet (%d water, %d steam, outlet %u, inlet %u)\n",
+                bentWater, bentSteam, w.at(bendX + 4, bendY - 2).mat,
+                w.at(bendX, bendY - 1).mat); return 103;
+    }
+
     /* Water's short reach makes a horizontal heat front advance three cells in
        one frame. Frame zero scans right-to-left, so local neighbor conduction
        alone cannot relay heat away from the left endpoint during this step. */

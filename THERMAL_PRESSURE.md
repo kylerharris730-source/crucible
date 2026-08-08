@@ -37,12 +37,21 @@ Regression coverage verifies open expansion, sealed retention, connected
 equalization, condensation conservation, reopening a sleeping chamber, and
 sieve provenance.
 
-## 3. Liquid displacement
+## 3. Liquid displacement — implemented
 
 Pressurized gas spends one excess unit to create another gas cell and shifts a
 connected liquid path toward its nearest surface or outlet. Prefer a cheap
 vertical column search, followed by a bounded lateral search. No world-wide
 flood fill and no teleporting to a remote outlet.
+
+The vertical path is capped at 64 cells and the lateral search at a 16-cell
+radius. One compressed parcel displaces one volume per frame. Cells carry their
+temperature through the shift, liquid volume is conserved, player-occupied
+cells cannot be selected as outlets, and every moved path is dirtied and
+stamped so it cannot relay again during the same in-place simulation scan.
+
+Regression coverage verifies both a 23-cell-deep lift and a bent liquid path,
+including exact liquid volume and pressure-unit conservation.
 
 ## 4. Permeable powders
 

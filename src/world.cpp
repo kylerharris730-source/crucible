@@ -59,6 +59,14 @@ static const int NB8_DY[8] = { -1,  1,  0,  0, -1, -1,  1,  1 };
    one degree, turning a calm interface into permanent pixel vibration. */
 static const int DENSITY_SWAP_EPS_Q8 = 64;
 
+/* Pressure can lift a reasonably deep column cheaply, while the more
+   expensive sideways search stays tightly local. These are deliberately two
+   limits: the common case is a straight column of water above a steam pocket,
+   and making that pay for a square flood fill would punish boilers for no
+   visual benefit. */
+static const int GAS_PRESSURE_VERTICAL_REACH = 64;
+static const int GAS_PRESSURE_LIQUID_RADIUS  = 16;
+
 /* Divide a heat transfer by 2^shift to get the temperature change a material of
    that thermal mass actually feels, carrying the remainder stochastically so
    small transfers average out correctly instead of truncating to nothing.
@@ -719,6 +727,124 @@ bool World::updateGasPressure(int x, int y) {
         temp[ni] = temp[i];
         c.moisture = (u8)((c.moisture & GAS_VOLUME_ONLY) | (excess - 1));
         dirtyPoint(x, y); dirtyPoint(nx, ny);
+        return true;
+    }
+
+    /* A compressed parcel under liquid should not have to wait for its owner
+       cell to bubble all the way to the surface before any of the stored
+       volume can appear. Pressure instead shifts one connected liquid path
+       into an empty outlet and occupies the vacated cell nearest the gas.
+
+       One unit per parcel per frame is intentional. It makes decompression
+       prompt without allowing a large boiler to rearrange a lake in a single
+       scan. Whole Cells and temperatures move together, just like tryMove(). */
+    const u8 gasMat = c.mat;
+    const u8 gasTemp = temp[i];
+    const u8 pressureStamp = (u8)(stamp() << STAMP_SHIFT);
+    const u8 gasDir = (u8)(c.flags & F_DIR);
+    const auto finishExpansion = [&](int di) {
+        Cell& d = cells[di];
+        d.mat = gasMat;
+        d.moisture = GAS_VOLUME_ONLY;
+        d.tint = (u8)rngBits(8);
+        d.flags = (u8)(gasDir | pressureStamp);
+        temp[di] = gasTemp;
+        c.moisture = (u8)((c.moisture & GAS_VOLUME_ONLY) | (excess - 1));
+        c.flags = (u8)(gasDir | pressureStamp);
+        dirtyPoint(x, y);
+        dirtyPoint(di % SIM_W, di / SIM_W);
+    };
+
+    /* Fast path: the overwhelmingly common boiler geometry is liquid directly
+       above the gas with open air above that column. Shift from the surface
+       downward so no parcel is overwritten before it has been copied. */
+    int outletY = -1;
+    for (int d = 1; d <= GAS_PRESSURE_VERTICAL_REACH && y - d >= PLAY_Y0; ++d) {
+        const u8 mat = cells[(y - d) * SIM_W + x].mat;
+        if (mat == MAT_EMPTY) { outletY = y - d; break; }
+        if (MATS[mat].kind != KIND_LIQUID) break;
+    }
+    if (outletY >= 0 && !blocksCell(x, outletY)) {
+        for (int my = outletY; my < y - 1; ++my) {
+            const int dst = my * SIM_W + x;
+            const int src = (my + 1) * SIM_W + x;
+            cells[dst] = cells[src];
+            temp[dst] = temp[src];
+            cells[dst].flags = (u8)((cells[dst].flags & F_DIR) | pressureStamp);
+            dirtyPoint(x, my);
+        }
+        finishExpansion((y - 1) * SIM_W + x);
+        return true;
+    }
+
+    /* A short bent pipe, cavity, or sloping shoreline needs more than a
+       vertical ray. Search only a 33x33 box around the gas. parent[] is both
+       the visited set and the path back to the first adjacent liquid, so the
+       work and stack storage have hard upper bounds independent of world or
+       lake size. */
+    static const int R = GAS_PRESSURE_LIQUID_RADIUS;
+    static const int SIDE = R * 2 + 1;
+    static const int CAP = SIDE * SIDE;
+    i16 parent[CAP];
+    i16 queue[CAP];
+    for (int k = 0; k < CAP; ++k) parent[k] = -2;
+
+    const int orderDx[4] = { 0, dir, -dir, 0 };
+    const int orderDy[4] = { -1, 0, 0, 1 };
+    int head = 0, tail = 0;
+    for (int k = 0; k < 4; ++k) {
+        const int nx = x + orderDx[k], ny = y + orderDy[k];
+        if (nx < PLAY_X0 || nx > PLAY_X1 || ny < PLAY_Y0 || ny > PLAY_Y1) continue;
+        if (MATS[cells[ny * SIM_W + nx].mat].kind != KIND_LIQUID) continue;
+        const int li = (ny - (y - R)) * SIDE + (nx - (x - R));
+        if (parent[li] != -2) continue;
+        parent[li] = -1;
+        queue[tail++] = (i16)li;
+    }
+
+    int goal = -1, outletX = 0, outletSearchY = 0;
+    while (head < tail && goal < 0) {
+        const int li = queue[head++];
+        const int lx = li % SIDE, ly = li / SIDE;
+        const int wx = x - R + lx, wy = y - R + ly;
+        for (int k = 0; k < 4; ++k) {
+            const int nx = wx + orderDx[k], ny = wy + orderDy[k];
+            if (nx < PLAY_X0 || nx > PLAY_X1 || ny < PLAY_Y0 || ny > PLAY_Y1) continue;
+            const Cell& n = cells[ny * SIM_W + nx];
+            if (n.mat == MAT_EMPTY && !blocksCell(nx, ny)) {
+                goal = li; outletX = nx; outletSearchY = ny; break;
+            }
+        }
+        if (goal >= 0) break;
+
+        for (int k = 0; k < 4; ++k) {
+            const int nlx = lx + orderDx[k], nly = ly + orderDy[k];
+            if (nlx < 0 || nlx >= SIDE || nly < 0 || nly >= SIDE) continue;
+            const int ni = nly * SIDE + nlx;
+            if (parent[ni] != -2) continue;
+            const int nx = x - R + nlx, ny = y - R + nly;
+            if (nx < PLAY_X0 || nx > PLAY_X1 || ny < PLAY_Y0 || ny > PLAY_Y1) continue;
+            if (MATS[cells[ny * SIM_W + nx].mat].kind != KIND_LIQUID) continue;
+            parent[ni] = (i16)li;
+            queue[tail++] = (i16)ni;
+        }
+    }
+
+    if (goal >= 0) {
+        int dst = outletSearchY * SIM_W + outletX;
+        int path = goal;
+        while (path >= 0) {
+            const int px = x - R + path % SIDE;
+            const int py = y - R + path / SIDE;
+            const int src = py * SIM_W + px;
+            cells[dst] = cells[src];
+            temp[dst] = temp[src];
+            cells[dst].flags = (u8)((cells[dst].flags & F_DIR) | pressureStamp);
+            dirtyPoint(dst % SIM_W, dst / SIM_W);
+            dst = src;
+            path = parent[path];
+        }
+        finishExpansion(dst);
         return true;
     }
 
