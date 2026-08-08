@@ -518,27 +518,8 @@ static bool sparkStep(World& w, Spark& s) {
             handedOn = true;
             continue;
         }
-        /* --- which direction the claim records ------------------------------
-           The direction the WAVE is going, not the direction of this particular
-           step. Those differ for the sideways steps that fill a thick wire's
-           cross-section, and recording the step is what made a following pulse
-           die for no reason the player could see.
-
-           A wave moving right down a wire two cells thick claims the near row
-           heading right and -- because the far row is reached by stepping
-           sideways into it -- claimed the far row heading DOWN. A second pulse
-           dropped in behind, travelling right, then passed along the near row
-           and was refused by the far one, so whether a trailing wave lived
-           depended on which row it happened to be injected into. From outside
-           that is just electricity being temperamental.
-
-           The wave is going the way the front that owns this step is going, so
-           a sibling records its parent's heading. The parent has already chosen
-           it by the time any sibling is spawned. */
-        const int claimDx = travelled ? (int)s.dx : cand[k][0];
-        const int claimDy = travelled ? (int)s.dy : cand[k][1];
         g_pulseMark[mark] = (u16)(s.pulse
-                              | ((u16)dirIndex(claimDx, claimDy) << PULSE_DIR_SHIFT));
+                              | ((u16)dirIndex(cand[k][0], cand[k][1]) << PULSE_DIR_SHIFT));
 
         if (!travelled) {
             /* Keep this front for the preferred direction. Other exits become
