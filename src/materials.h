@@ -358,6 +358,12 @@ enum MatId {
        meaning; it sinks through water but is otherwise an ordinary fluid. */
     MAT_GLOWFLUID,
 
+    /* One-cell filter blocks. Kept at the end so adding them never renumbers
+       materials in existing saves. Their permeability is handled by world.cpp:
+       Sieve passes liquids and gases; Gas Sieve passes gases only. */
+    MAT_SIEVE,
+    MAT_GAS_SIEVE,
+
     MAT_COUNT
 };
 

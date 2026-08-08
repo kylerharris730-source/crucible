@@ -89,7 +89,12 @@ MatInfo MATS[MAT_COUNT] = {
      spreading rule differ. Making it behave differently would mean a block of
      turf dug up and dropped acted unlike the dirt it plainly is. */
   { "Grass", KIND_POWDER, 140, 150,   12,   0,   0, 192,  2,   80,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0x5E9A3C, 0x3F7028, 0x375E22, 0x264A18, 0 },
-  { "Water", KIND_LIQUID, 100,   0,    0,   5,   0,   0,  0,  180,  0,   0,   0, degC(0), MAT_ICE, degC(100), MAT_STEAM, 0, MAT_EMPTY,   0,  0x3D7FD1, 0x2C5FA6, 0x3D7FD1, 0x2C5FA6, 0 },
+  /* Water gets a short conduction reach in addition to its already-high
+     contact conductivity. At spread 3 every intermediate cell is checked by
+     the four-probe heat path, so this carries heat through water three pixels
+     per frame without hopping a dry gap or paying for repeated whole-pool
+     relaxation passes. */
+  { "Water", KIND_LIQUID, 100,   0,    0,   5,   0,   0,  0,  180,  0,   3,   0, degC(0), MAT_ICE, degC(100), MAT_STEAM, 0, MAT_EMPTY,   0,  0x3D7FD1, 0x2C5FA6, 0x3D7FD1, 0x2C5FA6, 0 },
   /* Ice is static, so it never flows and never gets displaced -- tryMove
      refuses to swap with any non-liquid, non-gas, which is what stops water
      tunnelling through a frozen sheet regardless of the densities. The density
@@ -838,6 +843,10 @@ MatInfo MATS[MAT_COUNT] = {
      through a pool and settles at the bottom. It has no heat reaction: it is
      a lighting/building material, not another route around the metal ladder. */
   { "Glowfluid", KIND_LIQUID,  90, 0, 0, 8, 0, 0, 0, 150, 0, 0, 0, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, 0x8CE8B8, 0x3CA878, 0x8CE8B8, 0x3CA878, 0 },
+  /* Filters remain solid material cells; world.cpp lets the permitted flow
+     kinds hop across them while powders stay caught on the mesh. */
+  { "Sieve", KIND_STATIC, 255, 0, 0, 0, 0, 0, 0, 60, 0, 0, 0, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, 0x9CA8A8, 0x687878, 0x9CA8A8, 0x687878, 0 },
+  { "GasSieve", KIND_STATIC, 255, 0, 0, 0, 0, 0, 0, 60, 0, 0, 0, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, 0xB49CE0, 0x7860A0, 0xB49CE0, 0x7860A0, 0 },
 };
 
 u32 g_colorLut[MAT_COUNT * 256];

@@ -243,6 +243,13 @@ void World::heat(int cx, int cy, int r, int delta) {
 /* Move source into target, either because target is empty or because target
    is a fluid the source is heavy enough to sink through. Both cells are
    stamped with the current parity so neither gets a second turn this frame. */
+static bool filterAllows(u8 filter, u8 moving) {
+    const u8 kind = MATS[moving].kind;
+    if (filter == MAT_SIEVE) return kind == KIND_LIQUID || kind == KIND_GAS;
+    if (filter == MAT_GAS_SIEVE) return kind == KIND_GAS;
+    return false;
+}
+
 bool World::tryMove(int sx, int sy, int tx, int ty) {
     /* Nothing moves into an occupied entity box -- see the note in world.h.
        First test in the function and first comparison of the box test, so the
@@ -261,11 +268,31 @@ bool World::tryMove(int sx, int sy, int tx, int ty) {
        fails on its first compare against a constant almost everywhere in the
        world, and the second test is only reached for cells actually inside the
        box. */
-    if (blocksCell(tx, ty) && !cellFalling(cells[sy * SIM_W + sx])) return false;
-
     const int si = sy * SIM_W + sx, ti = ty * SIM_W + tx;
     Cell& s = cells[si];
     Cell& t = cells[ti];
+
+    /* Filters are fixed mesh cells, not a second layer. A permitted fluid or
+       gas therefore crosses one by hopping into the space beyond, leaving the
+       mesh and its temperature intact. Powders never take this branch. */
+    if (filterAllows(t.mat, s.mat)) {
+        const int dx = tx - sx, dy = ty - sy;
+        const int px = tx + dx, py = ty + dy;
+        if (px < PLAY_X0 || px > PLAY_X1 || py < PLAY_Y0 || py > PLAY_Y1 || blocksCell(px, py)) return false;
+        const int pi = py * SIM_W + px;
+        Cell& p = cells[pi];
+        if (p.mat != MAT_EMPTY) return false;
+        p = s;
+        s.mat = MAT_EMPTY; s.moisture = 0; s.tint = (u8)rngBits(8); s.flags = 0;
+        temp[pi] = temp[si]; temp[si] = AMBIENT_TEMP;
+        const u8 st = (u8)(stamp() << STAMP_SHIFT);
+        p.flags = (u8)((p.flags & F_DIR) | st);
+        s.flags = st;
+        dirtyPoint(sx, sy); dirtyPoint(tx, ty); dirtyPoint(px, py);
+        return true;
+    }
+
+    if (blocksCell(tx, ty) && !cellFalling(s)) return false;
 
     if (t.mat != MAT_EMPTY) {
         const MatInfo& tm = MATS[t.mat];
@@ -301,7 +328,17 @@ bool World::tryMove(int sx, int sy, int tx, int ty) {
         /* Gases invert the density test: they displace anything *heavier*,
            which is how steam bubbles up through water. */
         if (sm.kind == KIND_GAS) { if (tm.density <= sm.density) return false; }
-        else                     { if (tm.density >= sm.density) return false; }
+        else {
+            if (tm.density >= sm.density) return false;
+            /* Gas owns the swap with liquid, on the gas cell's turn. Letting
+               liquid push a gas target sounds symmetric but is not under an
+               in-place scan: neighbouring water cells can relay one stamped
+               steam cell sideways/upward many times before it gets a turn.
+               Waiting costs at most one frame; then the bubble rises itself. */
+            if (tm.kind == KIND_GAS) {
+                return false;
+            }
+        }
         }
     }
 
@@ -425,11 +462,38 @@ void World::updatePowder(int x, int y) {
     tryMove(x, y, x - dx, y + 1);
 }
 
+/* Temperature-only convection for every fluid. It is intentionally limited to
+   two cells of the SAME material: conduction already handles heat crossing a
+   water/lava or gas/liquid boundary, while exchanging parcels across that
+   boundary without moving their materials would be false mixing.
+
+   Alternating non-overlapping row pairs prevents a hot parcel from racing up
+   several cells during one bottom-to-top scan. Position/frame parity replaces
+   an RNG roll, so convection adds no RNG consumption and cannot alter the
+   established movement silhouette of a fluid body. */
+void World::updateConvection(int x, int y) {
+    const int i = y * SIM_W + x;
+    const u8 mat = cells[i].mat;
+    const u8 kind = MATS[mat].kind;
+    if ((kind != KIND_LIQUID && kind != KIND_GAS) ||
+        (((u32)y ^ frame) & 1u) != 0u) return;
+
+    const int above = i - SIM_W;
+    if (cells[above].mat != mat || (int)temp[i] <= (int)temp[above] + 4) return;
+
+    const u8 parcel = temp[i];
+    temp[i] = temp[above];
+    temp[above] = parcel;
+    dirtyPoint(x, y);
+    dirtyPoint(x, y - 1);
+}
+
 void World::updateLiquid(int x, int y) {
     Cell& c = cells[y * SIM_W + x];
     const MatInfo& m = MATS[c.mat];
 
     if (tryMove(x, y, x, y + 1)) return;
+    updateConvection(x, y);
 
     /* Viscosity. For a liquid the `jitter` byte is a chance out of 255 that the
        cell simply refuses to flow sideways this frame -- see the note on the
@@ -514,6 +578,21 @@ void World::updateGas(int x, int y) {
     Cell& c = cells[y * SIM_W + x];
     const MatInfo& m = MATS[c.mat];
 
+    /* A submerged bubble gets one upward step per turn, but that step may be
+       diagonal. This widens a plume naturally without restoring the old bug:
+       unrestricted sideways swaps let water relay one steam cell across a pool
+       during an in-place scan. Here lateral travel is bounded by vertical
+       travel -- after rising N cells a bubble can be at most N cells sideways. */
+    const u8 aboveKind = MATS[cells[(y - 1) * SIM_W + x].mat].kind;
+    if (aboveKind == KIND_LIQUID) {
+        if (m.jitter && rngChance(m.jitter)) {
+            const int jd = (rngNext() & 1u) ? 1 : -1;
+            if (tryMove(x, y, x + jd, y - 1)) return;
+            if (tryMove(x, y, x - jd, y - 1)) return;
+        }
+        if (tryMove(x, y, x, y - 1)) return;
+    }
+
     /* Flit: before trying to rise, a gas has a per-material chance of just
        wandering sideways. This is what stops smoke and steam from rising as a
        rigid vertical column -- they billow and drift the way a real plume
@@ -526,27 +605,34 @@ void World::updateGas(int x, int y) {
 
     /* A mirror of updateLiquid with the vertical sense flipped. */
     if (tryMove(x, y, x, y - 1)) return;
+    updateConvection(x, y);
 
     int dx = (c.flags & F_DIR) ? 1 : -1;
     if (tryMove(x, y, x + dx, y - 1)) return;
     if (tryMove(x, y, x - dx, y - 1)) return;
 
     for (int attempt = 0; attempt < 2; ++attempt) {
-        int destX = x;
+        int moveFromX = x, moveToX = x;
         for (int s = 1; s <= (int)m.dispersion; ++s) {
             int nx = x + dx * s;
             if (nx < PLAY_X0 || nx > PLAY_X1) break;
             const Cell& n = cells[y * SIM_W + nx];
             if (n.mat != MAT_EMPTY) {
+                if (filterAllows(n.mat, c.mat)) {
+                    const int beyond = nx + dx;
+                    if (beyond >= PLAY_X0 && beyond <= PLAY_X1 &&
+                        cells[y * SIM_W + beyond].mat == MAT_EMPTY) moveToX = nx;
+                    break;
+                }
+                if (n.mat == c.mat) { moveFromX = nx; continue; }
                 const MatInfo& nm = MATS[n.mat];
                 if (nm.kind != KIND_GAS || nm.density <= m.density) break;
             }
-            destX = nx;
-            if (cells[(y - 1) * SIM_W + nx].mat == MAT_EMPTY) break;  /* found a way up */
+            moveToX = nx;
+            break;
         }
-        if (destX != x) {
-            tryMove(x, y, destX, y);
-            dirtyArea(imin(x, destX), y, imax(x, destX), y);
+        if (moveToX != x && tryMove(moveFromX, y, moveToX, y)) {
+            dirtyArea(imin(x, moveToX), y, imax(x, moveToX), y);
             return;
         }
         dx = -dx;

@@ -40,8 +40,10 @@ if errorlevel 1 (
     echo The new build is at build\crucible.new.exe
     exit /b 1
 )
-REM Direct diagnostic builds use the `crucible.<purpose>.exe` convention. They
-REM are not game saves or the main executable, so a successful normal build is
-REM the safe moment to clear that scoped clutter.
+REM Direct diagnostic builds use either the `crucible.<purpose>.exe` or
+REM `<name>_test.exe` convention. Failed replacement builds can also leave a
+REM `<name>.new.exe`. None are saves or the main executable, so a successful
+REM normal build is the safe moment to clear that scoped clutter.
 for %%f in (build\crucible.*.exe) do del /q "%%f" 2>nul
+for %%f in (build\*_test.exe build\*.new.exe) do del /q "%%f" 2>nul
 echo Built build\crucible.exe

@@ -477,6 +477,153 @@ int main() {
         circuitInput(receiver, CIR_SIG_3) != 17 || circuitWireCount() != 3) {
         fprintf(stderr, "circuit signals did not aggregate through wires\n"); return 21;
     }
+
+    /* A Sieve is a fixed mesh, not consumed by the flow: liquids and gas hop
+       across it, while powder is caught. A Gas Sieve is the stricter version. */
+    w.reset();
+    w.setLiveWindow(480, 480, 550, 550);
+    w.setCell(500, 500, MAT_WATER); w.setCell(500, 501, MAT_SIEVE);
+    w.step();
+    if (w.at(500, 501).mat != MAT_SIEVE || w.at(500, 502).mat != MAT_WATER) {
+        fprintf(stderr, "sieve did not pass water\n"); return 45;
+    }
+    w.reset();
+    w.setLiveWindow(480, 480, 550, 550);
+    w.setCell(510, 500, MAT_SAND); w.setCell(510, 501, MAT_SIEVE);
+    w.setCell(509, 500, MAT_STONE); w.setCell(511, 500, MAT_STONE);
+    w.setCell(509, 501, MAT_STONE); w.setCell(511, 501, MAT_STONE);
+    w.step();
+    if (w.at(510, 500).mat != MAT_SAND) {
+        fprintf(stderr, "sieve passed powder\n"); return 46;
+    }
+    w.reset();
+    w.setLiveWindow(480, 480, 550, 550);
+    w.setCell(520, 500, MAT_WATER); w.setCell(520, 501, MAT_GAS_SIEVE);
+    w.setCell(519, 500, MAT_STONE); w.setCell(521, 500, MAT_STONE);
+    w.setCell(519, 501, MAT_STONE); w.setCell(521, 501, MAT_STONE);
+    w.step();
+    if (w.at(520, 500).mat != MAT_WATER) {
+        fprintf(stderr, "gas sieve passed liquid\n"); return 47;
+    }
+    w.reset();
+    w.setLiveWindow(480, 480, 550, 550);
+    w.setCell(530, 500, MAT_STEAM); w.setCell(530, 499, MAT_GAS_SIEVE);
+    w.step();
+    if (w.at(530, 499).mat != MAT_GAS_SIEVE || w.at(530, 498).mat != MAT_STEAM) {
+        fprintf(stderr, "gas sieve did not pass gas\n"); return 48;
+    }
+
+    /* Convection moves a hot fluid parcel upward without moving either cell.
+       Use glowfluid rather than water so this catches an accidental return to
+       a water-only special case. The bottom row is even so reset frame zero
+       selects this non-overlapping pair. */
+    w.reset();
+    const int convX = 600, convBottom = 600;
+    w.setLiveWindow(convX - 4, convBottom - 6, convX + 4, convBottom + 4);
+    for (int y = convBottom - 2; y <= convBottom + 1; ++y) {
+        w.setCell(convX - 3, y, MAT_STONE);
+        w.setCell(convX + 3, y, MAT_STONE);
+    }
+    for (int x = convX - 2; x <= convX + 2; ++x) {
+        w.setCell(x, convBottom + 1, MAT_STONE);
+        w.setCell(x, convBottom, MAT_GLOWFLUID);
+        w.setCell(x, convBottom - 1, MAT_GLOWFLUID);
+        w.temp[convBottom * SIM_W + x] = degC(90);
+        w.temp[(convBottom - 1) * SIM_W + x] = AMBIENT_TEMP;
+    }
+    g_rng = 0x31415926u;
+    w.step();
+    const int convBelowT = w.temp[convBottom * SIM_W + convX];
+    const int convAboveT = w.temp[(convBottom - 1) * SIM_W + convX];
+    const bool convMatsStayed = w.at(convX, convBottom).mat == MAT_GLOWFLUID &&
+                                w.at(convX, convBottom - 1).mat == MAT_GLOWFLUID;
+
+    /* Identical sealed column shifted down one row: frame zero does not select
+       its odd bottom row, so this is the neighbor-conduction-only control. */
+    w.reset();
+    const int ctrlBottom = convBottom + 1;
+    w.setLiveWindow(convX - 4, ctrlBottom - 6, convX + 4, ctrlBottom + 4);
+    for (int y = ctrlBottom - 2; y <= ctrlBottom + 1; ++y) {
+        w.setCell(convX - 3, y, MAT_STONE);
+        w.setCell(convX + 3, y, MAT_STONE);
+    }
+    for (int x = convX - 2; x <= convX + 2; ++x) {
+        w.setCell(x, ctrlBottom + 1, MAT_STONE);
+        w.setCell(x, ctrlBottom, MAT_GLOWFLUID);
+        w.setCell(x, ctrlBottom - 1, MAT_GLOWFLUID);
+        w.temp[ctrlBottom * SIM_W + x] = degC(90);
+        w.temp[(ctrlBottom - 1) * SIM_W + x] = AMBIENT_TEMP;
+    }
+    g_rng = 0x31415926u;
+    w.step();
+    const int ctrlAboveT = w.temp[(ctrlBottom - 1) * SIM_W + convX];
+    if (!convMatsStayed || convAboveT <= ctrlAboveT) {
+        fprintf(stderr, "water convection did not beat conduction-only control (conv %d/%d, control above %d)\n",
+                convBelowT, convAboveT, ctrlAboveT); return 49;
+    }
+
+    /* Water's short reach makes a horizontal heat front advance three cells in
+       one frame. Frame zero scans right-to-left, so local neighbor conduction
+       alone cannot relay heat away from the left endpoint during this step. */
+    w.reset();
+    const int waterHeatX = 700, waterHeatY = 620;
+    w.setLiveWindow(waterHeatX - 4, waterHeatY - 4, waterHeatX + 12, waterHeatY + 4);
+    for (int x = waterHeatX; x < waterHeatX + 8; ++x) {
+        w.setCell(x, waterHeatY, MAT_WATER);
+        w.setCell(x, waterHeatY + 1, MAT_STONE);
+    }
+    w.setCell(waterHeatX - 1, waterHeatY, MAT_STONE);
+    w.setCell(waterHeatX + 8, waterHeatY, MAT_STONE);
+    w.setCell(waterHeatX - 1, waterHeatY + 1, MAT_STONE);
+    w.setCell(waterHeatX + 8, waterHeatY + 1, MAT_STONE);
+    w.temp[waterHeatY * SIM_W + waterHeatX] = degC(90);
+    const int waterHeatBefore = w.temp[waterHeatY * SIM_W + waterHeatX];
+    w.step();
+    if (w.temp[waterHeatY * SIM_W + waterHeatX + 3] <= AMBIENT_TEMP) {
+        fprintf(stderr, "water heat front did not use its short conduction reach (before %d; %u %u %u %u; mats %u %u)\n",
+                waterHeatBefore,
+                (unsigned)w.temp[waterHeatY * SIM_W + waterHeatX],
+                (unsigned)w.temp[waterHeatY * SIM_W + waterHeatX + 1],
+                (unsigned)w.temp[waterHeatY * SIM_W + waterHeatX + 2],
+                (unsigned)w.temp[waterHeatY * SIM_W + waterHeatX + 3],
+                (unsigned)w.at(waterHeatX, waterHeatY).mat,
+                (unsigned)w.at(waterHeatX + 3, waterHeatY).mat); return 51;
+    }
+
+    /* A submerged gas plume may rise diagonally, but never makes a pure
+       sideways underwater hop. Track it each frame: it must widen, while its
+       lateral distance remains bounded by how far it has risen. */
+    w.reset();
+    const int bubbleX = 800, bubbleY = 700;
+    w.setLiveWindow(bubbleX - 16, bubbleY - 68, bubbleX + 16, bubbleY + 8);
+    for (int y = bubbleY - 60; y <= bubbleY + 2; ++y) {
+        for (int x = bubbleX - 10; x <= bubbleX + 10; ++x) {
+            const bool wall = x == bubbleX - 10 || x == bubbleX + 10 || y == bubbleY + 2;
+            w.setCell(x, y, wall ? MAT_STONE : MAT_WATER);
+            if (!wall) w.temp[y * SIM_W + x] = AMBIENT_TEMP;
+        }
+    }
+    w.setCell(bubbleX, bubbleY, MAT_STEAM);
+    g_rng = 0x27182818u;
+    int steamCount = 0, steamX = bubbleX, steamY = bubbleY, maxLateral = 0;
+    for (int frame = 0; frame < 6; ++frame) {
+        w.step();
+        steamCount = 0;
+        for (int y = bubbleY - 60; y <= bubbleY + 1; ++y)
+            for (int x = bubbleX - 9; x <= bubbleX + 9; ++x)
+                if (w.at(x, y).mat == MAT_STEAM) {
+                    ++steamCount; steamX = x; steamY = y;
+                }
+        const int lateral = steamX < bubbleX ? bubbleX - steamX : steamX - bubbleX;
+        if (lateral > maxLateral) maxLateral = lateral;
+        if (steamCount != 1 || lateral > bubbleY - steamY) break;
+    }
+    if (steamCount != 1 || steamY >= bubbleY || maxLateral == 0 ||
+        (steamX < bubbleX ? bubbleX - steamX : steamX - bubbleX) > bubbleY - steamY) {
+        fprintf(stderr, "submerged steam did not widen locally (%d at %d,%d; max lateral %d)\n",
+                steamCount, steamX, steamY, maxLateral); return 50;
+    }
+
     puts("simulation regression test passed");
     return 0;
 }

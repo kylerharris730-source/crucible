@@ -26,6 +26,12 @@ const Recipe RECIPES[] = {
     { { { (ItemId)MAT_WOOD, 1 }, { ITEM_NONE, 0 }, { ITEM_NONE, 0 } },
       (ItemId)MAT_ROPE, 2, "2 Rope", STATION_HAND },
 
+    /* Void is a convenience disposal block, not a progression material. Coal
+       gives the otherwise mundane stone a small cost, while four blocks per
+       craft makes sealing a bad pipe run or clearing a jam practical. */
+    { { { (ItemId)MAT_STONE, 2 }, { (ItemId)MAT_COAL, 1 }, { ITEM_NONE, 0 } },
+      (ItemId)MAT_VOID, 4, "4 Void", STATION_HAND },
+
     /* A door is a wall you built twice, so it costs more per cell than either
        of the above -- and you need a lot of cells to fill a doorway, which is
        what stops doors being the default way to close a room. */
@@ -186,6 +192,12 @@ const Recipe RECIPES[] = {
        material two tiers above them. */
     { { { (ItemId)MAT_WOOD, 3 }, { (ItemId)MAT_COAL, 1 }, { ITEM_NONE, 0 } },
       (ItemId)MAT_RUBBER, 2, "2 Rubber", STATION_BENCH },
+    /* Filters are deliberate plumbing pieces: the coarse mesh catches a
+       powder while letting fluid through; the finer one admits gas only. */
+    { { { (ItemId)MAT_WOOD, 2 }, { (ItemId)MAT_IRON, 1 }, { ITEM_NONE, 0 } },
+      (ItemId)MAT_SIEVE, 4, "4 Sieve", STATION_BENCH },
+    { { { (ItemId)MAT_COPPER, 2 }, { (ItemId)MAT_GLASS, 1 }, { ITEM_NONE, 0 } },
+      (ItemId)MAT_GAS_SIEVE, 4, "4 Gas Sieve", STATION_BENCH },
 
     /* --- bread ------------------------------------------------------------
        What wheat is FOR, and the first thing in this game that acts on the

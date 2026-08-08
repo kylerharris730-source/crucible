@@ -328,9 +328,10 @@ static const int ACID_DISSOLVE_CHANCE = 20;
 /* How readily a spring pushes water into an empty neighbour, out of 255. Slow
    on purpose: a spring that filled at the rate water flows would be a burst
    pipe rather than a spring, and the pleasure of finding one is watching the
-   pool come back. 12 refills a body of any useful size in a few seconds and
-   still reads as seeping. */
-static const int SPRING_FLOW_CHANCE = 12;
+   pool come back. 24 is twice the former seep rate: a discovered spring now
+   supports a practical drain or small reservoir, while still filling one cell
+   at a time rather than behaving like a burst pipe. */
+static const int SPRING_FLOW_CHANCE = 24;
 
 /* Heater and cooler setpoints. These are the extremes of the u8 scale on
    purpose: the heater sits above stone's melting point (220) and so above
@@ -757,6 +758,7 @@ private:
     void updateHeat(int x, int y);
     void updateMoisture(int x, int y);
     void updateEvaporation(int x, int y);
+    void updateConvection(int x, int y);
     void updatePowder(int x, int y);
     void updateLiquid(int x, int y);
     void updateGas(int x, int y);
