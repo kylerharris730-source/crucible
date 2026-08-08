@@ -64,10 +64,10 @@ static const int DENSITY_SWAP_EPS_Q8 = 64;
    limits: the common case is a straight column of water above a steam pocket,
    and making that pay for a square flood fill would punish boilers for no
    visual benefit. */
-static const int GAS_PRESSURE_VERTICAL_REACH = 64;
+static const int GAS_PRESSURE_VERTICAL_REACH = 512;
 static const int GAS_PRESSURE_LIQUID_RADIUS  = 16;
 static const int GAS_PRESSURE_POWDER_REACH   = 8;
-static const int GAS_PRESSURE_POCKET_RAY     = 64;
+static const int GAS_PRESSURE_POCKET_RAY     = 512;
 static const int GAS_PRESSURE_POCKET_RADIUS  = 32;
 static const int GAS_PRESSURE_POCKET_NODES   = 2048;
 static const int GAS_PRESSURE_POCKET_BUDGET  = 128;
@@ -836,7 +836,6 @@ bool World::updateGasPressure(int x, int y) {
             cells[dst] = cells[src];
             temp[dst] = temp[src];
             cells[dst].flags = (u8)((cells[dst].flags & F_DIR) | pressureStamp);
-            dirtyPoint(x, my);
         }
         for (int gy = y - burst; gy < y; ++gy) {
             const int gi = gy * SIM_W + x;
@@ -846,13 +845,12 @@ bool World::updateGasPressure(int x, int y) {
             g.tint = (u8)rngBits(8);
             g.flags = (u8)(gasDir | pressureStamp);
             temp[gi] = gasTemp;
-            dirtyPoint(x, gy);
         }
         if (burst) {
             c.moisture = (u8)((c.moisture & GAS_VOLUME_ONLY) |
                               ((int)excess - burst));
             c.flags = (u8)(gasDir | pressureStamp);
-            dirtyPoint(x, y);
+            dirtyArea(x, outletY - burst, x, y);
             return true;
         }
     }
@@ -928,12 +926,21 @@ bool World::updateGasPressure(int x, int y) {
             const int nx = gx + dx[k], ny = gy + dy[k];
             const Cell& n = cells[ny * SIM_W + nx];
             if (n.mat == MAT_EMPTY && !blocksCell(nx, ny)) return true;
-            if (MATS[n.mat].kind == KIND_LIQUID) return true;
             if (filterAllows(n.mat, gasMat) ||
                 reactivePowderAllowsGas(n.mat, gasMat)) return true;
-            if (MATS[n.mat].kind == KIND_POWDER &&
-                g_matPressureResistance[n.mat] != 255 &&
-                g_matPressureResistance[n.mat] <= excess) return true;
+        }
+
+        /* Merely touching liquid is not relief. In a deep lake that mistake
+           labels the sides and bottom of a Steam blob as outlets even though
+           neither can create volume; shared pressure then piles up there and
+           waits for bubbles to crawl upward. A straight liquid column counts
+           only when it actually reaches open space within the lift bound. Bent
+           local outlets are still handled by the bounded liquid search below. */
+        for (int d = 1; d <= GAS_PRESSURE_VERTICAL_REACH && gy - d >= PLAY_Y0; ++d) {
+            const int ny = gy - d;
+            const Cell& n = cells[ny * SIM_W + gx];
+            if (n.mat == MAT_EMPTY) return !blocksCell(gx, ny);
+            if (MATS[n.mat].kind != KIND_LIQUID) break;
         }
         return false;
     };

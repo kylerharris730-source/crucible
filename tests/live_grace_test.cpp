@@ -1213,6 +1213,47 @@ int main() {
                 w.at(liftX, liftY - liftDepth - 4).mat); return 102;
     }
 
+    /* A genuinely deep lake must route pressure to its distant surface. The
+       pressure source also touches a sealed side pocket of Water: merely
+       touching liquid is not an outlet and must not trap the pocket's shared
+       pressure at this underwater dead end. */
+    w.reset();
+    const int lakeX = 1260, lakeGasTop = 830, lakeGasBottom = 930;
+    const int lakeDepth = 160, lakeSurface = lakeGasTop - lakeDepth;
+    w.setLiveWindow(lakeX - 5, lakeSurface - 8, lakeX + 5, lakeGasBottom + 4);
+    for (int y = lakeSurface - 1; y <= lakeGasBottom + 1; ++y) {
+        w.setCell(lakeX - 1, y, MAT_STONE);
+        w.setCell(lakeX + 1, y, MAT_STONE);
+    }
+    w.setCell(lakeX, lakeGasBottom + 1, MAT_STONE);
+    for (int y = lakeSurface; y < lakeGasTop; ++y)
+        w.setCell(lakeX, y, MAT_WATER);
+    for (int y = lakeGasTop; y <= lakeGasBottom; ++y) {
+        w.setCell(lakeX, y, MAT_STEAM);
+        w.temp[y * SIM_W + lakeX] = degC(120);
+    }
+    const int lakeSourceY = lakeGasTop + 75;
+    w.setCell(lakeX - 1, lakeSourceY, MAT_WATER);
+    w.setCell(lakeX - 2, lakeSourceY, MAT_STONE);
+    w.cells[lakeSourceY * SIM_W + lakeX].moisture = 5;
+    w.dirtyPoint(lakeX, lakeSourceY);
+    w.step();
+    int lakeWater = 0, lakeSteam = 0, lakeExcess = 0;
+    for (int y = lakeSurface - 8; y <= lakeGasBottom; ++y)
+        for (int x = lakeX - 1; x <= lakeX; ++x) {
+            if (w.at(x, y).mat == MAT_WATER) ++lakeWater;
+            if (w.at(x, y).mat == MAT_STEAM) {
+                ++lakeSteam;
+                lakeExcess += w.at(x, y).moisture & GAS_EXCESS_MASK;
+            }
+        }
+    const int initialLakeSteam = lakeGasBottom - lakeGasTop + 1;
+    if (lakeWater != lakeDepth + 1 || lakeSteam != initialLakeSteam + 5 ||
+        lakeExcess != 0) {
+        fprintf(stderr, "deep-lake pressure chose a false underwater outlet (%d water, %d steam, %d excess)\n",
+                lakeWater, lakeSteam, lakeExcess); return 110;
+    }
+
     /* The bounded liquid search follows a bent connected path to its outlet;
        this catches implementations that only special-case a vertical column. */
     w.reset();

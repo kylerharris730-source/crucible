@@ -45,7 +45,7 @@ connected liquid path toward its nearest surface or outlet. Prefer a cheap
 vertical column search, followed by a bounded lateral search. No world-wide
 flood fill and no teleporting to a remote outlet.
 
-The vertical path is capped at 64 cells and the lateral search at a 16-cell
+The vertical path is capped at 512 cells and the lateral search at a 16-cell
 radius. A straight vertical outlet can displace up to five volumes in one turn;
 a bent path moves one. Cells carry their temperature through the shift, liquid
 volume is conserved, player-occupied cells cannot be selected as outlets, and
@@ -100,7 +100,7 @@ gas-volume conservation, and the immovable/ore thresholds.
 Stored expansion volume no longer has to diffuse one pixel at a time through a
 connected Steam blob before its surface can use it. An interior compressed cell
 routes part of its pressure directly to a lower-pressure boundary cell of the
-same gas pocket. Four straight rays of up to 64 cells handle broad ordinary
+same gas pocket. Four straight rays of up to 512 cells handle broad ordinary
 pockets cheaply; a 32-cell-radius, 2,048-node bounded flood handles bends and
 irregular cavities. Neither path walks the world or adds a per-cell pressure
 plane. At most 128 cells may start a pocket-routing search per world step;
@@ -112,11 +112,21 @@ or powder push, so represented gas volume and material remain conserved. A cell
 already touching a possible outlet keeps its own pressure rather than bouncing
 it around the pocket when that outlet is sealed.
 
+Liquid touching the side or bottom of a gas pocket is not considered pressure
+relief by itself. A shared-pressure target must have a straight liquid column
+that really reaches open space within 512 cells (or a genuine empty/filter/
+reaction outlet); this keeps deep-lake pressure moving toward the surface rather
+than accumulating on a useless underwater wall. Long vertical shifts dirty one
+span instead of thousands of individual cells.
+
 Regression coverage releases five volumes across all 41 exposed cells of a
 41x41 Steam pocket with 81 compressed interior cells in one turn—205 visible
 Steam volumes at once—and verifies exact gas-plus-pressure and Water
-conservation. A separate L-shaped pocket
-verifies the bounded flood reaches a Water face that no straight ray can see.
+conservation. A separate test routes pressure through 75 cells of Steam and a
+160-cell-deep lake, verifying that it ignores a sealed side-water dead end,
+reaches the real surface, and releases all five stored volumes in one step.
+A separate L-shaped pocket verifies the bounded flood reaches a Water face that
+no straight ray can see.
 A temporary 121x121 stress scene with 81 compressed cells measured roughly
 3.5-4.0 ms per simulation step on the development machine. An intentionally
 pathological 1,681-cell compressed core initially measured about 40 ms; the
