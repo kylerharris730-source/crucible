@@ -831,9 +831,10 @@ int main() {
                 waxHighY, waxY, waxCount); return 93;
     }
 
-    /* Boiling stores expansion locally, then releases one visible gas volume
-       per frame. Five daughters are volume-only; the one owner token is what
-       lets all six Steam cells condense back to exactly one Water cell. */
+    /* Boiling stores expansion locally, then releases up to five connected gas
+       volumes in one open-space burst. Five daughters are volume-only; the one
+       owner token is what lets all six Steam cells condense back to exactly one
+       Water cell. */
     w.reset();
     const int pressureX = 760, pressureY = 640;
     w.setLiveWindow(pressureX - 40, pressureY - 40,
@@ -847,7 +848,8 @@ int main() {
         (w.at(pressureX, pressureY).moisture & GAS_VOLUME_ONLY)) {
         fprintf(stderr, "boiling water did not store five expansion volumes\n"); return 94;
     }
-    for (int tick = 0; tick < 12; ++tick) w.step();
+    /* Open Steam releases the full five-volume expansion charge in one turn. */
+    w.step();
     int pressureSteamCount = 0, ownerCount = 0, excessSum = 0;
     for (int y = pressureY - 40; y <= pressureY + 10; ++y)
         for (int x = pressureX - 40; x <= pressureX + 40; ++x) {
@@ -1103,7 +1105,7 @@ int main() {
     const int blobBottom = blobTop + blobSize - 1;
     w.setLiveWindow(blobX - 6, blobTop - 10,
                     blobX + blobSize + 5, blobBottom + 5);
-    for (int y = blobTop - 5; y <= blobBottom + 1; ++y) {
+    for (int y = blobTop - 10; y <= blobBottom + 1; ++y) {
         w.setCell(blobX - 1, y, MAT_STONE);
         w.setCell(blobX + blobSize, y, MAT_STONE);
     }
@@ -1126,7 +1128,7 @@ int main() {
         }
     w.step();
     int blobSteam = 0, blobWater = 0, blobExcess = 0;
-    for (int y = blobTop - 5; y <= blobBottom; ++y)
+    for (int y = blobTop - 10; y <= blobBottom; ++y)
         for (int x = blobX; x < blobX + blobSize; ++x) {
             const Cell& bc = w.at(x, y);
             if (bc.mat == MAT_STEAM) {
@@ -1137,7 +1139,7 @@ int main() {
         }
     const int initialBlobSteam = blobSize * blobSize;
     const int initialBlobVolume = initialBlobSteam + chargedCells * 5;
-    if (blobSteam != initialBlobSteam + blobSize || blobWater != blobSize * 4 ||
+    if (blobSteam != initialBlobSteam + blobSize * 5 || blobWater != blobSize * 4 ||
         blobSteam + blobExcess != initialBlobVolume) {
         fprintf(stderr, "shared pocket pressure did not decompress broad Steam blob (%d steam, %d water, %d excess)\n",
                 blobSteam, blobWater, blobExcess); return 108;
@@ -1197,18 +1199,18 @@ int main() {
     w.dirtyPoint(liftX, liftY);
     w.step();
     int liftedWater = 0, liftedSteam = 0, liftedExcess = 0;
-    for (int y = liftY - liftDepth; y <= liftY; ++y) {
+    for (int y = liftY - liftDepth - 4; y <= liftY; ++y) {
         if (w.at(liftX, y).mat == MAT_WATER) ++liftedWater;
         if (w.at(liftX, y).mat == MAT_STEAM) {
             ++liftedSteam;
             liftedExcess += w.at(liftX, y).moisture & GAS_EXCESS_MASK;
         }
     }
-    if (liftedWater != liftDepth - 1 || liftedSteam != 2 || liftedExcess != 4 ||
-        w.at(liftX, liftY - liftDepth).mat != MAT_WATER) {
+    if (liftedWater != liftDepth - 1 || liftedSteam != 6 || liftedExcess != 0 ||
+        w.at(liftX, liftY - liftDepth - 4).mat != MAT_WATER) {
         fprintf(stderr, "steam pressure did not lift deep water (%d water, %d steam, %d excess, top %u)\n",
                 liftedWater, liftedSteam, liftedExcess,
-                w.at(liftX, liftY - liftDepth).mat); return 102;
+                w.at(liftX, liftY - liftDepth - 4).mat); return 102;
     }
 
     /* The bounded liquid search follows a bent connected path to its outlet;

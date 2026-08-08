@@ -71,6 +71,7 @@ static const int GAS_PRESSURE_POCKET_RAY     = 64;
 static const int GAS_PRESSURE_POCKET_RADIUS  = 32;
 static const int GAS_PRESSURE_POCKET_NODES   = 2048;
 static const int GAS_PRESSURE_POCKET_BUDGET  = 128;
+static const int GAS_PRESSURE_EXPANSION_BURST = 5;
 
 /* Divide a heat transfer by 2^shift to get the temperature change a material of
    that thermal mass actually feels, carrying the remainder stochastically so
@@ -726,10 +727,11 @@ void World::updateLiquid(int x, int y) {
 }
 
 /* Spend or redistribute one compressed gas parcel's excess volume. Expansion
-   is local and visible: one adjacent cell per frame, never a flood fill and
-   never a teleport to a distant opening. If the parcel is sealed, its excess
-   remains in the cell and costs nothing once equalized; changing a boundary
-   dirties the neighbourhood and wakes it again. */
+   is local and visible: up to five connected cells through open air or a
+   straight liquid column, never a teleport to a distant opening. Bent liquid
+   and powder paths still move one conserved volume at a time. If the parcel is
+   sealed, its excess remains in the cell and costs nothing once equalized;
+   changing a boundary dirties the neighbourhood and wakes it again. */
 bool World::updateGasPressure(int x, int y) {
     const int i = y * SIM_W + x;
     Cell& c = cells[i];
@@ -739,35 +741,64 @@ bool World::updateGasPressure(int x, int y) {
     const int dir = (c.flags & F_DIR) ? 1 : -1;
     const int dx[4] = { 0, dir, -dir, 0 };
     const int dy[4] = { -1, 0, 0, 1 };
-    for (int k = 0; k < 4; ++k) {
-        const int nx = x + dx[k], ny = y + dy[k];
-        const int ni = ny * SIM_W + nx;
-        Cell& n = cells[ni];
-        if (n.mat != MAT_EMPTY || blocksCell(nx, ny)) continue;
-        n.mat = c.mat;
-        n.moisture = GAS_VOLUME_ONLY;
-        n.tint = (u8)rngBits(8);
-        const u8 st = (u8)(stamp() << STAMP_SHIFT);
-        n.flags = (u8)((c.flags & F_DIR) | st);
-        c.flags = (u8)((c.flags & F_DIR) | st);
-        temp[ni] = temp[i];
-        c.moisture = (u8)((c.moisture & GAS_VOLUME_ONLY) | (excess - 1));
-        dirtyPoint(x, y); dirtyPoint(nx, ny);
-        return true;
-    }
-
-    /* A compressed parcel under liquid should not have to wait for its owner
-       cell to bubble all the way to the surface before any of the stored
-       volume can appear. Pressure instead shifts one connected liquid path
-       into an empty outlet and occupies the vacated cell nearest the gas.
-
-       One unit per parcel per frame is intentional. It makes decompression
-       prompt without allowing a large boiler to rearrange a lake in a single
-       scan. Whole Cells and temperatures move together, just like tryMove(). */
     const u8 gasMat = c.mat;
     const u8 gasTemp = temp[i];
     const u8 pressureStamp = (u8)(stamp() << STAMP_SHIFT);
     const u8 gasDir = (u8)(c.flags & F_DIR);
+
+    /* Open space has essentially no resistance, so release a whole ordinary
+       boiling charge instead of growing one pixel per frame. This is a tiny
+       connected flood rooted at the source: every new cell is reached through
+       a cell spawned earlier in this same burst, never placed across a wall or
+       disconnected pocket. Radius three is already far more room than the
+       five-volume Water -> Steam expansion can consume. */
+    {
+        static const int R = 3, SIDE = R * 2 + 1, CAP = SIDE * SIDE;
+        i16 queue[CAP];
+        u8 seen[CAP] = { 0 };
+        int head = 0, tail = 0, spawned = 0;
+        const int center = R * SIDE + R;
+        queue[tail++] = (i16)center;
+        seen[center] = 1;
+        const int burst = imin((int)excess, GAS_PRESSURE_EXPANSION_BURST);
+        while (head < tail && spawned < burst) {
+            const int li = queue[head++];
+            const int lx = li % SIDE, ly = li / SIDE;
+            for (int k = 0; k < 4 && spawned < burst; ++k) {
+                const int nlx = lx + dx[k], nly = ly + dy[k];
+                if (nlx < 0 || nlx >= SIDE || nly < 0 || nly >= SIDE) continue;
+                const int niLocal = nly * SIDE + nlx;
+                if (seen[niLocal]) continue;
+                seen[niLocal] = 1;
+                const int nx = x - R + nlx, ny = y - R + nly;
+                if (nx < PLAY_X0 || nx > PLAY_X1 || ny < PLAY_Y0 || ny > PLAY_Y1) continue;
+                const int ni = ny * SIM_W + nx;
+                Cell& n = cells[ni];
+                if (n.mat != MAT_EMPTY || blocksCell(nx, ny)) continue;
+                n.mat = gasMat;
+                n.moisture = GAS_VOLUME_ONLY;
+                n.tint = (u8)rngBits(8);
+                n.flags = (u8)(gasDir | pressureStamp);
+                temp[ni] = gasTemp;
+                dirtyPoint(nx, ny);
+                queue[tail++] = (i16)niLocal;
+                ++spawned;
+            }
+        }
+        if (spawned) {
+            c.moisture = (u8)((c.moisture & GAS_VOLUME_ONLY) |
+                              ((int)excess - spawned));
+            c.flags = (u8)(gasDir | pressureStamp);
+            dirtyPoint(x, y);
+            return true;
+        }
+    }
+
+    /* A compressed parcel under liquid should not have to wait for its owner
+       cell to bubble all the way to the surface before any of the stored
+       volume can appear. Pressure shifts the connected vertical liquid column
+       by as many as five cells in one burst and occupies the vacated cells.
+       Whole Cells and temperatures move together, just like tryMove(). */
     const auto finishExpansion = [&](int di) {
         Cell& d = cells[di];
         d.mat = gasMat;
@@ -791,16 +822,39 @@ bool World::updateGasPressure(int x, int y) {
         if (MATS[mat].kind != KIND_LIQUID) break;
     }
     if (outletY >= 0 && !blocksCell(x, outletY)) {
-        for (int my = outletY; my < y - 1; ++my) {
+        int burst = 0;
+        const int wanted = imin((int)excess, GAS_PRESSURE_EXPANSION_BURST);
+        for (; burst < wanted; ++burst) {
+            const int ey = outletY - burst;
+            if (ey < PLAY_Y0 || cells[ey * SIM_W + x].mat != MAT_EMPTY ||
+                blocksCell(x, ey)) break;
+        }
+        for (int sy = outletY + 1; sy < y; ++sy) {
+            const int my = sy - burst;
             const int dst = my * SIM_W + x;
-            const int src = (my + 1) * SIM_W + x;
+            const int src = sy * SIM_W + x;
             cells[dst] = cells[src];
             temp[dst] = temp[src];
             cells[dst].flags = (u8)((cells[dst].flags & F_DIR) | pressureStamp);
             dirtyPoint(x, my);
         }
-        finishExpansion((y - 1) * SIM_W + x);
-        return true;
+        for (int gy = y - burst; gy < y; ++gy) {
+            const int gi = gy * SIM_W + x;
+            Cell& g = cells[gi];
+            g.mat = gasMat;
+            g.moisture = GAS_VOLUME_ONLY;
+            g.tint = (u8)rngBits(8);
+            g.flags = (u8)(gasDir | pressureStamp);
+            temp[gi] = gasTemp;
+            dirtyPoint(x, gy);
+        }
+        if (burst) {
+            c.moisture = (u8)((c.moisture & GAS_VOLUME_ONLY) |
+                              ((int)excess - burst));
+            c.flags = (u8)(gasDir | pressureStamp);
+            dirtyPoint(x, y);
+            return true;
+        }
     }
 
     /* Powders transmit a shove only along a straight, short line. Unlike the

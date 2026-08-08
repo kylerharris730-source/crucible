@@ -22,8 +22,9 @@ one Wax cell remaining.
 
 An occupied gas cell represents one volume unit and stores a bounded number of
 unexpanded volume units. Boiling Water creates one owner Steam parcel carrying
-five extra units. Excess expands locally one adjacent cell per frame; if sealed,
-it remains as pressure and equalizes through connected gas. The kind-specific
+five extra units. At a usable boundary, up to five units expand through connected
+open air or a straight liquid column in one turn; if sealed, excess remains as
+pressure and equalizes through connected gas. The kind-specific
 `Cell::moisture` payload stores this without adding a 38 MB pressure plane.
 
 Expansion daughters carry a volume-only provenance bit. On cooling, daughters
@@ -45,10 +46,11 @@ vertical column search, followed by a bounded lateral search. No world-wide
 flood fill and no teleporting to a remote outlet.
 
 The vertical path is capped at 64 cells and the lateral search at a 16-cell
-radius. One compressed parcel displaces one volume per frame. Cells carry their
-temperature through the shift, liquid volume is conserved, player-occupied
-cells cannot be selected as outlets, and every moved path is dirtied and
-stamped so it cannot relay again during the same in-place simulation scan.
+radius. A straight vertical outlet can displace up to five volumes in one turn;
+a bent path moves one. Cells carry their temperature through the shift, liquid
+volume is conserved, player-occupied cells cannot be selected as outlets, and
+every moved path is dirtied and stamped so it cannot relay again during the
+same in-place simulation scan.
 
 Regression coverage verifies both a 23-cell-deep lift and a bent liquid path,
 including exact liquid volume and pressure-unit conservation.
@@ -110,9 +112,10 @@ or powder push, so represented gas volume and material remain conserved. A cell
 already touching a possible outlet keeps its own pressure rather than bouncing
 it around the pocket when that outlet is sealed.
 
-Regression coverage starts decompression across all 41 exposed cells of a
-41x41 Steam pocket with 81 compressed interior cells in one turn, and verifies
-exact gas-plus-pressure and Water conservation. A separate L-shaped pocket
+Regression coverage releases five volumes across all 41 exposed cells of a
+41x41 Steam pocket with 81 compressed interior cells in one turn—205 visible
+Steam volumes at once—and verifies exact gas-plus-pressure and Water
+conservation. A separate L-shaped pocket
 verifies the bounded flood reaches a Water face that no straight ray can see.
 A temporary 121x121 stress scene with 81 compressed cells measured roughly
 3.5-4.0 ms per simulation step on the development machine. An intentionally
