@@ -227,13 +227,14 @@ static const int CHEST_CAP = 100000;
    That gives forks their expected behaviour while making rings harmless: when
    fronts meet on the far side of a loop, the second one simply stops.
 
-   A cell claimed by a DIFFERENT wave is refused too, unless that wave has
-   finished or was heading the same way -- so a pulse may follow another down a
-   wire but may never cut across one or run into one. Without that last rule two
-   waves meeting head-on passed straight through each other, each finding the
-   other's trail unclaimed as far as its own id was concerned, and in any wire
-   thicker than a single cell the result was a front count that grew every frame
-   until the wire cooked itself apart. See the note in sparkStep.
+   A recent cell claimed by a DIFFERENT wave is refused too, unless that wave
+   has finished or was heading the same way. "Recent" is important: it lets a
+   pulse follow another down a wire once there is a visible gap, while still
+   stopping pulses which cut across or run into each other. Without that local
+   collision rule two waves meeting head-on passed straight through each other,
+   each flooding the other's trail; in any wire thicker than a single cell the
+   front count grew every frame until the wire cooked itself apart. See the note
+   in sparkStep.
 
    The mark is outside Cell on purpose, so electricity still never dirties the
    material simulation. The fixed front array remains the backstop for a very

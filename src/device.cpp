@@ -218,11 +218,57 @@ void circuitRemapMaterials(const u8* remap, int savedMatCount) {
 static u16 g_pulseMark[SIM_W * SIM_H];
 static u16 g_nextPulse = 1;
 
+/* A live pulse can be hundreds of cells away from the trail it left behind.
+   Treating every one of those old cells as occupied is what made a fresh pulse
+   disappear on thick wire: the sideways steps which fill the wire met stale,
+   differently-directed claims and were mistaken for a crossing wave.
+
+   Keep a short, exact collision wake instead. Three rotating slots avoid a
+   frame-number wrap alias, and two packed bits per cell hold slot 1, 2, 3 or
+   "not recent". A claim is recent for the frame it was made and the next two;
+   after that it remains a same-pulse loop barrier but no longer blocks a
+   separate pulse which is visibly behind it. */
+static u8 g_pulseRecent[(SIM_W * SIM_H + 3) / 4];
+static const int SPARK_RECENT_SLOTS = 3;
+static const int SPARK_RECENT_MAX = MAX_SPARKS * 5;
+static int g_pulseRecentCells[SPARK_RECENT_SLOTS][SPARK_RECENT_MAX];
+static int g_pulseRecentCount[SPARK_RECENT_SLOTS];
+static int g_pulseRecentSlot = 0;
+
+static inline u8 sparkRecentStamp(int cell) {
+    return (u8)((g_pulseRecent[cell >> 2] >> ((cell & 3) * 2)) & 3u);
+}
+
+static inline void sparkSetRecentStamp(int cell, u8 stamp) {
+    u8& packed = g_pulseRecent[cell >> 2];
+    const int shift = (cell & 3) * 2;
+    packed = (u8)((packed & ~(3u << shift)) | ((u32)stamp << shift));
+}
+
+static void sparkRecentBeginFrame() {
+    g_pulseRecentSlot = (g_pulseRecentSlot + 1) % SPARK_RECENT_SLOTS;
+    const u8 stamp = (u8)(g_pulseRecentSlot + 1);
+    for (int i = 0; i < g_pulseRecentCount[g_pulseRecentSlot]; ++i) {
+        const int cell = g_pulseRecentCells[g_pulseRecentSlot][i];
+        if (sparkRecentStamp(cell) == stamp) sparkSetRecentStamp(cell, 0);
+    }
+    g_pulseRecentCount[g_pulseRecentSlot] = 0;
+}
+
+static void sparkMarkRecent(int cell) {
+    const u8 stamp = (u8)(g_pulseRecentSlot + 1);
+    if (sparkRecentStamp(cell) == stamp) return;
+    int& count = g_pulseRecentCount[g_pulseRecentSlot];
+    if (count >= SPARK_RECENT_MAX) return;
+    g_pulseRecentCells[g_pulseRecentSlot][count++] = cell;
+    sparkSetRecentStamp(cell, stamp);
+}
+
 /* --- how many fronts each pulse still has alive ----------------------------
    The mark above records WHICH wave last claimed a cell; this records whether
-   that wave still exists. Together they are the difference between "a wave has
-   been through here" and "a wave is going through here", and only the second of
-   those is a reason to refuse another wave.
+   that wave still exists. The recent-wake table above separately says whether
+   it is still locally near that claim. All three are needed before a different
+   wave can be refused.
 
    32 KB of counters indexed by pulse id, maintained at the one place a front is
    born and the one place it dies. Nothing ever scans it. */
@@ -337,11 +383,14 @@ void sparkClear() {
        the last one's loose ends. */
     shedClear();
     memset(g_pulseMark, 0, sizeof(g_pulseMark));
+    memset(g_pulseRecent, 0, sizeof(g_pulseRecent));
+    memset(g_pulseRecentCount, 0, sizeof(g_pulseRecentCount));
     memset(g_pulseFronts, 0, sizeof(g_pulseFronts));
     memset(g_sparkLoad, 0, sizeof(g_sparkLoad));
     g_nextPulse = 1;
     g_sparkFrame = 0;
     g_nextSparkSlot = 0;
+    g_pulseRecentSlot = 0;
 }
 
 static u16 nextPulse() {
@@ -487,28 +536,24 @@ static bool sparkStep(World& w, Spark& s) {
            a thick wire's cross-section exactly once, and what makes a ring
            safe -- fronts going opposite ways round it meet and stop.
 
-           It is ANOTHER wave that is still travelling. This was permitted,
-           because a mark only ever meant "my pulse has been here", and the
-           result was that two waves meeting head-on passed straight THROUGH
-           each other. In a one-cell wire that merely looks odd. In a wire two
-           or more cells thick it is catastrophic, and measurably so: each wave
-           finds the other's trail unclaimed as far as it is concerned, floods
-           back down it, and the sideways branching that should fill the section
-           once instead refills it every frame. Measured on a 200x2 wire, four
-           fronts became four hundred at a steady +4 per frame, until crowd heat
-           cooked the copper to its arc point and blew the wire apart. Every
-           thickness above one did it; only the one-cell case, which has nowhere
-           to branch, survived.
+           It is the RECENT LOCAL WAKE of another wave that is still travelling.
+           This was once permitted, because a mark only meant "my pulse has been
+           here", and two head-on waves passed straight THROUGH each other. In
+           wire two or more cells thick, each then flooded back down the other's
+           trail and refilled the cross-section every frame. Four fronts became
+           four hundred on a 200x2 wire until the copper blew apart.
 
-           So the test is not "whose mark is this" but "is that wave still
-           going". A finished wave leaves its mark behind as a record, and the
-           next pulse is free to travel over it -- which is what keeps a wire
-           reusable, and what stops this from being a wire that only ever works
-           once. */
+           Testing only whether the other wave still exists went too far the
+           other way. A long wave kept its entire trail occupied, so the sideways
+           steps of a following pulse could hit an old, differently-directed
+           claim and be swallowed despite a visible gap. The short recent wake
+           is the actual collision region: beyond it another pulse may reuse the
+           trail, while this pulse's own marks remain permanent for loop safety. */
         const u16 claimId = (u16)(claim & PULSE_ID_MASK);
         const bool blocked = claimId
             && (claimId == s.pulse                     /* my own wave's trail */
                 || (g_pulseFronts[claimId]             /* another, still going */
+                    && sparkRecentStamp(mark)           /* locally still here */
                     && (int)(claim >> PULSE_DIR_SHIFT)
                        != dirIndex(cand[k][0], cand[k][1])));
         if (blocked) {
@@ -520,6 +565,7 @@ static bool sparkStep(World& w, Spark& s) {
         }
         g_pulseMark[mark] = (u16)(s.pulse
                               | ((u16)dirIndex(cand[k][0], cand[k][1]) << PULSE_DIR_SHIFT));
+        sparkMarkRecent(mark);
 
         if (!travelled) {
             /* Keep this front for the preferred direction. Other exits become
@@ -1188,7 +1234,9 @@ static bool circuitCompare(int a, int b, int op) {
 bool sparkAdd(int x, int y, int dx, int dy) {
     if (x < PLAY_X0 || x > PLAY_X1 || y < PLAY_Y0 || y > PLAY_Y1) return false;
     const u16 pulse = nextPulse();
-    g_pulseMark[y * SIM_W + x] = (u16)(pulse | ((u16)dirIndex(dx, dy) << PULSE_DIR_SHIFT));
+    const int mark = y * SIM_W + x;
+    g_pulseMark[mark] = (u16)(pulse | ((u16)dirIndex(dx, dy) << PULSE_DIR_SHIFT));
+    sparkMarkRecent(mark);
     return sparkAddFront(x, y, dx, dy, pulse);
 }
 
@@ -1267,6 +1315,7 @@ void devTick(World& w) {
     /* A u32 wrap needs roughly two years at 60 Hz. Resetting branch stamps at
        that point is enough to retain the "not twice this frame" contract. */
     if (g_sparkFrame == 0) g_sparkFrame = 1;
+    sparkRecentBeginFrame();
     for (int i = 0; i < MAX_SPARKS; ++i) {
         Spark& s = g_sparks[i];
         if (!s.used || !w.electricalLive(s.x, s.y) || s.stepped == g_sparkFrame) continue;

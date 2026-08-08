@@ -306,6 +306,59 @@ int main() {
         fprintf(stderr, "loop pulse recirculated\n"); return 10;
     }
 
+    /* A pulse dropped behind another one on a thick wire must grow into the
+       full-width wave, not be mistaken for a crossing wave by old trail marks. */
+    sparkClear();
+    const int tx = 600, ty = 300, tw = 100, th = 6;
+    for (int y = ty; y < ty + th; ++y)
+        for (int x2 = tx; x2 < tx + tw; ++x2)
+            w.setCell(x2, y, MAT_COPPER);
+    if (!sparkAdd(tx, ty + 1, 1, 0)) {
+        fprintf(stderr, "could not start leading thick-wire pulse\n"); return 39;
+    }
+    for (int i = 0; i < 20; ++i) devTick(w);
+    if (!sparkAdd(tx + 10, ty + 1, 1, 0)) {
+        fprintf(stderr, "could not start following thick-wire pulse\n"); return 40;
+    }
+    for (int i = 0; i < 20; ++i) devTick(w);
+    int followingRows = 0, followingFronts = 0;
+    for (int y = ty; y < ty + th; ++y) {
+        bool hasRow = false;
+        for (int i = 0; i < MAX_SPARKS; ++i) if (g_sparks[i].used &&
+            g_sparks[i].pulse == 2 && g_sparks[i].y == y) {
+            hasRow = true; ++followingFronts;
+        }
+        if (hasRow) ++followingRows;
+    }
+    if (followingRows != th || followingFronts != th) {
+        fprintf(stderr, "following thick-wire pulse was swallowed or narrowed\n"); return 41;
+    }
+
+    /* The more local collision rule must retain the reason it exists: opposing
+       waves annihilate instead of crossing and recursively refilling trails. */
+    sparkClear();
+    for (int y = ty; y < ty + th; ++y)
+        for (int x2 = tx; x2 < tx + tw; ++x2) {
+            w.setCell(x2, y, MAT_COPPER);
+            w.temp[y * SIM_W + x2] = AMBIENT_TEMP;
+        }
+    if (!sparkAdd(tx, ty + 1, 1, 0) ||
+        !sparkAdd(tx + tw - 1, ty + th - 2, -1, 0)) {
+        fprintf(stderr, "could not start opposing thick-wire pulses\n"); return 42;
+    }
+    int opposingPeak = 0;
+    for (int i = 0; i < tw + 40; ++i) {
+        devTick(w);
+        if (sparkCount() > opposingPeak) opposingPeak = sparkCount();
+    }
+    bool opposingWireIntact = true;
+    for (int y = ty; y < ty + th; ++y)
+        for (int x2 = tx; x2 < tx + tw; ++x2)
+            if (w.at(x2, y).mat != MAT_COPPER) opposingWireIntact = false;
+    if (sparkCount() != 0 || opposingPeak > th * 3 || !opposingWireIntact) {
+        fprintf(stderr, "opposing thick-wire pulses cascaded\n"); return 43;
+    }
+
     /* A swarm of otherwise separate one-cell fronts in one chunk adds arc heat
        beyond their ordinary endpoints. This is the cleanup path for malformed
        conductive blobs, whose individual fronts would otherwise be too spread
