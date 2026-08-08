@@ -881,6 +881,7 @@ u8  g_matWetBy[MAT_COUNT];
 u8  g_matAlloyWith[MAT_COUNT];
 u8  g_matThermalExpansionQ8[MAT_COUNT];
 u8  g_matGasExpansion[MAT_COUNT];
+u8  g_matPressureResistance[MAT_COUNT];
 u8  g_matAlloysTo[MAT_COUNT];
 u8  g_bgHeat[MAT_COUNT];
 u8  g_bgRetain[MAT_COUNT];
@@ -1495,6 +1496,37 @@ static void initSlaking() {
     g_matAlloysTo[MAT_TIN_MELT]     = MAT_BRONZE_MELT;
 }
 
+/* Physical resistance to being shifted by gas pressure. This is intentionally
+   a short explicit powder list rather than KIND_POWDER => one number: a seed,
+   a bank of damp dirt, and tungsten ore should not all yield to the same boiler
+   merely because they share a movement rule. Values are compared with stored
+   excess volume, whose ordinary Steam range is 0..5. */
+static void initPressureResistance() {
+    memset(g_matPressureResistance, 0xFF, sizeof(g_matPressureResistance));
+
+    g_matPressureResistance[MAT_SAND]        = 2;
+    g_matPressureResistance[MAT_OAK_SEED]    = 2;
+    g_matPressureResistance[MAT_BIRCH_SEED]  = 2;
+    g_matPressureResistance[MAT_WHEAT_SEED]  = 2;
+    g_matPressureResistance[MAT_FLAX_SEED]   = 2;
+    g_matPressureResistance[MAT_COTTON_SEED] = 2;
+    g_matPressureResistance[MAT_CHITIN]      = 2;
+
+    g_matPressureResistance[MAT_DIRT]  = 3;
+    g_matPressureResistance[MAT_GRASS] = 3;
+    g_matPressureResistance[MAT_CLAY]  = 4;
+    g_matPressureResistance[MAT_COAL]  = 5;
+
+    /* Ore can be shifted by a future high-pressure machine, but a six-volume
+       Water -> Steam expansion cannot rearrange a vein. */
+    g_matPressureResistance[MAT_COPPER_ORE]   = 6;
+    g_matPressureResistance[MAT_IRON_ORE]     = 6;
+    g_matPressureResistance[MAT_TIN_ORE]      = 6;
+    g_matPressureResistance[MAT_GOLD_ORE]     = 6;
+    g_matPressureResistance[MAT_TITANIUM_ORE] = 7;
+    g_matPressureResistance[MAT_TUNGSTEN_ORE] = 8;
+}
+
 /* See g_matStation in materials.h. Four entries, one per tier, and the enum
    value already IS the tier -- see CraftStation in craft.h, which this table
    exists to answer questions from without either side knowing about the
@@ -1810,6 +1842,7 @@ void initMaterials() {
     g_matGasExpansion[MAT_COLDFIRE] = 4;
 
     initStrength();
+    initPressureResistance();
     initPassable();
     initClimb();
     initPlatform();

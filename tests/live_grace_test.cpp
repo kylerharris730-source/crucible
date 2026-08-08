@@ -1017,6 +1017,83 @@ int main() {
                 sawOccupiedCoal ? 1 : 0, poreCoal, poreFuel, poreSteam); return 104;
     }
 
+    /* Stored pressure can shift a short powder plug into a real empty outlet.
+       Three Sand cells require pressure four (base two plus two more cells),
+       then exactly one expansion volume occupies the vacated face. */
+    w.reset();
+    const int pushX = 940, pushY = 720;
+    w.setLiveWindow(pushX - 5, pushY - 10, pushX + 5, pushY + 5);
+    for (int y = pushY - 8; y <= pushY + 1; ++y) {
+        w.setCell(pushX - 1, y, MAT_STONE);
+        w.setCell(pushX + 1, y, MAT_STONE);
+    }
+    w.setCell(pushX, pushY + 1, MAT_STONE);
+    for (int y = pushY - 3; y < pushY; ++y) w.setCell(pushX, y, MAT_SAND);
+    w.setCell(pushX, pushY, MAT_STEAM);
+    w.cells[pushY * SIM_W + pushX].moisture = 4;
+    w.temp[pushY * SIM_W + pushX] = degC(120);
+    w.dirtyPoint(pushX, pushY);
+    w.step();
+    int pushedSand = 0, pushedSteam = 0, pushedExcess = 0;
+    for (int y = pushY - 5; y <= pushY; ++y) {
+        const Cell& pc = w.at(pushX, y);
+        if (pc.mat == MAT_SAND) ++pushedSand;
+        if (pc.mat == MAT_STEAM) {
+            ++pushedSteam;
+            pushedExcess += pc.moisture & GAS_EXCESS_MASK;
+        }
+    }
+    if (pushedSand != 3 || pushedSteam != 2 || pushedExcess != 3 ||
+        w.at(pushX, pushY - 4).mat != MAT_SAND ||
+        w.at(pushX, pushY - 1).mat != MAT_STEAM) {
+        fprintf(stderr, "pressure did not conserve a shifted powder plug (%d sand, %d steam, %d excess, top %u, face %u)\n",
+                pushedSand, pushedSteam, pushedExcess,
+                w.at(pushX, pushY - 4).mat, w.at(pushX, pushY - 1).mat); return 105;
+    }
+
+    /* One stored unit is below even Sand's threshold, and adding one more cell
+       to the three-cell plug raises its requirement beyond pressure four. Both
+       configurations must remain completely still. */
+    w.reset();
+    w.setLiveWindow(pushX - 5, pushY - 10, pushX + 5, pushY + 5);
+    for (int y = pushY - 8; y <= pushY + 1; ++y) {
+        w.setCell(pushX - 1, y, MAT_STONE);
+        w.setCell(pushX + 1, y, MAT_STONE);
+    }
+    w.setCell(pushX, pushY + 1, MAT_STONE);
+    w.setCell(pushX, pushY - 1, MAT_SAND);
+    w.setCell(pushX, pushY, MAT_STEAM);
+    w.cells[pushY * SIM_W + pushX].moisture = 1;
+    w.temp[pushY * SIM_W + pushX] = degC(120);
+    w.dirtyPoint(pushX, pushY);
+    w.step();
+    if (w.at(pushX, pushY - 1).mat != MAT_SAND ||
+        w.at(pushX, pushY).mat != MAT_STEAM ||
+        (w.at(pushX, pushY).moisture & GAS_EXCESS_MASK) != 1) {
+        fprintf(stderr, "low pressure moved Sand\n"); return 106;
+    }
+
+    w.reset();
+    w.setLiveWindow(pushX - 5, pushY - 10, pushX + 5, pushY + 5);
+    for (int y = pushY - 8; y <= pushY + 1; ++y) {
+        w.setCell(pushX - 1, y, MAT_STONE);
+        w.setCell(pushX + 1, y, MAT_STONE);
+    }
+    w.setCell(pushX, pushY + 1, MAT_STONE);
+    for (int y = pushY - 4; y < pushY; ++y) w.setCell(pushX, y, MAT_SAND);
+    w.setCell(pushX, pushY, MAT_STEAM);
+    w.cells[pushY * SIM_W + pushX].moisture = 4;
+    w.temp[pushY * SIM_W + pushX] = degC(120);
+    w.dirtyPoint(pushX, pushY);
+    w.step();
+    if (w.at(pushX, pushY - 5).mat != MAT_EMPTY ||
+        w.at(pushX, pushY - 1).mat != MAT_SAND ||
+        (w.at(pushX, pushY).moisture & GAS_EXCESS_MASK) != 4 ||
+        g_matPressureResistance[MAT_STONE] != 255 ||
+        g_matPressureResistance[MAT_COPPER_ORE] <= 5) {
+        fprintf(stderr, "packed or immovable material yielded to insufficient pressure\n"); return 107;
+    }
+
     /* Pressure lifts a connected water column immediately instead of waiting
        for the original steam cell to bubble through it one pixel per frame. */
     w.reset();

@@ -73,15 +73,30 @@ four-cell Coal column and verifies that the co-occupied state occurs, the pile
 is not pressure-shoved, and the result is exactly four Fuel with no Coal or
 Steam left over.
 
-## 5. General pressure pushing
+## 5. Bounded powder pressure pushing — implemented
 
 After liquid displacement and permeability are predictable, pressure may move
 loose powders according to a material resistance table. Static terrain,
 devices, and placed walls remain immovable initially. Ruptures, destructive
 pressure, player force, and pistons are later gameplay decisions.
 
+Pressure tests four straight rays and shifts the lowest-resistance powder plug
+into a real empty outlet, up to eight cells long. Each material has an explicit
+starting threshold; every additional cell adds one to the required pressure.
+The successful shove still spends only one expansion volume. This lets fresh
+Steam lift three Sand cells while one stored unit cannot move even one, four
+Sand cells resist pressure four, ordinary Steam permeates rather than shoving
+reactive Coal, and ores require pressure beyond a Water boiler's five stored
+units. Static materials never enter the path search.
+
+The hover readout now reports stored pressure on gas cells. Regression coverage
+checks short-plug movement, low-pressure refusal, length resistance, powder and
+gas-volume conservation, and the immovable/ore thresholds.
+
 ## Required diagnostics
 
-Before destructive pressure exists, add a pressure view or hover readout. Test
-sealed expansion, pressure equalization, deep-water lift, Coal permeability,
-material conservation, save/reload, sleeping chunks, and active-window cost.
+Before destructive pressure exists, retain the pressure hover readout. Existing
+regressions cover sealed expansion, pressure equalization, deep-water lift,
+Coal permeability, and material conservation. Save/reload, sleeping chunks,
+and active-window cost need explicit stress harnesses before rupture or cell
+destruction is added.

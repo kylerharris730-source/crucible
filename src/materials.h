@@ -514,6 +514,13 @@ static inline int materialDensityQ8(u8 mat, u8 temperature) {
    One means legacy one-for-one conversion; Steam deliberately expands. */
 extern u8 g_matGasExpansion[MAT_COUNT];
 
+/* Minimum stored gas-volume pressure needed to start moving a powder cell.
+   Each additional cell in a pushed line adds one to the requirement. 255 means
+   pressure-immovable; this is explicit rather than derived from mining
+   strength because hardness and willingness to shift as loose material are
+   different properties (ore is hard to break but still granular). */
+extern u8 g_matPressureResistance[MAT_COUNT];
+
 /* Cell -> pixel, precomputed. Indexed by
       (mat << 8) | (moisture & 0xF0) | (tint >> 4)
    which is 16 wetness levels x 16 tint levels per material. */

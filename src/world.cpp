@@ -66,6 +66,7 @@ static const int DENSITY_SWAP_EPS_Q8 = 64;
    visual benefit. */
 static const int GAS_PRESSURE_VERTICAL_REACH = 64;
 static const int GAS_PRESSURE_LIQUID_RADIUS  = 16;
+static const int GAS_PRESSURE_POWDER_REACH   = 8;
 
 /* Divide a heat transfer by 2^shift to get the temperature change a material of
    that thermal mass actually feels, carrying the remainder stochastically so
@@ -794,6 +795,60 @@ bool World::updateGasPressure(int x, int y) {
             dirtyPoint(x, my);
         }
         finishExpansion((y - 1) * SIM_W + x);
+        return true;
+    }
+
+    /* Powders transmit a shove only along a straight, short line. Unlike the
+       liquid search below this deliberately does not turn corners: pressure
+       can lift a plug or slide a small bank into free space, but it cannot find
+       a winding route through a mountain and make the far side jump.
+
+       Resistance is a THRESHOLD, not a number of volumes consumed. The gas
+       still expands by one volume when the line yields; adding another powder
+       cell raises the required pressure by one, so long packed masses stop the
+       search even when every individual grain is easy to move. */
+    int powderDir = -1, powderCount = 0, powderRequired = 256;
+    for (int k = 0; k < 4; ++k) {
+        int count = 0, required = 0;
+        for (int d = 1; d <= GAS_PRESSURE_POWDER_REACH + 1; ++d) {
+            const int nx = x + dx[k] * d, ny = y + dy[k] * d;
+            if (nx < PLAY_X0 || nx > PLAY_X1 || ny < PLAY_Y0 || ny > PLAY_Y1) break;
+            const Cell& n = cells[ny * SIM_W + nx];
+            if (n.mat == MAT_EMPTY) {
+                if (count && !blocksCell(nx, ny) && required <= (int)excess &&
+                    (required < powderRequired ||
+                     (required == powderRequired && count < powderCount))) {
+                    powderDir = k;
+                    powderCount = count;
+                    powderRequired = required;
+                }
+                break;
+            }
+            if (MATS[n.mat].kind != KIND_POWDER ||
+                reactivePowderAllowsGas(n.mat, gasMat)) break;
+            const int resistance = g_matPressureResistance[n.mat];
+            if (resistance == 255) break;
+            required = imax(required, resistance + count);
+            ++count;
+            if (required > (int)excess) break;
+        }
+    }
+
+    if (powderDir >= 0) {
+        const int pdx = dx[powderDir], pdy = dy[powderDir];
+        for (int d = powderCount + 1; d >= 2; --d) {
+            const int tx = x + pdx * d, ty = y + pdy * d;
+            const int sx = x + pdx * (d - 1), sy = y + pdy * (d - 1);
+            const int dst = ty * SIM_W + tx, src = sy * SIM_W + sx;
+            cells[dst] = cells[src];
+            temp[dst] = temp[src];
+            /* Only a downward shove is a straight fall for collision purposes;
+               upward and sideways movement must not leave F_FALL stale. */
+            const u8 fall = (pdx == 0 && pdy == 1) ? F_FALL : 0;
+            cells[dst].flags = (u8)(fall | pressureStamp);
+            dirtyPoint(tx, ty);
+        }
+        finishExpansion((y + dy[powderDir]) * SIM_W + x + dx[powderDir]);
         return true;
     }
 

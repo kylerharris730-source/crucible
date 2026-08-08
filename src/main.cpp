@@ -791,15 +791,18 @@ static bool hoverCell(char* out, int cap, u32* colOut) {
     const Cell& c = g_world.at(cx, cy);
     const int t = (int)g_world.temp[cy * SIM_W + cx] - TEMP_OFFSET;
     const char* name = (c.mat == MAT_EMPTY) ? "Air" : MATS[c.mat].name;
+    char pressure[24] = "";
+    if (MATS[c.mat].kind == KIND_GAS && (c.moisture & GAS_EXCESS_MASK))
+        sprintf(pressure, "  pressure %u", (unsigned)(c.moisture & GAS_EXCESS_MASK));
     /* Names what is BEHIND as well as in front, because in background mode the
        thing you are about to act on is the one you cannot otherwise identify --
        a backdrop is deliberately too dark to tell apart by colour alone. */
     const u8 b = g_world.bgAt(cx, cy);
     if (b != MAT_EMPTY)
-        _snprintf(out, cap, "%s  %+d C  / %s%s", name, t, MATS[b].name,
+        _snprintf(out, cap, "%s  %+d C%s  / %s%s", name, t, pressure, MATS[b].name,
                   g_world.bgPlaced(cx, cy) ? " (built)" : "");
     else
-        _snprintf(out, cap, "%s  %+d C", name, t);
+        _snprintf(out, cap, "%s  %+d C%s", name, t, pressure);
     out[cap - 1] = 0;
     if (colOut) {
         /* the material's own dry colour, so the label is tinted like the thing
