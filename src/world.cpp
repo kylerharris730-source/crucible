@@ -272,23 +272,22 @@ bool World::tryMove(int sx, int sy, int tx, int ty) {
     Cell& s = cells[si];
     Cell& t = cells[ti];
 
-    /* Filters are fixed mesh cells, not a second layer. A permitted fluid or
-       gas therefore crosses one by hopping into the space beyond, leaving the
-       mesh and its temperature intact. Powders never take this branch. */
+    /* Filters are fixed mesh cells with one sparse occupant slot in moisture.
+       A permitted fluid enters that slot while the sieve remains the cell's
+       material, then advances through the mesh one cell per frame. This is what
+       lets steam inside a sieve actually touch coal resting on its surface.
+       Powders never enter this branch. */
     if (filterAllows(t.mat, s.mat)) {
-        const int dx = tx - sx, dy = ty - sy;
-        const int px = tx + dx, py = ty + dy;
-        if (px < PLAY_X0 || px > PLAY_X1 || py < PLAY_Y0 || py > PLAY_Y1 || blocksCell(px, py)) return false;
-        const int pi = py * SIM_W + px;
-        Cell& p = cells[pi];
-        if (p.mat != MAT_EMPTY) return false;
-        p = s;
-        s.mat = MAT_EMPTY; s.moisture = 0; s.tint = (u8)rngBits(8); s.flags = 0;
-        temp[pi] = temp[si]; temp[si] = AMBIENT_TEMP;
+        if (t.moisture) return false;   /* one fluid parcel per mesh cell */
+        t.moisture = s.mat;
+        temp[ti] = temp[si];
+        s.mat = MAT_EMPTY;
+        s.moisture = 0;
+        temp[si] = AMBIENT_TEMP;
         const u8 st = (u8)(stamp() << STAMP_SHIFT);
-        p.flags = (u8)((p.flags & F_DIR) | st);
-        s.flags = st;
-        dirtyPoint(sx, sy); dirtyPoint(tx, ty); dirtyPoint(px, py);
+        t.flags = (u8)((s.flags & F_DIR) | st);
+        s.flags = (u8)((s.flags & F_DIR) | st);
+        dirtyPoint(sx, sy); dirtyPoint(tx, ty);
         return true;
     }
 
@@ -355,6 +354,79 @@ bool World::tryMove(int sx, int sy, int tx, int ty) {
     dirtyPoint(sx, sy);
     dirtyPoint(tx, ty);
     return true;
+}
+
+/* Move a fluid parcel already inside a sieve either into the next compatible
+   mesh cell or back out into empty world space. The sieve material itself never
+   moves. Temperature follows the parcel through the mesh; while occupied, the
+   sieve and fluid share that one temperature, which also lets ordinary heat
+   conduction act on the contents without another world-sized array. */
+bool World::moveFilterFluid(int sx, int sy, int tx, int ty) {
+    if (tx < PLAY_X0 || tx > PLAY_X1 || ty < PLAY_Y0 || ty > PLAY_Y1) return false;
+    const int si = sy * SIM_W + sx, ti = ty * SIM_W + tx;
+    Cell& s = cells[si];
+    Cell& t = cells[ti];
+    const u8 moving = s.moisture;
+    if (!moving) return false;
+
+    if (filterAllows(t.mat, moving)) {
+        if (t.moisture) return false;
+        t.moisture = moving;
+    } else {
+        if (t.mat != MAT_EMPTY || blocksCell(tx, ty)) return false;
+        t.mat = moving;
+        t.moisture = 0;
+    }
+
+    s.moisture = 0;
+    temp[ti] = temp[si];
+    temp[si] = AMBIENT_TEMP;
+    const u8 st = (u8)(stamp() << STAMP_SHIFT);
+    t.flags = (u8)((s.flags & F_DIR) | st);
+    s.flags = (u8)((s.flags & F_DIR) | st);
+    dirtyPoint(sx, sy);
+    dirtyPoint(tx, ty);
+    return true;
+}
+
+void World::updateFilterFluid(int x, int y) {
+    const int i = y * SIM_W + x;
+    Cell& c = cells[i];
+    const u8 moving = c.moisture;
+    if (!moving) return;
+
+    /* Contact reactions see through the mesh. This is table-driven in the same
+       direction as the ordinary coal-side rule: a neighbour names what fluid
+       transforms it, the neighbour changes, and the fluid parcel is spent. */
+    for (int k = 0; k < 4; ++k) {
+        const int nx = x + NB_DX[k], ny = y + NB_DY[k];
+        const u8 neighbour = cells[ny * SIM_W + nx].mat;
+        if (!g_matWetInto[neighbour] || g_matWetBy[neighbour] != moving) continue;
+        convert(nx, ny, g_matWetInto[neighbour]);
+        c.moisture = 0;
+        temp[i] = AMBIENT_TEMP;
+        dirtyPoint(x, y);
+        return;
+    }
+
+    const MatInfo& m = MATS[moving];
+    int dx = (c.flags & F_DIR) ? 1 : -1;
+    if (m.kind == KIND_GAS) {
+        if (moveFilterFluid(x, y, x, y - 1)) return;
+        if (moveFilterFluid(x, y, x + dx, y - 1)) return;
+        if (moveFilterFluid(x, y, x - dx, y - 1)) return;
+        if (moveFilterFluid(x, y, x + dx, y)) return;
+        if (moveFilterFluid(x, y, x - dx, y)) return;
+    } else { /* only liquids can enter the other permitted branch */
+        if (moveFilterFluid(x, y, x, y + 1)) return;
+        if (moveFilterFluid(x, y, x + dx, y + 1)) return;
+        if (moveFilterFluid(x, y, x - dx, y + 1)) return;
+        if (moveFilterFluid(x, y, x + dx, y)) return;
+        if (moveFilterFluid(x, y, x - dx, y)) return;
+    }
+
+    c.flags ^= F_DIR;
+    dirtyPoint(x, y);   /* occupied mesh retries until it can leave or react */
 }
 
 void World::updatePowder(int x, int y) {
@@ -1255,6 +1327,14 @@ void World::updateCell(int x, int y) {
     c.flags = (u8)((c.flags & F_DIR) | (st << STAMP_SHIFT));
 
     const MatInfo& m = MATS[c.mat];
+
+    /* Sieve moisture is a coexisting fluid material id, not absorbed water.
+       Give that parcel its turn before applying phase/reaction tables to the
+       mesh material itself. */
+    if ((c.mat == MAT_SIEVE || c.mat == MAT_GAS_SIEVE) && c.moisture) {
+        updateFilterFluid(x, y);
+        return;
+    }
 
     /* --- a seed that has come to rest ---------------------------------
        Reported, not acted on: whether this becomes a tree is tree.cpp's

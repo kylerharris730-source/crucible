@@ -1,11 +1,62 @@
 #include "projectile.h"
 #include "entity.h"
-#include "item.h"
 #include "item.h"     /* the nearest-first disc table, for explosions */
 #include "render.h"   /* VIEW_CELLS_W/H */
+#include "light.h"
 #include <math.h>
 
 Projectile g_proj[MAX_PROJ];
+
+/* --- Glowflare reveal burst -----------------------------------------------
+
+   These are overlays rather than cells or projectiles. They deliberately do
+   not even receive a World in their tick, which makes the promise that they
+   pass through rock structural rather than a collision exception somebody can
+   accidentally remove later. Their only effects are a moving dynamic light
+   source and a bright pixel; after well under a second both decay away. */
+struct GlowMote {
+    float x, y, vx, vy;
+    i16 life;
+    bool alive;
+};
+
+static const int MAX_GLOW_MOTES = 256;
+static const int GLOW_BURST_MOTES = 28;
+static GlowMote g_glowMotes[MAX_GLOW_MOTES];
+
+static void glowBurst(float x, float y) {
+    static const float TAU = 6.28318530718f;
+    const int seed = (((int)x * 17) ^ ((int)y * 31)) & 255;
+    const float phase = TAU * (float)seed / 256.0f;
+    int made = 0;
+    for (int slot = 0; slot < MAX_GLOW_MOTES && made < GLOW_BURST_MOTES; ++slot) {
+        GlowMote& m = g_glowMotes[slot];
+        if (m.alive) continue;
+        const float a = phase + TAU * (float)made / (float)GLOW_BURST_MOTES;
+        const float speed = 2.4f + 0.42f * (float)(made % 6);
+        m.x = x; m.y = y;
+        m.vx = cosf(a) * speed;
+        m.vy = sinf(a) * speed;
+        m.life = (i16)(34 + made % 9);
+        m.alive = true;
+        ++made;
+    }
+}
+
+static void glowMotesTick() {
+    for (int i = 0; i < MAX_GLOW_MOTES; ++i) {
+        GlowMote& m = g_glowMotes[i];
+        if (!m.alive) continue;
+        if (--m.life <= 0) { m.alive = false; continue; }
+        /* No cell query here: motes cross liquids, walls, ores and machines.
+           Drag makes the burst expand quickly and then hang for only a moment
+           around the rock it just revealed. */
+        m.x += m.vx; m.y += m.vy;
+        m.vx *= 0.94f; m.vy *= 0.94f;
+        if (m.x < PLAY_X0 || m.x > PLAY_X1 || m.y < PLAY_Y0 || m.y > PLAY_Y1)
+            m.alive = false;
+    }
+}
 
 /* --- explosions ------------------------------------------------------------
    A disc of destruction with a falloff, then fire in the core and heat over the
@@ -70,28 +121,31 @@ int projExplosionsThisFrame = 0;
 
 void projClear() {
     for (int i = 0; i < MAX_PROJ; ++i) g_proj[i].alive = false;
+    for (int i = 0; i < MAX_GLOW_MOTES; ++i) g_glowMotes[i].alive = false;
 }
 
-void projSpawn(float x, float y, float vx, float vy,
+bool projSpawn(float x, float y, float vx, float vy,
                int power, int pierce, int life, u32 colour, int blast,
-               int payload, int damage, bool hostile, float gravity) {
+               int payload, int damage, bool hostile, float gravity, int effect) {
     for (int i = 0; i < MAX_PROJ; ++i) {
         if (g_proj[i].alive) continue;
         Projectile& p = g_proj[i];
         p.x = x; p.y = y; p.vx = vx; p.vy = vy;
         p.power = power; p.pierce = pierce; p.life = life; p.blast = blast;
         p.colour = colour; p.payload = (u8)payload; p.damage = damage;
-        p.hostile = hostile; p.gravity = gravity; p.alive = true;
-        return;
+        p.hostile = hostile; p.gravity = gravity; p.effect = (u8)effect; p.alive = true;
+        return true;
     }
     /* Full: drop it. Silently, because the alternative -- replacing the oldest
        -- makes shots vanish mid-flight, which looks like a bug from inside the
        game while dropping one at the muzzle just looks like it did not fire. */
+    return false;
 }
 
 int projUpdate(World& w) {
     int destroyed = 0;
     projExplosionsThisFrame = 0;
+    glowMotesTick();
 
     for (int i = 0; i < MAX_PROJ; ++i) {
         Projectile& p = g_proj[i];
@@ -265,8 +319,24 @@ int projUpdate(World& w) {
         if (blocked && p.payload != MAT_EMPTY && dropX >= 0) {
             w.setCell(dropX, dropY, p.payload);
         }
+        if (blocked && p.effect == PROJ_EFFECT_GLOWFLARE && dropX >= 0)
+            glowBurst(p.x, p.y);
     }
     return destroyed;
+}
+
+void projRegisterLights() {
+    /* The intact ampoule is visible in flight; impact replaces that one moving
+       point with a fan of stronger sources travelling through the rock. */
+    for (int i = 0; i < MAX_PROJ; ++i)
+        if (g_proj[i].alive && g_proj[i].effect == PROJ_EFFECT_GLOWFLARE)
+            lightAddDynamic((int)g_proj[i].x, (int)g_proj[i].y, 220);
+    for (int i = 0; i < MAX_GLOW_MOTES; ++i) {
+        const GlowMote& m = g_glowMotes[i];
+        if (!m.alive) continue;
+        const int level = imin(255, (int)m.life * 8);
+        lightAddDynamic((int)m.x, (int)m.y, (u8)level);
+    }
 }
 
 /* Takes VIEW coordinates. Callers convert from world by subtracting the
@@ -323,10 +393,30 @@ void projDraw(u32* px, int camX, int camY) {
         plot(px, cx - 1, cy + 1, e);
         plot(px, cx + 1, cy + 1, e);
     }
+
+    for (int i = 0; i < MAX_GLOW_MOTES; ++i) {
+        const GlowMote& m = g_glowMotes[i];
+        if (!m.alive) continue;
+        const int x = (int)m.x - camX, y = (int)m.y - camY;
+        const int n = imin(42, (int)m.life);
+        const u32 c = fade(0x9AF4BE, n, 42);
+        plot(px, x, y, m.life > 24 ? 0xE8FFF0 : c);
+        if (m.life > 30) {
+            const u32 edge = fade(c, 2, 3);
+            plot(px, x - 1, y, edge); plot(px, x + 1, y, edge);
+            plot(px, x, y - 1, edge); plot(px, x, y + 1, edge);
+        }
+    }
 }
 
 int projCount() {
     int n = 0;
     for (int i = 0; i < MAX_PROJ; ++i) if (g_proj[i].alive) ++n;
+    return n;
+}
+
+int projGlowMoteCount() {
+    int n = 0;
+    for (int i = 0; i < MAX_GLOW_MOTES; ++i) if (g_glowMotes[i].alive) ++n;
     return n;
 }

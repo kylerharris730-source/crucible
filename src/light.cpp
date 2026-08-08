@@ -488,7 +488,7 @@ static void sweepBackward(const LRect& r) {
 
    The one artefact it does have: the far FACE of a wall is lit from the near
    side, so standing in a dark room you see the shared wall dimly rather than
-   black. That is the honest consequence of light reading 20 cells into rock,
+   black. That is the honest consequence of light reading 40 cells into rock,
    the wall is genuinely lit rock, and it is a surface rather than a room -- the
    air beside it stays dark, which is the part that would actually have looked
    broken.
@@ -497,7 +497,7 @@ static void sweepBackward(const LRect& r) {
    acts as a fixed source and can never GAIN from the soak. Without that, light
    would pool in air at the soak's low attenuation and creep along corridors it
    has no business in. */
-static const int SOLID_SOAK     = 20 / LIGHT_CELL;   /* SAMPLES light reads into */
+static const int SOLID_SOAK     = 40 / LIGHT_CELL;   /* SAMPLES light reads into */
 static const int SOLID_SOAK_ATT = LIGHT_MAX / SOLID_SOAK;
 
 /* One forward/backward pair, where the main sweeps use two. The second pair
@@ -622,7 +622,7 @@ static void solidSoak(const LRect& sr, const LRect& wr) {
    already a column property (see the ray model above), so it can have its own
    attenuation, and this pass runs AFTER the sweeps -- so the light it adds
    lights the rock it is in and does not propagate anywhere from there. That
-   last part is what keeps it honest: soaking daylight 15 cells into a roof
+   last part is what keeps it honest: soaking daylight 32 cells into a roof
    cannot brighten the room under it, because nothing reads these values again.
 
    It also stops at the first open cell below ground, which is what makes it
@@ -633,7 +633,7 @@ static void solidSoak(const LRect& sr, const LRect& wr) {
    SUN_SOAK of the surface has dim rock around it and a dark interior. It is a
    rare shape, the values involved are low, and the alternative is letting the
    soak into the sweeps, which is exactly the leak this pass exists to avoid. */
-static const int SUN_SOAK     = 16 / LIGHT_CELL;     /* SAMPLES daylight reaches */
+static const int SUN_SOAK     = 32 / LIGHT_CELL;     /* SAMPLES daylight reaches */
 static const int SUN_SOAK_ATT = LIGHT_MAX / SUN_SOAK;
 
 /* No state machine any more, and losing it fixed a bug that had nothing to do

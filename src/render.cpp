@@ -21,7 +21,7 @@ static const u32 VOID_COLOUR = 0x000000;
    backdrop underground. Looking up out of a shaft you see real sky and it is
    bright; looking at the back wall of the shaft you see stone and it is dark.
    That is the distinction that matters and it is the one this makes. */
-static inline u32 backdrop(const World& w, int wx, int wy, int i, bool* openSky) {
+static inline u32 backdrop(const World& w, int wx, int wy, int i, u32 sky, bool* openSky) {
     const u8 raw = w.bg[i];
     const u8 b = (u8)(raw & BG_MAT_MASK);
     if (b) {
@@ -38,11 +38,6 @@ static inline u32 backdrop(const World& w, int wx, int wy, int i, bool* openSky)
        terrain of any shape gets the backdrop generation gave it rather than one
        inferred from how high it happens to be. */
     const int cx = wx >> CHUNK_SHIFT, cy = wy >> CHUNK_SHIFT;
-    const u32 daySky = g_skyLut[wy < SKY_BAND ? (wy < 0 ? 0 : wy) : SKY_BAND - 1];
-    /* Lighting already makes night dim; tinting the backdrop as well makes it
-       read as night before the player has a roof over their head. The moon and
-       sun are drawn later as distant overlays, so this remains just the sky. */
-    const u32 sky = lerpColor(0x07101F, daySky, dayLight());
 
     if (w.zone[cy * CHUNKS_X + cx] == ZONE_SKY) { *openSky = true; return sky; }
 
@@ -88,6 +83,12 @@ int renderView(const World& w, u32* out, int view, int camX, int camY, bool lit)
     const Cell* cells = w.cells;
     const u8*   temp  = w.temp;
     int count = 0;
+    /* Constant for the entire frame. backdrop() used to call dayLight() for
+       every empty visible cell, then repeat the identical sky blend across all
+       512 cells of a row. A large excavated cavern made that nearly 200,000
+       floating-point daylight calculations per frame even though the result
+       only varies with Y. */
+    const int daylight = dayLight();
 
     for (int vy = 0; vy < VIEW_CELLS_H; ++vy) {
         const int wy = camY + vy;
@@ -98,6 +99,13 @@ int renderView(const World& w, u32* out, int view, int camX, int camY, bool lit)
             for (int vx = 0; vx < VIEW_CELLS_W; ++vx) row[vx] = VOID_COLOUR;
             continue;
         }
+
+        const u32 daySky = g_skyLut[wy < SKY_BAND ? (wy < 0 ? 0 : wy) : SKY_BAND - 1];
+        /* Lighting already makes night dim; tinting the backdrop as well makes
+           it read as night before the player has a roof over their head. The
+           moon and sun are drawn later as distant overlays, so this is just the
+           row's sky colour, shared by every empty cell on it. */
+        const u32 rowSky = lerpColor(0x07101F, daySky, daylight);
 
         /* The horizontal span that is actually inside the world, so the inner
            loops carry no bounds test at all. */
@@ -130,8 +138,12 @@ int renderView(const World& w, u32* out, int view, int camX, int camY, bool lit)
                 Cell c = cells[i];
                 bool openSky = false;
                 u32 col = g_matUnseen[c.mat]
-                        ? backdrop(w, camX + vx, wy, i, &openSky)
+                        ? backdrop(w, camX + vx, wy, i, rowSky, &openSky)
                         : g_colorLut[((u32)c.mat << 8) | (u32)(c.moisture & 0xF0) | (u32)(c.tint >> 4)];
+                if ((c.mat == MAT_SIEVE || c.mat == MAT_GAS_SIEVE) && c.moisture) {
+                    const u32 fluid = g_colorLut[((u32)c.moisture << 8) | (u32)(c.tint >> 4)];
+                    col = lerpColor(col, fluid, 112);
+                }
                 row[vx] = (lrow && !openSky) ? shadeColor(col, g_lightShade[lrow[vx]]) : col;
                 count += (c.mat != MAT_EMPTY && c.mat != MAT_WALL);
             }
@@ -154,8 +166,18 @@ int renderView(const World& w, u32* out, int view, int camX, int camY, bool lit)
                are drawn by its sprite, not by the material, so they take the
                backdrop like empty air. See g_matUnseen in materials.h. */
             u32 col = g_matUnseen[c.mat]
-                    ? backdrop(w, camX + vx, wy, i, &openSky)
+                    ? backdrop(w, camX + vx, wy, i, rowSky, &openSky)
                     : g_colorLut[((u32)c.mat << 8) | (u32)(c.moisture & 0xF0) | (u32)(c.tint >> 4)];
+            /* A sieve can hold one coexisting fluid parcel in moisture. Keep
+               the mesh visible, but tint it toward its contents so water,
+               glowfluid or steam advancing through it is observable rather
+               than hidden state. Both sieve palettes have identical dry/wet
+               endpoints, so the overloaded moisture byte does not otherwise
+               distort their own colour lookup above. */
+            if ((c.mat == MAT_SIEVE || c.mat == MAT_GAS_SIEVE) && c.moisture) {
+                const u32 fluid = g_colorLut[((u32)c.moisture << 8) | (u32)(c.tint >> 4)];
+                col = lerpColor(col, fluid, 112);
+            }
             const u8 t = temp[i];
             /* g_matGlows lets a material opt out of the overlay entirely
                (plasma does; see materials.h). Deliberately a flag and not a

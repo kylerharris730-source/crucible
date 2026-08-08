@@ -249,6 +249,15 @@ const Recipe RECIPES[] = {
       ITEM_TWIN_CONTROLLER, 1, "Twin Controller", STATION_ANVIL },
     { { { (ItemId)MAT_CHITIN, 4 }, { (ItemId)MAT_COPPER, 2 }, { ITEM_NONE, 0 } },
       ITEM_GARLIC_FIELD_CHIP, 1, "Garlic Field Chip", STATION_ANVIL },
+    /* The player wears accessories; drones socket chips. Building the player
+       version from its matching chip makes the relationship obvious while the
+       extra casing is the cost of making it survive on a moving body. */
+    { { { ITEM_GARLIC_FIELD_CHIP, 1 }, { (ItemId)MAT_CHITIN, 4 }, { ITEM_NONE, 0 } },
+      ITEM_GARLIC_ACCESSORY, 1, "Garlic Accessory", STATION_ANVIL },
+    { { { ITEM_OVERCLOCK_CHIP, 1 }, { (ItemId)MAT_RUBBER, 2 }, { ITEM_NONE, 0 } },
+      ITEM_OVERLOAD_ACCESSORY, 1, "Overload Accessory", STATION_ANVIL },
+    { { { ITEM_TWIN_CONTROLLER, 1 }, { (ItemId)MAT_GLASS, 2 }, { ITEM_NONE, 0 } },
+      ITEM_TWIN_ACCESSORY, 1, "Twin Accessory", STATION_ANVIL },
     { { { (ItemId)MAT_GLOWFLUID, 2 }, { (ItemId)MAT_GLASS, 1 }, { ITEM_NONE, 0 } },
       ITEM_GLOW_FLARE, 1, "Glowflare", STATION_CHEM },
     { { { (ItemId)MAT_COPPER, 2 }, { (ItemId)MAT_IRON, 1 }, { ITEM_NONE, 0 } },

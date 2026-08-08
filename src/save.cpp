@@ -487,7 +487,15 @@ bool saveRead(const char* path, World& w) {
             statAdd("cell material", len + 12);
         } else if (tag == fourcc("CMOI")) {
             if (!rleRead(f, g_plane, SIM_W * SIM_H)) { sprintf(g_err, "bad moisture data"); fclose(f); return false; }
-            for (int i = 0; i < SIM_W * SIM_H; ++i) w.cells[i].moisture = g_plane[i];
+            for (int i = 0; i < SIM_W * SIM_H; ++i) {
+                /* A sieve's moisture byte is a fluid material id. Remap it by
+                   name just like the foreground plane; ordinary moisture is a
+                   scalar and must remain untouched. */
+                const u8 raw = g_plane[i];
+                w.cells[i].moisture = ((w.cells[i].mat == MAT_SIEVE ||
+                                        w.cells[i].mat == MAT_GAS_SIEVE) && raw)
+                                      ? g_remap[raw] : raw;
+            }
             statAdd("cell moisture", len + 12);
         } else if (tag == fourcc("TEMP")) {
             if (!rleRead(f, w.temp, SIM_W * SIM_H)) { sprintf(g_err, "bad temperature data"); fclose(f); return false; }

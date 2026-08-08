@@ -327,14 +327,14 @@ void initItems() {
        which is the entire cost and is meant to bite once the pack is full of
        ore. */
     ITEMS[ITEM_LENS].name       = "Focusing Lens";
-    ITEMS[ITEM_LENS].kind       = ITEMK_WORN;
+    ITEMS[ITEM_LENS].kind       = ITEMK_ACCESSORY;
     ITEMS[ITEM_LENS].equipSlot  = EQ_TRINKET_A;
     ITEMS[ITEM_LENS].maxStack   = 1;
     ITEMS[ITEM_LENS].colour     = 0x8FD8E8;
     ITEMS[ITEM_LENS].reachBonus = 28;
 
     ITEMS[ITEM_RELAY].name       = "Field Relay";
-    ITEMS[ITEM_RELAY].kind       = ITEMK_WORN;
+    ITEMS[ITEM_RELAY].kind       = ITEMK_ACCESSORY;
     ITEMS[ITEM_RELAY].equipSlot  = EQ_TRINKET_A;
     ITEMS[ITEM_RELAY].maxStack   = 1;
     ITEMS[ITEM_RELAY].colour     = 0xB088E0;
@@ -681,10 +681,8 @@ void initItems() {
     ITEMS[ITEM_GARLIC_FIELD_CHIP].sprite   = SPR_MOD_BLAST;
 
     ITEMS[ITEM_GLOW_FLARE].name       = "Glowflare";
-    ITEMS[ITEM_GLOW_FLARE].kind       = ITEMK_TOOL;
-    ITEMS[ITEM_GLOW_FLARE].maxStack   = 1;
-    ITEMS[ITEM_GLOW_FLARE].toolSlots  = 0;
-    ITEMS[ITEM_GLOW_FLARE].baseDelay  = 24;
+    ITEMS[ITEM_GLOW_FLARE].kind       = ITEMK_THROWABLE;
+    ITEMS[ITEM_GLOW_FLARE].maxStack   = 64;
     ITEMS[ITEM_GLOW_FLARE].power      = 0;
     ITEMS[ITEM_GLOW_FLARE].damage     = 1;
     ITEMS[ITEM_GLOW_FLARE].pierce     = 1;
@@ -692,6 +690,30 @@ void initItems() {
     ITEMS[ITEM_GLOW_FLARE].shotColour = 0x9AF4BE;
     ITEMS[ITEM_GLOW_FLARE].colour     = 0x9AF4BE;
     ITEMS[ITEM_GLOW_FLARE].sprite     = SPR_FLARE;
+
+    /* Player accessories mirror the three drone-chip concepts without sharing
+       their sockets or their code paths. Two trinket slots make every one a
+       loadout decision rather than another always-on property of the pack. */
+    ITEMS[ITEM_GARLIC_ACCESSORY].name      = "Garlic Accessory";
+    ITEMS[ITEM_GARLIC_ACCESSORY].kind      = ITEMK_ACCESSORY;
+    ITEMS[ITEM_GARLIC_ACCESSORY].equipSlot = EQ_TRINKET_A;
+    ITEMS[ITEM_GARLIC_ACCESSORY].maxStack  = 1;
+    ITEMS[ITEM_GARLIC_ACCESSORY].colour    = 0xDCE8B0;
+    ITEMS[ITEM_GARLIC_ACCESSORY].sprite    = SPR_ACC_GARLIC;
+
+    ITEMS[ITEM_OVERLOAD_ACCESSORY].name      = "Overload Accessory";
+    ITEMS[ITEM_OVERLOAD_ACCESSORY].kind      = ITEMK_ACCESSORY;
+    ITEMS[ITEM_OVERLOAD_ACCESSORY].equipSlot = EQ_TRINKET_A;
+    ITEMS[ITEM_OVERLOAD_ACCESSORY].maxStack  = 1;
+    ITEMS[ITEM_OVERLOAD_ACCESSORY].colour    = 0xF0B85C;
+    ITEMS[ITEM_OVERLOAD_ACCESSORY].sprite    = SPR_ACC_OVERLOAD;
+
+    ITEMS[ITEM_TWIN_ACCESSORY].name      = "Twin Accessory";
+    ITEMS[ITEM_TWIN_ACCESSORY].kind      = ITEMK_ACCESSORY;
+    ITEMS[ITEM_TWIN_ACCESSORY].equipSlot = EQ_TRINKET_A;
+    ITEMS[ITEM_TWIN_ACCESSORY].maxStack  = 1;
+    ITEMS[ITEM_TWIN_ACCESSORY].colour    = 0xC89AF0;
+    ITEMS[ITEM_TWIN_ACCESSORY].sprite    = SPR_ACC_TWIN;
 
 
     /* The starter weapon. A TOOL with no module slots, which is what makes it
@@ -938,10 +960,17 @@ int Inventory::armour() const {
     return total;
 }
 
+bool Inventory::hasEquipped(ItemId item) const {
+    if (item == ITEM_NONE) return false;
+    for (int i = 0; i < EQ_COUNT; ++i)
+        if (!equip[i].empty() && equip[i].item == item) return true;
+    return false;
+}
+
 bool equipFits(ItemId item, int eqSlot) {
     if (item == ITEM_NONE || eqSlot < 0 || eqSlot >= EQ_COUNT) return false;
     const ItemDef& d = ITEMS[item];
-    if (d.kind != ITEMK_WORN || d.equipSlot >= EQ_COUNT) return false;
+    if ((d.kind != ITEMK_WORN && d.kind != ITEMK_ACCESSORY) || d.equipSlot >= EQ_COUNT) return false;
     if (d.equipSlot == (u8)eqSlot) return true;
     return (d.equipSlot == EQ_TRINKET_A && eqSlot == EQ_TRINKET_B) ||
            (d.equipSlot == EQ_DRONE_A && eqSlot == EQ_DRONE_B);
@@ -958,7 +987,7 @@ int Inventory::packWorn(int eqSlot) const {
 bool Inventory::equipFromPack(ItemId item) {
     if (item == ITEM_NONE) return false;
     const ItemDef& d = ITEMS[item];
-    if (d.kind != ITEMK_WORN || d.equipSlot >= EQ_COUNT) return false;
+    if ((d.kind != ITEMK_WORN && d.kind != ITEMK_ACCESSORY) || d.equipSlot >= EQ_COUNT) return false;
     if (countOf(item) <= 0) return false;
 
     /* Prefer an empty slot it fits, and only swap when every one it fits is

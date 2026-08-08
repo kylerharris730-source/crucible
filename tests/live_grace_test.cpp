@@ -7,7 +7,9 @@
 #include "item.h"
 #include "sprite.h"
 #include "drone.h"
+#include "accessory.h"
 #include "entity.h"
+#include "light.h"
 #include <stdio.h>
 
 /* This used to define g_logisticsUiOpen itself, because device.cpp read a flag
@@ -65,7 +67,9 @@ int main() {
     droneInv.equip[EQ_DRONE_A].count = 1;
     g_pickups[0].used = true; g_pickups[0].item = (ItemId)MAT_CHITIN;
     g_pickups[0].count = 1; g_pickups[0].x = 550.0f; g_pickups[0].y = 500.0f;
-    droneReset(); droneTick(w, dronePlayer, droneInv);
+    droneReset();
+    for (int tick = 0; tick < 120 && g_pickups[0].used; ++tick)
+        droneTick(w, dronePlayer, droneInv);
     if (g_pickups[0].used || droneInv.countOf((ItemId)MAT_CHITIN) != 1 ||
         !equipFits(ITEM_SHIELD_DRONE, EQ_DRONE_B)) {
         fprintf(stderr, "pickup or shield drone equipment failed\n"); return 36;
@@ -83,6 +87,117 @@ int main() {
     droneReset(); droneTick(w, dronePlayer, droneInv);
     if (g_entities[shieldTarget].hp >= shieldHp || g_entities[shieldTarget].vx <= 0.0f) {
         fprintf(stderr, "shield drone did not pulse damage and knockback\n"); return 38;
+    }
+    /* Player accessories occupy trinket slots and deliberately do not fit the
+       drone-chip sockets. Their three initial effects parallel the drone
+       chips, but resolve through a separate player-side path. */
+    Inventory accessoryInv = {}; accessoryInv.clear();
+    if (!equipFits(ITEM_GARLIC_ACCESSORY, EQ_TRINKET_A) ||
+        !equipFits(ITEM_GARLIC_ACCESSORY, EQ_TRINKET_B) ||
+        equipFits(ITEM_GARLIC_ACCESSORY, EQ_DRONE_A) ||
+        ITEMS[ITEM_GARLIC_ACCESSORY].kind != ITEMK_ACCESSORY) {
+        fprintf(stderr, "player accessory class does not fit trinket slots\n"); return 77;
+    }
+    accessoryInv.equip[EQ_TRINKET_A].item = ITEM_OVERLOAD_ACCESSORY;
+    accessoryInv.equip[EQ_TRINKET_A].count = 1;
+    accessoryInv.equip[EQ_TRINKET_B].item = ITEM_TWIN_ACCESSORY;
+    accessoryInv.equip[EQ_TRINKET_B].count = 1;
+    if (accessoryShotDelay(accessoryInv, 28) != 21 ||
+        !accessoryTwinShot(accessoryInv) ||
+        accessoryInv.hasEquipped(ITEM_GARLIC_ACCESSORY)) {
+        fprintf(stderr, "overload or twin accessory effect is not isolated\n"); return 78;
+    }
+    accessoryInv.equip[EQ_TRINKET_A].item = ITEM_GARLIC_ACCESSORY;
+    entReset();
+    const int garlicTarget = entSpawn(w, ENT_MITE, 520.0f, 500.0f);
+    if (garlicTarget < 0) { fprintf(stderr, "could not spawn garlic test target\n"); return 79; }
+    const int garlicHp = g_entities[garlicTarget].hp;
+    accessoryReset(); accessoryTick(dronePlayer, accessoryInv);
+    if (g_entities[garlicTarget].hp >= garlicHp) {
+        fprintf(stderr, "garlic accessory did not damage a nearby enemy\n"); return 80;
+    }
+    /* Followers accelerate back instead of teleporting and settle into the
+       invisible small pocket above the player's head after ordinary movement. */
+    droneInv.clear();
+    droneInv.equip[EQ_LIGHT_DRONE].item = ITEM_LIGHT_DRONE;
+    droneInv.equip[EQ_LIGHT_DRONE].count = 1;
+    droneReset();
+    for (int tick = 0; tick < 120 && g_pickups[0].used; ++tick)
+        droneTick(w, dronePlayer, droneInv);
+    const float oldDroneX = g_drones[0].x;
+    Player movedPlayer; movedPlayer.reset(650.0f, 500.0f);
+    droneTick(w, movedPlayer, droneInv);
+    if (g_drones[0].x <= oldDroneX || g_drones[0].x >= movedPlayer.centreX()) {
+        fprintf(stderr, "drone catch-up did not accelerate smoothly\n"); return 81;
+    }
+    for (int tick = 0; tick < 180; ++tick) droneTick(w, movedPlayer, droneInv);
+    const float homeDx = g_drones[0].x - movedPlayer.centreX();
+    const float homeDy = g_drones[0].y - ((float)movedPlayer.top() - DRONE_HOME_ABOVE);
+    if (homeDx * homeDx + homeDy * homeDy >
+        (float)(DRONE_HOME_RADIUS * DRONE_HOME_RADIUS)) {
+        fprintf(stderr, "idle drone did not settle in its home pocket\n"); return 82;
+    }
+    /* A light drone embedded in a wall must emerge on the player's side of
+       that wall. The empty pocket immediately beyond it is closer to the
+       drone, but lighting that pocket would still leave the player in shadow. */
+    w.reset(); droneReset(); droneTick(w, dronePlayer, droneInv);
+    for (int y = 470; y <= 500; ++y)
+        for (int x = 514; x <= 522; ++x) w.setCell(x, y, MAT_STONE);
+    g_drones[0].x = 520.5f; g_drones[0].y = 484.5f;
+    g_drones[0].vx = g_drones[0].vy = 0.0f;
+    droneTick(w, dronePlayer, droneInv);
+    if (g_drones[0].vx > -0.35f) {
+        fprintf(stderr, "embedded light drone recovery still brakes too early\n"); return 86;
+    }
+    for (int tick = 0; tick < 44; ++tick) droneTick(w, dronePlayer, droneInv);
+    if (g_matStrength[w.at((int)g_drones[0].x, (int)g_drones[0].y).mat] != STR_NOTHING ||
+        g_drones[0].x >= 511.0f) {
+        fprintf(stderr, "light drone did not clear the player side of a surface\n"); return 87;
+    }
+    /* In clear air beside the same wall, surface avoidance should push away
+       rather than allowing a zero-speed drone to skate against it. */
+    g_drones[0].x = 513.2f; g_drones[0].y = 484.5f;
+    g_drones[0].vx = g_drones[0].vy = 0.0f;
+    droneTick(w, dronePlayer, droneInv);
+    if (g_drones[0].vx >= 0.0f) {
+        fprintf(stderr, "light drone did not keep clearance from a wall\n"); return 88;
+    }
+    /* An attack drone with a wall across its home firing line must hold its
+       shot, fly to an open point inside the broad task envelope, then fire. */
+    w.reset(); entReset(); projClear(); droneInv.clear();
+    droneInv.equip[EQ_DRONE_A].item = ITEM_ATTACK_DRONE;
+    droneInv.equip[EQ_DRONE_A].count = 1;
+    for (int y = 450; y <= 550; ++y) w.setCell(540, y, MAT_STONE);
+    const int obscuredTarget = entSpawn(w, ENT_MITE, 580.0f, 500.0f);
+    if (obscuredTarget < 0) { fprintf(stderr, "could not spawn LOS test target\n"); return 83; }
+    droneReset(); droneTick(w, dronePlayer, droneInv);
+    if (projCount() != 0) {
+        fprintf(stderr, "attack drone fired through an obstructed line\n"); return 84;
+    }
+    for (int tick = 0; tick < 180 && projCount() == 0; ++tick)
+        droneTick(w, dronePlayer, droneInv);
+    const float taskDx = g_drones[1].x - dronePlayer.centreX();
+    const float taskDy = g_drones[1].y - dronePlayer.centreY();
+    if (projCount() == 0 || taskDx * taskDx + taskDy * taskDy >
+        (float)(DRONE_TASK_RADIUS * DRONE_TASK_RADIUS)) {
+        fprintf(stderr, "attack drone did not reposition inside its task envelope\n"); return 85;
+    }
+    /* The projectile is drawn three cells wide, so a centreline which misses
+       a curved wall by one cell is still a visible clip. The drone must reject
+       this grazing line even though the zero-width ray itself is empty. */
+    w.reset(); entReset(); projClear(); droneReset(); droneInv.clear();
+    droneInv.equip[EQ_DRONE_A].item = ITEM_ATTACK_DRONE;
+    droneInv.equip[EQ_DRONE_A].count = 1;
+    droneTick(w, dronePlayer, droneInv);  /* instantiate before positioning */
+    g_drones[1].x = 500.5f; g_drones[1].y = 500.5f;
+    g_drones[1].vx = g_drones[1].vy = 0.0f;
+    const int grazeTarget = entSpawn(w, ENT_MITE, 570.0f, 501.0f);
+    if (grazeTarget < 0) { fprintf(stderr, "could not spawn grazing-shot target\n"); return 89; }
+    w.setCell(540, 502, MAT_STONE); /* below the y=500 zero-width centreline */
+    droneTick(w, dronePlayer, droneInv);
+    if (projCount() != 0 || (g_drones[1].vx == 0.0f && g_drones[1].vy == 0.0f)) {
+        fprintf(stderr, "attack drone accepted a wall-grazing firing line p=%d v=%.3f,%.3f\n",
+                projCount(), g_drones[1].vx, g_drones[1].vy); return 90;
     }
     /* Mining capability belongs to the best miner carried, not the selected
        hotbar slot; holding building material must not make an auger disappear. */
@@ -167,6 +282,65 @@ int main() {
     projUpdate(w);
     if (w.at(110, 100).mat != MAT_TORCH || projCount() != 1) {
         fprintf(stderr, "shot did not pass through torch\n"); return 30;
+    }
+
+    /* Glowflares are counts, not unique tools: they merge into one ordinary
+       stack, carry no instance handle, and can be consumed one at a time. */
+    Inventory flareInv = {};
+    flareInv.clear();
+    if (flareInv.add(ITEM_GLOW_FLARE, 40) != 0 ||
+        flareInv.countOf(ITEM_GLOW_FLARE) != 40 ||
+        flareInv.slot[0].count != 40 || flareInv.slot[0].inst != 0 ||
+        ITEMS[ITEM_GLOW_FLARE].kind != ITEMK_THROWABLE) {
+        fprintf(stderr, "glowflares did not form an ordinary consumable stack\n"); return 55;
+    }
+    if (flareInv.take(ITEM_GLOW_FLARE, 1) != 1 || flareInv.slot[0].count != 39) {
+        fprintf(stderr, "glowflare stack did not consume one use\n"); return 56;
+    }
+
+    /* A flare stops at rock, leaves its glowfluid charge on the near side and
+       bursts into overlays. The next two updates occur inside a solid 80x80
+       block; retaining every mote proves their motion does not collide with
+       material. They then all expire promptly instead of becoming permanent
+       dynamic lights. */
+    projClear(); w.reset();
+    for (int yy = 660; yy <= 740; ++yy)
+        for (int xx = 660; xx <= 740; ++xx) w.setCell(xx, yy, MAT_STONE);
+    if (!projSpawn(700.5f, 700.5f, 12.0f, 0.0f, 0, 1, 20, 0x9AF4BE, 0,
+                   MAT_GLOWFLUID, 1, false, 0.0f, PROJ_EFFECT_GLOWFLARE)) {
+        fprintf(stderr, "could not spawn glowflare test shot\n"); return 57;
+    }
+    projUpdate(w);
+    if (projCount() != 0 || projGlowMoteCount() != 28 ||
+        w.at(701, 700).mat != MAT_STONE || w.at(700, 700).mat != MAT_GLOWFLUID) {
+        fprintf(stderr, "glowflare did not burst against an intact wall\n"); return 58;
+    }
+    lightClearDynamic();
+    projRegisterLights();
+    lightCompute(w, 640, 640);
+    if (lightAt(61, 60) < 180) {
+        fprintf(stderr, "glowflare burst did not register strong dynamic light\n"); return 59;
+    }
+    projUpdate(w); projUpdate(w);
+    if (projGlowMoteCount() != 28) {
+        fprintf(stderr, "glowflare motes collided with solid blocks\n"); return 60;
+    }
+    for (int frame = 0; frame < 50; ++frame) projUpdate(w);
+    if (projGlowMoteCount() != 0) {
+        fprintf(stderr, "glowflare motes did not decay\n"); return 61;
+    }
+
+    /* Any light now reads forty world cells into solid material. At thirty
+       cells a thick stone block must retain some illumination; the previous
+       twenty-cell soak was already zero here. */
+    w.reset();
+    for (int yy = 450; yy <= 550; ++yy)
+        for (int xx = 400; xx <= 459; ++xx) w.setCell(xx, yy, MAT_STONE);
+    lightClearDynamic();
+    lightAddDynamic(399, 500, 255);
+    lightCompute(w, 350, 450);
+    if (lightAt(79, 50) == 0) {
+        fprintf(stderr, "light did not penetrate thirty cells into solid material\n"); return 62;
     }
     /* A torch is now a fixture: it can be installed under water without
        consuming the pool, and its footprint cannot catch falling loot. */
@@ -478,13 +652,23 @@ int main() {
         fprintf(stderr, "circuit signals did not aggregate through wires\n"); return 21;
     }
 
-    /* A Sieve is a fixed mesh, not consumed by the flow: liquids and gas hop
-       across it, while powder is caught. A Gas Sieve is the stricter version. */
+    /* A Sieve is a fixed mesh with one fluid occupant per cell. A parcel walks
+       through a brush-thick mesh one cell per frame while powder is caught. A
+       Gas Sieve is the stricter version. */
     w.reset();
     w.setLiveWindow(480, 480, 550, 550);
-    w.setCell(500, 500, MAT_WATER); w.setCell(500, 501, MAT_SIEVE);
+    for (int y = 499; y <= 505; ++y) {
+        w.setCell(499, y, MAT_STONE); w.setCell(501, y, MAT_STONE);
+    }
+    w.setCell(500, 500, MAT_WATER);
+    for (int y = 501; y <= 503; ++y) w.setCell(500, y, MAT_SIEVE);
     w.step();
-    if (w.at(500, 501).mat != MAT_SIEVE || w.at(500, 502).mat != MAT_WATER) {
+    if (w.at(500, 500).mat != MAT_EMPTY || w.at(500, 501).moisture != MAT_WATER) {
+        fprintf(stderr, "water did not enter sieve occupant slot\n"); return 45;
+    }
+    for (int frame = 0; frame < 3; ++frame) w.step();
+    if (w.at(500, 501).mat != MAT_SIEVE || w.at(500, 502).mat != MAT_SIEVE ||
+        w.at(500, 503).mat != MAT_SIEVE || w.at(500, 504).mat != MAT_WATER) {
         fprintf(stderr, "sieve did not pass water\n"); return 45;
     }
     w.reset();
@@ -502,15 +686,48 @@ int main() {
     w.setCell(519, 500, MAT_STONE); w.setCell(521, 500, MAT_STONE);
     w.setCell(519, 501, MAT_STONE); w.setCell(521, 501, MAT_STONE);
     w.step();
-    if (w.at(520, 500).mat != MAT_WATER) {
+    if (w.at(520, 500).mat != MAT_WATER || w.at(520, 501).moisture != 0) {
         fprintf(stderr, "gas sieve passed liquid\n"); return 47;
     }
     w.reset();
     w.setLiveWindow(480, 480, 550, 550);
-    w.setCell(530, 500, MAT_STEAM); w.setCell(530, 499, MAT_GAS_SIEVE);
+    for (int y = 497; y <= 505; ++y) {
+        w.setCell(529, y, MAT_STONE); w.setCell(531, y, MAT_STONE);
+    }
+    w.setCell(530, 504, MAT_STEAM);
+    for (int y = 501; y <= 503; ++y) w.setCell(530, y, MAT_GAS_SIEVE);
     w.step();
-    if (w.at(530, 499).mat != MAT_GAS_SIEVE || w.at(530, 498).mat != MAT_STEAM) {
+    if (w.at(530, 504).mat != MAT_EMPTY || w.at(530, 503).moisture != MAT_STEAM) {
+        fprintf(stderr, "steam did not enter gas sieve occupant slot\n"); return 48;
+    }
+    for (int frame = 0; frame < 3; ++frame) w.step();
+    if (w.at(530, 503).mat != MAT_GAS_SIEVE || w.at(530, 502).mat != MAT_GAS_SIEVE ||
+        w.at(530, 501).mat != MAT_GAS_SIEVE || w.at(530, 500).mat != MAT_STEAM) {
         fprintf(stderr, "gas sieve did not pass gas\n"); return 48;
+    }
+
+    /* Occupancy is real contact, not just transport. Steam inside the mesh
+       slakes coal resting on top; the resulting liquid fuel then enters the
+       vacated occupant slot and flows out beneath it. */
+    w.reset();
+    w.setLiveWindow(530, 480, 570, 530);
+    for (int y = 498; y <= 503; ++y) {
+        w.setCell(549, y, MAT_STONE); w.setCell(551, y, MAT_STONE);
+    }
+    w.setCell(550, 500, MAT_COAL);
+    w.setCell(550, 501, MAT_SIEVE);
+    w.setCell(550, 502, MAT_STEAM);
+    w.step();
+    if (w.at(550, 501).moisture != MAT_STEAM) {
+        fprintf(stderr, "steam did not occupy sieve beneath coal\n"); return 52;
+    }
+    w.step();
+    if (w.at(550, 501).moisture != MAT_FUEL || w.at(550, 500).mat != MAT_EMPTY) {
+        fprintf(stderr, "sieve-contained steam did not slake coal into flowing fuel\n"); return 53;
+    }
+    w.step();
+    if (w.at(550, 501).moisture != 0 || w.at(550, 502).mat != MAT_FUEL) {
+        fprintf(stderr, "fuel did not flow out of sieve after slaking\n"); return 54;
     }
 
     /* Convection moves a hot fluid parcel upward without moving either cell.

@@ -41,6 +41,11 @@
    to aim high once this existed. */
 static const float PROJ_GRAVITY = 0.18f;
 
+enum ProjectileEffect {
+    PROJ_EFFECT_NONE = 0,
+    PROJ_EFFECT_GLOWFLARE
+};
+
 struct Projectile {
     float x, y;      /* cells, with a fractional part */
     float vx, vy;
@@ -75,6 +80,10 @@ struct Projectile {
        lava igniting) is already simulated and asks nothing further of this
        file. */
     u8    payload;
+    /* Optional impact-only overlay effect. Kept separate from payload because
+       glowfluid is also valid ammunition in an ordinary multitool, while a
+       Glowflare is specifically the ampoule that bursts into revealing motes. */
+    u8    effect;
     bool  alive;
 };
 
@@ -94,7 +103,7 @@ void projClear();
    ignites what is nearby, acid starts dissolving its neighbours -- all of
    that is the ordinary simulation reacting to a cell that changed, exactly
    as it would if a player had placed the material by hand. */
-void projSpawn(float x, float y, float vx, float vy,
+bool projSpawn(float x, float y, float vx, float vy,
                int power, int pierce, int life, u32 colour, int blast = 0,
                int payload = MAT_EMPTY, int damage = 0, bool hostile = false,
                /* Defaulted ON, so a shot arcs unless it says otherwise. That is
@@ -103,7 +112,8 @@ void projSpawn(float x, float y, float vx, float vy,
                   the world rather than like it hovers. Pass 0 to opt out, and
                   say why -- there is exactly one reason so far (a mining beam,
                   which has to bore a straight tunnel). */
-               float gravity = PROJ_GRAVITY);
+               float gravity = PROJ_GRAVITY,
+               int effect = PROJ_EFFECT_NONE);
 
 /* Blows a hole, sets fire to the middle of it and heats the lot. Exposed
    because an explosion is a world event rather than a projectile one -- the
@@ -118,5 +128,9 @@ extern int projExplosionsThisFrame;
 /* Steps every live projectile and applies it to the world. Returns how many
    cells were destroyed this frame. */
 int  projUpdate(World& w);
+/* Register the glow carried by live flares and their non-colliding impact
+   motes. Called after lightClearDynamic() and before lightUpdate(). */
+void projRegisterLights();
 void projDraw(u32* px, int camX, int camY);
 int  projCount();
+int  projGlowMoteCount();

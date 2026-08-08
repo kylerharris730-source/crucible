@@ -873,6 +873,57 @@ static const char* ART_FLARE[SPR_H] = {
     "..............",
 };
 
+static const char* ART_ACC_GARLIC[SPR_H] = {
+    "..............",
+    "......q.......",
+    ".....qWq......",
+    "....WWWWW.....",
+    "...WWwWwWW....",
+    "...WwWWWwW....",
+    "...WWWWWWW....",
+    "....WWWWW.....",
+    ".....WWW......",
+    "......G.......",
+    ".....GGG......",
+    "....G...G.....",
+    "..............",
+    "..............",
+};
+
+static const char* ART_ACC_OVERLOAD[SPR_H] = {
+    "......K.......",
+    "..K...K...K...",
+    "...K.....K....",
+    "....GOOOG.....",
+    "...GO...OG....",
+    "..GO..K..OG...",
+    "..GO.KTK.OG...",
+    "..GO..K..OG...",
+    "...GO...OG....",
+    "....GOOOG.....",
+    "...K.....K....",
+    "..K.......K...",
+    "......K.......",
+    "..............",
+};
+
+static const char* ART_ACC_TWIN[SPR_H] = {
+    "..............",
+    "...444..444...",
+    "..4WWW44WWW4..",
+    ".4W...44...W4.",
+    ".4W...44...W4.",
+    ".4W...44...W4.",
+    "..4WWW44WWW4..",
+    "...444..444...",
+    ".....4..4.....",
+    "......44......",
+    "......GG......",
+    ".....G..G.....",
+    "..............",
+    "..............",
+};
+
 /* The fallback for named objects that do not yet merit a bespoke silhouette.
    It is deliberately a parcel/tag rather than a colour square, so every
    non-material item has an object-shaped icon while dedicated art can arrive
@@ -1069,6 +1120,9 @@ void initSprites() {
     expand(SPR_SEED,      ART_SEED);
     expand(SPR_FLINT,     ART_FLINT);
     expand(SPR_FLARE,     ART_FLARE);
+    expand(SPR_ACC_GARLIC,   ART_ACC_GARLIC);
+    expand(SPR_ACC_OVERLOAD, ART_ACC_OVERLOAD);
+    expand(SPR_ACC_TWIN,     ART_ACC_TWIN);
     expand(SPR_ITEM_GENERIC, ART_ITEM_GENERIC);
     expand(SPR_BOLTER,    ART_BOLTER);
     expand(SPR_BENCH,     ART_BENCH);

@@ -21,6 +21,7 @@
 #include "map.h"
 #include "entity.h"
 #include "drone.h"
+#include "accessory.h"
 #include "save.h"
 
 /* The window is a fixed-size left-hand tool panel plus the sim viewport. The
@@ -84,6 +85,7 @@ static const BrushDef BRUSHES[] = {
     { MAT_GRASS, "Grass" },
     { MAT_STONE, "Stone" },
     { MAT_WOOD,  "Wood"  },
+    { MAT_BIRCH_WOOD, "Birch Wood" },
     /* Rubber only -- molten rubber, molten iron and molten copper are all
        simulated but unplaceable, for the same reason mercury's vapour and
        frozen forms are: they are states you put a material INTO, not things
@@ -97,13 +99,28 @@ static const BrushDef BRUSHES[] = {
        around molten rubber and mercury vapour above. */
     { MAT_COPPER_ORE,"Cu Ore"},
     { MAT_IRON_ORE,  "Fe Ore"},
+    /* Raw and finished forms remain drawable; molten intermediates do not.
+       This keeps the sandbox useful for laying out deeper-layer processing
+       without filling the picker with states normally produced by heat. */
+    { MAT_TIN_ORE,     "Tin Ore" },
+    { MAT_TIN,         "Tin"     },
+    { MAT_BRONZE,      "Bronze"  },
+    { MAT_STEEL,       "Steel"   },
+    { MAT_GOLD_ORE,    "Gold Ore"},
+    { MAT_GOLD,        "Gold"    },
+    { MAT_TITANIUM_ORE,"Ti Ore"  },
+    { MAT_TITANIUM,    "Titanium"},
+    { MAT_TUNGSTEN_ORE,"W Ore"   },
+    { MAT_TUNGSTEN,    "Tungsten"},
     /* The heat ladder. Clay and ceramic sit together because one becomes the
        other; coal and fuel likewise. The burning forms (ember, fuelfire) are NOT
        placeable, on the same line already drawn around molten metal and slag --
        they are states you put a material into, not things you build with. */
     { MAT_CLAY,    "Clay"   },
     { MAT_CERAMIC, "Ceramic"},
+    { MAT_GLASS,   "Glass"   },
     { MAT_ALUMINUM_NITRIDE, "AlN" },
+    { MAT_REFRACTORY, "Refractory" },
     { MAT_COAL,    "Coal"   },
     { MAT_FUEL,    "Fuel"   },
     { MAT_GRAPHENE,"Graphene"},
@@ -112,6 +129,8 @@ static const BrushDef BRUSHES[] = {
     { MAT_PLASMA,"Plasma"},
     { MAT_COLDFIRE,"Cold Fire"},
     { MAT_NITROGEN,"Liquid N2"},
+    { MAT_ACID,    "Acid"     },
+    { MAT_GLOWFLUID,"Glowfluid"},
     /* Mercury only. Its vapour and frozen forms are still fully simulated -- a
        mercury pool boiled past 150 C still gives off vapour, and chilled past
        -30 C still freezes solid -- they are just not PLACEABLE. They are
@@ -142,6 +161,22 @@ static const BrushDef BRUSHES[] = {
     { MAT_PLATFORM,"Platform"},
     { MAT_OAK_SEED,  "Oak Seed" },
     { MAT_BIRCH_SEED,"Birch Seed"},
+    /* Seeds and harvested heads are inventory materials in their own right.
+       Saplings, stalks, leaves and pods remain growth states, so drawing a
+       field starts from the same inputs as planting one in survival. */
+    { MAT_WHEAT_SEED, "Wheat Seed" },
+    { MAT_WHEAT,      "Wheat"      },
+    { MAT_FLAX_SEED,  "Flax Seed"  },
+    { MAT_FLAX,       "Flax"       },
+    { MAT_COTTON_SEED,"Cotton Seed"},
+    { MAT_COTTON,     "Cotton"     },
+    /* World/debug materials and the new plumbing meshes. All are real cells,
+       so the player-off sandbox should be able to paint them directly. */
+    { MAT_STRATUM,  "Stratum"  },
+    { MAT_SPRING,   "Spring"   },
+    { MAT_CHITIN,   "Chitin"   },
+    { MAT_SIEVE,    "Sieve"    },
+    { MAT_GAS_SIEVE,"Gas Sieve"},
     { MAT_LAMP,  "Lamp"  },
     { MAT_HEATER,"Heater"},
     { MAT_COOLER,"Cooler"},
@@ -332,13 +367,13 @@ static bool g_uiCapture = false;   /* the click landed on the panel, not the sim
 static bool g_overwrite = false;   /* false = placement only fills empty space */
 static int  g_view      = VIEW_NORMAL;
 static bool g_lmb = false, g_rmb = false;
-/* One spawn per click rather than one per frame. Every other left-click action
+/* One consumable use per click rather than one per frame. Most left-click actions
    in the game wants to repeat while held -- digging, building, sowing -- so the
-   rate limiting they share is a cooldown rather than a latch. An egg is the
-   opposite: it consumes a unique item and creates a creature, and holding the
-   button for a third of a second would empty the pool into a heap. Cleared on
+   rate limiting they share is a cooldown rather than a latch. Eggs, food and
+   throwable flares are the opposite: each consumes one item, and holding the
+   button should not empty the whole stack. Cleared on
    button release, in the same WM_LBUTTONUP that clears g_lmb. */
-static bool g_eggLatch = false;
+static bool g_useLatch = false;
 
 /* --- the line tool ---------------------------------------------------------
    Hold R, press a mouse button, drag, release: the brush is laid down along the
@@ -1573,6 +1608,8 @@ static void makeWorld() {
        so a fresh world would otherwise arrive with the last one's wildlife
        standing in mid-air where its floor used to be. */
     entReset();
+    droneReset();
+    accessoryReset();
     /* A new world has not been explored. Without this a Clear leaves the old
        world's map showing, which is worse than a blank one: it is a confident
        picture of somewhere that no longer exists. */
@@ -1734,7 +1771,7 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_LBUTTONUP:
         commitWire();       /* before the button clears -- see commitLine */
         commitLine();
-        g_lmb = false; g_eggLatch = false; g_uiCapture = false; ReleaseCapture(); return 0;
+        g_lmb = false; g_useLatch = false; g_uiCapture = false; ReleaseCapture(); return 0;
     case WM_RBUTTONDOWN:
         g_mx = (short)LOWORD(lp);
         g_my = (short)HIWORD(lp);
@@ -1923,6 +1960,8 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 sprintf(g_saveMsg, "Loaded %s -- %.2f MB%s%s", SAVE_PATH, mb,
                         saveError()[0] ? " -- " : "", saveError());
                 updateCamera(true);
+                droneReset();
+                accessoryReset();
             } else {
                 /* A failed load leaves the world half-written, so it is not
                    somewhere to carry on from. Regenerating is the honest
@@ -2104,7 +2143,7 @@ static void fireTool(const Aim& aim) {
 
     ToolInst& ti = g_toolInst[h.inst];
     if (ti.cooldown > 0) return;
-    ti.cooldown = s.delay;
+    ti.cooldown = accessoryShotDelay(g_inv, s.delay);
 
     const float pcx = g_player.centreX(), pcy = g_player.centreY();
     float dx = (float)aim.x - pcx, dy = (float)aim.y - pcy;
@@ -2130,17 +2169,48 @@ static void fireTool(const Aim& aim) {
        rather than trusted from the resolved ToolShot, which only reports
        there being SOME payload loaded, not how much. */
     int payload = MAT_EMPTY;
-    if (h.item == ITEM_GLOW_FLARE) {
-        /* A flare is a sealed glowfluid ampoule, not an ammunition launcher:
-           every shot carries its own light charge and deposits it at impact. */
-        payload = MAT_GLOWFLUID;
-    } else if (s.payloadMat != MAT_EMPTY && ti.payload.count > 0) {
+    if (s.payloadMat != MAT_EMPTY && ti.payload.count > 0) {
         payload = s.payloadMat;
         if (--ti.payload.count == 0) { ti.payload.item = ITEM_NONE; ti.payload.inst = 0; }
     }
-    projSpawn(pcx + dx * MUZZLE, pcy + dy * MUZZLE, dx * SPEED, dy * SPEED,
-              s.power, s.pierce, 90, s.colour, s.blast, payload, s.damage,
-              false, s.gravity);
+    const float vx = dx * SPEED, vy = dy * SPEED;
+    const bool fired = projSpawn(pcx + dx * MUZZLE, pcy + dy * MUZZLE, vx, vy,
+                                 s.power, s.pierce, 90, s.colour, s.blast,
+                                 payload, s.damage, false, s.gravity);
+    if (fired && accessoryTwinShot(g_inv)) {
+        /* Duplicate the command, as the drone controller does. One payload was
+           spent above; the accessory rewards the slot with a second delivery,
+           fanned just enough that both projectiles remain individually visible. */
+        const float fanX = -vy * 0.10f, fanY = vx * 0.10f;
+        projSpawn(pcx + dx * MUZZLE, pcy + dy * MUZZLE,
+                  vx + fanX, vy + fanY, s.power, s.pierce, 90, 0xD8A4FF,
+                  s.blast, payload, s.damage, false, s.gravity);
+    }
+}
+
+/* A Glowflare is ammunition in its own container, not a durable weapon. It
+   therefore owns no ToolInst and fires once per click from an ordinary stack.
+   Returning projSpawn's answer matters: a saturated projectile pool has not
+   actually used the flare, so it must not quietly consume one. */
+static bool throwGlowflare(const Aim& aim) {
+    const ItemStack& h = g_inv.held();
+    if (h.empty() || h.item != ITEM_GLOW_FLARE) return false;
+    const ItemDef& d = ITEMS[h.item];
+
+    const float pcx = g_player.centreX(), pcy = g_player.centreY();
+    float dx = (float)aim.x - pcx, dy = (float)aim.y - pcy;
+    float len = sqrtf(dx * dx + dy * dy);
+    if (len < 0.001f) { dx = 1.0f; dy = 0.0f; len = 1.0f; }
+    dx /= len; dy /= len;
+
+    const float muzzle = PLAYER_H * 0.5f + 2.0f;
+    const float speed = d.shotSpeed > 0.0f ? d.shotSpeed : SHOT_SPEED_DEFAULT;
+    return projSpawn(pcx + dx * muzzle, pcy + dy * muzzle,
+                     dx * speed, dy * speed,
+                     d.power, d.pierce, 90, d.shotColour, d.blast,
+                     MAT_GLOWFLUID, d.damage, false,
+                     d.shotBeam ? 0.0f : PROJ_GRAVITY,
+                     PROJ_EFFECT_GLOWFLARE);
 }
 
 /* Devices are discrete, but a drag is still a useful way to lay out a run. Walk
@@ -2181,6 +2251,20 @@ static void applyBrush() {
        and the rest of the stroke would do nothing, so a fast drag would chew a
        hole where the mouse WAS rather than where it is. Nibbling at the current
        aim point is both simpler and what it looks like it should do. */
+    /* A throwable consumes one item per deliberate click. It precedes tools
+       because it is intentionally NOT a unique stateful tool: that distinction
+       is what lets a stack split and merge without duplicating an instance. */
+    if (g_survival && g_playerOn && g_lmb && !g_rmb
+        && !g_inv.held().empty() && ITEMS[g_inv.held().item].kind == ITEMK_THROWABLE) {
+        if (!g_useLatch) {
+            const ItemId what = g_inv.held().item;
+            if (throwGlowflare(aim)) g_inv.take(what, 1);
+            g_useLatch = true;
+        }
+        g_pmx = aim.x; g_pmy = aim.y;
+        return;
+    }
+
     /* Holding a tool replaces the build verb with the fire verb. Digging stays
        on the right button either way -- you can always claw at the wall, and a
        tool that took away your hands would be a strange upgrade. */
@@ -2222,14 +2306,14 @@ static void applyBrush() {
        button would put the whole stack away in a third of a second. */
     if (g_playerOn && g_lmb && !g_rmb && !g_bgLayer
         && !g_inv.held().empty() && ITEMS[g_inv.held().item].kind == ITEMK_FOOD) {
-        if (!g_eggLatch) {
+        if (!g_useLatch) {
             const ItemId what = g_inv.held().item;
             /* Refuse at full health rather than silently eating it. Wasting a
                loaf because you mis-clicked is exactly the kind of small theft
                players remember. */
             if (g_player.hp < PLAYER_HP_MAX && g_inv.take(what, 1) == 1)
                 g_player.heal(ITEMS[what].heal);
-            g_eggLatch = true;
+            g_useLatch = true;
         }
         return;
     }
@@ -2247,15 +2331,15 @@ static void applyBrush() {
     /* Spawn eggs. Like a seed in that they consume the item and place nothing,
        and unlike everything else on this path in that what they create is not
        in the grid at all -- so they get their own branch rather than being
-       squeezed into placeFrom. Rate-limited by g_clickLatch so that holding the
+       squeezed into placeFrom. Rate-limited by g_useLatch so that holding the
        button does not empty the pool in a second. */
     if (g_playerOn && g_lmb && !g_rmb && !g_bgLayer
         && !g_inv.held().empty() && ITEMS[g_inv.held().item].kind == ITEMK_EGG) {
-        if (!g_eggLatch) {
+        if (!g_useLatch) {
             const int type = ITEMS[g_inv.held().item].summons;
             if (type && entSpawn(g_world, type, (float)aim.x, (float)aim.y) >= 0)
                 g_inv.take(g_inv.held().item, 1);
-            g_eggLatch = true;
+            g_useLatch = true;
         }
         return;
     }
@@ -2899,7 +2983,11 @@ static void drawHotbar(HDC hdc) {
         /* Holding a tool, the line describes the tool -- because that is what
            the left button now does, and a readout that kept saying "Hands"
            while you were shooting would be describing the wrong verb. */
-        if (!h.empty() && ITEMS[h.item].kind == ITEMK_TOOL) {
+        if (!h.empty() && ITEMS[h.item].kind == ITEMK_THROWABLE) {
+            sprintf(s, "%s  x%u  click to throw  reach %d", ITEMS[h.item].name,
+                    (unsigned)h.count, currentReach());
+        }
+        else if (!h.empty() && ITEMS[h.item].kind == ITEMK_TOOL) {
             if (sh.canFire) sprintf(s, "%s  pow %d  pierce %d  %d/s  reach %d",
                                     ITEMS[h.item].name, sh.power, sh.pierce,
                                     60 / imax(1, sh.delay), currentReach());
@@ -4442,6 +4530,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
                one job it has. Sandbox stays free of unasked-for wildlife. */
             if (g_playerOn) {
                 entTick(g_world, g_player, g_inv);
+                accessoryTick(g_player, g_inv);
                 droneTick(g_world, g_player, g_inv);
                 if (g_survival) entSpawnTick(g_world, g_player, g_camX, g_camY);
             }
@@ -4453,6 +4542,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         lightClearDynamic();
         droneRegisterLights();
         devRegisterLights();
+        projRegisterLights();
         if (g_lightOn) lightUpdate(g_world, g_camX, g_camY);
         g_cellCount = renderView(g_world, g_pixels, g_view, g_camX, g_camY, g_lightOn);
         drawCelestials(g_pixels);

@@ -184,14 +184,24 @@ enum {
     ITEM_TWIN_CONTROLLER,
     ITEM_GARLIC_FIELD_CHIP,
     ITEM_GLOW_FLARE,
+    /* Player-side counterparts to drone chips. Appended so existing item ids
+       remain stable; these occupy trinket slots, never a drone socket. */
+    ITEM_GARLIC_ACCESSORY,
+    ITEM_OVERLOAD_ACCESSORY,
+    ITEM_TWIN_ACCESSORY,
     ITEM_COUNT
 };
 
 enum ItemKind {
     ITEMK_MATERIAL = 0,   /* stacks; one unit is one cell of world */
     ITEMK_TOOL,           /* unique, carries its own state */
+    /* Stackable and consumed when thrown. Flight stats reuse the shot fields,
+       but it owns no ToolInst: a stack split in half must remain two ordinary
+       counts, never two handles pointing at one mutable weapon. */
+    ITEMK_THROWABLE,
     ITEMK_MODULE,         /* slots into a tool to change what it does */
     ITEMK_DRONE_MODULE,   /* installed in a specific companion's internal bay */
+    ITEMK_ACCESSORY,      /* passive player modifier; fits a trinket slot */
     /* --- ITEMK_WORN ------------------------------------------------------
        Goes in an equipment slot and does its job from there. It used to be
        ITEMK_CARRIED and work from anywhere in the pack, which was honestly
@@ -630,6 +640,11 @@ struct Inventory {
     /* Total flat damage reduction from everything worn. Summed, unlike every
        other bonus here -- see ItemDef::armour for why this one is different. */
     int  armour() const;
+
+    /* True only when this exact item is in an equipment slot. Kept out of the
+       pack scan deliberately: accessories are choices competing for two
+       trinket slots, not passive bonuses from luggage. */
+    bool hasEquipped(ItemId item) const;
 
     /* The first tool in the pack WITH MODULE SLOTS, or -1. The inventory screen
        shows one tool's loadout and this is the one it shows -- with a single

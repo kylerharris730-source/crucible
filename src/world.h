@@ -386,6 +386,9 @@ static const int PRESSURE_MAX   = 10;
 
 struct Cell {
     u8 mat;
+    /* Absorbed moisture for porous materials. Sieve cells have zero capacity,
+       so they reuse this byte as a sparse fluid-occupant material id: the mesh
+       remains `mat`, while one permitted liquid/gas can coexist inside it. */
     u8 moisture;
     u8 tint;      /* fixed per-cell colour jitter */
     u8 flags;
@@ -762,6 +765,8 @@ private:
     void updatePowder(int x, int y);
     void updateLiquid(int x, int y);
     void updateGas(int x, int y);
+    void updateFilterFluid(int x, int y);
+    bool moveFilterFluid(int sx, int sy, int tx, int ty);
     void convert(int x, int y, u8 mat);
     bool tryMove(int sx, int sy, int tx, int ty);
 };

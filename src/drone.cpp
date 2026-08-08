@@ -7,12 +7,21 @@
 #include <string.h>
 
 Drone g_drones[MAX_DRONES];
-/* A pair of basic iron drones should assist a fight, not replace the starter
-   weapon. Their reliable aim remains useful; lower damage is the cleanest
-   lever because it preserves that feel and their readable firing cadence. */
+
 static const int ATTACK_DRONE_DAMAGE = 3;
 static const int ATTACK_DRONE_COOLDOWN = 28;
 static const int OVERCLOCK_DRONE_COOLDOWN = 20;
+static const float ATTACK_ACQUIRE_RADIUS = 220.0f;
+static const float PICKUP_GRAB_RADIUS = 7.0f;
+static const float LIGHT_WALL_CLEARANCE = 6.0f;
+/* The bolt head is visibly 3x3. A two-cell circular sweep includes that width
+   plus one cell of grace at the cardinal edges, keeping diagonal terrain from
+   looking as though the drone deliberately grazed it. */
+static const int ATTACK_SHOT_CLEARANCE = 2;
+
+/* Last player position supplied to droneTick. The two envelopes are steering
+   rules only; showing them permanently adds a large amount of visual noise. */
+static float g_taskX, g_taskY, g_homeX, g_homeY;
 
 static bool hasChip(const Inventory& inv, int droneBay, ItemId item) {
     for (int i = 0; i < Inventory::DRONE_MODULE_SLOTS_MAX; ++i)
@@ -20,7 +29,9 @@ static bool hasChip(const Inventory& inv, int droneBay, ItemId item) {
     return false;
 }
 
-void droneReset() { memset(g_drones, 0, sizeof(g_drones)); }
+void droneReset() {
+    memset(g_drones, 0, sizeof(g_drones));
+}
 
 static u8 equippedDrone(const Inventory& inv, int i) {
     const int slot = i == 0 ? EQ_LIGHT_DRONE : (i == 1 ? EQ_DRONE_A : EQ_DRONE_B);
@@ -33,7 +44,7 @@ static u8 equippedDrone(const Inventory& inv, int i) {
 
 static Entity* nearestEnemy(float x, float y) {
     Entity* best = 0;
-    float best2 = 220.0f * 220.0f;
+    float best2 = ATTACK_ACQUIRE_RADIUS * ATTACK_ACQUIRE_RADIUS;
     for (int i = 0; i < MAX_ENTITIES; ++i) {
         Entity& e = g_entities[i];
         if (!e.alive()) continue;
@@ -44,13 +55,29 @@ static Entity* nearestEnemy(float x, float y) {
     return best;
 }
 
+static Pickup* nearestPickupInEnvelope(float px, float py, float x, float y) {
+    Pickup* best = 0;
+    float best2 = 1e30f;
+    const float task2 = (float)(DRONE_TASK_RADIUS * DRONE_TASK_RADIUS);
+    for (int i = 0; i < MAX_PICKUPS; ++i) {
+        Pickup& drop = g_pickups[i];
+        if (!drop.used) continue;
+        const float pdx = drop.x - px, pdy = drop.y - py;
+        if (pdx * pdx + pdy * pdy > task2) continue;
+        const float dx = drop.x - x, dy = drop.y - y;
+        const float d2 = dx * dx + dy * dy;
+        if (d2 < best2) { best2 = d2; best = &drop; }
+    }
+    return best;
+}
+
 static void pickupCollect(Drone& d, Inventory& inv) {
-    static const float RANGE = 110.0f;
+    const float grab2 = PICKUP_GRAB_RADIUS * PICKUP_GRAB_RADIUS;
     for (int i = 0; i < MAX_PICKUPS; ++i) {
         Pickup& drop = g_pickups[i];
         if (!drop.used) continue;
         const float dx = drop.x - d.x, dy = drop.y - d.y;
-        if (dx * dx + dy * dy > RANGE * RANGE) continue;
+        if (dx * dx + dy * dy > grab2) continue;
         const int left = inv.add(drop.item, drop.count);
         drop.count = (i16)left;
         if (drop.count == 0) drop.used = false;
@@ -67,49 +94,266 @@ static void shieldIntercept(const Drone& d) {
     }
 }
 
-void droneTick(const World&, const Player& p, Inventory& inv) {
+static bool shotOpen(const World& w, int x, int y) {
+    if (x < PLAY_X0 || x > PLAY_X1 || y < PLAY_Y0 || y > PLAY_Y1) return false;
+    const u8 m = w.at(x, y).mat;
+    return m == MAT_EMPTY || m == MAT_TORCH || g_matStrength[m] == STR_NOTHING;
+}
+
+/* The same promise the actual projectile makes, checked before choosing where
+   to hover. Bresenham visits every crossed row/column cheaply; the target cell
+   is excluded because the creature lives in its empty cell as an overlay. */
+static bool clearShot(const World& w, float fx, float fy, float tx, float ty) {
+    int x = (int)fx, y = (int)fy;
+    const int ex = (int)tx, ey = (int)ty;
+    int dx = ex - x; if (dx < 0) dx = -dx;
+    int dy = ey - y; if (dy < 0) dy = -dy;
+    const int sx = x < ex ? 1 : -1, sy = y < ey ? 1 : -1;
+    int err = dx - dy;
+    bool first = true;
+    for (;;) {
+        if (x == ex && y == ey) return true;
+        if (!first && !shotOpen(w, x, y)) return false;
+        first = false;
+        const int e2 = err * 2;
+        if (e2 > -dy) { err -= dy; x += sx; }
+        if (e2 <  dx) { err += dx; y += sy; }
+    }
+}
+
+/* Attack aiming is intentionally stricter than the point collision used by
+   projectile simulation. Sample a small disc around the flight centreline so
+   the entire visible bolt clears curved and diagonal walls. Stop at the near
+   edge of the enemy: terrain beside or behind a body should not make the body
+   impossible to shoot. */
+static bool clearAttackShot(const World& w, float fx, float fy,
+                            const Entity& target) {
+    const float tx = target.centreX(), ty = target.centreY();
+    const float dx = tx - fx, dy = ty - fy;
+    const float length = sqrtf(dx * dx + dy * dy);
+    if (length < 0.01f) return true;
+    const float bodyRadius = (float)imin(target.width(), target.height()) * 0.5f;
+    const float clearLength = fmaxf(0.0f, length - bodyRadius -
+                                           (float)ATTACK_SHOT_CLEARANCE);
+    /* One sample per travelled cell is enough because each sample checks a
+       radius-two disc; neighbouring discs overlap generously even diagonally. */
+    const int steps = imax(1, (int)ceilf(clearLength));
+    for (int i = 0; i <= steps; ++i) {
+        const float travel = clearLength * (float)i / (float)steps;
+        const int cx = (int)(fx + dx / length * travel);
+        const int cy = (int)(fy + dy / length * travel);
+        for (int oy = -ATTACK_SHOT_CLEARANCE; oy <= ATTACK_SHOT_CLEARANCE; ++oy)
+            for (int ox = -ATTACK_SHOT_CLEARANCE; ox <= ATTACK_SHOT_CLEARANCE; ++ox) {
+                if (ox * ox + oy * oy > ATTACK_SHOT_CLEARANCE * ATTACK_SHOT_CLEARANCE)
+                    continue;
+                if (!shotOpen(w, cx + ox, cy + oy)) return false;
+            }
+    }
+    return true;
+}
+
+/* A light source in rock is worse than no companion at all: it spends its
+   output illuminating an opaque cell. Trace FROM the player toward the drone
+   and stop at the last open cell before the first obstruction. That detail is
+   important. Searching around the drone for the geometrically nearest empty
+   cell can put it in a sealed pocket on the wrong side of the wall, where it
+   is technically in air and still lights none of the space the player sees. */
+static bool playerSideOpenPoint(const World& w, const Player& p, const Drone& d,
+                                float* outX, float* outY) {
+    const float sx = p.centreX(), sy = p.centreY();
+    const bool embedded = !shotOpen(w, (int)d.x, (int)d.y);
+    if (!embedded && clearShot(w, d.x, d.y, sx, sy)) return false;
+
+    const float dx = d.x - sx, dy = d.y - sy;
+    const float length = sqrtf(dx * dx + dy * dy);
+    int steps = (int)ceilf(fmaxf(fabsf(dx), fabsf(dy)) * 2.0f);
+    if (steps < 1) steps = 1;
+
+    bool haveOpen = false;
+    float lastX = sx, lastY = sy;
+    for (int i = 0; i <= steps; ++i) {
+        const float t = (float)i / (float)steps;
+        const float x = sx + dx * t, y = sy + dy * t;
+        const int cx = (int)x, cy = (int)y;
+        if (!shotOpen(w, cx, cy)) break;
+        lastX = x; lastY = y;
+        haveOpen = true;
+    }
+    if (!haveOpen) return false;
+    /* Do not aim at the cell touching the wall: that produced a light drone
+       which technically escaped and then skated along the surface. Continue
+       several cells into the player's side of the room. Every point on this
+       part of the ray was already checked open above. */
+    const float openLength = sqrtf((lastX - sx) * (lastX - sx) +
+                                   (lastY - sy) * (lastY - sy));
+    const float retreat = fminf(LIGHT_WALL_CLEARANCE, openLength);
+    if (length > 0.01f) {
+        lastX -= dx / length * retreat;
+        lastY -= dy / length * retreat;
+    }
+    *outX = lastX; *outY = lastY;
+    return true;
+}
+
+/* Once it has a clear line to the player, a light drone gently favours the
+   middle of open space. This is deliberately a force rather than a snapped
+   destination: it rounds motion away from walls without making the follower
+   hop between a grid of candidate cells. During an obstruction recovery this
+   is disabled, otherwise it would resist crossing the very wall it must pass. */
+static void repelLightFromSurfaces(const World& w, Drone& d) {
+    static const int R = 6;
+    if (!shotOpen(w, (int)d.x, (int)d.y)) return;
+    float pushX = 0.0f, pushY = 0.0f;
+    const int cx = (int)d.x, cy = (int)d.y;
+    for (int oy = -R; oy <= R; ++oy) for (int ox = -R; ox <= R; ++ox) {
+        if (ox == 0 && oy == 0) continue;
+        const int d2 = ox * ox + oy * oy;
+        if (d2 > R * R || shotOpen(w, cx + ox, cy + oy)) continue;
+        const float dist = sqrtf((float)d2);
+        const float weight = ((float)R + 0.5f - dist) / ((float)R * dist);
+        pushX -= (float)ox / dist * weight;
+        pushY -= (float)oy / dist * weight;
+    }
+    const float mag = sqrtf(pushX * pushX + pushY * pushY);
+    if (mag > 0.001f) {
+        const float force = fminf(0.24f, mag * 0.055f);
+        d.vx += pushX / mag * force;
+        d.vy += pushY / mag * force;
+    }
+}
+
+/* Search a small deterministic set of positions inside the task envelope.
+   This is positioning, not terrain pathfinding: drones are flying overlays and
+   may cross rock on the way there. The chosen endpoint must be open and must
+   give the actual projectile a clear line to its target. */
+static bool firingPosition(const World& w, const Player& p, const Drone& d,
+                           const Entity& target, int bay, float* outX, float* outY) {
+    static const float TAU = 6.28318530718f;
+    static const float RADII[3] = { 0.32f, 0.62f, 0.92f };
+    static const int ANGLES = 20;
+    float bestScore = 1e30f;
+    bool found = false;
+    for (int ring = 0; ring < 3; ++ring) for (int a = 0; a < ANGLES; ++a) {
+        const float angle = TAU * (float)a / (float)ANGLES + (float)bay * 0.19f;
+        const float r = (float)DRONE_TASK_RADIUS * RADII[ring];
+        const float x = p.centreX() + cosf(angle) * r;
+        const float y = p.centreY() + sinf(angle) * r;
+        if (!shotOpen(w, (int)x, (int)y) || !clearAttackShot(w, x, y, target)) continue;
+        const float dx = x - d.x, dy = y - d.y;
+        const float score = dx * dx + dy * dy;
+        if (score < bestScore) { bestScore = score; *outX = x; *outY = y; found = true; }
+    }
+    return found;
+}
+
+/* Arrival steering: desired speed falls with the remaining distance, while
+   response rises with it. Far-away drones accelerate hard; near the target
+   they ask for a small velocity and brake instead of orbiting or overshooting. */
+static void steerArrive(Drone& d, float tx, float ty, float maxSpeed, float slowRadius) {
+    const float dx = tx - d.x, dy = ty - d.y;
+    const float dist2 = dx * dx + dy * dy;
+    if (dist2 < 0.01f) { d.vx *= 0.78f; d.vy *= 0.78f; return; }
+    const float dist = sqrtf(dist2);
+    float speed = maxSpeed;
+    if (dist < slowRadius) speed *= dist / slowRadius;
+    const float wantX = dx * speed / dist, wantY = dy * speed / dist;
+    float response = 0.07f + dist * 0.0022f;
+    if (response > 0.30f) response = 0.30f;
+    d.vx += (wantX - d.vx) * response;
+    d.vy += (wantY - d.vy) * response;
+}
+
+static void addSeparation(Drone& d, int self) {
+    for (int i = 0; i < MAX_DRONES; ++i) {
+        if (i == self || g_drones[i].type == DRONE_NONE) continue;
+        const float dx = d.x - g_drones[i].x, dy = d.y - g_drones[i].y;
+        const float d2 = dx * dx + dy * dy;
+        if (d2 >= 100.0f || d2 < 0.01f) continue;
+        const float dist = sqrtf(d2);
+        const float push = (10.0f - dist) * 0.012f;
+        d.vx += dx * push / dist; d.vy += dy * push / dist;
+    }
+}
+
+void droneTick(const World& w, const Player& p, Inventory& inv) {
+    g_taskX = p.centreX(); g_taskY = p.centreY();
+    g_homeX = p.centreX(); g_homeY = (float)p.top() - (float)DRONE_HOME_ABOVE;
+
     for (int i = 0; i < MAX_DRONES; ++i) {
         Drone& d = g_drones[i];
         const u8 want = equippedDrone(inv, i);
         if (d.type != want) {
             memset(&d, 0, sizeof(d));
             d.type = want;
-            d.x = p.centreX() + (float)(i * 12 - 12);
-            d.y = p.centreY() - 26.0f;
+            /* New companions arrive inside the home pocket rather than
+               teleporting on top of each other at the player's centre. */
+            d.x = g_homeX + (float)(i - 1) * 7.0f;
+            d.y = g_homeY + (float)(i & 1) * 4.0f;
         }
         if (d.type == DRONE_NONE) continue;
 
-        float tx, ty;
-        if (d.type == DRONE_SHIELD) {
-            d.shotCool = (d.shotCool + 4) % 360;
-            const float a = (float)d.shotCool * 3.14159265f / 180.0f;
-            tx = p.centreX() + cosf(a) * 28.0f;
-            ty = p.centreY() + sinf(a) * 20.0f;
-        } else {
-            const float orbit = (float)(i * 2 - 2);
-            tx = p.centreX() + orbit + (float)p.facing * 14.0f;
-            ty = p.centreY() - 24.0f - (float)(i & 1) * 8.0f;
+        Entity* enemy = d.type == DRONE_ATTACK ? nearestEnemy(g_taskX, g_taskY) : 0;
+        bool hasTask = false;
+        bool escapingLight = false;
+        float tx = g_homeX, ty = g_homeY;
+
+        if (d.type == DRONE_PICKUP) {
+            Pickup* drop = nearestPickupInEnvelope(g_taskX, g_taskY, d.x, d.y);
+            if (drop) { tx = drop->x; ty = drop->y; hasTask = true; }
+        } else if (d.type == DRONE_LIGHT) {
+            /* Light drones alone care whether their overlay is embedded. Their
+               recovery target is guaranteed to be on the player's side. */
+            escapingLight = playerSideOpenPoint(w, p, d, &tx, &ty);
+            hasTask = escapingLight;
+        } else if (enemy && !clearAttackShot(w, d.x, d.y, *enemy)) {
+            hasTask = firingPosition(w, p, d, *enemy, i, &tx, &ty);
         }
-        d.vx = (d.vx + (tx - d.x) * 0.10f) * 0.78f;
-        d.vy = (d.vy + (ty - d.y) * 0.10f) * 0.78f;
+
+        const float pdx = d.x - g_taskX, pdy = d.y - g_taskY;
+        const bool outsideTask = pdx * pdx + pdy * pdy >
+                                 (float)(DRONE_TASK_RADIUS * DRONE_TASK_RADIUS);
+        const float hdx = d.x - g_homeX, hdy = d.y - g_homeY;
+        const bool insideHome = hdx * hdx + hdy * hdy <=
+                                (float)(DRONE_HOME_RADIUS * DRONE_HOME_RADIUS);
+
+        if (escapingLight) {
+            /* Do not use ordinary task braking while buried. It was slowing
+               before clearing the material and could be abandoned by a
+               moving player. Brake only once it is nearly in safe open air. */
+            steerArrive(d, tx, ty, 6.5f, 10.0f);
+        } else if (outsideTask) {
+            /* Catch-up is the only urgent motion. A task never drags a drone
+               farther away from a player who has already left it behind. */
+            steerArrive(d, g_homeX, g_homeY, 6.0f, 70.0f);
+        } else if (hasTask) {
+            steerArrive(d, tx, ty, 3.4f, 34.0f);
+        } else if (!insideHome) {
+            /* Inside the broad envelope, returning home is intentionally calm. */
+            steerArrive(d, g_homeX, g_homeY, 2.25f, 48.0f);
+        } else {
+            d.vx *= 0.86f; d.vy *= 0.86f;
+        }
+        if (d.type == DRONE_LIGHT && !escapingLight)
+            repelLightFromSurfaces(w, d);
+        addSeparation(d, i);
         d.x += d.vx; d.y += d.vy;
 
         if (d.type == DRONE_ATTACK) {
             const bool overclock = hasChip(inv, i, ITEM_OVERCLOCK_CHIP);
             const bool twin      = hasChip(inv, i, ITEM_TWIN_CONTROLLER);
             if (d.shotCool > 0) --d.shotCool;
-            Entity* target = nearestEnemy(d.x, d.y);
-            if (target && d.shotCool == 0) {
-                float dx = target->centreX() - d.x, dy = target->centreY() - d.y;
+            /* Positioning is part of aiming now: a blocked drone waits and
+               moves instead of spending bolts on the wall it can see. */
+            if (enemy && d.shotCool == 0 &&
+                shotOpen(w, (int)d.x, (int)d.y) &&
+                clearAttackShot(w, d.x, d.y, *enemy)) {
+                float dx = enemy->centreX() - d.x, dy = enemy->centreY() - d.y;
                 const float len = sqrtf(dx * dx + dy * dy);
                 if (len > 0.01f) {
                     dx *= 4.8f / len; dy *= 4.8f / len;
                     projSpawn(d.x, d.y, dx, dy, 0, 0, 70, 0xF2C16D, 0,
                               MAT_EMPTY, ATTACK_DRONE_DAMAGE, false, 0.0f);
                     if (twin) {
-                        /* The controller duplicates a firing command, not the
-                           drone itself: both bolts originate from the same
-                           companion but fan out enough to read as two shots. */
                         const float px = -dy * 0.10f, py = dx * 0.10f;
                         projSpawn(d.x, d.y, dx + px, dy + py, 0, 0, 70, 0xD8A4FF, 0,
                                   MAT_EMPTY, ATTACK_DRONE_DAMAGE, false, 0.0f);
@@ -123,9 +367,6 @@ void droneTick(const World&, const Player& p, Inventory& inv) {
             shieldIntercept(d);
             if (d.effectCool > 0) --d.effectCool;
             if (d.effectCool == 0) {
-                /* The shield's base pulse is deliberately a nudge, not a
-                   weapon: it buys breathing room around the player. Garlic
-                   adds a second, smaller disc around the drone itself. */
                 entDamageKnockbackDisc((int)p.centreX(), (int)p.centreY(), 34, 1, 1.25f);
                 if (hasChip(inv, i, ITEM_GARLIC_FIELD_CHIP))
                     entDamageDisc((int)d.x, (int)d.y, 14, 1);
