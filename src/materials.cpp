@@ -1500,11 +1500,11 @@ static void initSlaking() {
    a short explicit powder list rather than KIND_POWDER => one number: a seed,
    a bank of damp dirt, and tungsten ore should not all yield to the same boiler
    merely because they share a movement rule. Values are compared with stored
-   excess volume, whose ordinary Steam range is 0..5. */
+   excess volume, whose freshly boiled Steam range is now 0..2. */
 static void initPressureResistance() {
     memset(g_matPressureResistance, 0xFF, sizeof(g_matPressureResistance));
 
-    g_matPressureResistance[MAT_SAND]        = 2;
+    g_matPressureResistance[MAT_SAND]        = 1;
     g_matPressureResistance[MAT_OAK_SEED]    = 2;
     g_matPressureResistance[MAT_BIRCH_SEED]  = 2;
     g_matPressureResistance[MAT_WHEAT_SEED]  = 2;
@@ -1515,9 +1515,9 @@ static void initPressureResistance() {
     g_matPressureResistance[MAT_DIRT]  = 3;
     g_matPressureResistance[MAT_GRASS] = 3;
     g_matPressureResistance[MAT_CLAY]  = 4;
-    g_matPressureResistance[MAT_COAL]  = 5;
+    g_matPressureResistance[MAT_COAL]  = 2;
 
-    /* Ore can be shifted by a future high-pressure machine, but a six-volume
+    /* Ore can be shifted by a future high-pressure machine, but ordinary
        Water -> Steam expansion cannot rearrange a vein. */
     g_matPressureResistance[MAT_COPPER_ORE]   = 6;
     g_matPressureResistance[MAT_IRON_ORE]     = 6;

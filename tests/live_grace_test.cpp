@@ -1053,8 +1053,8 @@ int main() {
                 w.at(pushX, pushY - 4).mat, w.at(pushX, pushY - 1).mat); return 105;
     }
 
-    /* One stored unit is below even Sand's threshold, and adding one more cell
-       to the three-cell plug raises its requirement beyond pressure four. Both
+    /* One stored unit cannot shift a two-cell Sand plug, and adding two more
+       cells to the three-cell plug raises its requirement beyond pressure four. Both
        configurations must remain completely still. */
     w.reset();
     w.setLiveWindow(pushX - 5, pushY - 10, pushX + 5, pushY + 5);
@@ -1063,6 +1063,7 @@ int main() {
         w.setCell(pushX + 1, y, MAT_STONE);
     }
     w.setCell(pushX, pushY + 1, MAT_STONE);
+    w.setCell(pushX, pushY - 2, MAT_SAND);
     w.setCell(pushX, pushY - 1, MAT_SAND);
     w.setCell(pushX, pushY, MAT_STEAM);
     w.cells[pushY * SIM_W + pushX].moisture = 1;
@@ -1082,18 +1083,55 @@ int main() {
         w.setCell(pushX + 1, y, MAT_STONE);
     }
     w.setCell(pushX, pushY + 1, MAT_STONE);
-    for (int y = pushY - 4; y < pushY; ++y) w.setCell(pushX, y, MAT_SAND);
+    for (int y = pushY - 5; y < pushY; ++y) w.setCell(pushX, y, MAT_SAND);
     w.setCell(pushX, pushY, MAT_STEAM);
     w.cells[pushY * SIM_W + pushX].moisture = 4;
     w.temp[pushY * SIM_W + pushX] = degC(120);
     w.dirtyPoint(pushX, pushY);
     w.step();
-    if (w.at(pushX, pushY - 5).mat != MAT_EMPTY ||
+    if (w.at(pushX, pushY - 6).mat != MAT_EMPTY ||
         w.at(pushX, pushY - 1).mat != MAT_SAND ||
         (w.at(pushX, pushY).moisture & GAS_EXCESS_MASK) != 4 ||
         g_matPressureResistance[MAT_STONE] != 255 ||
         g_matPressureResistance[MAT_COPPER_ORE] <= 5) {
         fprintf(stderr, "packed or immovable material yielded to insufficient pressure\n"); return 107;
+    }
+
+    /* Pressure in the interior of a Steam pocket routes to a remote Coal face,
+       then lifts the loose grain before falling back to Coal's permeable Steam
+       reaction when a packed pile cannot move. Fresh Steam's two stored units
+       are enough for this single-grain shove. */
+    w.reset();
+    const int coalPushX = 960, coalGasTop = 700, coalGasBottom = 710;
+    w.setLiveWindow(coalPushX - 4, coalGasTop - 5,
+                    coalPushX + 4, coalGasBottom + 4);
+    for (int y = coalGasTop - 2; y <= coalGasBottom + 1; ++y) {
+        w.setCell(coalPushX - 1, y, MAT_STONE);
+        w.setCell(coalPushX + 1, y, MAT_STONE);
+    }
+    w.setCell(coalPushX, coalGasBottom + 1, MAT_STONE);
+    for (int y = coalGasTop; y <= coalGasBottom; ++y) {
+        w.setCell(coalPushX, y, MAT_STEAM);
+        w.temp[y * SIM_W + coalPushX] = degC(120);
+    }
+    w.setCell(coalPushX, coalGasTop - 1, MAT_COAL);
+    w.cells[coalGasBottom * SIM_W + coalPushX].moisture = 2;
+    w.dirtyPoint(coalPushX, coalGasBottom);
+    w.step();
+    int coalPushSteam = 0, coalPushExcess = 0;
+    for (int y = coalGasTop - 2; y <= coalGasBottom; ++y) {
+        if (w.at(coalPushX, y).mat == MAT_STEAM) {
+            ++coalPushSteam;
+            coalPushExcess += w.at(coalPushX, y).moisture & GAS_EXCESS_MASK;
+        }
+    }
+    if (w.at(coalPushX, coalGasTop - 2).mat != MAT_COAL ||
+        w.at(coalPushX, coalGasTop - 1).mat != MAT_STEAM ||
+        coalPushSteam != 12 || coalPushExcess != 1) {
+        fprintf(stderr, "shared Steam pressure did not lift Coal (%u/%u, %d steam, %d excess)\n",
+                w.at(coalPushX, coalGasTop - 2).mat,
+                w.at(coalPushX, coalGasTop - 1).mat,
+                coalPushSteam, coalPushExcess); return 111;
     }
 
     /* Pressure stored throughout the center of a broad Steam pocket reaches
@@ -1311,6 +1349,45 @@ int main() {
                 (unsigned)w.temp[waterHeatY * SIM_W + waterHeatX + 3],
                 (unsigned)w.at(waterHeatX, waterHeatY).mat,
                 (unsigned)w.at(waterHeatX + 3, waterHeatY).mat); return 51;
+    }
+
+    /* Water convection carries the hot parcel upward three cells per frame;
+       this is directional heat transport, separate from symmetric conduction. */
+    w.reset();
+    const int convectX = 730, convectBottom = 680, convectHeight = 16;
+    w.setLiveWindow(convectX - 4, convectBottom - convectHeight - 4,
+                    convectX + 4, convectBottom + 4);
+    for (int y = convectBottom - convectHeight; y <= convectBottom + 1; ++y) {
+        w.setCell(convectX - 1, y, MAT_RUBBER);
+        w.setCell(convectX + 1, y, MAT_RUBBER);
+    }
+    w.setCell(convectX, convectBottom + 1, MAT_RUBBER);
+    for (int y = convectBottom - convectHeight + 1; y <= convectBottom; ++y) {
+        w.setCell(convectX, y, MAT_WATER);
+        w.temp[y * SIM_W + convectX] = AMBIENT_TEMP;
+    }
+    w.temp[convectBottom * SIM_W + convectX] = degC(90);
+    w.cells[convectBottom * SIM_W + convectX].moisture = 123;
+    w.dirtyPoint(convectX, convectBottom);
+    w.step();
+    int hottestWaterY = convectBottom, hottestWaterTemp = -1;
+    int markedWaterY = convectBottom;
+    for (int y = convectBottom; y > convectBottom - convectHeight; --y) {
+        if (w.at(convectX, y).mat == MAT_WATER &&
+            (int)w.temp[y * SIM_W + convectX] > hottestWaterTemp) {
+            hottestWaterTemp = w.temp[y * SIM_W + convectX];
+            hottestWaterY = y;
+        }
+        if (w.at(convectX, y).mat == MAT_WATER &&
+            w.at(convectX, y).moisture == 123) markedWaterY = y;
+    }
+    if (markedWaterY > convectBottom - 2) {
+        fprintf(stderr, "Water convection did not carry its hot parcel upward quickly (marker y %d, hottest %d at y %d; %u %u %u %u)\n",
+                markedWaterY, hottestWaterTemp, hottestWaterY,
+                (unsigned)w.temp[convectBottom * SIM_W + convectX],
+                (unsigned)w.temp[(convectBottom - 1) * SIM_W + convectX],
+                (unsigned)w.temp[(convectBottom - 2) * SIM_W + convectX],
+                (unsigned)w.temp[(convectBottom - 3) * SIM_W + convectX]); return 112;
     }
 
     /* A submerged gas plume may rise diagonally, but never makes a pure

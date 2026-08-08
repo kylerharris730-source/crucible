@@ -9,7 +9,8 @@ must remain useful and testable without depending on the next one.
 - Every liquid and gas has a small thermal-expansion coefficient; Wax has a
   deliberately large coefficient that crosses Water's density near 60 C.
 - Convection exchanges whole cells and their temperature, not temperature by
-  itself. Alternating row pairs prevent a parcel moving many cells in one scan.
+  itself. Water parcels can rise through three cooler Water cells per frame at
+  a two-degree gradient; other fluids retain the conservative adjacent swap.
 - A quarter-density hysteresis prevents one-degree interface jitter.
 - Wax is available in the sandbox palette. Its survival source and stronger
   blob cohesion remain design work, not assumptions hidden in this milestone.
@@ -76,9 +77,9 @@ the Coal and retains the remaining pressure, exactly as it does for a Sieve.
 The transient occupant is material-name-remapped across save/load.
 
 Regression coverage feeds four stored Steam volumes through a supported
-four-cell Coal column and verifies that the co-occupied state occurs, the pile
-is not pressure-shoved, and the result is exactly four Fuel with no Coal or
-Steam left over.
+four-cell Coal column and verifies that the co-occupied state occurs when the
+pile has no movable outlet, producing exactly four Fuel with no Coal or Steam
+left over.
 
 ## 5. Bounded powder pressure pushing — implemented
 
@@ -90,11 +91,15 @@ pressure, player force, and pistons are later gameplay decisions.
 Pressure tests four straight rays and shifts the lowest-resistance powder plug
 into a real empty outlet, up to eight cells long. Each material has an explicit
 starting threshold; every additional cell adds one to the required pressure.
-The successful shove still spends only one expansion volume. This lets fresh
-Steam lift three Sand cells while one stored unit cannot move even one, four
-Sand cells resist pressure four, ordinary Steam permeates rather than shoving
-reactive Coal, and ores require pressure beyond a Water boiler's five stored
-units. Static materials never enter the path search.
+The successful shove still spends only one expansion volume. Sand starts at
+one and Coal at two, so fresh Steam can move two Sand grains or one loose Coal
+grain; packed Coal remains permeable and reactive. Dirt starts at three, Clay
+at four, common ores at six, Titanium at seven, and Tungsten at eight. Static
+materials never enter the path search.
+
+Shared pressure recognizes a powder face only after verifying that the entire
+bounded plug can reach real empty space. This lets pressure from inside a gas
+pocket reach movable Sand or Coal without treating packed terrain as relief.
 
 The hover readout now reports stored pressure on gas cells. Regression coverage
 checks short-plug movement, low-pressure refusal, length resistance, powder and

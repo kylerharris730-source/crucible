@@ -72,6 +72,8 @@ static const int GAS_PRESSURE_POCKET_RADIUS  = 32;
 static const int GAS_PRESSURE_POCKET_NODES   = 2048;
 static const int GAS_PRESSURE_POCKET_BUDGET  = 128;
 static const int GAS_PRESSURE_EXPANSION_BURST = 5;
+static const int WATER_CONVECTION_REACH       = 3;
+static const int WATER_CONVECTION_DELTA       = 2;
 
 /* Divide a heat transfer by 2^shift to get the temperature change a material of
    that thermal mass actually feels, carrying the remainder stochastically so
@@ -600,14 +602,17 @@ void World::updatePowder(int x, int y) {
     tryMove(x, y, x - dx, y + 1);
 }
 
-/* Buoyant parcel convection. Same-material pairs retain the old four-degree
-   threshold, but now exchange the whole parcel (cell identity plus heat) rather
-   than teleporting temperature. Different liquids/gases exchange when the
-   lower parcel's effective thermal density is meaningfully lighter.
+/* Buoyant parcel convection. Same-material pairs normally retain the old
+   four-degree threshold, but Water gets a stronger three-cell vertical reach
+   and a two-degree threshold. This carries an actual hot parcel upward rather
+   than teleporting heat, making a heated lake form a warm upper layer without
+   globally accelerating conduction through walls or solids. Different
+   liquids/gases exchange when the lower parcel's effective thermal density is
+   meaningfully lighter.
 
-   Alternating non-overlapping row pairs prevents one hot parcel from racing up
-   several cells during a bottom-to-top scan. No RNG is consumed, preserving
-   the deterministic movement silhouette. */
+   Alternating source-row parity and movement stamps keep each parcel to one
+   bounded convection move per frame (three cells for Water, one otherwise).
+   No RNG is consumed, preserving the deterministic movement silhouette. */
 bool World::updateConvection(int x, int y) {
     const int i = y * SIM_W + x;
     const u8 mat = cells[i].mat;
@@ -615,11 +620,26 @@ bool World::updateConvection(int x, int y) {
     if ((kind != KIND_LIQUID && kind != KIND_GAS) ||
         (((u32)y ^ frame) & 1u) != 0u) return false;
 
-    const int above = i - SIM_W;
+    int above = i - SIM_W;
     const u8 aboveMat = cells[above].mat;
     if (MATS[aboveMat].kind != kind) return false;
     if (aboveMat == mat) {
-        if ((int)temp[i] <= (int)temp[above] + 4) return false;
+        const int reach = mat == MAT_WATER ? WATER_CONVECTION_REACH : 1;
+        const int delta = mat == MAT_WATER ? WATER_CONVECTION_DELTA : 4;
+        int target = i;
+        for (int d = 1; d <= reach && y - d >= PLAY_Y0; ++d) {
+            const int candidate = i - d * SIM_W;
+            if (cells[candidate].mat != mat) break;
+            /* Conduction runs before movement and can smooth the immediately
+               adjacent pair below the threshold while a cooler parcel still
+               exists two or three cells up. Inspect the whole short column;
+               only a parcel at least as hot as this one blocks its rise. */
+            if ((int)temp[candidate] >= (int)temp[i]) break;
+            if ((int)temp[i] > (int)temp[candidate] + delta)
+                target = candidate;
+        }
+        if (target == i) return false;
+        above = target;
     } else {
         const int belowDensity = materialDensityQ8(mat, temp[i]);
         const int aboveDensity = materialDensityQ8(aboveMat, temp[above]);
@@ -635,8 +655,7 @@ bool World::updateConvection(int x, int y) {
     const u8 st = (u8)(stamp() << STAMP_SHIFT);
     cells[i].flags = (u8)((cells[i].flags & F_DIR) | st);
     cells[above].flags = (u8)((cells[above].flags & F_DIR) | st);
-    dirtyPoint(x, y);
-    dirtyPoint(x, y - 1);
+    dirtyArea(x, above / SIM_W, x, y);
     return true;
 }
 
@@ -881,8 +900,7 @@ bool World::updateGasPressure(int x, int y) {
                 }
                 break;
             }
-            if (MATS[n.mat].kind != KIND_POWDER ||
-                reactivePowderAllowsGas(n.mat, gasMat)) break;
+            if (MATS[n.mat].kind != KIND_POWDER) break;
             const int resistance = g_matPressureResistance[n.mat];
             if (resistance == 255) break;
             required = imax(required, resistance + count);
@@ -941,6 +959,31 @@ bool World::updateGasPressure(int x, int y) {
             const Cell& n = cells[ny * SIM_W + gx];
             if (n.mat == MAT_EMPTY) return !blocksCell(gx, ny);
             if (MATS[n.mat].kind != KIND_LIQUID) break;
+        }
+
+        /* A non-reactive powder face is relief only when the complete short
+           plug can move into a real empty cell. Treating any adjacent powder
+           as an outlet strands pressure against packed terrain; ignoring it
+           makes interior pressure take many frames to reach a movable pile. */
+        for (int k = 0; k < 4; ++k) {
+            int count = 0, required = 0;
+            for (int d = 1; d <= GAS_PRESSURE_POWDER_REACH + 1; ++d) {
+                const int nx = gx + dx[k] * d, ny = gy + dy[k] * d;
+                if (nx < PLAY_X0 || nx > PLAY_X1 ||
+                    ny < PLAY_Y0 || ny > PLAY_Y1) break;
+                const Cell& n = cells[ny * SIM_W + nx];
+                if (n.mat == MAT_EMPTY) {
+                    if (count && !blocksCell(nx, ny) &&
+                        required <= (int)excess) return true;
+                    break;
+                }
+                if (MATS[n.mat].kind != KIND_POWDER) break;
+                const int resistance = g_matPressureResistance[n.mat];
+                if (resistance == 255) break;
+                required = imax(required, resistance + count);
+                ++count;
+                if (required > (int)excess) break;
+            }
         }
         return false;
     };
