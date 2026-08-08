@@ -67,6 +67,10 @@ static const int DENSITY_SWAP_EPS_Q8 = 64;
 static const int GAS_PRESSURE_VERTICAL_REACH = 64;
 static const int GAS_PRESSURE_LIQUID_RADIUS  = 16;
 static const int GAS_PRESSURE_POWDER_REACH   = 8;
+static const int GAS_PRESSURE_POCKET_RAY     = 64;
+static const int GAS_PRESSURE_POCKET_RADIUS  = 32;
+static const int GAS_PRESSURE_POCKET_NODES   = 2048;
+static const int GAS_PRESSURE_POCKET_BUDGET  = 128;
 
 /* Divide a heat transfer by 2^shift to get the temperature change a material of
    that thermal mass actually feels, carrying the remainder stochastically so
@@ -119,6 +123,7 @@ void World::reset() {
     memset(felledMark, 0, sizeof(felledMark));
     frame  = 0;
     activeChunks = 0;
+    pressureRoutesRemaining = 0;
     clearDirty(cur);
     clearDirty(next);
 
@@ -850,6 +855,116 @@ bool World::updateGasPressure(int x, int y) {
         }
         finishExpansion((y + dy[powderDir]) * SIM_W + x + dx[powderDir]);
         return true;
+    }
+
+    /* Pressure belongs to a connected gas pocket, not to whichever pixel
+       happened to inherit the hidden volume when liquid boiled. The old
+       adjacent equalizer made an interior charge crawl through a large Steam
+       blob one cell per frame; only after reaching the skin could it displace
+       Water, producing the long-lived dense blob seen in large boilers.
+
+       Route pressure directly to a lower-pressure boundary parcel. Straight
+       rays cover the common large round pocket for a handful of reads. A
+       bounded local flood handles crooked pockets without a world-sized
+       pressure plane or an unbounded component walk. The receiver performs the
+       ordinary visible expansion/displacement on its own turn, so this moves
+       no material and manufactures no volume. */
+    const auto hasPressureRelief = [&](int gx, int gy) {
+        for (int k = 0; k < 4; ++k) {
+            const int nx = gx + dx[k], ny = gy + dy[k];
+            const Cell& n = cells[ny * SIM_W + nx];
+            if (n.mat == MAT_EMPTY && !blocksCell(nx, ny)) return true;
+            if (MATS[n.mat].kind == KIND_LIQUID) return true;
+            if (filterAllows(n.mat, gasMat) ||
+                reactivePowderAllowsGas(n.mat, gasMat)) return true;
+            if (MATS[n.mat].kind == KIND_POWDER &&
+                g_matPressureResistance[n.mat] != 255 &&
+                g_matPressureResistance[n.mat] <= excess) return true;
+        }
+        return false;
+    };
+
+    if (!hasPressureRelief(x, y) && pressureRoutesRemaining > 0) {
+        --pressureRoutesRemaining;
+        int receiver = -1, receiverDistance = 1000000, receiverExcess = 256;
+        for (int k = 0; k < 4; ++k) {
+            for (int d = 1; d <= GAS_PRESSURE_POCKET_RAY; ++d) {
+                const int nx = x + dx[k] * d, ny = y + dy[k] * d;
+                if (nx < PLAY_X0 || nx > PLAY_X1 || ny < PLAY_Y0 || ny > PLAY_Y1) break;
+                const int ni = ny * SIM_W + nx;
+                const Cell& n = cells[ni];
+                if (n.mat != gasMat) break;
+                const int nExcess = n.moisture & GAS_EXCESS_MASK;
+                if (nExcess < (int)excess && hasPressureRelief(nx, ny) &&
+                    (d < receiverDistance ||
+                     (d == receiverDistance && nExcess < receiverExcess))) {
+                    receiver = ni;
+                    receiverDistance = d;
+                    receiverExcess = nExcess;
+                    break;
+                }
+            }
+        }
+
+        if (receiver < 0) {
+            static const int R = GAS_PRESSURE_POCKET_RADIUS;
+            static const int SIDE = R * 2 + 1;
+            static const int CAP = SIDE * SIDE;
+            static u16 seen[CAP] = { 0 };
+            static i16 queue[GAS_PRESSURE_POCKET_NODES];
+            static u16 epoch = 0;
+            if (++epoch == 0) {
+                memset(seen, 0, sizeof(seen));
+                epoch = 1;
+            }
+
+            const int center = R * SIDE + R;
+            int head = 0, tail = 0;
+            seen[center] = epoch;
+            queue[tail++] = (i16)center;
+            while (head < tail && receiver < 0) {
+                const int li = queue[head++];
+                const int lx = li % SIDE, ly = li / SIDE;
+                for (int k = 0; k < 4; ++k) {
+                    const int nlx = lx + dx[k], nly = ly + dy[k];
+                    if (nlx < 0 || nlx >= SIDE || nly < 0 || nly >= SIDE) continue;
+                    const int niLocal = nly * SIDE + nlx;
+                    if (seen[niLocal] == epoch) continue;
+                    seen[niLocal] = epoch;
+                    const int nx = x - R + nlx, ny = y - R + nly;
+                    if (nx < PLAY_X0 || nx > PLAY_X1 || ny < PLAY_Y0 || ny > PLAY_Y1) continue;
+                    const int ni = ny * SIM_W + nx;
+                    const Cell& n = cells[ni];
+                    if (n.mat != gasMat) continue;
+                    const int nExcess = n.moisture & GAS_EXCESS_MASK;
+                    if (nExcess < (int)excess && hasPressureRelief(nx, ny)) {
+                        receiver = ni;
+                        receiverExcess = nExcess;
+                        break;
+                    }
+                    if (tail < GAS_PRESSURE_POCKET_NODES)
+                        queue[tail++] = (i16)niLocal;
+                }
+            }
+        }
+
+        if (receiver >= 0) {
+            Cell& r = cells[receiver];
+            const int room = GAS_EXCESS_MASK - receiverExcess;
+            /* Raise the boundary to the donor's pressure level. An empty skin
+               cell therefore receives the whole charge and the next donor
+               seeks another lower-pressure outlet instead of piling onto the
+               same column. A partially charged receiver only takes the
+               difference, preserving the ordinary equalization behaviour. */
+            int give = imax(1, (int)excess - receiverExcess);
+            give = imin(give, room);
+            give = imin(give, (int)excess);
+            c.moisture = (u8)((c.moisture & GAS_VOLUME_ONLY) | ((int)excess - give));
+            r.moisture = (u8)((r.moisture & GAS_VOLUME_ONLY) | (receiverExcess + give));
+            dirtyPoint(x, y);
+            dirtyPoint(receiver % SIM_W, receiver / SIM_W);
+            return true;
+        }
     }
 
     /* A short bent pipe, cavity, or sloping shoreline needs more than a
@@ -2087,6 +2202,11 @@ void World::updateCell(int x, int y) {
 }
 
 void World::step() {
+    /* Pocket sharing is the only pressure operation that searches farther than
+       its immediate material path. Bound it across the whole world, not per
+       chunk, so a pathological mass-boil drains over several frames instead of
+       turning one frame into an unbounded collection of 2,048-node walks. */
+    pressureRoutesRemaining = GAS_PRESSURE_POCKET_BUDGET;
     /* Last frame's accumulated rects become this frame's work list. */
     memcpy(cur, next, sizeof(cur));
     clearDirty(next);

@@ -495,6 +495,7 @@ struct World {
     Chunk next[CHUNK_COUNT];      /* being accumulated for the next frame */
     u32   frame;
     int   activeChunks;           /* stat, for the HUD */
+    int   pressureRoutesRemaining;/* per-frame shared-pocket search budget */
 
     /* --- the live window -------------------------------------------------
        Chunks outside this rectangle are not simulated at all. Everything in

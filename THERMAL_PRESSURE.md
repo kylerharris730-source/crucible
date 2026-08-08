@@ -93,10 +93,37 @@ The hover readout now reports stored pressure on gas cells. Regression coverage
 checks short-plug movement, low-pressure refusal, length resistance, powder and
 gas-volume conservation, and the immovable/ore thresholds.
 
+## 6. Shared gas-pocket pressure — implemented
+
+Stored expansion volume no longer has to diffuse one pixel at a time through a
+connected Steam blob before its surface can use it. An interior compressed cell
+routes part of its pressure directly to a lower-pressure boundary cell of the
+same gas pocket. Four straight rays of up to 64 cells handle broad ordinary
+pockets cheaply; a 32-cell-radius, 2,048-node bounded flood handles bends and
+irregular cavities. Neither path walks the world or adds a per-cell pressure
+plane. At most 128 cells may start a pocket-routing search per world step;
+additional pressure uses the local equalizer and retries on later frames.
+
+Routing only moves hidden pressure units. The receiving boundary still performs
+the existing visible expansion, liquid displacement, sieve entry, Coal reaction,
+or powder push, so represented gas volume and material remain conserved. A cell
+already touching a possible outlet keeps its own pressure rather than bouncing
+it around the pocket when that outlet is sealed.
+
+Regression coverage starts decompression across all 41 exposed cells of a
+41x41 Steam pocket with 81 compressed interior cells in one turn, and verifies
+exact gas-plus-pressure and Water conservation. A separate L-shaped pocket
+verifies the bounded flood reaches a Water face that no straight ray can see.
+A temporary 121x121 stress scene with 81 compressed cells measured roughly
+3.5-4.0 ms per simulation step on the development machine. An intentionally
+pathological 1,681-cell compressed core initially measured about 40 ms; the
+128-search world budget reduced it to roughly 5.1-5.3 ms while letting it drain
+over additional frames.
+
 ## Required diagnostics
 
 Before destructive pressure exists, retain the pressure hover readout. Existing
 regressions cover sealed expansion, pressure equalization, deep-water lift,
-Coal permeability, and material conservation. Save/reload, sleeping chunks,
-and active-window cost need explicit stress harnesses before rupture or cell
-destruction is added.
+Coal permeability, large and curved pocket sharing, material conservation, and
+active-window cost. Save/reload and sleeping chunks need explicit stress
+harnesses before rupture or cell destruction is added.

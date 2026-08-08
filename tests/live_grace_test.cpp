@@ -1094,6 +1094,91 @@ int main() {
         fprintf(stderr, "packed or immovable material yielded to insufficient pressure\n"); return 107;
     }
 
+    /* Pressure stored throughout the center of a broad Steam pocket reaches
+       its Water boundary in one turn. Adjacent-only equalization needs twenty
+       turns just to reach this 41-cell blob's skin, so no new visible gas
+       volume would exist after this step under the old rule. */
+    w.reset();
+    const int blobX = 980, blobTop = 700, blobSize = 41;
+    const int blobBottom = blobTop + blobSize - 1;
+    w.setLiveWindow(blobX - 6, blobTop - 10,
+                    blobX + blobSize + 5, blobBottom + 5);
+    for (int y = blobTop - 5; y <= blobBottom + 1; ++y) {
+        w.setCell(blobX - 1, y, MAT_STONE);
+        w.setCell(blobX + blobSize, y, MAT_STONE);
+    }
+    for (int x = blobX; x < blobX + blobSize; ++x) {
+        w.setCell(x, blobBottom + 1, MAT_STONE);
+        for (int y = blobTop; y <= blobBottom; ++y)
+            w.setCell(x, y, MAT_STEAM);
+        for (int y = blobTop - 4; y < blobTop; ++y)
+            w.setCell(x, y, MAT_WATER);
+    }
+    const int blobCenterX = blobX + blobSize / 2;
+    const int blobCenterY = blobTop + blobSize / 2;
+    const int chargedRadius = 4;
+    const int chargedCells = (chargedRadius * 2 + 1) * (chargedRadius * 2 + 1);
+    for (int y = blobCenterY - chargedRadius; y <= blobCenterY + chargedRadius; ++y)
+        for (int x = blobCenterX - chargedRadius; x <= blobCenterX + chargedRadius; ++x) {
+            w.cells[y * SIM_W + x].moisture = 5;
+            w.temp[y * SIM_W + x] = degC(120);
+            w.dirtyPoint(x, y);
+        }
+    w.step();
+    int blobSteam = 0, blobWater = 0, blobExcess = 0;
+    for (int y = blobTop - 5; y <= blobBottom; ++y)
+        for (int x = blobX; x < blobX + blobSize; ++x) {
+            const Cell& bc = w.at(x, y);
+            if (bc.mat == MAT_STEAM) {
+                ++blobSteam;
+                blobExcess += bc.moisture & GAS_EXCESS_MASK;
+            }
+            if (bc.mat == MAT_WATER) ++blobWater;
+        }
+    const int initialBlobSteam = blobSize * blobSize;
+    const int initialBlobVolume = initialBlobSteam + chargedCells * 5;
+    if (blobSteam != initialBlobSteam + blobSize || blobWater != blobSize * 4 ||
+        blobSteam + blobExcess != initialBlobVolume) {
+        fprintf(stderr, "shared pocket pressure did not decompress broad Steam blob (%d steam, %d water, %d excess)\n",
+                blobSteam, blobWater, blobExcess); return 108;
+    }
+
+    /* A crooked connected pocket cannot use any straight pressure ray. The
+       bounded flood must carry the charge around the corner to the Water face
+       without changing the number of pre-existing gas or liquid cells. */
+    w.reset();
+    const int curveX = 1100, curveY = 720;
+    w.setLiveWindow(curveX - 6, curveY - 16, curveX + 12, curveY + 5);
+    for (int y = curveY - 12; y <= curveY + 2; ++y)
+        for (int x = curveX - 2; x <= curveX + 7; ++x)
+            w.setCell(x, y, MAT_STONE);
+    for (int x = curveX; x <= curveX + 5; ++x)
+        w.setCell(x, curveY, MAT_STEAM);
+    for (int y = curveY - 6; y < curveY; ++y)
+        w.setCell(curveX + 5, y, MAT_STEAM);
+    for (int y = curveY - 10; y < curveY - 6; ++y)
+        w.setCell(curveX + 5, y, MAT_WATER);
+    w.setCell(curveX + 5, curveY - 11, MAT_EMPTY);
+    w.cells[curveY * SIM_W + curveX].moisture = 5;
+    w.temp[curveY * SIM_W + curveX] = degC(120);
+    w.dirtyPoint(curveX, curveY);
+    w.step();
+    int curvedSteam = 0, curvedWater = 0, curvedExcess = 0;
+    for (int y = curveY - 11; y <= curveY; ++y)
+        for (int x = curveX; x <= curveX + 5; ++x) {
+            const Cell& cc = w.at(x, y);
+            if (cc.mat == MAT_STEAM) {
+                ++curvedSteam;
+                curvedExcess += cc.moisture & GAS_EXCESS_MASK;
+            }
+            if (cc.mat == MAT_WATER) ++curvedWater;
+        }
+    if (curvedSteam != 13 || curvedWater != 4 || curvedExcess != 4 ||
+        curvedSteam + curvedExcess != 17) {
+        fprintf(stderr, "shared pressure did not follow curved Steam pocket (%d steam, %d water, %d excess)\n",
+                curvedSteam, curvedWater, curvedExcess); return 109;
+    }
+
     /* Pressure lifts a connected water column immediately instead of waiting
        for the original steam cell to bubble through it one pixel per frame. */
     w.reset();
