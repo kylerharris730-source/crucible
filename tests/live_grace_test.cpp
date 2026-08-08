@@ -831,9 +831,9 @@ int main() {
                 waxHighY, waxY, waxCount); return 93;
     }
 
-    /* Boiling stores expansion locally, then releases up to five connected gas
-       volumes in one open-space burst. Five daughters are volume-only; the one
-       owner token is what lets all six Steam cells condense back to exactly one
+    /* Boiling stores expansion locally, then releases two connected gas
+       volumes in one open-space burst. Two daughters are volume-only; the one
+       owner token is what lets all three Steam cells condense back to exactly one
        Water cell. */
     w.reset();
     const int pressureX = 760, pressureY = 640;
@@ -844,11 +844,11 @@ int main() {
     w.dirtyPoint(pressureX, pressureY);
     w.step();
     if (w.at(pressureX, pressureY).mat != MAT_STEAM ||
-        (w.at(pressureX, pressureY).moisture & GAS_EXCESS_MASK) != 5 ||
+        (w.at(pressureX, pressureY).moisture & GAS_EXCESS_MASK) != 2 ||
         (w.at(pressureX, pressureY).moisture & GAS_VOLUME_ONLY)) {
-        fprintf(stderr, "boiling water did not store five expansion volumes\n"); return 94;
+        fprintf(stderr, "boiling water did not store two expansion volumes\n"); return 94;
     }
-    /* Open Steam releases the full five-volume expansion charge in one turn. */
+    /* Open Steam releases the full two-volume expansion charge in one turn. */
     w.step();
     int pressureSteamCount = 0, ownerCount = 0, excessSum = 0;
     for (int y = pressureY - 40; y <= pressureY + 10; ++y)
@@ -859,8 +859,8 @@ int main() {
             excessSum += pc.moisture & GAS_EXCESS_MASK;
             if (!(pc.moisture & GAS_VOLUME_ONLY)) ++ownerCount;
         }
-    if (pressureSteamCount != 6 || ownerCount != 1 || excessSum != 0) {
-        fprintf(stderr, "steam did not expand to six conserved volumes (%d steam, %d owner, %d excess)\n",
+    if (pressureSteamCount != 3 || ownerCount != 1 || excessSum != 0) {
+        fprintf(stderr, "steam did not expand to three conserved volumes (%d steam, %d owner, %d excess)\n",
                 pressureSteamCount, ownerCount, excessSum); return 95;
     }
     for (int y = pressureY - 40; y <= pressureY + 10; ++y)
@@ -897,7 +897,7 @@ int main() {
         w.step();
     }
     if (w.at(pressureX, pressureY).mat != MAT_STEAM ||
-        (w.at(pressureX, pressureY).moisture & GAS_EXCESS_MASK) != 5) {
+        (w.at(pressureX, pressureY).moisture & GAS_EXCESS_MASK) != 2) {
         fprintf(stderr, "sealed steam did not retain its pressure (mat %u moisture %u temp %u)\n",
                 w.at(pressureX, pressureY).mat, w.at(pressureX, pressureY).moisture,
                 w.temp[pressureY * SIM_W + pressureX]); return 97;
@@ -919,7 +919,7 @@ int main() {
                 ++pressureSteamCount;
                 excessSum += w.at(x, y).moisture & GAS_EXCESS_MASK;
             }
-    if (pressureSteamCount != 6 || excessSum != 0) {
+    if (pressureSteamCount != 3 || excessSum != 0) {
         fprintf(stderr, "opened chamber did not release stored steam (%d/%d)\n",
                 pressureSteamCount, excessSum); return 98;
     }

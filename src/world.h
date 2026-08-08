@@ -405,7 +405,7 @@ static const u8 F_DIR = 0x01;
 
 /* Gas pressure encoding in Cell::moisture. A normal/painted gas cell has one
    condensation mass token and value 0. Expansion daughters carry the high bit
-   and vanish when cooled; this lets one Water cell expand to six Steam cells
+   and vanish when cooled; this lets one Water cell expand to three Steam cells
    and still condense back to exactly one Water cell. */
 static const u8 GAS_VOLUME_ONLY = 0x80;
 static const u8 GAS_EXCESS_MASK = 0x7F;

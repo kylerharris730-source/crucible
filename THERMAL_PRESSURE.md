@@ -22,17 +22,22 @@ one Wax cell remaining.
 
 An occupied gas cell represents one volume unit and stores a bounded number of
 unexpanded volume units. Boiling Water creates one owner Steam parcel carrying
-five extra units. At a usable boundary, up to five units expand through connected
+two extra units. At a usable boundary, all two units expand through connected
 open air or a straight liquid column in one turn; if sealed, excess remains as
 pressure and equalizes through connected gas. The kind-specific
 `Cell::moisture` payload stores this without adding a 38 MB pressure plane.
 
 Expansion daughters carry a volume-only provenance bit. On cooling, daughters
 collapse to Empty and the single owner condenses to Water, preserving the round
-trip `1 Water -> 6 Steam volumes -> 1 Water`. Gas-sieve occupancy packs and
+trip `1 Water -> 3 Steam volumes -> 1 Water`. Gas-sieve occupancy packs and
 restores that provenance bit as well. This temporarily constrains material ids
 to seven bits; reaching 128 materials should replace packed sieve occupants
 with a sidecar rather than steal another bit.
+
+The original six-to-one Water expansion made ordinary boiling overwhelm large
+lakes once pressure transport became fast. Water now expands three-to-one;
+Mercury gas retains the larger six-volume charge, so the pressure machinery
+still supports and tests five-unit bursts.
 
 Regression coverage verifies open expansion, sealed retention, connected
 equalization, condensation conservation, reopening a sleeping chamber, and

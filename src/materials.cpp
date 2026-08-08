@@ -1837,7 +1837,10 @@ void initMaterials() {
     g_matThermalExpansionQ8[MAT_WAX] = 26;
 
     for (int m = 0; m < MAT_COUNT; ++m) g_matGasExpansion[m] = 1;
-    g_matGasExpansion[MAT_STEAM] = 6;
+    /* Water boiling should create a useful pressure pulse without turning a
+       modest pool into an overwhelming amount of Steam. Transport remains
+       fast; only the represented volume changes from six cells to three. */
+    g_matGasExpansion[MAT_STEAM] = 3;
     g_matGasExpansion[MAT_MERCURY_GAS] = 6;
     g_matGasExpansion[MAT_COLDFIRE] = 4;
 

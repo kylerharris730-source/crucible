@@ -751,7 +751,7 @@ bool World::updateGasPressure(int x, int y) {
        connected flood rooted at the source: every new cell is reached through
        a cell spawned earlier in this same burst, never placed across a wall or
        disconnected pocket. Radius three is already far more room than the
-       five-volume Water -> Steam expansion can consume. */
+       largest ordinary gas-expansion charge can consume. */
     {
         static const int R = 3, SIDE = R * 2 + 1, CAP = SIDE * SIDE;
         i16 queue[CAP];
@@ -1986,7 +1986,7 @@ void World::updateCell(int x, int y) {
     if (m.coolTemp && t < (int)m.coolTemp) {
         /* Expansion-only gas volumes carry pressure but no condensation mass
            token. They collapse to empty; exactly one owner parcel from the
-           original liquid returns to liquid, so 1 Water -> 6 Steam -> 1 Water
+           original liquid returns to liquid, so 1 Water -> 3 Steam -> 1 Water
            rather than multiplying matter on the round trip. */
         if (m.kind == KIND_GAS && MATS[m.coolsTo].kind == KIND_LIQUID &&
             (c.moisture & GAS_VOLUME_ONLY))
