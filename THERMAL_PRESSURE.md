@@ -9,8 +9,8 @@ must remain useful and testable without depending on the next one.
 - Every liquid and gas has a small thermal-expansion coefficient; Wax has a
   deliberately large coefficient that crosses Water's density near 60 C.
 - Convection exchanges whole cells and their temperature, not temperature by
-  itself. Water parcels can rise through three cooler Water cells per frame at
-  a two-degree gradient; other fluids retain the conservative adjacent swap.
+  itself. Every liquid and gas parcel can rise through three cooler cells of
+  the same material per frame at a two-degree gradient.
 - A quarter-density hysteresis prevents one-degree interface jitter.
 - Wax is available in the sandbox palette. Its survival source and stronger
   blob cohesion remain design work, not assumptions hidden in this milestone.

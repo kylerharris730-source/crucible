@@ -775,7 +775,7 @@ int main() {
     w.step();
     const int ctrlAboveT = w.temp[(ctrlBottom - 1) * SIM_W + convX];
     if (!convMatsStayed || convAboveT <= ctrlAboveT) {
-        fprintf(stderr, "water convection did not beat conduction-only control (conv %d/%d, control above %d)\n",
+        fprintf(stderr, "non-Water convection did not beat conduction-only control (conv %d/%d, control above %d)\n",
                 convBelowT, convAboveT, ctrlAboveT); return 49;
     }
 
@@ -1435,6 +1435,35 @@ int main() {
                 (unsigned)w.temp[(convectBottom - 1) * SIM_W + convectX],
                 (unsigned)w.temp[(convectBottom - 2) * SIM_W + convectX],
                 (unsigned)w.temp[(convectBottom - 3) * SIM_W + convectX]); return 112;
+    }
+
+    /* The stronger reach is a fluid rule, not a Water special case. Repeat
+       the marked-parcel check with Glowfluid, which has no phase transition
+       that could satisfy the test by replacing the parcel. */
+    w.reset();
+    const int glowConvectX = convectX + 20;
+    w.setLiveWindow(glowConvectX - 4, convectBottom - convectHeight - 4,
+                    glowConvectX + 4, convectBottom + 4);
+    for (int y = convectBottom - convectHeight; y <= convectBottom + 1; ++y) {
+        w.setCell(glowConvectX - 1, y, MAT_RUBBER);
+        w.setCell(glowConvectX + 1, y, MAT_RUBBER);
+    }
+    w.setCell(glowConvectX, convectBottom + 1, MAT_RUBBER);
+    for (int y = convectBottom - convectHeight + 1; y <= convectBottom; ++y) {
+        w.setCell(glowConvectX, y, MAT_GLOWFLUID);
+        w.temp[y * SIM_W + glowConvectX] = AMBIENT_TEMP;
+    }
+    w.temp[convectBottom * SIM_W + glowConvectX] = degC(90);
+    w.cells[convectBottom * SIM_W + glowConvectX].moisture = 123;
+    w.dirtyPoint(glowConvectX, convectBottom);
+    w.step();
+    int markedGlowY = convectBottom;
+    for (int y = convectBottom; y > convectBottom - convectHeight; --y)
+        if (w.at(glowConvectX, y).mat == MAT_GLOWFLUID &&
+            w.at(glowConvectX, y).moisture == 123) markedGlowY = y;
+    if (markedGlowY > convectBottom - 2) {
+        fprintf(stderr, "Glowfluid did not use full-strength convection (marker y %d)\n",
+                markedGlowY); return 114;
     }
 
     /* A submerged gas plume may rise diagonally, but never makes a pure

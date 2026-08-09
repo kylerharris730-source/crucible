@@ -72,8 +72,8 @@ static const int GAS_PRESSURE_POCKET_RADIUS  = 32;
 static const int GAS_PRESSURE_POCKET_NODES   = 2048;
 static const int GAS_PRESSURE_POCKET_BUDGET  = 128;
 static const int GAS_PRESSURE_EXPANSION_BURST = 5;
-static const int WATER_CONVECTION_REACH       = 3;
-static const int WATER_CONVECTION_DELTA       = 2;
+static const int FLUID_CONVECTION_REACH       = 3;
+static const int FLUID_CONVECTION_DELTA       = 2;
 
 /* Divide a heat transfer by 2^shift to get the temperature change a material of
    that thermal mass actually feels, carrying the remainder stochastically so
@@ -603,16 +603,15 @@ void World::updatePowder(int x, int y) {
     tryMove(x, y, x - dx, y + 1);
 }
 
-/* Buoyant parcel convection. Same-material pairs normally retain the old
-   four-degree threshold, but Water gets a stronger three-cell vertical reach
-   and a two-degree threshold. This carries an actual hot parcel upward rather
-   than teleporting heat, making a heated lake form a warm upper layer without
-   globally accelerating conduction through walls or solids. Different
-   liquids/gases exchange when the lower parcel's effective thermal density is
-   meaningfully lighter.
+/* Buoyant parcel convection. Every same-material liquid or gas uses the
+   three-cell vertical reach and two-degree threshold first tuned for Water.
+   This carries an actual hot parcel upward rather than teleporting heat,
+   making a heated fluid body form a warm upper layer without globally
+   accelerating conduction through walls or solids. Different fluids exchange
+   when the lower parcel's effective thermal density is meaningfully lighter.
 
    Alternating source-row parity and movement stamps keep each parcel to one
-   bounded convection move per frame (three cells for Water, one otherwise).
+   bounded convection move of at most three cells per frame.
    No RNG is consumed, preserving the deterministic movement silhouette. */
 bool World::updateConvection(int x, int y) {
     const int i = y * SIM_W + x;
@@ -625,8 +624,8 @@ bool World::updateConvection(int x, int y) {
     const u8 aboveMat = cells[above].mat;
     if (MATS[aboveMat].kind != kind) return false;
     if (aboveMat == mat) {
-        const int reach = mat == MAT_WATER ? WATER_CONVECTION_REACH : 1;
-        const int delta = mat == MAT_WATER ? WATER_CONVECTION_DELTA : 4;
+        const int reach = FLUID_CONVECTION_REACH;
+        const int delta = FLUID_CONVECTION_DELTA;
         int target = i;
         for (int d = 1; d <= reach && y - d >= PLAY_Y0; ++d) {
             const int candidate = i - d * SIM_W;
