@@ -1147,38 +1147,52 @@ int main() {
                 coalPushSteam, coalPushExcess); return 111;
     }
 
-    /* Powder density, not pressure, makes Sand sink through ordinary Steam.
-       The Steam carries no excess volume here, so this cannot accidentally be
-       satisfied by the pressure-shove path. */
+    /* Unpressurized Steam percolates through a Sand pile one cell per frame.
+       With a bottom-to-top in-place scan, allowing the powder to own this swap
+       relays the same Steam parcel through the entire pile in one turn. */
     w.reset();
-    const int sandSinkX = 970, sinkTop = 680, sinkBottom = 694;
-    w.setLiveWindow(sandSinkX - 4, sinkTop - 4, sandSinkX + 4, sinkBottom + 4);
-    for (int y = sinkTop - 1; y <= sinkBottom + 1; ++y) {
+    const int sandSinkX = 970, pileTop = 680, pileBottom = 689;
+    const int initialSteamY = pileBottom + 1;
+    w.setLiveWindow(sandSinkX - 4, pileTop - 4,
+                    sandSinkX + 4, initialSteamY + 4);
+    for (int y = pileTop - 1; y <= initialSteamY + 1; ++y) {
         w.setCell(sandSinkX - 1, y, MAT_STONE);
         w.setCell(sandSinkX + 1, y, MAT_STONE);
     }
-    w.setCell(sandSinkX, sinkBottom + 1, MAT_STONE);
-    for (int y = sinkTop; y <= sinkBottom; ++y) {
-        w.setCell(sandSinkX, y, MAT_STEAM);
-        w.temp[y * SIM_W + sandSinkX] = degC(120);
-    }
-    w.setCell(sandSinkX, sinkTop - 1, MAT_SAND);
+    w.setCell(sandSinkX, initialSteamY + 1, MAT_STONE);
+    for (int y = pileTop; y <= pileBottom; ++y)
+        w.setCell(sandSinkX, y, MAT_SAND);
+    w.setCell(sandSinkX, initialSteamY, MAT_STEAM);
+    w.temp[initialSteamY * SIM_W + sandSinkX] = degC(120);
     w.step();
-    int sunkSand = 0, sunkSandY = -1, sinkSteam = 0, sinkExcess = 0;
-    for (int y = sinkTop - 1; y <= sinkBottom; ++y) {
-        if (w.at(sandSinkX, y).mat == MAT_SAND) {
-            ++sunkSand;
-            sunkSandY = y;
-        }
+    if (w.at(sandSinkX, pileBottom).mat != MAT_STEAM ||
+        w.at(sandSinkX, initialSteamY).mat != MAT_SAND) {
+        fprintf(stderr, "Steam did not percolate exactly one Sand cell (%u at %d, %u below)\n",
+                w.at(sandSinkX, pileBottom).mat, pileBottom,
+                w.at(sandSinkX, initialSteamY).mat); return 113;
+    }
+
+    for (int tick = 0; tick < 4; ++tick) {
+        for (int y = pileTop; y <= initialSteamY; ++y)
+            if (w.at(sandSinkX, y).mat == MAT_STEAM) {
+                w.temp[y * SIM_W + sandSinkX] = degC(120);
+                w.dirtyPoint(sandSinkX, y);
+            }
+        w.step();
+    }
+    int sunkSand = 0, sinkSteam = 0, sinkSteamY = -1, sinkExcess = 0;
+    for (int y = pileTop; y <= initialSteamY; ++y) {
+        if (w.at(sandSinkX, y).mat == MAT_SAND) ++sunkSand;
         if (w.at(sandSinkX, y).mat == MAT_STEAM) {
             ++sinkSteam;
+            sinkSteamY = y;
             sinkExcess += w.at(sandSinkX, y).moisture & GAS_EXCESS_MASK;
         }
     }
-    if (sunkSand != 1 || sunkSandY != sinkTop ||
-        sinkSteam != sinkBottom - sinkTop + 1 || sinkExcess != 0) {
-        fprintf(stderr, "Sand did not sink through unpressurized Steam (%d at y %d, %d Steam, %d excess)\n",
-                sunkSand, sunkSandY, sinkSteam, sinkExcess); return 113;
+    if (sunkSand != 10 || sinkSteam != 1 ||
+        sinkSteamY != initialSteamY - 5 || sinkExcess != 0) {
+        fprintf(stderr, "Steam percolation did not remain one cell per frame (%d Sand, %d Steam at y %d, %d excess)\n",
+                sunkSand, sinkSteam, sinkSteamY, sinkExcess); return 113;
     }
 
     /* Pressure stored throughout the center of a broad Steam pocket reaches

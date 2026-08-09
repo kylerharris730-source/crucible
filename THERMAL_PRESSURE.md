@@ -101,9 +101,11 @@ Shared pressure recognizes a powder face only after verifying that the entire
 bounded plug can reach real empty space. This lets pressure from inside a gas
 pocket reach movable Sand or Coal without treating packed terrain as relief.
 
-Pressure is not required for ordinary settling: powders compare their density
-against gas and exchange downward under gravity. Sand, Coal, and other powders
-therefore sink through unpressurized Steam instead of resting on its surface.
+Pressure is not required for ordinary settling. Gas compares its density with
+the powder directly above and swaps upward through one denser cell on its own
+turn, settling Sand, Coal, and other powders downward. Movement stamps limit a
+Steam parcel to one such swap per frame, so it visibly percolates through a
+pile instead of relaying to the top during one bottom-to-top scan.
 
 The hover readout now reports stored pressure on gas cells. Regression coverage
 checks short-plug movement, low-pressure refusal, length resistance, powder and

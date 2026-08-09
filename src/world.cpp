@@ -356,6 +356,7 @@ bool World::tryMove(int sx, int sy, int tx, int ty) {
 
     if (t.mat != MAT_EMPTY) {
         const MatInfo& tm = MATS[t.mat];
+        const MatInfo& sm = MATS[s.mat];
         /* A seed falls through anything that GREW, and this is the one
            exception to "powders do not enter solids". Without it the whole
            harvest is stuck: a pod broken high in a crown leaves its seed
@@ -383,27 +384,33 @@ bool World::tryMove(int sx, int sy, int tx, int ty) {
         const bool throughFoliage = g_matIsSeed[s.mat]
                                  && g_matIsPlant[t.mat] && !g_matIsSeed[t.mat];
         if (!throughFoliage) {
-        if (tm.kind != KIND_LIQUID && tm.kind != KIND_GAS) return false;
-        const MatInfo& sm = MATS[s.mat];
-        const int sourceDensity = materialDensityQ8(s.mat, temp[si]);
-        const int targetDensity = materialDensityQ8(t.mat, temp[ti]);
-        /* Gases invert the density test: they displace anything *heavier*,
-           which is how steam bubbles up through water. */
-        if (sm.kind == KIND_GAS) {
-            if (targetDensity <= sourceDensity + DENSITY_SWAP_EPS_Q8) return false;
-        }
-        else {
-            if (sourceDensity <= targetDensity + DENSITY_SWAP_EPS_Q8) return false;
-            /* Gas owns a LIQUID/Gas swap on the gas cell's turn. Letting a
-               liquid push a gas target sounds symmetric but is not under an
-               in-place scan: neighbouring water cells can relay one stamped
-               Steam cell sideways/upward many times before it gets a turn.
-               Powders are different: gravity must let denser Sand or Coal
-               exchange downward through gas on the powder's own turn. */
-            if (sm.kind == KIND_LIQUID && tm.kind == KIND_GAS) {
-                return false;
+            /* Gas may percolate straight upward through one denser powder cell
+               on the gas parcel's own turn. Restricting this exception to
+               (0,-1) prevents flit/dispersion from tunnelling sideways through
+               a pile and lets the movement stamp cap it at one cell per frame. */
+            const bool gasPercolatingUp = sm.kind == KIND_GAS &&
+                                          tm.kind == KIND_POWDER &&
+                                          tx == sx && ty == sy - 1;
+            if (tm.kind != KIND_LIQUID && tm.kind != KIND_GAS &&
+                !gasPercolatingUp) return false;
+            const int sourceDensity = materialDensityQ8(s.mat, temp[si]);
+            const int targetDensity = materialDensityQ8(t.mat, temp[ti]);
+            /* Gases invert the density test: they displace anything *heavier*,
+               which is how steam bubbles up through water. */
+            if (sm.kind == KIND_GAS) {
+                if (targetDensity <= sourceDensity + DENSITY_SWAP_EPS_Q8) return false;
             }
-        }
+            else {
+                if (sourceDensity <= targetDensity + DENSITY_SWAP_EPS_Q8) return false;
+                /* Gas owns a LIQUID/Gas swap on the gas cell's turn. Letting a
+                   liquid push a gas target sounds symmetric but is not under
+                   an in-place scan: neighbouring water cells can relay one
+                   stamped Steam cell sideways/upward many times before it gets
+                   a turn. Powders use the same ownership rule now: gas rises
+                   through one powder cell on its turn, so a displaced parcel
+                   cannot relay up an entire pile during the scan. */
+                if (tm.kind == KIND_GAS) return false;
+            }
         }
     }
 
