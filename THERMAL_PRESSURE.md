@@ -12,12 +12,20 @@ must remain useful and testable without depending on the next one.
   itself. Every liquid and gas parcel can rise through three cooler cells of
   the same material per frame at a two-degree gradient.
 - A quarter-density hysteresis prevents one-degree interface jitter.
+- A fluid cell with eight same-material neighbours still convects, then skips
+  gravity, diagonal, pressure-reach, and dispersion work that cannot change an
+  interior parcel. Interfaces and mixed-fluid cells keep the full flow path.
 - Wax is available in the sandbox palette. Its survival source and stronger
   blob cohesion remain design work, not assumptions hidden in this milestone.
 
 Regression coverage holds a Wax parcel at 90 C until it rises through a sealed
 Water column, cools it to 20 C, and verifies that it sinks again with exactly
 one Wax cell remaining.
+
+In a temporary 512x320 (163,840-cell) release benchmark, the packed-fluid path
+reduced median uniform-Lava steps from 16.0 ms to 3.1 ms, stratified Lava from
+16.7 ms to 10.3 ms, alternating-temperature Lava from 16.5 ms to 8.0 ms, and
+active Glowfluid from 16.0 ms to 6.0 ms on the development machine.
 
 ## 2. Compressed gas volume — implemented
 

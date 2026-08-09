@@ -1480,6 +1480,40 @@ int main() {
                 markedGlowY); return 114;
     }
 
+    /* The packed-pool fast path must retain convection. This marked hot parcel
+       has all eight neighbours occupied by Wax, so only that path can move
+       it during this frame. */
+    w.reset();
+    const int packedX0 = 760, packedX1 = 766;
+    const int packedTop = 710, packedBottom = 720, packedMarkerX = 763;
+    const int packedMarkerY = 718;
+    w.setLiveWindow(packedX0 - 4, packedTop - 4,
+                    packedX1 + 4, packedBottom + 4);
+    for (int x = packedX0 - 1; x <= packedX1 + 1; ++x) {
+        w.setCell(x, packedTop - 1, MAT_RUBBER);
+        w.setCell(x, packedBottom + 1, MAT_RUBBER);
+    }
+    for (int y = packedTop; y <= packedBottom; ++y) {
+        w.setCell(packedX0 - 1, y, MAT_RUBBER);
+        w.setCell(packedX1 + 1, y, MAT_RUBBER);
+        for (int x = packedX0; x <= packedX1; ++x) {
+            w.setCell(x, y, MAT_WAX);
+            w.temp[y * SIM_W + x] = AMBIENT_TEMP;
+        }
+    }
+    w.temp[packedMarkerY * SIM_W + packedMarkerX] = degC(90);
+    w.cells[packedMarkerY * SIM_W + packedMarkerX].moisture = 124;
+    w.dirtyPoint(packedMarkerX, packedMarkerY);
+    w.step();
+    int packedMarkerAfterY = packedMarkerY;
+    for (int y = packedTop; y <= packedBottom; ++y)
+        if (w.at(packedMarkerX, y).mat == MAT_WAX &&
+            w.at(packedMarkerX, y).moisture == 124) packedMarkerAfterY = y;
+    if (packedMarkerAfterY > packedMarkerY - 2) {
+        fprintf(stderr, "packed-fluid fast path suppressed convection (%d -> %d)\n",
+                packedMarkerY, packedMarkerAfterY); return 115;
+    }
+
     /* A submerged gas plume may rise diagonally, but never makes a pure
        sideways underwater hop. Track it each frame: it must widen, while its
        lateral distance remains bounded by how far it has risen. */

@@ -667,8 +667,31 @@ bool World::updateConvection(int x, int y) {
 }
 
 void World::updateLiquid(int x, int y) {
-    Cell& c = cells[y * SIM_W + x];
+    const int i = y * SIM_W + x;
+    Cell& c = cells[i];
     const MatInfo& m = MATS[c.mat];
+
+    /* The interior of a large single-material pool has no possible gravity or
+       flow move, yet the ordinary path asks tryMove several times, scans for
+       hydrostatic reach, and may walk sideways through more of the same fluid
+       for every hot cell on every frame. Eight matching neighbours prove this
+       parcel is not on an interface. Convection still gets its full turn—this
+       optimization removes only movement attempts that cannot immediately
+       change the local arrangement. Boundary and mixed-fluid cells keep the
+       complete path below. */
+    const u8 mat = c.mat;
+    const bool packedSame = cells[i - SIM_W - 1].mat == mat &&
+                            cells[i - SIM_W    ].mat == mat &&
+                            cells[i - SIM_W + 1].mat == mat &&
+                            cells[i - 1].mat == mat &&
+                            cells[i + 1].mat == mat &&
+                            cells[i + SIM_W - 1].mat == mat &&
+                            cells[i + SIM_W    ].mat == mat &&
+                            cells[i + SIM_W + 1].mat == mat;
+    if (packedSame) {
+        updateConvection(x, y);
+        return;
+    }
 
     if (tryMove(x, y, x, y + 1)) return;
     if (updateConvection(x, y)) return;
