@@ -23,6 +23,7 @@
 #include "drone.h"
 #include "accessory.h"
 #include "save.h"
+#include "multiplayer.h"
 
 /* The window is a fixed-size left-hand tool panel plus the sim viewport. The
    viewport keeps a clean integer scale so pixels stay crisp and the
@@ -4308,7 +4309,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     initMaterials();
     g_world.reset();
     initItems();
-    g_inv.clear();
+    playerSessionsReset();
     layoutPanel();
     layoutHotbar();
 
@@ -4453,8 +4454,11 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         /* Publish the body's box before stepping, so this frame's simulation
            already respects it -- otherwise sand gets one frame of free passage
            through the player every time they move. */
-        if (g_playerOn) g_player.occupy(g_world);
-        else            g_world.clearBlockBox();
+        g_world.clearBlockBoxes();
+        if (g_playerOn) g_player.occupy(g_world, LOCAL_PLAYER_ID);
+        for (int id = 1; id < MAX_PLAYERS; ++id)
+            if (g_playerSessions[id].connected)
+                g_playerSessions[id].body.occupy(g_world, id);
 
         /* Tell the world what to simulate. Everything outside is frozen in
            place -- state is kept, it simply does not advance -- which is what
@@ -4462,6 +4466,20 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         g_world.setLiveWindow(g_camX - SIM_MARGIN, g_camY - SIM_MARGIN,
                               g_camX + viewCellsW()  + SIM_MARGIN,
                               g_camY + viewCellsH() + SIM_MARGIN);
+        /* Remote sessions contribute independent simulation islands. Never
+           stretch the local camera rectangle to include them: two players at
+           opposite ends of the world should cost two active areas, not every
+           chunk in the enormous rectangle between them. */
+        for (int id = 1; id < MAX_PLAYERS; ++id) {
+            if (!g_playerSessions[id].connected) continue;
+            const Player& remote = g_playerSessions[id].body;
+            const int rcx = (int)remote.centreX(), rcy = (int)remote.centreY();
+            const int halfW = viewCellsW() / 2, halfH = viewCellsH() / 2;
+            g_world.addLiveWindow(rcx - halfW - SIM_MARGIN,
+                                  rcy - halfH - SIM_MARGIN,
+                                  rcx + halfW + SIM_MARGIN,
+                                  rcy + halfH + SIM_MARGIN);
+        }
 
         LARGE_INTEGER tA, tB;
         QueryPerformanceCounter(&tA);

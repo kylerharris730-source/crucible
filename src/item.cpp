@@ -5,7 +5,6 @@
 #include <string.h>
 
 ItemDef   ITEMS[ITEM_COUNT];
-Inventory g_inv;
 ToolInst  g_toolInst[MAX_TOOL_INST];
 
 u16 toolInstNew() {

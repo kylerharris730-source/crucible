@@ -518,6 +518,13 @@ struct World {
        quietly stop simulating and still pass. */
     i32 liveX0, liveY0, liveX1, liveY1;
 
+    /* Exact union of every player's guaranteed core. The first window keeps
+       the adaptive fingers below; additional, possibly distant players mark
+       independent islands here. A bounding rectangle would simulate all the
+       empty country between two players and make distance itself expensive. */
+    u8  liveCoreMask[CHUNK_COUNT];
+    int liveWindowCount;
+
     /* The camera window is the guaranteed core.  A second core-sized budget is
        available as two vertical fingers: activity that reaches an edge grows
        that edge, while a newly active opposite edge reclaims rows from the
@@ -562,15 +569,10 @@ struct World {
             for (int cx = cx0; cx <= cx1; ++cx) zone[cy * CHUNKS_X + cx] = z;
     }
 
-    void setLiveWindow(int x0, int y0, int x1, int y1) {
-        liveX0 = x0; liveY0 = y0; liveX1 = x1; liveY1 = y1;
-        const i32 cx0 = imax(0, x0 >> CHUNK_SHIFT), cx1 = imin(CHUNKS_X - 1, x1 >> CHUNK_SHIFT);
-        const i32 cy0 = imax(0, y0 >> CHUNK_SHIFT), cy1 = imin(CHUNKS_Y - 1, y1 >> CHUNK_SHIFT);
-        if (cx0 != liveCoreCX0 || cx1 != liveCoreCX1 || cy0 != liveCoreCY0 || cy1 != liveCoreCY1) {
-            fingerTop = fingerBottom = fingerLeft = fingerRight = 0;
-            liveCoreCX0 = cx0; liveCoreCX1 = cx1; liveCoreCY0 = cy0; liveCoreCY1 = cy1;
-        }
-    }
+    /* set starts a new per-frame union; add contributes another disjoint core.
+       Existing single-player callers only use set and retain their behavior. */
+    void setLiveWindow(int x0, int y0, int x1, int y1);
+    void addLiveWindow(int x0, int y0, int x1, int y1);
     void clearLiveWindow() { setLiveWindow(0, 0, SIM_W - 1, SIM_H - 1); }
 
     /* Electrical state is time-based, so it must share the world's actual live
@@ -583,17 +585,20 @@ struct World {
         if (x < 0 || x >= SIM_W || y < 0 || y >= SIM_H) return false;
         const int cx = x >> CHUNK_SHIFT, cy = y >> CHUNK_SHIFT;
         const int ci = cy * CHUNKS_X + cx;
-        if (keepAlive[ci]) return true;
+        if (keepAlive[ci] || liveCoreMask[ci]) return true;
         return (cx >= liveCoreCX0 && cx <= liveCoreCX1 &&
                 cy >= liveCoreCY0 - fingerTop && cy <= liveCoreCY1 + fingerBottom) ||
                (cy >= liveCoreCY0 && cy <= liveCoreCY1 &&
                 cx >= liveCoreCX0 - fingerLeft && cx <= liveCoreCX1 + fingerRight);
     }
 
-    /* --- solid entity box ------------------------------------------------
-       A single axis-aligned box that no material may move into. It exists so
-       the player has physical presence -- sand piles on their head instead of
-       falling through it, water flows around them rather than over them.
+    /* --- solid entity boxes -----------------------------------------------
+       A small fixed set of axis-aligned shapes that material may not settle
+       inside. Four is the co-op player cap, and a fixed array keeps the hot
+       movement test bounded without making World know what a Player is.
+
+       They give players physical presence -- sand piles on their heads instead
+       of falling through them, water flows around them rather than over them.
 
        This lives in World, and is set from outside each frame, so that
        world.cpp needs to know nothing about players or entities. It is a box
@@ -608,30 +613,55 @@ struct World {
        in every respect -- it needs a density, the falling-sand rules are then
        free to shove it around, and material it moves into has to go somewhere.
 
-       Disabled by setting x0 past the right edge, so the very first comparison
-       fails and the rest are never evaluated. */
-    i32   blockX0, blockY0, blockX1, blockY1;
-    /* Rows of 45-degree taper at the top of the box, one cell of inset per side
-       per row. An occupant with a flat top collects whatever falls on it; a
-       pointed one sheds it. See the note in player.h for why the slope has to
-       be one cell per row and not shallower. */
-    i32   blockTaper;
+       Disabled boxes set x0 past the right edge, so their first comparison
+       fails. */
+    static const int MAX_OCCUPANTS = 4;
+    struct OccupantBox {
+        i32 x0, y0, x1, y1;
+        /* Rows of 45-degree taper at the top, one cell of inset per side per
+           row. A flat top collects falling material; a pointed one sheds it. */
+        i32 taper;
+    } occupant[MAX_OCCUPANTS];
+    u8 occupantMask;
 
+    void setBlockBoxFor(int slot, int x0, int y0, int x1, int y1, int taper = 0) {
+        if (slot < 0 || slot >= MAX_OCCUPANTS) return;
+        OccupantBox& b = occupant[slot];
+        b.x0 = x0; b.y0 = y0; b.x1 = x1; b.y1 = y1; b.taper = taper;
+        occupantMask = (u8)(occupantMask | (1u << slot));
+    }
+    void clearBlockBoxFor(int slot) {
+        if (slot < 0 || slot >= MAX_OCCUPANTS) return;
+        OccupantBox& b = occupant[slot];
+        b.x0 = SIM_W; b.y0 = SIM_H; b.x1 = -1; b.y1 = -1; b.taper = 0;
+        occupantMask = (u8)(occupantMask & ~(1u << slot));
+    }
+    void clearBlockBoxes() {
+        occupantMask = 0;
+        for (int slot = 0; slot < MAX_OCCUPANTS; ++slot) {
+            OccupantBox& b = occupant[slot];
+            b.x0 = SIM_W; b.y0 = SIM_H; b.x1 = -1; b.y1 = -1; b.taper = 0;
+        }
+    }
+    /* Legacy slot-zero wrappers keep all existing single-player and harness
+       call sites behaving identically while new code names an occupant. */
     void setBlockBox(int x0, int y0, int x1, int y1, int taper = 0) {
-        blockX0 = x0; blockY0 = y0; blockX1 = x1; blockY1 = y1; blockTaper = taper;
+        setBlockBoxFor(0, x0, y0, x1, y1, taper);
     }
-    void clearBlockBox() {
-        blockX0 = SIM_W; blockY0 = SIM_H; blockX1 = -1; blockY1 = -1; blockTaper = 0;
+    void clearBlockBox() { clearBlockBoxFor(0); }
+    int blockerAt(int x, int y) const {
+        for (int slot = 0; slot < MAX_OCCUPANTS; ++slot) {
+            if (!(occupantMask & (1u << slot))) continue;
+            const OccupantBox& b = occupant[slot];
+            /* Ordered so cells far from every occupant reject before taper
+               arithmetic. This loop is four fixed, cheap bounds tests. */
+            if (x < b.x0 || x > b.x1 || y < b.y0 || y > b.y1) continue;
+            const i32 inset = b.taper - (y - b.y0);
+            if (inset <= 0 || (x >= b.x0 + inset && x <= b.x1 - inset)) return slot;
+        }
+        return -1;
     }
-    bool blocksCell(int x, int y) const {
-        /* Ordered so the overwhelmingly common case -- nowhere near the
-           occupant -- fails on the first comparison against a constant, and the
-           taper arithmetic only runs for cells actually inside the box. */
-        if (x < blockX0 || x > blockX1 || y < blockY0 || y > blockY1) return false;
-        const i32 inset = blockTaper - (y - blockY0);
-        if (inset <= 0) return true;
-        return x >= blockX0 + inset && x <= blockX1 - inset;
-    }
+    bool blocksCell(int x, int y) const { return blockerAt(x, y) >= 0; }
 
     void reset();
     void step();

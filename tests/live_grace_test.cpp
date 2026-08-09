@@ -10,6 +10,7 @@
 #include "accessory.h"
 #include "entity.h"
 #include "light.h"
+#include "multiplayer.h"
 #include <stdio.h>
 
 /* This used to define g_logisticsUiOpen itself, because device.cpp read a flag
@@ -26,6 +27,27 @@ static int waterY(const World& w, int x, int y0, int y1) {
 int main() {
     initMaterials();
     initItems();       /* explosion discs used by the electrical overload test */
+    playerSessionsReset();
+    /* Session zero is the exact storage all legacy g_player/g_inv call sites
+       see. A second player receives independent durable state and a stable id,
+       then closing that slot cannot disturb the host. */
+    if (&g_player != &g_playerSessions[LOCAL_PLAYER_ID].body ||
+        &g_inv != &g_playerSessions[LOCAL_PLAYER_ID].inventory ||
+        !playerSessionConnected(LOCAL_PLAYER_ID)) {
+        fprintf(stderr, "local compatibility aliases do not name player session zero\n"); return 123;
+    }
+    const PlayerId remotePlayer = playerSessionOpen(false, 300.0f, 300.0f);
+    if (remotePlayer != 1 || !playerSessionConnected(remotePlayer) ||
+        g_playerSessions[remotePlayer].inventory.add(MAT_SAND, 7) != 0 ||
+        g_playerSessions[remotePlayer].inventory.countOf(MAT_SAND) != 7 ||
+        g_inv.countOf(MAT_SAND) != 0) {
+        fprintf(stderr, "remote player session did not keep independent state\n"); return 124;
+    }
+    playerSessionClose(remotePlayer);
+    if (playerSessionConnected(remotePlayer) ||
+        g_playerSessions[remotePlayer].inventory.countOf(MAT_SAND) != 0) {
+        fprintf(stderr, "closed player session retained live state\n"); return 125;
+    }
     /* A lava backdrop is useful as a free copper furnace, but ore falling through
        its molten cells must not instantly skip iron's fuel-gated smelting step. */
     if (g_bgHeat[MAT_LAVA] >= MATS[MAT_IRON_ORE].boilTemp ||
@@ -49,6 +71,48 @@ int main() {
     }
     static World w;  /* World is deliberately large; keep this off the stack. */
     w.reset();
+    /* Material occupancy has one independently clearable shape per co-op
+       player. This is the physical prerequisite for two characters sharing a
+       falling-sand world: clearing or moving one must not make the other
+       permeable. */
+    Player firstOccupant, secondOccupant;
+    firstOccupant.reset(220.0f, 320.0f);
+    secondOccupant.reset(280.0f, 320.0f);
+    firstOccupant.occupy(w, 0);
+    secondOccupant.occupy(w, 1);
+    const int firstBodyX = (int)firstOccupant.centreX();
+    const int secondBodyX = (int)secondOccupant.centreX();
+    const int bodyY = firstOccupant.bottom();
+    if (!w.blocksCell(firstBodyX, bodyY) ||
+        !w.blocksCell(secondBodyX, bodyY) ||
+        w.blocksCell((firstBodyX + secondBodyX) / 2, bodyY)) {
+        fprintf(stderr, "multiple player occupancy boxes were not independent\n"); return 126;
+    }
+    firstOccupant.alive = false;
+    firstOccupant.occupy(w, 0);
+    if (w.blocksCell(firstBodyX, bodyY) || !w.blocksCell(secondBodyX, bodyY)) {
+        fprintf(stderr, "clearing one player occupancy box cleared another\n"); return 127;
+    }
+    w.clearBlockBoxes();
+    /* Distant players activate disjoint simulation islands. The midpoint must
+       remain frozen; treating the two cores as one bounding rectangle would
+       pass the endpoint checks but make player separation catastrophically
+       expensive. */
+    w.reset();
+    const int liveAX = 180, liveBX = 3700, liveY = 420;
+    const int betweenX = (liveAX + liveBX) / 2;
+    w.setLiveWindow(liveAX - 16, liveY - 16, liveAX + 16, liveY + 16);
+    w.addLiveWindow(liveBX - 16, liveY - 16, liveBX + 16, liveY + 16);
+    w.setCell(liveAX, liveY, MAT_SAND);
+    w.setCell(liveBX, liveY, MAT_SAND);
+    w.setCell(betweenX, liveY, MAT_SAND);
+    w.step();
+    if (w.at(liveAX, liveY + 1).mat != MAT_SAND ||
+        w.at(liveBX, liveY + 1).mat != MAT_SAND ||
+        w.at(betweenX, liveY).mat != MAT_SAND ||
+        w.at(betweenX, liveY + 1).mat == MAT_SAND) {
+        fprintf(stderr, "disjoint player live windows collapsed into one region\n"); return 128;
+    }
     Inventory droneInv; droneInv.clear();
     droneInv.equip[EQ_LIGHT_DRONE].item = ITEM_LIGHT_DRONE;
     droneInv.equip[EQ_LIGHT_DRONE].count = 1;

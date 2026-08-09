@@ -533,7 +533,7 @@ struct Player {
        only that some box is occupied. Also dirties the cells the body just
        vacated -- without that, sand resting on the player's head stays floating
        in mid-air after they walk away, because nothing woke its chunk. */
-    void occupy(World& w) const;
+    void occupy(World& w, int occupantSlot = 0) const;
 
     /* The box's current height in cells -- PLAYER_H, or CROUCH_H while
        crouching. Everything that measures the body reads this rather than
@@ -553,7 +553,8 @@ struct Player {
     int bottom() const { return (int)y + height() - 1; }
 };
 
-extern Player g_player;
+/* Session-zero compatibility alias; storage lives in multiplayer.cpp. */
+extern Player& g_player;
 
 /* True if a cell stops the player. Powders count as solid ground -- you walk on
    sand rather than sinking into it. That is a choice, not a physical truth: the

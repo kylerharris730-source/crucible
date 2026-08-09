@@ -5,8 +5,6 @@
 #include "light.h"    /* VIEW_CELLS_W/H, and shading the figure by the field */
 #include <math.h>
 
-Player g_player;
-
 /* The sprite IS the hitbox here -- see the note in sprite.h. If these ever
    drift apart, material rests visibly inside the character and the shed off the
    shoulders stops making sense, so it is worth failing the build over. */
@@ -800,23 +798,39 @@ void Player::update(const World& w, const PlayerInput& in) {
     animate();
 }
 
-void Player::occupy(World& w) const {
-    if (!alive) { w.clearBlockBox(); return; }
+void Player::occupy(World& w, int occupantSlot) const {
+    if (occupantSlot < 0 || occupantSlot >= World::MAX_OCCUPANTS) return;
 
     /* Remember where the body was last frame so the cells it has left can be
        woken. A settled pile does not re-examine itself -- that is the whole
-       point of the chunk system -- so material that was resting against the
-       player would hang in the air once the player moved out from under it. */
-    static int lastX0 = 0, lastY0 = 0, lastX1 = -1, lastY1 = -1;
+       point of the chunk system -- so material that was resting against a
+       player would hang in the air once they moved out from under it. History
+       is indexed by occupancy slot; one shared static was itself a hidden
+       single-player assumption. */
+    static int lastX0[World::MAX_OCCUPANTS] = { 0, 0, 0, 0 };
+    static int lastY0[World::MAX_OCCUPANTS] = { 0, 0, 0, 0 };
+    static int lastX1[World::MAX_OCCUPANTS] = { -1, -1, -1, -1 };
+    static int lastY1[World::MAX_OCCUPANTS] = { -1, -1, -1, -1 };
+
+    if (!alive) {
+        if (lastX1[occupantSlot] >= lastX0[occupantSlot])
+            w.dirtyArea(lastX0[occupantSlot], lastY0[occupantSlot],
+                        lastX1[occupantSlot], lastY1[occupantSlot]);
+        lastX1[occupantSlot] = lastY1[occupantSlot] = -1;
+        w.clearBlockBoxFor(occupantSlot);
+        return;
+    }
 
     const int x0 = left(), y0 = top(), x1 = right(), y1 = bottom();
-    w.setBlockBox(x0, y0, x1, y1, PLAYER_TAPER);
+    w.setBlockBoxFor(occupantSlot, x0, y0, x1, y1, PLAYER_TAPER);
 
-    if (lastX1 >= lastX0 && (lastX0 != x0 || lastY0 != y0)) {
-        w.dirtyArea(imin(lastX0, x0), imin(lastY0, y0),
-                    imax(lastX1, x1), imax(lastY1, y1));
+    if (lastX1[occupantSlot] >= lastX0[occupantSlot] &&
+        (lastX0[occupantSlot] != x0 || lastY0[occupantSlot] != y0)) {
+        w.dirtyArea(imin(lastX0[occupantSlot], x0), imin(lastY0[occupantSlot], y0),
+                    imax(lastX1[occupantSlot], x1), imax(lastY1[occupantSlot], y1));
     }
-    lastX0 = x0; lastY0 = y0; lastX1 = x1; lastY1 = y1;
+    lastX0[occupantSlot] = x0; lastY0[occupantSlot] = y0;
+    lastX1[occupantSlot] = x1; lastY1[occupantSlot] = y1;
 }
 
 void Player::draw(u32* px, int camX, int camY, bool lit) const {

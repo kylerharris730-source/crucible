@@ -106,8 +106,37 @@ static inline u8 latentDrain(int t) {
     return (u8)t;
 }
 
+static void markLiveCore(World& w, int x0, int y0, int x1, int y1) {
+    const int cx0 = imax(0, x0 >> CHUNK_SHIFT);
+    const int cy0 = imax(0, y0 >> CHUNK_SHIFT);
+    const int cx1 = imin(CHUNKS_X - 1, x1 >> CHUNK_SHIFT);
+    const int cy1 = imin(CHUNKS_Y - 1, y1 >> CHUNK_SHIFT);
+    if (cx0 > cx1 || cy0 > cy1) return;
+    for (int cy = cy0; cy <= cy1; ++cy)
+        for (int cx = cx0; cx <= cx1; ++cx)
+            w.liveCoreMask[cy * CHUNKS_X + cx] = 1;
+}
+
+void World::setLiveWindow(int x0, int y0, int x1, int y1) {
+    memset(liveCoreMask, 0, sizeof(liveCoreMask));
+    liveWindowCount = 1;
+    liveX0 = x0; liveY0 = y0; liveX1 = x1; liveY1 = y1;
+    const i32 cx0 = imax(0, x0 >> CHUNK_SHIFT), cx1 = imin(CHUNKS_X - 1, x1 >> CHUNK_SHIFT);
+    const i32 cy0 = imax(0, y0 >> CHUNK_SHIFT), cy1 = imin(CHUNKS_Y - 1, y1 >> CHUNK_SHIFT);
+    if (cx0 != liveCoreCX0 || cx1 != liveCoreCX1 || cy0 != liveCoreCY0 || cy1 != liveCoreCY1) {
+        fingerTop = fingerBottom = fingerLeft = fingerRight = 0;
+        liveCoreCX0 = cx0; liveCoreCX1 = cx1; liveCoreCY0 = cy0; liveCoreCY1 = cy1;
+    }
+    markLiveCore(*this, x0, y0, x1, y1);
+}
+
+void World::addLiveWindow(int x0, int y0, int x1, int y1) {
+    ++liveWindowCount;
+    markLiveCore(*this, x0, y0, x1, y1);
+}
+
 void World::reset() {
-    clearBlockBox();
+    clearBlockBoxes();
     /* setLiveWindow() compares the chunk-rounded core to decide whether old
        fingers remain valid, so establish a known sentinel before its first
        call.  World is also used as an uninitialised stack object by tests. */
@@ -595,8 +624,10 @@ void World::updatePowder(int x, int y) {
        Note this leaves pile behaviour completely alone, which is the point. Sand
        still rests on the head and shoulders, a drift still walls you in -- what
        changed is only that material in transit does not become part of you. */
-    if (blocksCell(x, y)) {
-        const int out = (x * 2 < blockX0 + blockX1) ? -1 : 1;
+    const int blocker = blockerAt(x, y);
+    if (blocker >= 0) {
+        const OccupantBox& box = occupant[blocker];
+        const int out = (x * 2 < box.x0 + box.x1) ? -1 : 1;
         static const int TRY[4][2] = { {1,1}, {-1,1}, {1,0}, {-1,0} };
         for (int t = 0; t < 4; ++t) {
             const int tx = x + TRY[t][0] * out, ty = y + TRY[t][1];
@@ -2495,7 +2526,8 @@ void World::step() {
 
             /* A plus-shaped live set: the core, plus four independent fingers.
                Corners are intentionally not paid for, preserving the 2x cap. */
-            const bool inLiveWindow = (cx >= coreCX0 && cx <= coreCX1 && cy >= liveCY0 && cy <= liveCY1)
+            const bool inLiveWindow = liveCoreMask[idx]
+                                   || (cx >= coreCX0 && cx <= coreCX1 && cy >= liveCY0 && cy <= liveCY1)
                                    || (cy >= coreCY0 && cy <= coreCY1 && cx >= liveCX0 && cx <= liveCX1);
             if (inLiveWindow) liveGrace[idx] = LIVE_GRACE_STEPS;
             const bool lingering = !inLiveWindow && liveGrace[idx] > 0;

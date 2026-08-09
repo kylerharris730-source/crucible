@@ -721,7 +721,8 @@ struct ToolShot {
 ToolShot toolResolve(const ItemStack& st);
 
 
-extern Inventory g_inv;
+/* Session-zero compatibility alias; storage lives in multiplayer.cpp. */
+extern Inventory& g_inv;
 
 /* --- what a digging implement can do --------------------------------------
 
