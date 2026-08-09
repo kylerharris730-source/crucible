@@ -26,9 +26,16 @@ struct PlayerCommand {
     u8 pressed; /* rising-edge verbs preserved even if several commands coalesce */
     u8 selected;
     u8 brushRadius;
+    i16 brush;
     bool background;
     bool overwrite;
     bool line;
+    bool lineCommit;
+    u8 lineCommitBits;
+    i32 lineStartX, lineStartY;
+    bool digFilterOn;
+    static const int FILTER_BYTES = (MAT_COUNT + 7) / 8;
+    u8 digFilter[FILTER_BYTES];
     i32 aimX, aimY;
 };
 
@@ -39,7 +46,8 @@ enum NetActionType {
     NACT_CLOSE_DEVICE,
     NACT_DEVICE,
     NACT_WIRE_POINT,
-    NACT_CIRCUIT_TERMINAL
+    NACT_CIRCUIT_TERMINAL,
+    NACT_STOW_CURSOR
 };
 
 enum NetDeviceOperation {

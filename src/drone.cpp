@@ -6,8 +6,6 @@
 #include <math.h>
 #include <string.h>
 
-Drone g_dronesByPlayer[4][MAX_DRONES];
-
 static const int ATTACK_DRONE_DAMAGE = 3;
 static const int ATTACK_DRONE_COOLDOWN = 28;
 static const int OVERCLOCK_DRONE_COOLDOWN = 20;
@@ -30,7 +28,8 @@ static bool hasChip(const Inventory& inv, int droneBay, ItemId item) {
 }
 
 void droneReset() {
-    memset(g_drones, 0, sizeof(g_drones));
+    for (int player = 0; player < MAX_PLAYERS; ++player)
+        memset(g_playerSessions[player].drones, 0, sizeof(g_playerSessions[player].drones));
 }
 
 static u8 equippedDrone(const Inventory& inv, int i) {
@@ -377,25 +376,25 @@ static void droneTickBank(Drone* drones, const World& w, const Player& p, Invent
 }
 
 void droneTick(const World& w, const Player& p, Inventory& inv) {
-    droneTickBank(g_dronesByPlayer[0], w, p, inv);
+    droneTickBank(g_playerSessions[0].drones, w, p, inv);
 }
 
 void droneTickFor(int playerSlot, const World& w, const Player& p, Inventory& inv) {
     if (playerSlot < 0 || playerSlot >= 4) return;
-    droneTickBank(g_dronesByPlayer[playerSlot], w, p, inv);
+    droneTickBank(g_playerSessions[playerSlot].drones, w, p, inv);
 }
 
 void droneRegisterLights() {
     for (int player = 0; player < 4; ++player)
         for (int i = 0; i < MAX_DRONES; ++i)
-            if (g_dronesByPlayer[player][i].type == DRONE_LIGHT)
-                lightAddDynamic((int)g_dronesByPlayer[player][i].x,
-                                (int)g_dronesByPlayer[player][i].y, 210);
+            if (g_playerSessions[player].drones[i].type == DRONE_LIGHT)
+                lightAddDynamic((int)g_playerSessions[player].drones[i].x,
+                                (int)g_playerSessions[player].drones[i].y, 210);
 }
 
 void droneDraw(u32* px, int camX, int camY, bool lit) {
     for (int player = 0; player < 4; ++player) for (int i = 0; i < MAX_DRONES; ++i) {
-        const Drone& d = g_dronesByPlayer[player][i];
+        const Drone& d = g_playerSessions[player].drones[i];
         if (d.type == DRONE_NONE) continue;
         const int x = (int)d.x - camX, y = (int)d.y - camY;
         const u32 c = d.type == DRONE_LIGHT  ? 0xA8EEFF

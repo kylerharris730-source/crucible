@@ -1,6 +1,14 @@
 CXX      := g++
 CXXFLAGS := -std=c++11 -O2 -Wall -Wextra
-BUILD_ID := $(shell git rev-parse --short=12 HEAD 2>/dev/null || echo unknown)
+GIT_HEAD := $(shell git rev-parse --short=12 HEAD 2>/dev/null || echo unknown)
+SOURCE_DIRTY := $(shell git status --porcelain --untracked-files=normal -- src Makefile build.bat 2>/dev/null)
+ifeq ($(strip $(SOURCE_DIRTY)),)
+BUILD_ID := $(GIT_HEAD)
+else
+# Safe false rejection for independently compiled dirty trees. Copying one
+# executable to both machines preserves its embedded GUID and still connects.
+BUILD_ID := $(GIT_HEAD)-dirty-$(shell powershell -NoProfile -Command "[guid]::NewGuid().ToString('N')")
+endif
 CXXFLAGS += -DCRUCIBLE_BUILD_ID=\"$(BUILD_ID)\"
 LDFLAGS  := -mwindows -lgdi32 -luser32 -lwinmm -lmsimg32 -lws2_32
 

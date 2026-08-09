@@ -22,7 +22,20 @@ REM world. Embedding HEAD makes that check automatic for normal builds; an
 REM exported source tree without Git gets an explicit unknown id and can still
 REM build, but should only connect to a copy of that same executable.
 set BUILD_ID=unknown
-for /f %%i in ('git rev-parse --short=12 HEAD 2^>nul') do set BUILD_ID=%%i
+set GIT_HEAD=
+set SOURCE_DIRTY=
+for /f %%i in ('git rev-parse --short^=12 HEAD 2^>nul') do set GIT_HEAD=%%i
+for /f %%i in ('git status --porcelain --untracked-files^=normal -- src Makefile build.bat 2^>nul') do set SOURCE_DIRTY=1
+if defined GIT_HEAD (
+    if defined SOURCE_DIRTY (
+        REM Two separately compiled dirty trees must never claim to be the same
+        REM build merely because HEAD matches. A GUID is embedded once per build;
+        REM copying that executable to the other PC still matches exactly.
+        for /f %%i in ('powershell -NoProfile -Command "[guid]::NewGuid().ToString('N')"') do set BUILD_ID=!GIT_HEAD!-dirty-%%i
+    ) else (
+        set BUILD_ID=!GIT_HEAD!
+    )
+)
 
 REM Built to a scratch name and moved into place only on success, so a build
 REM that fails leaves the last working game exactly where it was. g++ claims
@@ -52,5 +65,5 @@ REM `<name>_test.exe` convention. Failed replacement builds can also leave a
 REM `<name>.new.exe`. None are saves or the main executable, so a successful
 REM normal build is the safe moment to clear that scoped clutter.
 for %%f in (build\crucible.*.exe) do del /q "%%f" 2>nul
-for %%f in (build\*_test.exe build\*_smoke.exe build\*.new.exe) do del /q "%%f" 2>nul
+for %%f in (build\*_test.exe build\*_smoke.exe build\*_mismatch*.exe build\*.new.exe) do del /q "%%f" 2>nul
 echo Built build\crucible.exe

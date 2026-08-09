@@ -48,6 +48,19 @@ int main() {
         g_playerSessions[remotePlayer].inventory.countOf(MAT_SAND) != 0) {
         fprintf(stderr, "closed player session retained live state\n"); return 125;
     }
+    g_inv.add((ItemId)MAT_WOOD, 3);
+    g_playerSessions[0].networkId = 2;
+    const u16 joinedGeneration = g_playerSessions[0].generation;
+    const PlayerId replicatedHost = playerSessionOpen(false, 260.0f, 260.0f);
+    playerSessionsReturnToOffline();
+    if (g_playerSessions[0].networkId != LOCAL_PLAYER_ID ||
+        !g_playerSessions[0].local || !g_playerSessions[0].connected ||
+        g_playerSessions[0].generation == joinedGeneration ||
+        g_inv.countOf((ItemId)MAT_WOOD) != 3 ||
+        playerSessionConnected(replicatedHost)) {
+        fprintf(stderr, "client slot did not return cleanly to offline identity\n"); return 126;
+    }
+    g_inv.clear();
     /* A lava backdrop is useful as a free copper furnace, but ore falling through
        its molten cells must not instantly skip iron's fuel-gated smelting step. */
     if (g_bgHeat[MAT_LAVA] >= MATS[MAT_IRON_ORE].boilTemp ||
@@ -134,9 +147,9 @@ int main() {
     remoteSession.inventory.equip[EQ_DRONE_A].count = 1;
     droneTickFor(0, w, g_player, g_inv);
     droneTickFor(combatRemote, w, remoteSession.body, remoteSession.inventory);
-    if (g_dronesByPlayer[0][0].type != DRONE_LIGHT ||
-        g_dronesByPlayer[combatRemote][1].type != DRONE_ATTACK ||
-        g_dronesByPlayer[0][1].type != DRONE_NONE) {
+    if (g_playerSessions[0].drones[0].type != DRONE_LIGHT ||
+        g_playerSessions[combatRemote].drones[1].type != DRONE_ATTACK ||
+        g_playerSessions[0].drones[1].type != DRONE_NONE) {
         fprintf(stderr, "per-player drone banks overwrote one another\n"); return 130;
     }
     playerSessionClose(combatRemote);

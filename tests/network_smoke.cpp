@@ -15,6 +15,10 @@ int main(int argc, char** argv) {
     if (argc > 2 || (argc == 2 && strcmp(argv[1], "host") && strcmp(argv[1], "client"))) return 2;
     initMaterials(); initItems(); playerSessionsReset(); g_world.reset(); devClear();
     g_player.reset(400.0f, 400.0f);
+    /* The client deliberately corrupts this authoritative cell after joining.
+       Its rotating hash report must make the host resend the chunk. */
+    const int repairX = 420, repairY = 400;
+    g_world.setCell(repairX, repairY, MAT_STONE);
     const bool host = argc == 1 || strcmp(argv[1], "host") == 0;
     if (host ? !netHost(27842) : !netJoin("127.0.0.1", 27842)) {
         fprintf(stderr, "%s\n", netStatus()); return 3;
@@ -29,10 +33,11 @@ int main(int argc, char** argv) {
     }
     const DWORD start = GetTickCount();
     DWORD lastReport = start;
-    bool sent = false;
-    bool gotCommand = false, gotAction = false;
+    bool sent = false, corrupted = false, repairAckSent = false;
+    bool gotCommand = false, gotAction = false, gotRepairAck = false;
     while (GetTickCount() - start < 30000) {
         netPoll(g_world);
+        if (!host) netClientFrame(g_world);
         if (GetTickCount() - lastReport >= 2000) {
             fprintf(stderr, "%s: connected=%d ready=%d status=%s\n",
                     host ? "host" : "client", netConnected() ? 1 : 0,
@@ -44,20 +49,26 @@ int main(int argc, char** argv) {
             PlayerCommand c;
             if (netPopRemoteCommand(&c)) {
                 if (c.player != 1 || c.aimX != 777 || c.aimY != 888 ||
-                    !(c.bits & PCMD_RIGHT) || !c.line) {
+                    !(c.bits & PCMD_RIGHT) || !c.line || c.brush != MAT_WATER ||
+                    !c.lineCommit || c.lineCommitBits != PCMD_USE_LEFT ||
+                    c.lineStartX != 700 || c.lineStartY != 701 ||
+                    !c.digFilterOn || !(c.digFilter[MAT_SAND >> 3] & (1u << (MAT_SAND & 7)))) {
                     fprintf(stderr, "host received corrupt command\n"); return 4;
                 }
                 gotCommand = true;
             }
             NetAction action;
             if (netPopRemoteAction(&action)) {
-                if (action.player != 1 || action.type != NACT_CRAFT || action.a != 7 ||
-                    action.b != 3 || action.x != 1234 || action.y != 4321) {
+                if (action.player != 1) {
                     fprintf(stderr, "host received corrupt action\n"); return 9;
                 }
-                gotAction = true;
+                if (action.type == NACT_CRAFT && action.a == 7 && action.b == 3 &&
+                    action.x == 1234 && action.y == 4321) gotAction = true;
+                else if (action.type == NACT_CLOSE_DEVICE && action.x == 2468)
+                    gotRepairAck = true;
+                else { fprintf(stderr, "host received corrupt action\n"); return 9; }
             }
-            if (gotCommand && gotAction) {
+            if (gotCommand && gotAction && gotRepairAck) {
                 netStop();
                 if (child.hProcess) {
                     const DWORD wait = WaitForSingleObject(child.hProcess, 5000);
@@ -70,11 +81,15 @@ int main(int argc, char** argv) {
                 puts("network host smoke passed"); return 0;
             }
         } else if (netClientReady() && !sent) {
+            g_world.setCell(repairX, repairY, MAT_SAND); corrupted = true;
             PlayerCommand c; memset(&c, 0, sizeof(c));
             c.sequence = 1; c.player = netAssignedPlayer();
             c.generation = g_playerSessions[0].generation;
             c.bits = PCMD_RIGHT; c.selected = 0; c.brushRadius = 6;
-            c.line = true;
+            c.line = true; c.brush = MAT_WATER; c.digFilterOn = true;
+            c.lineCommit = true; c.lineCommitBits = PCMD_USE_LEFT;
+            c.lineStartX = 700; c.lineStartY = 701;
+            c.digFilter[MAT_SAND >> 3] |= (u8)(1u << (MAT_SAND & 7));
             c.aimX = 777; c.aimY = 888;
             if (!netSendCommand(c)) return 5;
             NetAction action; memset(&action, 0, sizeof(action));
@@ -84,10 +99,17 @@ int main(int argc, char** argv) {
             action.x = 1234; action.y = 4321;
             if (!netSendAction(action)) return 10;
             sent = true;
-        } else if (sent) {
+        } else if (sent && corrupted && g_world.at(repairX, repairY).mat == MAT_STONE && !repairAckSent) {
+            NetAction ack; memset(&ack, 0, sizeof(ack));
+            ack.sequence = 2; ack.player = netAssignedPlayer();
+            ack.generation = g_playerSessions[0].generation;
+            ack.type = NACT_CLOSE_DEVICE; ack.x = 2468;
+            if (!netSendAction(ack)) return 11;
+            repairAckSent = true;
+        } else if (repairAckSent) {
             /* Give the nonblocking send queue time to drain before exiting. */
             netPoll(g_world); Sleep(250);
-            puts("network client smoke passed"); netStop(); return 0;
+            puts("network client smoke passed (chunk resync repaired divergence)"); netStop(); return 0;
         }
         Sleep(5);
     }

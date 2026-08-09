@@ -13,15 +13,20 @@
 #include <vector>
 #include <deque>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #ifndef CRUCIBLE_BUILD_ID
+#ifdef CRUCIBLE_TEST_MISMATCH_BUILD
+#define CRUCIBLE_BUILD_ID "intentional-mismatch-test-build"
+#else
 #define CRUCIBLE_BUILD_ID "development"
+#endif
 #endif
 
 static const u32 NET_MAGIC = 0x54454E43u; /* CNET on little endian */
-static const u32 NET_PROTOCOL = 3;
-static const u32 NET_STATE_SCHEMA = 5;
+static const u32 NET_PROTOCOL = 7;
+static const u32 NET_STATE_SCHEMA = 6;
 static const u32 NET_MAX_PACKET = 256u * 1024u * 1024u;
 
 enum PacketType {
@@ -33,7 +38,8 @@ enum PacketType {
     PK_COMMAND,
     PK_STATE,
     PK_CHUNK,
-    PK_ACTION
+    PK_ACTION,
+    PK_CHUNK_HASHES
 };
 
 struct Writer {
@@ -85,6 +91,9 @@ static std::deque<NetAction> g_remoteActions;
 static u32 g_chunkHash[CHUNK_COUNT];
 static int g_netFrame = 0;
 
+static void packBytes(Writer& out, const u8* src, size_t n);
+static bool unpackBytes(Reader& in, std::vector<u8>& out);
+
 static void statusf(const char* fmt, const char* arg = 0) {
     if (arg) sprintf(g_status, fmt, arg); else strcpy(g_status, fmt);
 }
@@ -118,7 +127,6 @@ static void closeSocket(SOCKET& s) {
 static void disconnectPeer(const char* reason) {
     closeSocket(g_peer);
     if (g_role == NET_HOST && g_assigned != PLAYER_NONE) {
-        memset(g_dronesByPlayer[g_assigned], 0, sizeof(g_dronesByPlayer[g_assigned]));
         playerSessionClose(g_assigned);
     }
     g_assigned = PLAYER_NONE; g_ready = g_handshake = g_connecting = false;
@@ -129,6 +137,7 @@ static void disconnectPeer(const char* reason) {
 }
 
 void netStop() {
+    const bool wasClient = g_role == NET_CLIENT;
     closeSocket(g_peer); closeSocket(g_listen);
     g_recv.clear(); g_send.clear(); g_sendAt = 0;
     g_connecting = g_handshake = g_ready = false;
@@ -136,9 +145,9 @@ void netStop() {
     g_remoteActions.clear();
     if (g_role == NET_HOST)
         for (int i = 1; i < MAX_PLAYERS; ++i) {
-            memset(g_dronesByPlayer[i], 0, sizeof(g_dronesByPlayer[i]));
             playerSessionClose((PlayerId)i);
         }
+    if (wasClient) playerSessionsReturnToOffline();
     g_role = NET_OFF; statusf("Offline");
 }
 
@@ -235,7 +244,7 @@ static void sendState() {
         w.bytes(&s.body, sizeof(s.body)); w.bytes(&s.inventory, sizeof(s.inventory));
         w.bytes(&s.cursor, sizeof(s.cursor)); w.bytes(&s.trash, sizeof(s.trash));
         w.i32v(s.restBed); w.i32v(s.openDevice);
-        w.bytes(g_dronesByPlayer[i], sizeof(g_dronesByPlayer[i]));
+        w.bytes(s.drones, sizeof(s.drones));
     }
     w.bytes(g_toolInst, sizeof(g_toolInst));
     w.bytes(g_entities, sizeof(g_entities)); w.bytes(g_pickups, sizeof(g_pickups));
@@ -247,7 +256,9 @@ static void sendState() {
     const int torchN = torchCount(); w.u32v((u32)torchN);
     if (torchN > 0) w.bytes(torchData(), sizeof(TorchFixture) * (size_t)torchN);
     w.u32v(g_worldTime); w.u32v(g_bossesBeaten);
-    queuePacket(PK_STATE, w.b);
+    Writer packed;
+    packBytes(packed, w.b.empty() ? 0 : &w.b[0], w.b.size());
+    queuePacket(PK_STATE, packed.b);
 }
 
 static u32 hashChunk(const World& world, int cx, int cy) {
@@ -259,6 +270,50 @@ static u32 hashChunk(const World& world, int cx, int cy) {
         for (int k = 0; k < 5; ++k) { h ^= v[k]; h *= 16777619u; }
     }
     return h ? h : 1;
+}
+
+/* PackBits over an arbitrary byte block. State arrays are mostly unused slots,
+   so this removes long zero runs without another dependency or platform codec.
+   The uncompressed size is explicit and bounded by the decoder. */
+static void packBytes(Writer& out, const u8* src, size_t n) {
+    out.u32v((u32)n);
+    for (size_t i = 0; i < n;) {
+        size_t run = 1;
+        while (i + run < n && run < 128 && src[i + run] == src[i]) ++run;
+        if (run >= 3) {
+            out.u8v((u8)(0x80 | (run - 1))); out.u8v(src[i]); i += run;
+        } else {
+            const size_t start = i; i += run;
+            while (i < n && i - start < 128) {
+                size_t next = 1;
+                while (i + next < n && next < 3 && src[i + next] == src[i]) ++next;
+                if (next >= 3) break;
+                i += next;
+            }
+            const size_t len = i - start;
+            out.u8v((u8)(len - 1)); out.bytes(src + start, len);
+        }
+    }
+}
+
+static bool unpackBytes(Reader& in, std::vector<u8>& out) {
+    const u32 rawSize = in.u32v();
+    if (!in.ok || rawSize > 16u * 1024u * 1024u) { in.ok = false; return false; }
+    out.resize(rawSize); size_t at = 0;
+    while (in.ok && at < out.size()) {
+        const u8 tag = in.u8v(); const size_t len = (tag & 0x7F) + 1;
+        if (at + len > out.size()) { in.ok = false; break; }
+        if (tag & 0x80) {
+            const u8 value = in.u8v();
+            if (in.ok) memset(&out[at], value, len);
+        } else {
+            if (in.at + len > in.n) { in.ok = false; break; }
+            memcpy(&out[at], in.p + in.at, len); in.at += len;
+        }
+        at += len;
+    }
+    if (!in.ok || at != out.size() || in.at != in.n) { in.ok = false; return false; }
+    return true;
 }
 
 /* PackBits-style plane encoding: high bit means a repeated byte, low seven
@@ -346,6 +401,34 @@ static void sendChangedChunks(const World& world) {
     scanCursor = (scanCursor + budget) % total;
 }
 
+/* A client reports a rotating sample of the chunks it actually has. TCP makes
+   loss unlikely, but it does not prove the replica is correct: a decoder bug,
+   stale write, or future change to interest management can still leave one
+   machine looking at different cells forever. These hashes turn chunk repair
+   into a closed loop. The host compares against authoritative state and sends
+   the ordinary full chunk packet on any mismatch. */
+static void sendClientChunkHashes(const World& world) {
+    if (g_role != NET_CLIENT || !g_ready || g_peer == INVALID_SOCKET ||
+        !g_playerSessions[0].connected) return;
+    const Player& p = g_playerSessions[0].body;
+    const int x0 = imax(0, (int)p.centreX() - 512), x1 = imin(SIM_W - 1, (int)p.centreX() + 512);
+    const int y0 = imax(0, (int)p.centreY() - 448), y1 = imin(SIM_H - 1, (int)p.centreY() + 448);
+    const int cx0 = x0 >> CHUNK_SHIFT, cx1 = x1 >> CHUNK_SHIFT;
+    const int cy0 = y0 >> CHUNK_SHIFT, cy1 = y1 >> CHUNK_SHIFT;
+    const int width = cx1 - cx0 + 1, total = width * (cy1 - cy0 + 1);
+    if (total <= 0) return;
+    static int cursor = 0;
+    const int count = imin(16, total);
+    Writer w; w.u8v((u8)count);
+    for (int n = 0; n < count; ++n) {
+        const int at = (cursor + n) % total;
+        const int cx = cx0 + at % width, cy = cy0 + at / width;
+        w.u16v((u16)cx); w.u16v((u16)cy); w.u32v(hashChunk(world, cx, cy));
+    }
+    cursor = (cursor + count) % total;
+    queuePacket(PK_CHUNK_HASHES, w.b);
+}
+
 static void applyState(Reader& r) {
     const u32 schema = r.u32v();
     const u32 playerSize = r.u32v(), invSize = r.u32v(), entitySize = r.u32v();
@@ -356,7 +439,6 @@ static void applyState(Reader& r) {
         projSize != sizeof(Projectile) || deviceSize != sizeof(Device) ||
         droneSize != sizeof(Drone)) { r.ok = false; return; }
     playerSessionsReset();
-    memset(g_dronesByPlayer, 0, sizeof(g_dronesByPlayer));
     for (int i = 0; i < MAX_PLAYERS; ++i) g_playerSessions[i].connected = false;
     const int count = r.u8v(); int nextRemoteSlot = 1;
     for (int n = 0; n < count; ++n) {
@@ -367,7 +449,7 @@ static void applyState(Reader& r) {
         r.bytes(&s.body, sizeof(s.body)); r.bytes(&s.inventory, sizeof(s.inventory));
         r.bytes(&s.cursor, sizeof(s.cursor)); r.bytes(&s.trash, sizeof(s.trash));
         s.restBed = r.i32v(); s.openDevice = r.i32v();
-        r.bytes(g_dronesByPlayer[slot], sizeof(g_dronesByPlayer[slot]));
+        r.bytes(s.drones, sizeof(s.drones));
         s.connected = true; s.local = slot == 0; s.networkId = wire; s.generation = generation;
     }
     r.bytes(g_toolInst, sizeof(g_toolInst));
@@ -449,7 +531,11 @@ static void handlePacket(u8 type, const u8* data, size_t len, World& world) {
         PlayerCommand c;
         c.sequence = r.u32v(); c.player = r.u8v(); c.generation = r.u16v();
         c.bits = r.u8v(); c.pressed = r.u8v(); c.selected = r.u8v(); c.brushRadius = r.u8v();
+        c.brush = (i16)r.u16v();
         c.background = r.u8v() != 0; c.overwrite = r.u8v() != 0; c.line = r.u8v() != 0;
+        c.lineCommit = r.u8v() != 0; c.lineCommitBits = r.u8v();
+        c.lineStartX = r.i32v(); c.lineStartY = r.i32v();
+        c.digFilterOn = r.u8v() != 0; r.bytes(c.digFilter, sizeof(c.digFilter));
         c.aimX = r.i32v(); c.aimY = r.i32v();
         const int slot = playerSessionSlotForNetworkId(c.player);
         if (r.ok && slot >= 0 && g_playerSessions[slot].generation == c.generation &&
@@ -458,7 +544,12 @@ static void handlePacket(u8 type, const u8* data, size_t len, World& world) {
             g_remoteCommand = c; g_haveRemoteCommand = true;
         }
     } else if (type == PK_STATE && g_role == NET_CLIENT) {
-        applyState(r);
+        std::vector<u8> raw;
+        if (unpackBytes(r, raw)) {
+            Reader state(raw.empty() ? 0 : &raw[0], raw.size());
+            applyState(state);
+            if (!state.ok || state.at != state.n) r.ok = false;
+        }
         if (r.ok) { g_ready = true; statusf("Joined host"); }
     } else if (type == PK_CHUNK && g_role == NET_CLIENT) {
         applyChunk(world, r); if (r.ok) lightInvalidate();
@@ -470,6 +561,27 @@ static void handlePacket(u8 type, const u8* data, size_t len, World& world) {
         const int slot = playerSessionSlotForNetworkId(a.player);
         if (r.ok && slot >= 1 && g_playerSessions[slot].generation == a.generation &&
             g_remoteActions.size() < 256) g_remoteActions.push_back(a);
+    } else if (type == PK_CHUNK_HASHES && g_role == NET_HOST && g_ready) {
+        const int slot = playerSessionSlotForNetworkId(g_assigned);
+        const int count = r.u8v();
+        if (slot < 1 || count > 16) { r.ok = false; }
+        for (int n = 0; r.ok && n < count; ++n) {
+            const int cx = r.u16v(), cy = r.u16v(); const u32 clientHash = r.u32v();
+            if (cx < 0 || cx >= CHUNKS_X || cy < 0 || cy >= CHUNKS_Y) { r.ok = false; break; }
+            const Player& p = g_playerSessions[slot].body;
+            const int centreX = (cx << CHUNK_SHIFT) + CHUNK / 2;
+            const int centreY = (cy << CHUNK_SHIFT) + CHUNK / 2;
+            /* Only accept reports from the joined player's replicated island.
+               A malformed or modified client therefore cannot make the host
+               stream arbitrary parts of the world indefinitely. */
+            if (abs(centreX - (int)p.centreX()) > 512 + CHUNK ||
+                abs(centreY - (int)p.centreY()) > 448 + CHUNK) continue;
+            const int ci = cy * CHUNKS_X + cx;
+            const u32 authorityHash = hashChunk(world, cx, cy);
+            g_chunkHash[ci] = authorityHash;
+            if (clientHash != authorityHash && g_send.size() - g_sendAt < 8u * 1024u * 1024u)
+                sendChunk(world, cx, cy);
+        }
     }
     if (!r.ok) statusf("Malformed network packet");
 }
@@ -562,14 +674,22 @@ void netHostFrame(World& world) {
     if (g_netFrame % 3600 == 0) memset(g_chunkHash, 0, sizeof(g_chunkHash));
 }
 
-void netClientFrame(World&) { /* packets are applied by netPoll; rendering owns the rest */ }
+void netClientFrame(World& world) {
+    /* Sixteen tiny hashes per frame cover a normal view-plus-margin in roughly
+       one second and cost only a few kilobytes per second on the LAN. */
+    sendClientChunkHashes(world);
+}
 
 bool netSendCommand(const PlayerCommand& c) {
     if (g_role != NET_CLIENT || !g_ready || g_peer == INVALID_SOCKET) return false;
     Writer w; w.u32v(c.sequence); w.u8v(c.player); w.u16v(c.generation);
     w.u8v(c.bits); w.u8v(c.pressed); w.u8v(c.selected); w.u8v(c.brushRadius);
+    w.u16v((u16)c.brush);
     w.u8v(c.background ? 1 : 0); w.u8v(c.overwrite ? 1 : 0);
     w.u8v(c.line ? 1 : 0);
+    w.u8v(c.lineCommit ? 1 : 0); w.u8v(c.lineCommitBits);
+    w.i32v(c.lineStartX); w.i32v(c.lineStartY);
+    w.u8v(c.digFilterOn ? 1 : 0); w.bytes(c.digFilter, sizeof(c.digFilter));
     w.i32v(c.aimX); w.i32v(c.aimY); queuePacket(PK_COMMAND, w.b); return true;
 }
 

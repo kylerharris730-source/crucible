@@ -1,4 +1,5 @@
 #include "multiplayer.h"
+#include <string.h>
 
 PlayerSession g_playerSessions[MAX_PLAYERS];
 Player& g_player = g_playerSessions[LOCAL_PLAYER_ID].body;
@@ -6,6 +7,8 @@ Inventory& g_inv = g_playerSessions[LOCAL_PLAYER_ID].inventory;
 
 static void clearSession(PlayerSession& s) {
     s.inventory.clear();
+    memset(s.drones, 0, sizeof(s.drones));
+    s.garlicCooldown = 0;
     s.cursor = ItemStack();
     s.trash = ItemStack();
     s.body.reset(0.0f, 0.0f);
@@ -16,8 +19,9 @@ static void clearSession(PlayerSession& s) {
     s.wireX = s.wireY = -1;
     s.circuitWireFrom = -1; s.circuitWirePort = 0;
     s.suppressRightUse = false;
-    s.lineActive = false; s.lineBits = s.lineSelected = 0; s.lineRadius = 1;
-    s.lineBackground = s.lineOverwrite = false;
+    s.lineActive = false; s.lineBits = s.lineSelected = 0; s.lineRadius = 1; s.lineBrush = MAT_EMPTY;
+    s.lineBackground = s.lineOverwrite = s.lineFilterOn = false;
+    memset(s.lineFilter, 0, sizeof(s.lineFilter));
     s.previousCommandBits = 0;
     s.connected = false;
     s.local = false;
@@ -77,4 +81,16 @@ int playerSessionSlotForNetworkId(PlayerId networkId) {
         if (g_playerSessions[slot].connected &&
             g_playerSessions[slot].networkId == networkId) return slot;
     return -1;
+}
+
+void playerSessionsReturnToOffline() {
+    for (int slot = 1; slot < MAX_PLAYERS; ++slot) playerSessionClose((PlayerId)slot);
+    PlayerSession& s = g_playerSessions[0];
+    ++s.generation; if (!s.generation) ++s.generation;
+    s.connected = true; s.local = true; s.networkId = LOCAL_PLAYER_ID;
+    s.previousAimX = s.previousAimY = -1; s.digCooldown = 0;
+    s.openDevice = -1; s.wireX = s.wireY = -1;
+    s.circuitWireFrom = -1; s.circuitWirePort = 0;
+    s.suppressRightUse = s.lineActive = false;
+    s.previousCommandBits = 0;
 }

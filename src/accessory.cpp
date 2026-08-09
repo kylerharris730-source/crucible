@@ -1,10 +1,10 @@
 #include "accessory.h"
 #include "entity.h"
-#include <string.h>
+#include "multiplayer.h"
 
-static int g_garlicCool[4];
-
-void accessoryReset() { memset(g_garlicCool, 0, sizeof(g_garlicCool)); }
+void accessoryReset() {
+    for (int slot = 0; slot < MAX_PLAYERS; ++slot) g_playerSessions[slot].garlicCooldown = 0;
+}
 
 int accessoryShotDelay(const Inventory& inv, int baseDelay) {
     if (!inv.hasEquipped(ITEM_OVERLOAD_ACCESSORY)) return baseDelay;
@@ -20,8 +20,8 @@ void accessoryTick(const Player& player, const Inventory& inv) {
 }
 
 void accessoryTickFor(int playerSlot, const Player& player, const Inventory& inv) {
-    if (playerSlot < 0 || playerSlot >= 4) return;
-    int& cooldown = g_garlicCool[playerSlot];
+    if (playerSlot < 0 || playerSlot >= MAX_PLAYERS) return;
+    int& cooldown = g_playerSessions[playerSlot].garlicCooldown;
     if (!inv.hasEquipped(ITEM_GARLIC_ACCESSORY)) {
         cooldown = 0;
         return;

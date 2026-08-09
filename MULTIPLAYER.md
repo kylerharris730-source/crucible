@@ -39,10 +39,12 @@ host-only controls.
 
 ## Current implementation
 
-`PlayerSession` supplies four stable player slots. Slot zero backs the legacy
-`g_player` and `g_inv` references, so ordinary single-player code has no second
-copy of local state. Each session has a generation counter. Packet references
-are `(PlayerId, generation)`, preventing a delayed packet from a disconnected
+`PlayerSession` supplies four stable player slots and directly owns each
+player's body, inventory, drones, cursor/trash state, accessory cooldowns, and
+host-side command runtime. Slot zero backs the legacy `g_player` and `g_inv`
+references, so ordinary single-player code has no second copy of local state.
+Each session has a generation counter. Packet references are
+`(PlayerId, generation)`, preventing a delayed packet from a disconnected
 client from acting on whoever later reuses that slot.
 
 World material occupancy supports four independent player shapes. World
@@ -51,23 +53,52 @@ core around their body rather than stretching one huge rectangle between
 distant players. Simulation cost therefore scales with active areas, not the
 distance separating them.
 
-The transport is nonblocking TCP. A version/build handshake runs before world
-data is accepted. The host sends a normal compressed save as the initial
+The transport is nonblocking TCP. A protocol and exact-build handshake runs
+before world data is accepted. A clean build identifies its Git revision; a
+dirty build receives a per-build GUID, so separately compiled dirty trees
+cannot accidentally claim compatibility while copying one executable to both
+machines still works. The host sends a normal compressed save as the initial
 snapshot, followed by explicit command/action packets, replicated overlay
-state, and PackBits-compressed changed chunks around the joined player. Chunk
-hashing is amortized across frames and periodically forced so a client repairs
-itself without rejoining. A bounded send backlog prevents a slow peer from
-growing memory indefinitely.
+state, and PackBits-compressed changed chunks around the joined player. The
+high-frequency player/entity/device overlay block is PackBits-compressed as a
+whole as well; mostly-unused fixed pools collapse to short zero runs. Chunk
+hashing is amortized across frames. The client reports rotating hashes of the
+chunks it actually holds; the authority sends the ordinary full chunk packet
+whenever one differs, while a slower periodic forced refresh remains a second
+repair path. A bounded send backlog prevents a slow peer from growing memory
+indefinitely.
 
 Commands carry held movement/use state plus preserved rising edges. Discrete
 inventory, equipment, crafting, chest, machine configuration, copper-wire, and
 circuit-wire gestures use an ordered action queue. The client predicts only its
 own body movement; world cells and gameplay results are never client-authored.
+Offline and hosting input uses the same commands and a local loopback action
+queue rather than a trusted direct-mutation path. The main frame is correspondingly
+split into `clientInputTick()`, authoritative `serverTick()`, client camera/UI,
+and `clientRender()`; a joined process never enters `serverTick()`.
 
 Enemies target the nearest connected living player. Contact damage, hostile
 shots, pickups, accessories, and each player's three-drone bank use that
-player's body and inventory. Player and drone shots do not friendly-fire. Time
+player’s body and inventory. Player and drone shots do not friendly-fire. Time
 passes at 4x only when every connected living player rests in a valid bed.
+
+Multiplayer rules are explicit:
+
+- A host menu never pauses an online world; only the host may use the actual
+  pause/speed controls. Client inventory, crafting, map, and device panels are
+  presentation state and do not pause anybody.
+- Sleeping accelerates only the day/night clock, and only while every connected
+  living player is resting in a valid bed.
+- Death is per player. A dead player can respawn without resetting the world or
+  the other player.
+- Bosses are world-owned. They choose among connected living targets, their
+  transient fight state arrives in the post-snapshot entity state, and victory
+  plus geological progression belongs to the host save.
+- Joining mid-session spawns beside the host in a checked open location, gives
+  the joining inventory its starter kit, loads the current compressed world,
+  then supplies current players, enemies, projectiles, pickups, drones,
+  machines, circuits, rooms, trees, torches, time, and boss progression before
+  the client becomes ready.
 
 State packets use explicit framing and scalar fields for commands and actions.
 High-frequency overlay arrays currently use exact-build, size/schema-guarded
@@ -87,8 +118,12 @@ The command-line equivalents, mainly for repeatable testing, are
 
 The checked-in two-process smoke test creates a real loopback TCP peer and
 asserts handshake, full snapshot load, player mapping, readiness, held command
-framing, and ordered discrete-action framing. The full executable has also been
-run as two simultaneous processes with an established loopback session.
+framing, ordered discrete-action framing, and automatic repair after deliberately
+corrupting a client chunk. A second test compiles two different build IDs and
+proves the client is rejected before world synchronization. The production
+executable also has a headless local-loopback test for placement, crafting, and
+inventory transfer, and has been run as two simultaneous full processes with a
+sustained established session.
 
 ## Remaining extensions
 

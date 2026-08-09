@@ -417,6 +417,9 @@ static bool g_lineKey  = false;   /* R is down */
 static bool g_lineOn   = false;   /* ...and a drag is in progress */
 static bool g_lineDrew = false;   /* this hold of R drew something */
 static int  g_lineX = 0, g_lineY = 0;
+static bool g_lineCommitPulse = false;
+static u8   g_lineCommitBits = 0;
+static int  g_lineCommitX = 0, g_lineCommitY = 0;
 /* Wire mode is deliberately separate from R's general-purpose line modifier:
    it always places one-cell copper, regardless of the selected brush or held
    hotbar item. It is the quick way to make a circuit after placing machines. */
@@ -434,6 +437,7 @@ static int  g_circuitWireFromPort = 0;
    devTick can remove a device at any time, and the panel revalidates by index
    every frame it draws. */
 static int  g_devPanel = -1;
+static int  g_closeDevicePending = -1; /* client-side close until host echoes it */
 static bool handleDevPanelClick(int mx, int my);
 static bool handleCraftClick(int mx, int my);
 static void layoutCraft();
@@ -722,9 +726,14 @@ static void startLine() {
 
 static void commitLine() {
     if (!g_lineOn) return;
+    if (g_survival && g_playerOn) {
+        g_lineCommitPulse = true;
+        g_lineCommitBits = (u8)((g_lmb ? PCMD_USE_LEFT : 0) | (g_rmb ? PCMD_USE_RIGHT : 0));
+        g_lineCommitX = g_lineX; g_lineCommitY = g_lineY;
+    }
     g_lineOn   = false;
     g_lineDrew = true;      /* so releasing R does not also respawn */
-    if (netRole() == NET_CLIENT) { g_pmx = -1; return; }
+    if (g_survival && g_playerOn) { g_pmx = -1; return; }
     applyBrush();
     g_pmx = -1;
 }
@@ -734,7 +743,7 @@ static void startWire() {
     const Aim a = currentWireAim();
     g_wireX = a.x; g_wireY = a.y;
     g_wireOn = true;
-    if (netRole() == NET_CLIENT)
+    if (g_survival && g_playerOn)
         sendClientAction(NACT_WIRE_POINT, 0, 0, 0, 0, a.ghostX, a.ghostY);
 }
 
@@ -756,7 +765,7 @@ static void commitWire() {
     if (!g_wireOn) return;
     g_wireOn = false;
     const Aim a = currentWireAim();
-    if (netRole() == NET_CLIENT) {
+    if (g_survival && g_playerOn) {
         sendClientAction(NACT_WIRE_POINT, 0, 0, 0, 1, a.ghostX, a.ghostY);
         return;
     }
@@ -1182,112 +1191,36 @@ static void layoutCreative() {
 
    Returns whether anything happened, so a caller can tell a handled click from
    one that landed on the background. */
+static NetAction g_localActions[256];
+static int g_localActionHead = 0, g_localActionCount = 0;
+
+/* One submission API for every player gesture. A joined client serializes it;
+   the authority (including ordinary single-player) places the exact same
+   action into a local loopback queue. UI code therefore cannot accidentally
+   grow a trusted host-only version of an inventory or crafting operation. */
 static bool sendClientAction(u8 type, u8 container, u8 a, u8 b, u8 flags, i32 x, i32 y) {
-    if (netRole() != NET_CLIENT || !netClientReady()) return false;
+    if (netRole() == NET_CLIENT && !netClientReady()) return false;
     static u32 sequence = 0;
     NetAction action; memset(&action, 0, sizeof(action));
-    action.sequence = ++sequence; action.player = netAssignedPlayer();
+    action.sequence = ++sequence;
+    action.player = netRole() == NET_CLIENT ? netAssignedPlayer() : LOCAL_PLAYER_ID;
     action.generation = g_playerSessions[0].generation;
     action.type = type; action.container = container;
     action.a = a; action.b = b; action.flags = flags;
     action.x = x; action.y = y;
-    return netSendAction(action);
+    if (netRole() == NET_CLIENT) return netSendAction(action);
+    if (g_localActionCount >= (int)(sizeof(g_localActions) / sizeof(g_localActions[0]))) return false;
+    const int tail = (g_localActionHead + g_localActionCount) %
+                     (int)(sizeof(g_localActions) / sizeof(g_localActions[0]));
+    g_localActions[tail] = action; ++g_localActionCount; return true;
 }
 
-static bool slotClick(ItemStack& st, bool right) {
-    if (g_drag.empty()) {
-        if (st.empty()) return false;
-        if (right && st.count > 1) {
-            /* Half, rounded UP, so a stack of one still splits into something
-               rather than into nothing and a confused player. */
-            const u32 half = (st.count + 1) / 2;
-            g_drag = st;
-            g_drag.count = half;
-            /* The instance handle stays with the part left behind. A tool never
-               stacks above one so this branch cannot split one, and copying the
-               handle would put the same tool in two places. */
-            g_drag.inst = 0;
-            st.count -= half;
-            if (st.count == 0) st.item = ITEM_NONE;
-        } else {
-            g_drag = st;
-            st.item = ITEM_NONE; st.count = 0; st.inst = 0;
-        }
-        return true;
-    }
-
-    if (st.empty()) {
-        if (right && g_drag.count > 1) {
-            st.item = g_drag.item; st.count = 1; st.inst = 0;
-            --g_drag.count;
-        } else {
-            st = g_drag;
-            g_drag.item = ITEM_NONE; g_drag.count = 0; g_drag.inst = 0;
-        }
-        return true;
-    }
-
-    if (st.item == g_drag.item && g_drag.inst == 0 && st.inst == 0) {
-        const u32 cap  = ITEMS[st.item].maxStack;
-        const u32 room = cap > st.count ? cap - st.count : 0;
-        if (room == 0) return false;
-        const u32 move = right ? 1u : (g_drag.count < room ? g_drag.count : room);
-        st.count     += move;
-        g_drag.count -= move;
-        if (g_drag.count == 0) { g_drag.item = ITEM_NONE; g_drag.inst = 0; }
-        return true;
-    }
-
-    /* Two different things: swap, and only on the left button. Swapping on the
-       right as well would make "put one down" and "exchange everything" the
-       same gesture whenever the target happened to be occupied. */
-    if (right) return false;
-    const ItemStack tmp = st;
-    st = g_drag;
-    g_drag = tmp;
-    return true;
-}
-
-/* An equipment slot: the same gesture, refusing anything that does not belong
-   there. Without the check the boots slot would accept a stack of sand, which
-   is not a rule anybody should have to be told. */
-static bool equipClick(int eqSlot, bool right) {
-    ItemStack& eq = g_inv.equip[eqSlot];
-    const int droneBay = eqSlot == EQ_LIGHT_DRONE ? 0 : eqSlot == EQ_DRONE_A ? 1 : eqSlot == EQ_DRONE_B ? 2 : -1;
-    if (droneBay >= 0 && !eq.empty()) {
-        for (int i = 0; i < Inventory::DRONE_MODULE_SLOTS_MAX; ++i)
-            if (!g_inv.droneModule[droneBay][i].empty()) return false;
-    }
-    if (!g_drag.empty() && !equipFits(g_drag.item, eqSlot)) return false;
-    /* Never split into or out of a worn slot: you wear one of a thing. */
-    if (right) return false;
-    return slotClick(eq, false);
-}
-
-static bool droneModuleClick(int droneBay, int slot, bool right) {
-    if (right) return false;
-    ItemStack& st = g_inv.droneModule[droneBay][slot];
-    if (!g_drag.empty() && (ITEMS[g_drag.item].kind != ITEMK_DRONE_MODULE || g_drag.count != 1)) return false;
-    return slotClick(st, false);
-}
-
-/* A module slot holds a bare ItemId rather than a stack, so the same rules are
-   spelled out against one. Modules are unique and unstackable, which collapses
-   the four cases to two. */
-static bool moduleClick(ItemId& m, bool right) {
-    if (right) return false;
-    if (g_drag.empty()) {
-        if (m == ITEM_NONE) return false;
-        g_drag.item = m; g_drag.count = 1; g_drag.inst = 0;
-        m = ITEM_NONE;
-        return true;
-    }
-    if (ITEMS[g_drag.item].kind != ITEMK_MODULE || g_drag.count != 1) return false;
-    const ItemId was = m;
-    m = g_drag.item;
-    if (was != ITEM_NONE) { g_drag.item = was; g_drag.count = 1; }
-    else                  { g_drag.item = ITEM_NONE; g_drag.count = 0; }
-    return true;
+static bool popLocalAction(NetAction* action) {
+    if (!action || g_localActionCount <= 0) return false;
+    *action = g_localActions[g_localActionHead];
+    g_localActionHead = (g_localActionHead + 1) %
+                        (int)(sizeof(g_localActions) / sizeof(g_localActions[0]));
+    --g_localActionCount; return true;
 }
 
 /* Put whatever the cursor is holding back in the pack. Called when the screen
@@ -1296,16 +1229,13 @@ static bool moduleClick(ItemId& m, bool right) {
    comes back with the screen, which is the only lossless answer. */
 static void dragStow() {
     if (g_drag.empty()) return;
-    for (int i = 0; i < INV_SLOTS && !g_drag.empty(); ++i) {
-        ItemStack& st = g_inv.slot[i];
-        if (st.empty() || (st.item == g_drag.item && st.inst == 0 && g_drag.inst == 0))
-            slotClick(st, false);
-    }
+    sendClientAction(NACT_STOW_CURSOR);
 }
 
 static void openChest(int index) {
     if (index < 0 || index >= MAX_DEVICES || !g_devices[index].used) return;
     Device& d = g_devices[index];
+    g_playerSessions[0].openDevice = index;
     g_chestOpen = index; g_devPanel = -1; g_logisticsUiOpen = true;
     g_chestStack.item = d.count ? (ItemId)d.mat : ITEM_NONE;
     g_chestStack.count = d.count; g_chestStack.inst = 0;
@@ -1323,15 +1253,10 @@ static void openChest(int index) {
 
 static void closeChest() {
     if (netRole() == NET_CLIENT) {
-        sendClientAction(NACT_CLOSE_DEVICE);
-        g_chestOpen = -1; g_logisticsUiOpen = false;
-        return;
+        g_closeDevicePending = g_chestOpen;
+        g_playerSessions[0].openDevice = -1;
     }
-    if (g_chestOpen >= 0 && g_chestOpen < MAX_DEVICES && g_devices[g_chestOpen].used) {
-        Device& d = g_devices[g_chestOpen];
-        d.mat = g_chestStack.empty() ? (u8)MAT_EMPTY : (u8)g_chestStack.item;
-        d.count = (i32)g_chestStack.count;
-    }
+    sendClientAction(NACT_CLOSE_DEVICE);
     g_chestOpen = -1; g_logisticsUiOpen = false; dragStow();
 }
 
@@ -1339,14 +1264,12 @@ static bool handleChestClick(int mx, int my, bool right) {
     if (g_chestOpen < 0) return false;
     if (inRect(g_chestClose, mx, my)) { closeChest(); return true; }
     if (inRect(g_chestSlot, mx, my)) {
-        if (netRole() == NET_CLIENT) sendClientAction(NACT_SLOT, NSLOT_CHEST, 0, 0, right ? 1 : 0);
-        else slotClick(g_chestStack, right);
+        sendClientAction(NACT_SLOT, NSLOT_CHEST, 0, 0, right ? 1 : 0);
         return true;
     }
     for (int i = 0; i < INV_SLOTS; ++i)
         if (inRect(g_chestPack[i], mx, my)) {
-            if (netRole() == NET_CLIENT) sendClientAction(NACT_SLOT, NSLOT_PACK, (u8)i, 0, right ? 1 : 0);
-            else slotClick(g_inv.slot[i], right);
+            sendClientAction(NACT_SLOT, NSLOT_PACK, (u8)i, 0, right ? 1 : 0);
             return true;
         }
     return true;
@@ -1405,8 +1328,7 @@ static bool handleCreativeClick(int mx, int my, bool remove) {
     if (inRect(g_creClear, mx, my)) {
         if (g_signalPickerDevice >= 0) { closeSignalPicker(); return true; }
         if (g_filterDevice >= 0) {
-            if (netRole() == NET_CLIENT) sendClientAction(NACT_DEVICE, 0, NDEV_SET_FILTER, 0);
-            else g_devices[g_filterDevice].value = 0;
+            sendClientAction(NACT_DEVICE, 0, NDEV_SET_FILTER, 0);
             g_filterDevice = -1; g_creativeOpen = false; g_creSearchFocus = false;
             return true;
         }
@@ -1436,8 +1358,7 @@ static bool handleCreativeClick(int mx, int my, bool remove) {
 
     if (g_signalPickerDevice < 0) for (int i = 0; i < INV_SLOTS; ++i)
         if (inRect(g_packRect[i], mx, my)) {
-            if (netRole() == NET_CLIENT) sendClientAction(NACT_SLOT, NSLOT_PACK, (u8)i, 0, remove ? 1 : 0);
-            else slotClick(g_inv.slot[i], remove);
+            sendClientAction(NACT_SLOT, NSLOT_PACK, (u8)i, 0, remove ? 1 : 0);
             /* Picking a tool up or putting one down changes whether the bench
                exists, which changes the panel height. */
             layoutCreative();
@@ -1446,16 +1367,14 @@ static bool handleCreativeClick(int mx, int my, bool remove) {
 
     if (g_signalPickerDevice < 0) for (int i = 0; i < EQ_COUNT; ++i)
         if (inRect(g_eqRect[i], mx, my)) {
-            if (netRole() == NET_CLIENT) sendClientAction(NACT_SLOT, NSLOT_EQUIP, (u8)i, 0, remove ? 1 : 0);
-            else equipClick(i, remove);
+            sendClientAction(NACT_SLOT, NSLOT_EQUIP, (u8)i, 0, remove ? 1 : 0);
             layoutCreative(); return true;
         }
 
     if (g_signalPickerDevice < 0) for (int d = 0; d < MAX_DRONES; ++d)
         for (int i = 0; i < Inventory::DRONE_MODULE_SLOTS_MAX; ++i)
             if (inRect(g_droneModuleRect[d][i], mx, my)) {
-                if (netRole() == NET_CLIENT) sendClientAction(NACT_SLOT, NSLOT_DRONE_MODULE, (u8)d, (u8)i, remove ? 1 : 0);
-                else droneModuleClick(d, i, remove);
+                sendClientAction(NACT_SLOT, NSLOT_DRONE_MODULE, (u8)d, (u8)i, remove ? 1 : 0);
                 layoutCreative(); return true;
             }
 
@@ -1470,38 +1389,16 @@ static bool handleCreativeClick(int mx, int my, bool remove) {
        symptom is the 33rd multitool of a session arriving inert, with nothing
        anywhere connecting it to a bin. */
     if (g_signalPickerDevice < 0 && inRect(g_trashRect, mx, my)) {
-        if (netRole() == NET_CLIENT) {
-            sendClientAction(NACT_SLOT, NSLOT_TRASH);
-            return true;
-        }
-        if (g_drag.empty()) {
-            /* Empty hand: take back whatever is in there. This is the whole
-               recovery affordance and it is an ordinary pick-up. */
-            if (!g_trash.empty()) { g_drag = g_trash; g_trash = ItemStack(); }
-        } else {
-            /* Holding something: it goes in, and WHATEVER WAS THERE IS GONE.
-               Not a swap, which is what reusing slotClick gave and which quietly
-               made this a one-slot pocket -- put stone in, put dirt in, and the
-               stone came back to your hand. Nothing was ever destroyed, so it
-               was not a bin at all.
-
-               Destroying on displacement is what makes "until you next use it"
-               the recovery window: one undo, always available, never two. */
-            if (g_trash.inst) toolInstFree(g_trash.inst);
-            g_trash = g_drag;
-            g_drag  = ItemStack();
-        }
+        sendClientAction(NACT_SLOT, NSLOT_TRASH);
         layoutCreative();
         return true;
     }
 
     if (g_signalPickerDevice < 0 && g_toolPackSlot >= 0 && g_inv.slot[g_toolPackSlot].inst) {
-        ToolInst& ti = g_toolInst[g_inv.slot[g_toolPackSlot].inst];
         for (int i = 0; i < g_toolSlotCount; ++i)
             if (inRect(g_toolSlotRect[i], mx, my)) {
-                if (netRole() == NET_CLIENT) sendClientAction(NACT_SLOT, NSLOT_TOOL_MODULE,
-                                                               (u8)g_toolPackSlot, (u8)i, remove ? 1 : 0);
-                else moduleClick(ti.slot[i], remove);
+                sendClientAction(NACT_SLOT, NSLOT_TOOL_MODULE,
+                                 (u8)g_toolPackSlot, (u8)i, remove ? 1 : 0);
                 return true;
             }
         /* The payload slot is a genuine ItemStack, so it speaks slotClick's
@@ -1513,9 +1410,8 @@ static bool handleCreativeClick(int mx, int my, bool remove) {
            accepted and then doing something nobody asked for. */
         if (inRect(g_toolPayloadRect, mx, my)) {
             if (!g_drag.empty() && ITEMS[g_drag.item].kind != ITEMK_MATERIAL) return true;
-            if (netRole() == NET_CLIENT) sendClientAction(NACT_SLOT, NSLOT_TOOL_PAYLOAD,
-                                                           (u8)g_toolPackSlot, 0, remove ? 1 : 0);
-            else slotClick(ti.payload, remove);
+            sendClientAction(NACT_SLOT, NSLOT_TOOL_PAYLOAD,
+                             (u8)g_toolPackSlot, 0, remove ? 1 : 0);
             return true;
         }
 
@@ -1525,25 +1421,16 @@ static bool handleCreativeClick(int mx, int my, bool remove) {
         if (!inRect(g_creRect[i], mx, my)) continue;
         const int it = g_creItem[i];
         if (g_signalPickerDevice >= 0) {
-            if (netRole() == NET_CLIENT) {
-                const u8 op = g_signalPickerField == CIR_PICK_SIGNAL ? NDEV_SET_SIGNAL :
-                              g_signalPickerField == CIR_PICK_A ? NDEV_SET_A :
-                              g_signalPickerField == CIR_PICK_B ? NDEV_SET_B : NDEV_SET_OUT;
-                sendClientAction(NACT_DEVICE, 0, op, (u8)it);
-            } else if (g_signalPickerDevice < MAX_DEVICES && g_devices[g_signalPickerDevice].used) {
-                CircuitDeviceConfig& cc = g_circuitConfig[g_signalPickerDevice];
-                if      (g_signalPickerField == CIR_PICK_SIGNAL) cc.signal = (u8)it;
-                else if (g_signalPickerField == CIR_PICK_A)      cc.signalA = (u8)it;
-                else if (g_signalPickerField == CIR_PICK_B)      cc.signalB = (u8)it;
-                else if (g_signalPickerField == CIR_PICK_OUT)    cc.signalOut = (u8)it;
-            }
+            const u8 op = g_signalPickerField == CIR_PICK_SIGNAL ? NDEV_SET_SIGNAL :
+                          g_signalPickerField == CIR_PICK_A ? NDEV_SET_A :
+                          g_signalPickerField == CIR_PICK_B ? NDEV_SET_B : NDEV_SET_OUT;
+            sendClientAction(NACT_DEVICE, 0, op, (u8)it);
             closeSignalPicker();
             return true;
         }
         if (g_filterDevice >= 0) {
             if (it < MAT_COUNT) {
-                if (netRole() == NET_CLIENT) sendClientAction(NACT_DEVICE, 0, NDEV_SET_FILTER, (u8)it);
-                else g_devices[g_filterDevice].value = it;
+                sendClientAction(NACT_DEVICE, 0, NDEV_SET_FILTER, (u8)it);
             }
             g_filterDevice = -1; g_creativeOpen = false; g_creSearchFocus = false;
             return true;
@@ -1946,7 +1833,7 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                contraption to a stray drag would be far worse. */
             const Aim a = currentAim();
             Device* d = devAt(a.x, a.y);
-            if (netRole() == NET_CLIENT && (d || isDoor(g_world.at(a.x, a.y).mat))) {
+            if (g_survival && g_playerOn && (d || isDoor(g_world.at(a.x, a.y).mat))) {
                 g_interactPulse = true;
                 break;
             }
@@ -2200,7 +2087,11 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (g_mapOpen)           g_mapOpen = false;
             else if (g_chestOpen >= 0) closeChest();
             else if (g_devPanel >= 0) {
-                if (netRole() == NET_CLIENT) sendClientAction(NACT_CLOSE_DEVICE);
+                if (netRole() == NET_CLIENT) {
+                    g_closeDevicePending = g_devPanel;
+                    g_playerSessions[0].openDevice = -1;
+                }
+                sendClientAction(NACT_CLOSE_DEVICE);
                 g_devPanel = -1;
             }
             else if (g_craftOpen)    g_craftOpen = false;
@@ -2218,7 +2109,7 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                on the release rather than the press: with the key doing two jobs
                there is nothing to act on until it is known which one it was. */
             if (!g_lineDrew && g_mx >= PANEL_W && !g_menuOpen && !g_creativeOpen) {
-                if (netRole() == NET_CLIENT) g_respawnPulse = true;
+                if (g_survival && g_playerOn) g_respawnPulse = true;
                 else g_player.reset((float)((g_mx - PANEL_W) / cellPixels() + g_camX),
                                     (float)(g_my / cellPixels() + g_camY));
             }
@@ -2277,8 +2168,18 @@ static Aim currentAim() {
 }
 
 static void syncClientDeviceUi() {
-    if (netRole() != NET_CLIENT || !netClientReady()) return;
-    const int index = g_playerSessions[0].openDevice;
+    if (!(g_survival && g_playerOn) || (netRole() == NET_CLIENT && !netClientReady())) return;
+    int index = g_playerSessions[0].openDevice;
+    if (netRole() == NET_CLIENT && g_closeDevicePending >= 0) {
+        if (index == g_closeDevicePending) {
+            /* A state packet sent before the close action was consumed must not
+               reopen the panel. The pending marker clears as soon as the host
+               echoes any other open-device state, normally on the next packet. */
+            g_playerSessions[0].openDevice = -1; index = -1;
+        } else {
+            g_closeDevicePending = -1;
+        }
+    }
     if (index >= 0 && index < MAX_DEVICES && g_devices[index].used &&
         g_devices[index].type == DEV_CHEST) {
         if (g_chestOpen != index) openChest(index);
@@ -2305,12 +2206,18 @@ static PlayerCommand localPlayerCommand() {
     static u8 previousBits = 0;
     PlayerCommand c; memset(&c, 0, sizeof(c));
     c.sequence = ++sequence;
-    c.player = netAssignedPlayer();
+    c.player = netRole() == NET_CLIENT ? netAssignedPlayer() : LOCAL_PLAYER_ID;
     c.generation = g_playerSessions[0].generation;
     c.selected = (u8)imax(0, imin(HOTBAR_SLOTS - 1, g_inv.selected));
     c.brushRadius = (u8)g_brushRadius;
+    c.brush = (i16)g_brushMat;
     c.background = g_bgLayer; c.overwrite = g_overwrite;
     c.line = g_lineOn;
+    c.lineCommit = g_lineCommitPulse; c.lineCommitBits = g_lineCommitBits;
+    c.lineStartX = g_lineCommitX; c.lineStartY = g_lineCommitY;
+    c.digFilterOn = g_digFilterOn;
+    for (int mat = 0; mat < MAT_COUNT; ++mat)
+        if (g_digFilterMat[mat]) c.digFilter[mat >> 3] |= (u8)(1u << (mat & 7));
     if (!g_menuOpen && !g_creativeOpen && !g_craftOpen && g_chestOpen < 0 && !g_mapOpen) {
         if ((GetAsyncKeyState('A') & 0x8000) || (GetAsyncKeyState(VK_LEFT) & 0x8000)) c.bits |= PCMD_LEFT;
         if ((GetAsyncKeyState('D') & 0x8000) || (GetAsyncKeyState(VK_RIGHT) & 0x8000)) c.bits |= PCMD_RIGHT;
@@ -2344,6 +2251,7 @@ static void predictClientPlayer(const PlayerCommand& command) {
 
 static PlayerCommand g_remoteInput;
 static int g_remoteInputAge = 1000;
+static PlayerCommand g_localInput;
 
 static Aim commandAimFor(const PlayerSession& session, const PlayerCommand& command) {
     Aim a;
@@ -2386,12 +2294,29 @@ static void interactFor(PlayerSession& session, const Aim& aim) {
     if (doorToggle(g_world, aim.x, aim.y)) roomsNotifyEdit(g_world, aim.x, aim.y);
 }
 
-static void applyRemoteActions(PlayerSession& session, const PlayerCommand& command) {
+static void applyPlayerUses(PlayerSession& session, const PlayerCommand& command) {
     const u8 bits = command.bits;
     const u8 pressed = (u8)(command.pressed | (bits & ~session.previousCommandBits));
     const bool left = (bits & PCMD_USE_LEFT) != 0;
     bool right = (bits & PCMD_USE_RIGHT) != 0;
     const Aim aim = commandAimFor(session, command);
+
+    /* Mouse down and up can both arrive between two 60 Hz samples. Carrying a
+       discrete commit with its anchor means a quick line is still a line,
+       rather than disappearing because no sampled frame observed line=true. */
+    if (command.lineCommit && !session.lineActive && command.lineCommitBits) {
+        PlayerCommand start = command;
+        start.aimX = command.lineStartX; start.aimY = command.lineStartY;
+        const Aim startAim = commandAimFor(session, start);
+        session.lineActive = true;
+        session.lineBits = (u8)(command.lineCommitBits & (PCMD_USE_LEFT | PCMD_USE_RIGHT));
+        session.lineSelected = command.selected; session.lineRadius = command.brushRadius;
+        session.lineBrush = command.brush;
+        session.lineBackground = command.background; session.lineOverwrite = command.overwrite;
+        session.lineFilterOn = command.digFilterOn;
+        memcpy(session.lineFilter, command.digFilter, sizeof(session.lineFilter));
+        session.previousAimX = startAim.x; session.previousAimY = startAim.y;
+    }
 
     if (command.line && (left || right)) {
         if (!session.lineActive) {
@@ -2399,8 +2324,11 @@ static void applyRemoteActions(PlayerSession& session, const PlayerCommand& comm
             session.lineBits = (u8)(bits & (PCMD_USE_LEFT | PCMD_USE_RIGHT));
             session.lineSelected = command.selected;
             session.lineRadius = command.brushRadius;
+            session.lineBrush = command.brush;
             session.lineBackground = command.background;
             session.lineOverwrite = command.overwrite;
+            session.lineFilterOn = command.digFilterOn;
+            memcpy(session.lineFilter, command.digFilter, sizeof(session.lineFilter));
             session.previousAimX = aim.x; session.previousAimY = aim.y;
         }
         if (session.digCooldown > 0) --session.digCooldown;
@@ -2411,11 +2339,14 @@ static void applyRemoteActions(PlayerSession& session, const PlayerCommand& comm
         PlayerCommand commit = command;
         commit.bits = session.lineBits; commit.pressed = session.lineBits;
         commit.selected = session.lineSelected; commit.brushRadius = session.lineRadius;
+        commit.brush = session.lineBrush;
         commit.background = session.lineBackground; commit.overwrite = session.lineOverwrite;
-        commit.line = false;
+        commit.digFilterOn = session.lineFilterOn;
+        memcpy(commit.digFilter, session.lineFilter, sizeof(commit.digFilter));
+        commit.line = false; commit.lineCommit = false;
         session.lineActive = false; session.previousCommandBits = 0;
         session.inventory.selected = imax(0, imin(HOTBAR_SLOTS - 1, (int)commit.selected));
-        applyRemoteActions(session, commit);
+        applyPlayerUses(session, commit);
         return;
     }
     if (session.digCooldown > 0) --session.digCooldown;
@@ -2446,8 +2377,13 @@ static void applyRemoteActions(PlayerSession& session, const PlayerCommand& comm
     Player& player = session.body;
     const int radius = imax(1, imin(BRUSH_RADIUS_MAX, (int)command.brushRadius));
     ItemStack& held = inv.held();
+    bool digFilter[MAT_COUNT];
+    for (int mat = 0; mat < MAT_COUNT; ++mat)
+        digFilter[mat] = (command.digFilter[mat >> 3] & (1u << (mat & 7))) != 0;
 
-    if (left && !right && !held.empty() && ITEMS[held.item].kind == ITEMK_THROWABLE) {
+    if (left && !right && (command.brush == TOOL_HEAT || command.brush == TOOL_COOL)) {
+        g_world.heat(aim.x, aim.y, radius, command.brush == TOOL_HEAT ? HEAT_STEP : -HEAT_STEP);
+    } else if (left && !right && !held.empty() && ITEMS[held.item].kind == ITEMK_THROWABLE) {
         if (pressed & PCMD_USE_LEFT) {
             const ItemId item = held.item;
             if (throwGlowflareFor(player, inv, aim)) inv.take(item, 1);
@@ -2493,7 +2429,7 @@ static void applyRemoteActions(PlayerSession& session, const PlayerCommand& comm
         const ToolSpec tool = miningSpec(inv);
         if (session.digCooldown <= 0) {
             digInto(g_world, inv, aim.x, aim.y, imin(radius, tool.maxRadius), tool.cellsPerBite,
-                    tool.plantsOnly, tool.power, 0);
+                    tool.plantsOnly, tool.power, command.digFilterOn ? digFilter : 0);
             session.digCooldown = tool.cooldown;
         }
         roomsNotifyEdit(g_world, aim.x, aim.y);
@@ -2553,7 +2489,7 @@ static bool slotClickFor(ItemStack& cursor, ItemStack& slot, bool right) {
     const ItemStack swap = slot; slot = cursor; cursor = swap; return true;
 }
 
-static void applyRemoteSlotAction(PlayerSession& session, const NetAction& action) {
+static void applySlotAction(PlayerSession& session, const NetAction& action) {
     Inventory& inv = session.inventory;
     ItemStack& cursor = session.cursor;
     const bool right = (action.flags & 1) != 0;
@@ -2627,7 +2563,7 @@ static void applyRemoteSlotAction(PlayerSession& session, const NetAction& actio
     }
 }
 
-static void applyRemoteDeviceAction(PlayerSession& session, const NetAction& action) {
+static void applyDeviceAction(PlayerSession& session, const NetAction& action) {
     const int index = session.openDevice;
     if (index < 0 || index >= MAX_DEVICES || !g_devices[index].used) {
         session.openDevice = -1; return;
@@ -2676,7 +2612,7 @@ static void applyRemoteDeviceAction(PlayerSession& session, const NetAction& act
     d.latched = false;
 }
 
-static Aim remoteWireAim(const PlayerSession& session, int rawX, int rawY) {
+static Aim playerWireAim(const PlayerSession& session, int rawX, int rawY) {
     PlayerCommand command; memset(&command, 0, sizeof(command));
     command.aimX = rawX; command.aimY = rawY;
     Aim aim = commandAimFor(session, command);
@@ -2693,7 +2629,7 @@ static Aim remoteWireAim(const PlayerSession& session, int rawX, int rawY) {
     return aim;
 }
 
-static void remoteWireCell(PlayerSession& session, int x, int y) {
+static void playerWireCell(PlayerSession& session, int x, int y) {
     if (x < PLAY_X0 || x > PLAY_X1 || y < PLAY_Y0 || y > PLAY_Y1) return;
     const u8 old = g_world.at(x, y).mat;
     if (old == MAT_COPPER || old != MAT_EMPTY) return;
@@ -2701,8 +2637,8 @@ static void remoteWireCell(PlayerSession& session, int x, int y) {
     g_world.setCell(x, y, MAT_COPPER);
 }
 
-static void applyRemoteWirePoint(PlayerSession& session, const NetAction& action) {
-    const Aim aim = remoteWireAim(session, action.x, action.y);
+static void applyPlayerWirePoint(PlayerSession& session, const NetAction& action) {
+    const Aim aim = playerWireAim(session, action.x, action.y);
     if (!(action.flags & 1)) { session.wireX = aim.x; session.wireY = aim.y; return; }
     if (session.wireX < 0) return;
     int x = session.wireX, y = session.wireY;
@@ -2710,49 +2646,63 @@ static void applyRemoteWirePoint(PlayerSession& session, const NetAction& action
     const int dy = abs(aim.y - y), sy = y < aim.y ? 1 : -1;
     int err = dx - dy;
     for (;;) {
-        remoteWireCell(session, x, y);
+        playerWireCell(session, x, y);
         if (x == aim.x && y == aim.y) break;
         const int twice = err * 2; const bool moveX = twice > -dy; const bool moveY = twice < dx;
         int nx = x, ny = y;
         if (moveX) { err -= dy; nx += sx; }
         if (moveY) { err += dx; ny += sy; }
-        if (moveX && moveY) remoteWireCell(session, nx, y);
+        if (moveX && moveY) playerWireCell(session, nx, y);
         x = nx; y = ny;
     }
     session.wireX = session.wireY = -1;
     roomsNotifyEdit(g_world, aim.x, aim.y);
 }
 
-static void processRemoteActions() {
-    NetAction action;
-    int budget = 64;
-    while (budget-- > 0 && netPopRemoteAction(&action)) {
-        const int slot = playerSessionSlotForNetworkId(action.player);
-        if (slot < 1 || slot >= MAX_PLAYERS) continue;
-        PlayerSession& session = g_playerSessions[slot];
-        if (!session.connected || session.generation != action.generation) continue;
-        if (action.type == NACT_SLOT) applyRemoteSlotAction(session, action);
-        else if (action.type == NACT_CRAFT && action.a < N_RECIPES) {
-            craftScanStations(g_world, session.body);
-            const int count = imax(1, imin(50, (int)action.b));
-            for (int i = 0; i < count; ++i) if (!craftMake(session.inventory, action.a)) break;
-        } else if (action.type == NACT_CLOSE_DEVICE) {
-            session.openDevice = -1;
-        } else if (action.type == NACT_DEVICE) {
-            applyRemoteDeviceAction(session, action);
-        } else if (action.type == NACT_WIRE_POINT) {
-            applyRemoteWirePoint(session, action);
-        } else if (action.type == NACT_CIRCUIT_TERMINAL && action.a < MAX_DEVICES &&
-                   g_devices[action.a].used) {
-            if (session.circuitWireFrom < 0) {
-                session.circuitWireFrom = action.a; session.circuitWirePort = action.b & 1;
-            } else {
-                circuitToggleWirePorts(session.circuitWireFrom, session.circuitWirePort,
-                                       action.a, action.b & 1);
-                session.circuitWireFrom = -1; session.circuitWirePort = 0;
-            }
+static void applyPlayerAction(const NetAction& action) {
+    const int slot = playerSessionSlotForNetworkId(action.player);
+    if (slot < 0 || slot >= MAX_PLAYERS) return;
+    PlayerSession& session = g_playerSessions[slot];
+    if (!session.connected || session.generation != action.generation) return;
+    if (action.type == NACT_SLOT) applySlotAction(session, action);
+    else if (action.type == NACT_CRAFT && action.a < N_RECIPES) {
+        craftScanStations(g_world, session.body);
+        const int count = imax(1, imin(50, (int)action.b));
+        for (int i = 0; i < count; ++i) if (!craftMake(session.inventory, action.a)) break;
+    } else if (action.type == NACT_CLOSE_DEVICE) {
+        session.openDevice = -1;
+    } else if (action.type == NACT_DEVICE) {
+        applyDeviceAction(session, action);
+    } else if (action.type == NACT_WIRE_POINT) {
+        applyPlayerWirePoint(session, action);
+    } else if (action.type == NACT_CIRCUIT_TERMINAL && action.a < MAX_DEVICES &&
+               g_devices[action.a].used) {
+        const Device& terminal = g_devices[action.a];
+        const float dx = terminal.x + DEV_W * 0.5f - session.body.centreX();
+        const float dy = terminal.y + DEV_H * 0.5f - session.body.centreY();
+        const float reach = (float)(PLAYER_REACH + session.inventory.reachBonus() + DEV_W);
+        if (dx * dx + dy * dy > reach * reach) return;
+        if (session.circuitWireFrom < 0) {
+            session.circuitWireFrom = action.a; session.circuitWirePort = action.b & 1;
+        } else {
+            circuitToggleWirePorts(session.circuitWireFrom, session.circuitWirePort,
+                                   action.a, action.b & 1);
+            session.circuitWireFrom = -1; session.circuitWirePort = 0;
+        }
+    } else if (action.type == NACT_STOW_CURSOR) {
+        for (int i = 0; i < INV_SLOTS && !session.cursor.empty(); ++i) {
+            ItemStack& stack = session.inventory.slot[i];
+            if (stack.empty() || (stack.item == session.cursor.item && !stack.inst && !session.cursor.inst))
+                slotClickFor(session.cursor, stack, false);
         }
     }
+}
+
+static void processPlayerActions() {
+    NetAction action;
+    int budget = 128;
+    while (budget > 0 && popLocalAction(&action)) { applyPlayerAction(action); --budget; }
+    while (budget > 0 && netPopRemoteAction(&action)) { applyPlayerAction(action); --budget; }
 }
 
 static void refreshHostLogisticsPause() {
@@ -2767,7 +2717,30 @@ static void refreshHostLogisticsPause() {
     g_logisticsUiOpen = open;
 }
 
-static void updateRemotePlayerFromCommand() {
+static void updatePlayerFromCommand(int slot, PlayerSession& session, PlayerCommand& command,
+                                    bool allowMovement) {
+    if (!session.connected || session.generation != command.generation) return;
+    session.inventory.selected = imax(0, imin(HOTBAR_SLOTS - 1, (int)command.selected));
+    if (session.restBed >= 0 && (!g_devices[session.restBed].used ||
+                                g_devices[session.restBed].type != DEV_BED))
+        session.restBed = -1;
+    PlayerInput in;
+    in.left = (command.bits & PCMD_LEFT) != 0;
+    in.right = (command.bits & PCMD_RIGHT) != 0;
+    in.jump = (command.bits & PCMD_JUMP) != 0;
+    in.down = (command.bits & PCMD_DOWN) != 0;
+    if (session.restBed >= 0 && (in.left || in.right || in.jump || in.down)) session.restBed = -1;
+    session.body.fly = flightSpec(session.inventory);
+    session.body.speedMul = 1.0f + (float)session.inventory.speedBonus() / 100.0f;
+    session.body.resist = session.inventory.tempResist();
+    if (allowMovement && session.restBed < 0) session.body.update(g_world, in);
+    session.body.occupy(g_world, slot);
+    if (allowMovement) doorAuto(g_world, session.body);
+    applyPlayerUses(session, command);
+    command.pressed = 0; /* edge verbs are consumed once, even if this held command is reused */
+}
+
+static void updateRemotePlayerFromCommand(bool allowMovement) {
     PlayerCommand fresh;
     if (netPopRemoteCommand(&fresh)) { g_remoteInput = fresh; g_remoteInputAge = 0; }
     else if (g_remoteInputAge < 1000) ++g_remoteInputAge;
@@ -2775,25 +2748,7 @@ static void updateRemotePlayerFromCommand() {
 
     const int slot = playerSessionSlotForNetworkId(g_remoteInput.player);
     if (slot < 1 || slot >= MAX_PLAYERS) return;
-    PlayerSession& session = g_playerSessions[slot];
-    if (!session.connected || session.generation != g_remoteInput.generation) return;
-    session.inventory.selected = imax(0, imin(HOTBAR_SLOTS - 1, (int)g_remoteInput.selected));
-    if (session.restBed >= 0 && (!g_devices[session.restBed].used ||
-                                g_devices[session.restBed].type != DEV_BED))
-        session.restBed = -1;
-    PlayerInput in;
-    in.left = (g_remoteInput.bits & PCMD_LEFT) != 0;
-    in.right = (g_remoteInput.bits & PCMD_RIGHT) != 0;
-    in.jump = (g_remoteInput.bits & PCMD_JUMP) != 0;
-    in.down = (g_remoteInput.bits & PCMD_DOWN) != 0;
-    if (session.restBed >= 0 && (in.left || in.right || in.jump || in.down)) session.restBed = -1;
-    session.body.fly = flightSpec(session.inventory);
-    session.body.speedMul = 1.0f + (float)session.inventory.speedBonus() / 100.0f;
-    session.body.resist = session.inventory.tempResist();
-    if (session.restBed < 0) session.body.update(g_world, in);
-    session.body.occupy(g_world, slot);
-    doorAuto(g_world, session.body);
-    applyRemoteActions(session, g_remoteInput);
+    updatePlayerFromCommand(slot, g_playerSessions[slot], g_remoteInput, allowMovement);
 }
 
 /* Wiring is normally aiming for an existing terminal or wire, not the empty
@@ -2822,8 +2777,10 @@ static void circuitWireClick() {
     if (!d) { g_circuitWireFrom = -1; g_circuitWireFromPort = 0; return; }
     const int index = (int)(d - g_devices);
     const int port = circuitHasSeparatePorts(d->type) && a.x >= d->x + DEV_W / 2 ? 1 : 0;
-    if (netRole() == NET_CLIENT) {
+    if (g_survival && g_playerOn) {
         sendClientAction(NACT_CIRCUIT_TERMINAL, 0, (u8)index, (u8)port);
+        if (g_circuitWireFrom < 0) { g_circuitWireFrom = index; g_circuitWireFromPort = port; }
+        else { g_circuitWireFrom = -1; g_circuitWireFromPort = 0; }
         return;
     }
     if (g_circuitWireFrom < 0) { g_circuitWireFrom = index; g_circuitWireFromPort = port; return; }
@@ -3245,67 +3202,30 @@ static bool handleDevPanelClick(int mx, int my) {
 
     const DeviceInfo& di = DEVS[d.type];
     const int index = g_devPanel;
-    CircuitDeviceConfig& cc = g_circuitConfig[index];
-    if (netRole() == NET_CLIENT) {
-        if (PtInRect(&g_devpClose, pt)) {
-            sendClientAction(NACT_CLOSE_DEVICE); g_devPanel = -1; return true;
+    if (PtInRect(&g_devpClose, pt)) {
+        if (netRole() == NET_CLIENT) {
+            g_closeDevicePending = g_devPanel;
+            g_playerSessions[0].openDevice = -1;
         }
-        if (d.type == DEV_CONSTANT_COMBINATOR) {
-            if (PtInRect(&g_devpDec, pt)) sendClientAction(NACT_DEVICE, 0, NDEV_DEC);
-            else if (PtInRect(&g_devpInc, pt)) sendClientAction(NACT_DEVICE, 0, NDEV_INC);
-            else if (PtInRect(&g_devpTake, pt)) openCircuitSignalPicker(index, CIR_PICK_SIGNAL);
-            return true;
-        }
-        if (d.type == DEV_ARITHMETIC_COMBINATOR || d.type == DEV_DECIDER_COMBINATOR) {
-            if (PtInRect(&g_devpDec, pt)) openCircuitSignalPicker(index, CIR_PICK_A);
-            else if (PtInRect(&g_devpInc, pt)) openCircuitSignalPicker(index, CIR_PICK_B);
-            else if (PtInRect(&g_devpTake, pt)) openCircuitSignalPicker(index, CIR_PICK_OUT);
-            else if (PtInRect(&g_devpTurn, pt)) sendClientAction(NACT_DEVICE, 0, NDEV_TURN);
-            return true;
-        }
-        if (d.type == DEV_PIPE || d.type == DEV_CROSSOVER) return true;
-        if (d.type == DEV_DRAIN && PtInRect(&g_devpTake, pt)) {
-            g_filterDevice = index; g_creativeOpen = true; g_creSearch[0] = 0;
-            g_creScroll = 0; g_creSearchFocus = true; layoutCreative(); return true;
-        }
-        if (d.type == DEV_THERMOCOUPLE && PtInRect(&g_devpTake, pt)) {
-            openCircuitSignalPicker(index, CIR_PICK_SIGNAL); return true;
-        }
-        if (PtInRect(&g_devpDec, pt)) sendClientAction(NACT_DEVICE, 0, NDEV_DEC);
-        else if (PtInRect(&g_devpInc, pt)) sendClientAction(NACT_DEVICE, 0, NDEV_INC);
-        else if (PtInRect(&g_devpTurn, pt) && di.aimable) sendClientAction(NACT_DEVICE, 0, NDEV_TURN);
-        else if (PtInRect(&g_devpTake, pt)) sendClientAction(NACT_DEVICE, 0, NDEV_TAKE);
-        return true;
+        sendClientAction(NACT_CLOSE_DEVICE); g_devPanel = -1; return true;
     }
     /* Combinators own their whole bottom row. Signal buttons open the same
-       searchable inventory browser as filters; cycling was too easy to mistake
-       for a numeric adjustment and became miserable once material signals
-       joined the virtual 1-9 channels. */
-    if (d.type == DEV_CONSTANT_COMBINATOR || d.type == DEV_ARITHMETIC_COMBINATOR ||
-        d.type == DEV_DECIDER_COMBINATOR) {
-        if (PtInRect(&g_devpClose, pt)) { g_devPanel = -1; return true; }
-        if (d.type == DEV_CONSTANT_COMBINATOR) {
-            if (PtInRect(&g_devpDec, pt)) d.value -= 1;
-            else if (PtInRect(&g_devpInc, pt)) d.value += 1;
-            else if (PtInRect(&g_devpTake, pt)) { openCircuitSignalPicker(index, CIR_PICK_SIGNAL); return true; }
-            if (d.value < di.vMin) d.value = di.vMin;
-            if (d.value > di.vMax) d.value = di.vMax;
-        } else {
-            if (PtInRect(&g_devpDec, pt)) { openCircuitSignalPicker(index, CIR_PICK_A); return true; }
-            else if (PtInRect(&g_devpInc, pt)) { openCircuitSignalPicker(index, CIR_PICK_B); return true; }
-            else if (PtInRect(&g_devpTake, pt)) { openCircuitSignalPicker(index, CIR_PICK_OUT); return true; }
-            else if (PtInRect(&g_devpTurn, pt)) {
-                const int first = d.type == DEV_DECIDER_COMBINATOR ? CIR_OP_GREATER : CIR_OP_ADD;
-                const int last  = d.type == DEV_DECIDER_COMBINATOR ? CIR_OP_NOT_EQUAL : CIR_OP_MODULO;
-                cc.op = (u8)(cc.op < first || cc.op >= last ? first : cc.op + 1);
-            }
-        }
+       searchable inventory browser as filters; actual mutations still travel
+       through the player action queue on both local and network authorities. */
+    if (d.type == DEV_CONSTANT_COMBINATOR) {
+        if (PtInRect(&g_devpDec, pt)) sendClientAction(NACT_DEVICE, 0, NDEV_DEC);
+        else if (PtInRect(&g_devpInc, pt)) sendClientAction(NACT_DEVICE, 0, NDEV_INC);
+        else if (PtInRect(&g_devpTake, pt)) openCircuitSignalPicker(index, CIR_PICK_SIGNAL);
         return true;
     }
-    if (d.type == DEV_PIPE || d.type == DEV_CROSSOVER) {
-        if (PtInRect(&g_devpClose, pt)) { g_devPanel = -1; return true; }
-        return true; /* status-only: pipes have no settings or inventory action */
+    if (d.type == DEV_ARITHMETIC_COMBINATOR || d.type == DEV_DECIDER_COMBINATOR) {
+        if (PtInRect(&g_devpDec, pt)) openCircuitSignalPicker(index, CIR_PICK_A);
+        else if (PtInRect(&g_devpInc, pt)) openCircuitSignalPicker(index, CIR_PICK_B);
+        else if (PtInRect(&g_devpTake, pt)) openCircuitSignalPicker(index, CIR_PICK_OUT);
+        else if (PtInRect(&g_devpTurn, pt)) sendClientAction(NACT_DEVICE, 0, NDEV_TURN);
+        return true;
     }
+    if (d.type == DEV_PIPE || d.type == DEV_CROSSOVER) return true;
     if (d.type == DEV_DRAIN && PtInRect(&g_devpTake, pt)) {
         g_filterDevice = g_devPanel; g_creativeOpen = true; g_creSearch[0] = 0;
         g_creScroll = 0; g_creSearchFocus = true; layoutCreative();
@@ -3315,40 +3235,10 @@ static bool handleDevPanelClick(int mx, int my) {
         openCircuitSignalPicker(index, CIR_PICK_SIGNAL);
         return true;
     }
-    if (PtInRect(&g_devpDec, pt))        d.value -= di.vStep;
-    else if (PtInRect(&g_devpInc, pt))   d.value += di.vStep;
-    else if (PtInRect(&g_devpClose, pt)) { g_devPanel = -1; return true; }
-    else if (PtInRect(&g_devpTurn, pt) && di.aimable) {
-        d.face = (u8)((d.face + 1) & 3);
-        return true;
-    }
-    else if (PtInRect(&g_devpTake, pt) && (d.count > 0 || d.type == DEV_CHEST || d.type == DEV_SPOUT)) {
-        /* Empty the machine's buffer into the pack. The counterpart to loading a
-           placer by pouring onto it -- a miner fills up with what it has broken
-           and this is how you get it out. Moves only what actually fits, so a full
-           pack leaves the rest in the machine rather than destroying it. */
-        ItemStack& held = g_inv.held();
-        if ((d.type == DEV_CHEST || d.type == DEV_SPOUT) && !held.empty()
-            && ITEMS[held.item].kind == ITEMK_MATERIAL
-            && (d.count == 0 || d.mat == held.item)) {
-            const int cap = d.type == DEV_CHEST ? CHEST_CAP : DEV_CAP;
-            const int moved = imin((int)held.count, cap - (int)d.count);
-            d.mat = (u8)held.item; d.count += moved; held.count -= moved;
-            if (held.count == 0) held = ItemStack();
-        } else if (d.count > 0) {
-            const int moved = g_inv.add((ItemId)d.mat, (int)d.count);
-            d.count -= moved;
-            if (d.count <= 0) { d.count = 0; d.mat = MAT_EMPTY; }
-        }
-        return true;
-    }
-    if (d.value < di.vMin) d.value = di.vMin;
-    if (d.value > di.vMax) d.value = di.vMax;
-    /* Changing the setpoint has to clear the latch, or a thermocouple you have
-       just raised the mark on stays tripped from the old one and never fires
-       again until it cools all the way past the NEW mark. Measured as a real
-       confusion the first time the panel existed. */
-    d.latched = false;
+    if (PtInRect(&g_devpDec, pt)) sendClientAction(NACT_DEVICE, 0, NDEV_DEC);
+    else if (PtInRect(&g_devpInc, pt)) sendClientAction(NACT_DEVICE, 0, NDEV_INC);
+    else if (PtInRect(&g_devpTurn, pt) && di.aimable) sendClientAction(NACT_DEVICE, 0, NDEV_TURN);
+    else if (PtInRect(&g_devpTake, pt)) sendClientAction(NACT_DEVICE, 0, NDEV_TAKE);
     return true;
 }
 
@@ -4615,11 +4505,7 @@ static bool handleCraftClick(int mx, int my) {
                sixty-four attempts against an empty pack should cost nothing
                and change nothing. */
             const int n = (GetKeyState(VK_SHIFT) & 0x8000) ? CRAFT_SHIFT_BATCH : 1;
-            if (netRole() == NET_CLIENT)
-                sendClientAction(NACT_CRAFT, 0, (u8)i, (u8)imin(n, 50));
-            else
-                for (int k = 0; k < n; ++k)
-                    if (!craftMake(g_inv, i)) break;
+            sendClientAction(NACT_CRAFT, 0, (u8)i, (u8)imin(n, 50));
             /* Arm the repeat on THIS row, so sliding the mouse onto another
                recipe mid-hold does not silently start making that one. */
             g_craftHeldRow = i;
@@ -5031,6 +4917,312 @@ static void drawPanel(HDC hdc) {
     SelectObject(hdc, oldFont);
 }
 
+/* ======================================================================
+   Network-shaped frame pipeline
+   ======================================================================
+   Input/presentation and authority are deliberately separate even when they
+   live in one process. Offline play feeds commands and actions into the local
+   loopback queues; hosting consumes those plus a remote peer; joining never
+   enters serverTick at all. */
+static void clientInputTick() {
+    netPoll(g_world);
+    const bool authoritative = netRole() != NET_CLIENT;
+    if (netRole() == NET_CLIENT && netClientReady()) {
+        const PlayerCommand command = localPlayerCommand();
+        netSendCommand(command);
+        predictClientPlayer(command);
+        g_interactPulse = false;
+        g_respawnPulse = false;
+        g_lineCommitPulse = false;
+    } else if (authoritative && g_survival && g_playerOn) {
+        g_localInput = localPlayerCommand();
+        g_interactPulse = false;
+        g_respawnPulse = false;
+        g_lineCommitPulse = false;
+    } else if (netRole() == NET_CLIENT) {
+        /* Do not replay a click made on the loading screen after READY. Held
+           movement/buttons are sampled fresh; only one-frame verbs need
+           explicit disposal here. */
+        g_interactPulse = false;
+        g_respawnPulse = false;
+        g_lineCommitPulse = false;
+    }
+
+    /* Held crafting is an input repeater, not authority. Every repeat becomes
+       another validated craft action whether this process is offline, hosting,
+       or joined to somebody else. */
+    if (g_craftHeldRow >= 0) {
+        if (!g_lmb || !g_craftOpen) {
+            g_craftHeldRow = -1;
+        } else if (--g_craftCool <= 0) {
+            ++g_craftHeldFor;
+            int gap = CRAFT_REPEAT_DELAY >> (g_craftHeldFor / 5);
+            if (gap < CRAFT_REPEAT_MIN) gap = CRAFT_REPEAT_MIN;
+            g_craftCool = gap;
+            const int count = (GetKeyState(VK_SHIFT) & 0x8000) ? CRAFT_SHIFT_BATCH : 1;
+            if (!sendClientAction(NACT_CRAFT, 0, (u8)g_craftHeldRow, (u8)imin(count, 50)))
+                g_craftHeldRow = -1;
+        }
+    }
+    if (netRole() == NET_CLIENT) netClientFrame(g_world);
+}
+
+static void publishServerRegions() {
+    g_world.clearBlockBoxes();
+    if (g_playerOn) g_player.occupy(g_world, LOCAL_PLAYER_ID);
+    for (int slot = 1; slot < MAX_PLAYERS; ++slot)
+        if (g_playerSessions[slot].connected)
+            g_playerSessions[slot].body.occupy(g_world, slot);
+
+    const int localX = g_playerOn ? (int)g_player.centreX() - viewCellsW() / 2 : g_camX;
+    const int localY = g_playerOn ? (int)g_player.centreY() - viewCellsH() / 2 : g_camY;
+    g_world.setLiveWindow(localX - SIM_MARGIN, localY - SIM_MARGIN,
+                          localX + viewCellsW() + SIM_MARGIN,
+                          localY + viewCellsH() + SIM_MARGIN);
+    /* Independent islands avoid simulating the enormous rectangle between two
+       players who explore in opposite directions. */
+    for (int slot = 1; slot < MAX_PLAYERS; ++slot) {
+        if (!g_playerSessions[slot].connected) continue;
+        const Player& p = g_playerSessions[slot].body;
+        const int cx = (int)p.centreX(), cy = (int)p.centreY();
+        const int halfW = viewCellsW() / 2, halfH = viewCellsH() / 2;
+        g_world.addLiveWindow(cx - halfW - SIM_MARGIN, cy - halfH - SIM_MARGIN,
+                              cx + halfW + SIM_MARGIN, cy + halfH + SIM_MARGIN);
+    }
+}
+
+static void serverTick(const LARGE_INTEGER& perfFrequency) {
+    if (netRole() == NET_CLIENT) { g_simMs = 0.0; return; }
+    const bool onlineHost = netRole() == NET_HOST;
+    const bool menuPausesWorld = g_menuOpen && !onlineHost;
+    const bool uiPausesActors = !onlineHost &&
+        (g_menuOpen || g_creativeOpen || g_craftOpen || g_chestOpen >= 0);
+
+    for (int i = 1; i < MAX_TOOL_INST; ++i)
+        if (g_toolInst[i].used && g_toolInst[i].cooldown > 0) --g_toolInst[i].cooldown;
+    /* Survival always uses PlayerCommand. The direct brush remains only for
+       the character-off creative sandbox, which has no player authority. */
+    if (!(g_survival && g_playerOn) && !g_menuOpen && !g_creativeOpen &&
+        !g_craftOpen && g_chestOpen < 0 && !g_mapOpen) applyBrush();
+
+    publishServerRegions();
+    bool singleStep = false;
+    LARGE_INTEGER begin, end; QueryPerformanceCounter(&begin);
+    if (g_stepOnce) {
+        g_world.step(); g_stepOnce = false; singleStep = true;
+    } else if (!g_paused && !menuPausesWorld) {
+        for (int step = 0; step < SPEEDS[g_speedIdx]; ++step) g_world.step();
+    }
+    if (singleStep) projUpdate(g_world);
+    else if (!g_paused && !menuPausesWorld)
+        for (int step = 0; step < SPEEDS[g_speedIdx]; ++step) projUpdate(g_world);
+    QueryPerformanceCounter(&end);
+    g_simMs = 1000.0 * (double)(end.QuadPart - begin.QuadPart) /
+              (double)perfFrequency.QuadPart;
+
+    if (g_survival && g_playerOn) {
+        const bool localCanMove = (!g_paused || singleStep) && !g_menuOpen &&
+            !g_creativeOpen && !g_craftOpen && g_chestOpen < 0 && !g_mapOpen;
+        updatePlayerFromCommand(0, g_playerSessions[0], g_localInput, localCanMove);
+    }
+    if (onlineHost) updateRemotePlayerFromCommand(!g_paused || singleStep);
+    processPlayerActions();
+    refreshHostLogisticsPause();
+
+    if (singleStep || (!g_paused && !menuPausesWorld)) {
+        roomsTick(g_world);
+        devTick(g_world);
+        treesTick(g_world);
+    }
+    if (!g_paused && !uiPausesActors) {
+        bool everyoneResting = true;
+        for (int slot = 0; slot < MAX_PLAYERS; ++slot)
+            if (g_playerSessions[slot].connected && g_playerSessions[slot].body.alive &&
+                g_playerSessions[slot].restBed < 0) everyoneResting = false;
+        for (int step = 0; step < (everyoneResting ? 4 : 1); ++step) dayAdvance();
+
+        if (g_playerOn) {
+            entTickPlayers(g_world);
+            for (int slot = 0; slot < MAX_PLAYERS; ++slot) {
+                PlayerSession& session = g_playerSessions[slot];
+                if (!session.connected || !session.body.alive) continue;
+                accessoryTickFor(slot, session.body, session.inventory);
+                droneTickFor(slot, g_world, session.body, session.inventory);
+            }
+            if (g_survival) {
+                static int spawnTurn = 0;
+                for (int tries = 0; tries < MAX_PLAYERS; ++tries) {
+                    const int slot = (spawnTurn + tries) % MAX_PLAYERS;
+                    PlayerSession& session = g_playerSessions[slot];
+                    if (!session.connected || !session.body.alive) continue;
+                    spawnTurn = (slot + 1) % MAX_PLAYERS;
+                    const int spawnCamX = (int)session.body.centreX() - viewCellsW() / 2;
+                    const int spawnCamY = (int)session.body.centreY() - viewCellsH() / 2;
+                    entSpawnTick(g_world, session.body, spawnCamX, spawnCamY, slot == 0);
+                    break;
+                }
+            }
+        }
+    }
+    if (onlineHost) netHostFrame(g_world);
+}
+
+static void clientCameraTick() {
+    if (!g_playerOn && !g_menuOpen && !g_creativeOpen && !g_craftOpen && g_chestOpen < 0) {
+        const float pan = 6.0f;
+        float dx = 0.0f, dy = 0.0f;
+        if ((GetAsyncKeyState('A') & 0x8000) || (GetAsyncKeyState(VK_LEFT)  & 0x8000)) dx -= pan;
+        if ((GetAsyncKeyState('D') & 0x8000) || (GetAsyncKeyState(VK_RIGHT) & 0x8000)) dx += pan;
+        if ((GetAsyncKeyState('W') & 0x8000) || (GetAsyncKeyState(VK_UP)    & 0x8000)) dy -= pan;
+        if ((GetAsyncKeyState('S') & 0x8000) || (GetAsyncKeyState(VK_DOWN)  & 0x8000)) dy += pan;
+        if (dx != 0.0f || dy != 0.0f) panCamera(dx, dy);
+    }
+    updateCamera(false);
+}
+
+static void clientRender(HWND hwnd) {
+    /* Light is computed for this camera position and consumed immediately
+       by renderView. The two must agree about where the camera is, which
+       is why this sits here and not up beside the sim step. */
+    lightClearDynamic();
+    droneRegisterLights();
+    devRegisterLights();
+    projRegisterLights();
+    if (g_lightOn) lightUpdate(g_world, g_camX, g_camY);
+    g_cellCount = renderView(g_world, g_pixels, g_view, g_camX, g_camY, g_lightOn);
+    drawCelestials(g_pixels);
+    /* Reveal AFTER rendering, so the map records the frame you actually
+       saw rather than the one before it, and only while the world is
+       running -- standing on a pause screen should not fill in terrain. */
+    if (!g_paused && !g_menuOpen) mapReveal(g_world, g_camX, g_camY);
+    /* Machines draw whether or not the character is enabled -- they are part
+       of the world, not part of the player, and the sandbox half of this
+       program is exactly where you want to inspect a contraption. Before the
+       character, so walking in front of one puts you in front of it. */
+    circuitDraw(g_pixels, g_camX, g_camY, g_lightOn, g_circuitWireFrom, g_circuitWireFromPort);
+    devDraw(g_world, g_pixels, g_camX, g_camY, g_lightOn);
+    if (g_playerOn) {
+        g_player.draw(g_pixels, g_camX, g_camY, g_lightOn);
+        if (g_survival) drawHeldTool(g_pixels, currentAim(), g_lightOn);
+    }
+    for (int slot = 1; slot < MAX_PLAYERS; ++slot)
+        if (g_playerSessions[slot].connected)
+            g_playerSessions[slot].body.draw(g_pixels, g_camX, g_camY, g_lightOn);
+    /* Before sparks and shots so that something being hit is drawn UNDER
+       the projectile hitting it, and after the player so a creature in
+       front of you cannot hide the character you are steering. */
+    entDraw(g_pixels, g_camX, g_camY, g_lightOn);
+    droneDraw(g_pixels, g_camX, g_camY, g_lightOn);
+    sparkDraw(g_pixels, g_camX, g_camY);
+    /* After the fronts, so a mote falling in front of a lit wire is drawn
+       over it rather than under. */
+    shedDraw(g_pixels, g_camX, g_camY);
+    projDraw(g_pixels, g_camX, g_camY);
+    /* The map, over the world and the machines and under every panel. Last
+       of the PIXEL-BUFFER passes and before StretchDIBits, which is the
+       part that matters: these write into g_pixels, and once the blit has
+       happened that buffer is not looked at again this frame. Putting them
+       after it -- which is where they went first -- draws a perfectly
+       correct map into memory and shows none of it. The symptom is that the
+       map key appears to do nothing except stop the character, because the
+       input gate works and the drawing does not. */
+    drawFullMap(g_pixels);
+    drawMinimap(g_pixels);
+
+    /* Modals dim the world in the pixel buffer, before it becomes a blit --
+       see dimPixels(). Doing it to the window instead cost 500ms a frame. */
+    if (g_menuOpen || g_creativeOpen || g_craftOpen || g_chestOpen >= 0) dimPixels();
+
+    /* Compose off-screen: sim into the viewport, then the panel, then out
+       to the window in one BitBlt. */
+    /* The full map is its own screen, not a piece of the world: keep it at
+       its native scale while the world behind it may be zoomed. */
+    const int blitW = g_mapOpen ? VIEW_CELLS_W : viewCellsW();
+    const int blitH = g_mapOpen ? VIEW_CELLS_H : viewCellsH();
+    const u32* blitPixels = g_pixels;
+    BITMAPINFO blitBmi = g_bmi;
+    if (blitW != VIEW_CELLS_W || blitH != VIEW_CELLS_H) {
+        for (int y = 0; y < blitH; ++y)
+            memcpy(g_zoomPixels + y * blitW, g_pixels + y * VIEW_CELLS_W,
+                   (size_t)blitW * sizeof(u32));
+        blitPixels = g_zoomPixels;
+        blitBmi.bmiHeader.biWidth = blitW;
+        blitBmi.bmiHeader.biHeight = -blitH;
+    }
+    StretchDIBits(g_backDC, PANEL_W, 0, VIEW_W, VIEW_H, 0, 0, blitW, blitH,
+                  blitPixels, &blitBmi, DIB_RGB_COLORS, SRCCOPY);
+    g_hoverItem = ITEM_NONE;
+    drawPanel(g_backDC);
+    if (g_survival && g_playerOn) drawHotbar(g_backDC);
+    if (g_restBed >= 0) {
+        RECT rest = { PANEL_W + 16, VIEW_H - 34, WIN_W - 16, VIEW_H - 14 };
+        SetBkMode(g_backDC, TRANSPARENT);
+        SetTextColor(g_backDC, RGB(226, 190, 90));
+        DrawTextA(g_backDC, "RESTING  -  time passes 4x  -  move or right-click bed to wake", -1,
+                  &rest, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    }
+    drawDevPanel(g_backDC);
+    /* No reticle over the map -- it points at world cells, and the map is
+       not showing world cells. */
+    if (!g_menuOpen && !g_creativeOpen && !g_craftOpen && g_chestOpen < 0 && !g_mapOpen)
+        drawCursor(g_backDC);
+    if (g_creativeOpen) drawCreative(g_backDC);
+    if (g_craftOpen)    drawCraft(g_backDC);
+    if (g_chestOpen >= 0) drawChest(g_backDC);
+    if (g_menuOpen)     drawMenu(g_backDC);
+    drawItemTooltip(g_backDC);
+
+    HDC hdc = GetDC(hwnd);
+    BitBlt(hdc, 0, 0, WIN_W, WIN_H, g_backDC, 0, 0, SRCCOPY);
+    ReleaseDC(hwnd, hdc);
+}
+
+/* Headless proof that offline play really traverses the same command/action
+   authority used by a joined peer. Kept behind a command-line switch so the
+   production executable itself—not a rewritten test double—covers placement,
+   crafting, and inventory transfer. */
+static int runLocalCommandSmoke() {
+    netStop(); g_world.reset(); devClear(); playerSessionsReset();
+    g_survival = true; g_playerOn = true;
+    g_player.reset(400.0f, 400.0f); g_inv.clear();
+
+    g_inv.add((ItemId)MAT_WOOD, 4); g_inv.add((ItemId)MAT_COAL, 1);
+    if (!sendClientAction(NACT_CRAFT, 0, 0, 1)) return 201;
+    processPlayerActions();
+    if (g_inv.countOf(ITEM_TORCH_DEV) != 4) return 202;
+
+    g_inv.clear(); g_drag = ItemStack(); g_inv.add((ItemId)MAT_SAND, 5);
+    int sandSlot = -1;
+    for (int i = 0; i < INV_SLOTS; ++i) if (g_inv.slot[i].item == (ItemId)MAT_SAND) { sandSlot = i; break; }
+    if (sandSlot < 0 || !sendClientAction(NACT_SLOT, NSLOT_PACK, (u8)sandSlot)) return 203;
+    processPlayerActions();
+    if (g_drag.item != (ItemId)MAT_SAND || g_drag.count != 5 || !g_inv.slot[sandSlot].empty()) return 204;
+
+    g_drag = ItemStack(); g_inv.clear(); g_inv.add((ItemId)MAT_STONE, 100); g_inv.selected = 0;
+    PlayerCommand command; memset(&command, 0, sizeof(command));
+    command.player = LOCAL_PLAYER_ID; command.generation = g_playerSessions[0].generation;
+    command.bits = command.pressed = PCMD_USE_LEFT; command.selected = 0;
+    command.brushRadius = 1; command.brush = MAT_STONE;
+    command.aimX = (int)g_player.centreX() + 24; command.aimY = (int)g_player.centreY();
+    updatePlayerFromCommand(0, g_playerSessions[0], command, false);
+    if (g_world.at(command.aimX, command.aimY).mat != MAT_STONE) return 205;
+
+    g_inv.add((ItemId)MAT_STONE, 100);
+    memset(&command, 0, sizeof(command));
+    command.player = LOCAL_PLAYER_ID; command.generation = g_playerSessions[0].generation;
+    command.selected = 0; command.brushRadius = 1; command.brush = MAT_STONE;
+    command.lineCommit = true; command.lineCommitBits = PCMD_USE_LEFT;
+    command.lineStartX = (int)g_player.centreX() + 12;
+    command.lineStartY = (int)g_player.centreY() - 8;
+    command.aimX = command.lineStartX + 12; command.aimY = command.lineStartY;
+    updatePlayerFromCommand(0, g_playerSessions[0], command, false);
+    if (g_world.at(command.lineStartX, command.lineStartY).mat != MAT_STONE ||
+        g_world.at(command.aimX, command.aimY).mat != MAT_STONE) return 206;
+
+    puts("local command loopback smoke passed");
+    return 0;
+}
+
 int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR commandLine, int) {
     initMaterials();
     g_world.reset();
@@ -5038,23 +5230,31 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR commandLine, int) {
     playerSessionsReset();
     layoutPanel();
     layoutHotbar();
+    if (commandLine && strstr(commandLine, "--command-smoke")) return runLocalCommandSmoke();
 
-    /* Start near the top middle. The world is four screens wide and eight deep,
-       so the old "middle of the world" would drop the character four screens
-       underground with no way to tell which way was up. */
-    makeWorld();
-    {
+    const char* joinSwitch = commandLine ? strstr(commandLine, "--join ") : 0;
+    const bool emptyTestHost = commandLine && strstr(commandLine, "--host-empty");
+    /* A joining process is about to replace every world cell with the host's
+       compressed snapshot. Generating a full throwaway world first made a CLI
+       join look hung for more than a minute and doubled startup CPU/memory.
+       Normal/menu launches still build their local world exactly as before. */
+    if (!joinSwitch && !emptyTestHost) {
+        /* Start near the top middle. The world is four screens wide and eight
+           deep, so the old middle-of-world spawn was several screens underground. */
+        makeWorld();
         float sx, sy;
         worldSpawnPoint(&sx, &sy);
         g_player.reset(sx, sy);
+    } else {
+        g_player.reset(emptyTestHost ? 400.0f : 0.0f, emptyTestHost ? 400.0f : 0.0f);
     }
     /* Useful both for repeatable two-process testing and for a host that wants
        a shortcut. The menu remains the normal player-facing route. */
     if (commandLine && strstr(commandLine, "--host")) {
         g_survival = true; g_playerOn = true; netHost();
-    } else if (commandLine) {
-        const char* join = strstr(commandLine, "--join ");
-        if (join) {
+    } else if (joinSwitch) {
+        const char* join = joinSwitch;
+        {
             char ip[64]; int n = 0; join += 7;
             while (*join == ' ') ++join;
             while (*join && *join != ' ' && n < (int)sizeof(ip) - 1) ip[n++] = *join++;
@@ -5149,353 +5349,12 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR commandLine, int) {
         }
         if (!g_running) break;
 
-        netPoll(g_world);
+        clientInputTick();
+        serverTick(freq);
         syncClientDeviceUi();
-        const bool authoritative = netRole() != NET_CLIENT;
-        const bool onlineHost = netRole() == NET_HOST;
-        const bool serverMenuPause = g_menuOpen && !onlineHost;
-        const bool serverActorUiPause = !onlineHost &&
-            (g_menuOpen || g_creativeOpen || g_craftOpen || g_chestOpen >= 0);
-        if (netRole() == NET_CLIENT && netClientReady()) {
-            const PlayerCommand command = localPlayerCommand();
-            netSendCommand(command);
-            predictClientPlayer(command);
-            g_interactPulse = false;
-            g_respawnPulse = false;
-        }
+        clientCameraTick();
 
-        /* --- holding the craft button -------------------------------------
-           Repeats while the button stays down on the row it was pressed on,
-           accelerating from CRAFT_REPEAT_DELAY toward CRAFT_REPEAT_MIN.
-
-           Driven from the frame loop rather than from mouse messages because
-           the rate has to be in FRAMES: WM_MOUSEMOVE arrives when the mouse
-           moves, and a held button on a still mouse generates nothing at all. */
-        if (authoritative && g_craftHeldRow >= 0) {
-            if (!g_lmb || !g_craftOpen) {
-                g_craftHeldRow = -1;
-            } else if (--g_craftCool <= 0) {
-                ++g_craftHeldFor;
-                /* Halve the gap every five repeats, down to the floor. A
-                   geometric ramp rather than a linear one because what it has to
-                   span is a factor of twenty-six, and stepping down by one frame a
-                   time would spend most of the hold in the slow half. */
-                int gap = CRAFT_REPEAT_DELAY >> (g_craftHeldFor / 5);
-                if (gap < CRAFT_REPEAT_MIN) gap = CRAFT_REPEAT_MIN;
-                g_craftCool = gap;
-                const int n = (GetKeyState(VK_SHIFT) & 0x8000) ? CRAFT_SHIFT_BATCH : 1;
-                for (int k = 0; k < n; ++k)
-                    if (!craftMake(g_inv, g_craftHeldRow)) { g_craftHeldRow = -1; break; }
-            }
-        }
-
-        /* Ticked unconditionally, so a cooldown can never outlive the drag that
-           set it and the first click after a pause always acts at once. */
-        if (authoritative && g_digCool > 0) --g_digCool;
-        /* Tool cooldowns tick on the instance, not on a global, so two tools
-           recharge independently and swapping between them does not reset
-           either -- which is the whole reason firing state lives on the
-           instance rather than beside the input handler. */
-        for (int i = 1; authoritative && i < MAX_TOOL_INST; ++i)
-            if (g_toolInst[i].used && g_toolInst[i].cooldown > 0) --g_toolInst[i].cooldown;
-        /* The map covers the viewport, so a click while it is up must not dig
-           the world underneath it -- you cannot see what you would be hitting. */
-        if (authoritative && !g_menuOpen && !g_creativeOpen && !g_craftOpen && g_chestOpen < 0 && !g_mapOpen)
-            applyBrush();
-        /* Whether the sim actually advanced this frame, so the character moves
-           in lockstep with the world -- including on a single frame-advance. */
-        bool steppedThisFrame = false;
-
-        /* Publish the body's box before stepping, so this frame's simulation
-           already respects it -- otherwise sand gets one frame of free passage
-           through the player every time they move. */
-        g_world.clearBlockBoxes();
-        if (g_playerOn) g_player.occupy(g_world, LOCAL_PLAYER_ID);
-        for (int id = 1; id < MAX_PLAYERS; ++id)
-            if (g_playerSessions[id].connected)
-                g_playerSessions[id].body.occupy(g_world, id);
-
-        /* Tell the world what to simulate. Everything outside is frozen in
-           place -- state is kept, it simply does not advance -- which is what
-           bounds the cost of a world this size. See setLiveWindow(). */
-        g_world.setLiveWindow(g_camX - SIM_MARGIN, g_camY - SIM_MARGIN,
-                              g_camX + viewCellsW()  + SIM_MARGIN,
-                              g_camY + viewCellsH() + SIM_MARGIN);
-        /* Remote sessions contribute independent simulation islands. Never
-           stretch the local camera rectangle to include them: two players at
-           opposite ends of the world should cost two active areas, not every
-           chunk in the enormous rectangle between them. */
-        for (int id = 1; id < MAX_PLAYERS; ++id) {
-            if (!g_playerSessions[id].connected) continue;
-            const Player& remote = g_playerSessions[id].body;
-            const int rcx = (int)remote.centreX(), rcy = (int)remote.centreY();
-            const int halfW = viewCellsW() / 2, halfH = viewCellsH() / 2;
-            g_world.addLiveWindow(rcx - halfW - SIM_MARGIN,
-                                  rcy - halfH - SIM_MARGIN,
-                                  rcx + halfW + SIM_MARGIN,
-                                  rcy + halfH + SIM_MARGIN);
-        }
-
-        LARGE_INTEGER tA, tB;
-        QueryPerformanceCounter(&tA);
-        if (authoritative && g_stepOnce) {
-            /* Frame-advance stays one step regardless of the multiplier -- the
-               whole point of it is to inspect a single frame of the sim. */
-            g_world.step();
-            g_stepOnce = false;
-            steppedThisFrame = true;
-        } else if (authoritative && !g_paused && !serverMenuPause) {
-            for (int s = 0; s < SPEEDS[g_speedIdx]; ++s) g_world.step();
-        }
-        /* Projectiles move with the world, so the speed multiplier speeds them
-           up too -- a shot that crawled at 1x speed through a 4x world would
-           look like it was fired underwater. */
-        if (authoritative && steppedThisFrame) projUpdate(g_world);
-        else if (authoritative && !g_paused && !serverMenuPause)
-            for (int s = 0; s < SPEEDS[g_speedIdx]; ++s) projUpdate(g_world);
-        QueryPerformanceCounter(&tB);
-        g_simMs = 1000.0 * (double)(tB.QuadPart - tA.QuadPart) / (double)freq.QuadPart;
-
-        /* The character runs after the world, on the settled grid, and only
-           when the sim is actually advancing -- stepping while paused would
-           let you walk around a frozen world, which reads as a bug. Input is
-           polled rather than event-driven because held keys are the whole
-           interface here, and WM_KEYDOWN repeat rates are a user setting. */
-        if (g_restBed >= 0 && (!g_devices[g_restBed].used ||
-                               g_devices[g_restBed].type != DEV_BED))
-            g_restBed = -1;       /* bed removed while resting */
-        /* Any movement key wakes the player before the movement input is read.
-           Right-clicking the bed also wakes them; neither route needs a hidden
-           sleep-only key to remember. */
-        if (g_restBed >= 0 && ((GetAsyncKeyState('A') & 0x8000) || (GetAsyncKeyState('D') & 0x8000) ||
-                               (GetAsyncKeyState('W') & 0x8000) || (GetAsyncKeyState('S') & 0x8000) ||
-                               (GetAsyncKeyState(VK_SPACE) & 0x8000)))
-            g_restBed = -1;
-        if (authoritative && g_playerOn && g_restBed < 0 && !g_menuOpen && !g_creativeOpen && !g_craftOpen && g_chestOpen < 0
-            && !g_mapOpen && (!g_paused || steppedThisFrame)) {
-            PlayerInput in;
-            in.left  = (GetAsyncKeyState('A') & 0x8000) || (GetAsyncKeyState(VK_LEFT)  & 0x8000);
-            in.right = (GetAsyncKeyState('D') & 0x8000) || (GetAsyncKeyState(VK_RIGHT) & 0x8000);
-            in.jump  = (GetAsyncKeyState('W') & 0x8000) || (GetAsyncKeyState(VK_UP) & 0x8000)
-                    || (GetAsyncKeyState(VK_SPACE) & 0x8000);
-            /* Down: climbs a rope, and drops through a platform. S and the down
-               arrow, matching the other three. */
-            in.down  = (GetAsyncKeyState('S') & 0x8000) || (GetAsyncKeyState(VK_DOWN) & 0x8000);
-            /* Published before the step, so swapping a jetpack takes effect on
-               the same frame -- the same arrangement the collision box uses,
-               and the reason player.cpp knows nothing about inventories. */
-            g_player.fly = flightSpec(g_inv);
-            g_player.speedMul = 1.0f + (float)g_inv.speedBonus() / 100.0f;
-            g_player.resist   = g_inv.tempResist();
-            g_player.update(g_world, in);
-            /* Re-publish after movement before asking doors to close: the
-               closing guard must see the body's current position, not where it
-               stood at the start of this frame. Only this player path calls
-               doorAuto, so creatures cannot operate player doors. */
-            g_player.occupy(g_world);
-            doorAuto(g_world, g_player);
-        }
-        if (authoritative && netRole() == NET_HOST && !g_paused)
-            updateRemotePlayerFromCommand();
-        if (authoritative && netRole() == NET_HOST)
-            processRemoteActions();
-        if (authoritative) refreshHostLogisticsPause();
-
-        /* After the character has moved, so the camera never lags a frame
-           behind what it is following. With the character off, the arrow keys
-           drive the camera instead. */
-        if (!g_playerOn && !g_menuOpen && !g_creativeOpen && !g_craftOpen && g_chestOpen < 0) {
-            const float PAN = 6.0f;
-            float px = 0.0f, py = 0.0f;
-            if ((GetAsyncKeyState('A') & 0x8000) || (GetAsyncKeyState(VK_LEFT)  & 0x8000)) px -= PAN;
-            if ((GetAsyncKeyState('D') & 0x8000) || (GetAsyncKeyState(VK_RIGHT) & 0x8000)) px += PAN;
-            if ((GetAsyncKeyState('W') & 0x8000) || (GetAsyncKeyState(VK_UP)    & 0x8000)) py -= PAN;
-            if ((GetAsyncKeyState('S') & 0x8000) || (GetAsyncKeyState(VK_DOWN)  & 0x8000)) py += PAN;
-            if (px != 0.0f || py != 0.0f) panCamera(px, py);
-        }
-        updateCamera(false);
-
-        /* One room revalidated per ROOM_RECHECK frames -- see roomsTick(). The
-           edit path handles anything you did on purpose; this catches rooms
-           the SIMULATION undid, which is the case nothing else would notice:
-           a wall melted through, a floor washed out, a fire that ate the
-           ceiling. */
-        /* --- these advance exactly when the WORLD does -------------------
-           Gated on the same condition as g_world.step() above, and they were
-           not, which made pausing actively destructive rather than merely
-           incomplete.
-
-           devTick is the whole of electricity: it steps every spark, fires
-           every clock, and calls sparkCrowdHeat, which puts HEAT into the grid
-           where fronts are dense. Running that while the world is frozen is the
-           worst of both -- the clocks go on emitting, the crowd goes on
-           heating, and updateHeat is not running to spread or shed any of it,
-           so it piles up in one cell without limit. Reported from play as
-           pausing the game and coming back to a melted circuit.
-
-           The frame-advance case runs them too, deliberately: single-stepping
-           exists to watch a mechanism work, and a step that moved the sand but
-           not the sparks would be useless for the one thing it is for. */
-        if (authoritative && (steppedThisFrame || (!g_paused && !serverMenuPause))) {
-            roomsTick(g_world);
-            devTick(g_world);
-            treesTick(g_world);
-        }
-
-        /* Creatures run AFTER the character has moved, so contact damage is
-           tested against where the player actually ended up this frame rather
-           than where they were at the start of it -- walking into something
-           and being hit by it are the same event and must not be a frame
-           apart. Gated on the same conditions the character is: nothing should
-           be stalking you while the crafting screen is open.
-
-           The clock advances here too, on exactly the frames the world does, so
-           time cannot pass while paused. It is deliberately NOT multiplied by
-           the sim speed: the speed control is a debugging tool for watching the
-           simulation, and having 4x quietly mean "and also make it night four
-           times faster" would be a surprise nobody asked for. */
-        if (authoritative && !g_paused && !serverActorUiPause) {
-            /* Rest moves the sun and moon four times as quickly, but leaves
-               world simulation, machines, and enemies at normal speed. A bed
-               is a way to wait through a night, not a 4x simulation switch. */
-            bool everyoneResting = true;
-            for (int id = 0; id < MAX_PLAYERS; ++id)
-                if (g_playerSessions[id].connected && g_playerSessions[id].body.alive &&
-                    g_playerSessions[id].restBed < 0) everyoneResting = false;
-            const int daySteps = everyoneResting ? 4 : 1;
-            for (int i = 0; i < daySteps; ++i) dayAdvance();
-            /* Creatures MOVE whenever there is a character for them to move
-               relative to, but they only APPEAR on their own in survival. The
-               split matters for the spawn eggs: those are a debug tool reached
-               through the creative menu, and an egg that produced something
-               frozen in place until you switched modes would be useless for the
-               one job it has. Sandbox stays free of unasked-for wildlife. */
-            if (g_playerOn) {
-                entTickPlayers(g_world);
-                for (int slot = 0; slot < MAX_PLAYERS; ++slot) {
-                    PlayerSession& session = g_playerSessions[slot];
-                    if (!session.connected || !session.body.alive) continue;
-                    accessoryTickFor(slot, session.body, session.inventory);
-                    droneTickFor(slot, g_world, session.body, session.inventory);
-                }
-                if (g_survival) {
-                    /* One spawn clock per world, with its probe assigned round-
-                       robin. Calling the spawner once per player would count its
-                       cooldown down twice as fast in a two-player game. */
-                    static int spawnTurn = 0;
-                    for (int tries = 0; tries < MAX_PLAYERS; ++tries) {
-                        const int slot = (spawnTurn + tries) % MAX_PLAYERS;
-                        PlayerSession& session = g_playerSessions[slot];
-                        if (!session.connected || !session.body.alive) continue;
-                        spawnTurn = (slot + 1) % MAX_PLAYERS;
-                        const int spawnCamX = slot == 0 ? g_camX :
-                            (int)session.body.centreX() - viewCellsW() / 2;
-                        const int spawnCamY = slot == 0 ? g_camY :
-                            (int)session.body.centreY() - viewCellsH() / 2;
-                        entSpawnTick(g_world, session.body, spawnCamX, spawnCamY, slot == 0);
-                        break;
-                    }
-                }
-            }
-        }
-
-        if (authoritative) netHostFrame(g_world);
-        else               netClientFrame(g_world);
-
-        /* Light is computed for this camera position and consumed immediately
-           by renderView. The two must agree about where the camera is, which
-           is why this sits here and not up beside the sim step. */
-        lightClearDynamic();
-        droneRegisterLights();
-        devRegisterLights();
-        projRegisterLights();
-        if (g_lightOn) lightUpdate(g_world, g_camX, g_camY);
-        g_cellCount = renderView(g_world, g_pixels, g_view, g_camX, g_camY, g_lightOn);
-        drawCelestials(g_pixels);
-        /* Reveal AFTER rendering, so the map records the frame you actually
-           saw rather than the one before it, and only while the world is
-           running -- standing on a pause screen should not fill in terrain. */
-        if (!g_paused && !g_menuOpen) mapReveal(g_world, g_camX, g_camY);
-        /* Machines draw whether or not the character is enabled -- they are part
-           of the world, not part of the player, and the sandbox half of this
-           program is exactly where you want to inspect a contraption. Before the
-           character, so walking in front of one puts you in front of it. */
-        circuitDraw(g_pixels, g_camX, g_camY, g_lightOn, g_circuitWireFrom, g_circuitWireFromPort);
-        devDraw(g_world, g_pixels, g_camX, g_camY, g_lightOn);
-        if (g_playerOn) {
-            g_player.draw(g_pixels, g_camX, g_camY, g_lightOn);
-            if (g_survival) drawHeldTool(g_pixels, currentAim(), g_lightOn);
-        }
-        for (int slot = 1; slot < MAX_PLAYERS; ++slot)
-            if (g_playerSessions[slot].connected)
-                g_playerSessions[slot].body.draw(g_pixels, g_camX, g_camY, g_lightOn);
-        /* Before sparks and shots so that something being hit is drawn UNDER
-           the projectile hitting it, and after the player so a creature in
-           front of you cannot hide the character you are steering. */
-        entDraw(g_pixels, g_camX, g_camY, g_lightOn);
-        droneDraw(g_pixels, g_camX, g_camY, g_lightOn);
-        sparkDraw(g_pixels, g_camX, g_camY);
-        /* After the fronts, so a mote falling in front of a lit wire is drawn
-           over it rather than under. */
-        shedDraw(g_pixels, g_camX, g_camY);
-        projDraw(g_pixels, g_camX, g_camY);
-        /* The map, over the world and the machines and under every panel. Last
-           of the PIXEL-BUFFER passes and before StretchDIBits, which is the
-           part that matters: these write into g_pixels, and once the blit has
-           happened that buffer is not looked at again this frame. Putting them
-           after it -- which is where they went first -- draws a perfectly
-           correct map into memory and shows none of it. The symptom is that the
-           map key appears to do nothing except stop the character, because the
-           input gate works and the drawing does not. */
-        drawFullMap(g_pixels);
-        drawMinimap(g_pixels);
-
-        /* Modals dim the world in the pixel buffer, before it becomes a blit --
-           see dimPixels(). Doing it to the window instead cost 500ms a frame. */
-        if (g_menuOpen || g_creativeOpen || g_craftOpen || g_chestOpen >= 0) dimPixels();
-
-        /* Compose off-screen: sim into the viewport, then the panel, then out
-           to the window in one BitBlt. */
-        /* The full map is its own screen, not a piece of the world: keep it at
-           its native scale while the world behind it may be zoomed. */
-        const int blitW = g_mapOpen ? VIEW_CELLS_W : viewCellsW();
-        const int blitH = g_mapOpen ? VIEW_CELLS_H : viewCellsH();
-        const u32* blitPixels = g_pixels;
-        BITMAPINFO blitBmi = g_bmi;
-        if (blitW != VIEW_CELLS_W || blitH != VIEW_CELLS_H) {
-            for (int y = 0; y < blitH; ++y)
-                memcpy(g_zoomPixels + y * blitW, g_pixels + y * VIEW_CELLS_W,
-                       (size_t)blitW * sizeof(u32));
-            blitPixels = g_zoomPixels;
-            blitBmi.bmiHeader.biWidth = blitW;
-            blitBmi.bmiHeader.biHeight = -blitH;
-        }
-        StretchDIBits(g_backDC, PANEL_W, 0, VIEW_W, VIEW_H, 0, 0, blitW, blitH,
-                      blitPixels, &blitBmi, DIB_RGB_COLORS, SRCCOPY);
-        g_hoverItem = ITEM_NONE;
-        drawPanel(g_backDC);
-        if (g_survival && g_playerOn) drawHotbar(g_backDC);
-        if (g_restBed >= 0) {
-            RECT rest = { PANEL_W + 16, VIEW_H - 34, WIN_W - 16, VIEW_H - 14 };
-            SetBkMode(g_backDC, TRANSPARENT);
-            SetTextColor(g_backDC, RGB(226, 190, 90));
-            DrawTextA(g_backDC, "RESTING  -  time passes 4x  -  move or right-click bed to wake", -1,
-                      &rest, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-        }
-        drawDevPanel(g_backDC);
-        /* No reticle over the map -- it points at world cells, and the map is
-           not showing world cells. */
-        if (!g_menuOpen && !g_creativeOpen && !g_craftOpen && g_chestOpen < 0 && !g_mapOpen)
-            drawCursor(g_backDC);
-        if (g_creativeOpen) drawCreative(g_backDC);
-        if (g_craftOpen)    drawCraft(g_backDC);
-        if (g_chestOpen >= 0) drawChest(g_backDC);
-        if (g_menuOpen)     drawMenu(g_backDC);
-        drawItemTooltip(g_backDC);
-
-        HDC hdc = GetDC(hwnd);
-        BitBlt(hdc, 0, 0, WIN_W, WIN_H, g_backDC, 0, 0, SRCCOPY);
-        ReleaseDC(hwnd, hdc);
+        clientRender(hwnd);
 
         /* Pace to 60 Hz. */
         ++fpsFrames;
