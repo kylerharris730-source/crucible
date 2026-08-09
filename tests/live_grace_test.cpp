@@ -325,9 +325,54 @@ int main() {
     if (projGlowMoteCount() != 28) {
         fprintf(stderr, "glowflare motes collided with solid blocks\n"); return 60;
     }
+    /* A rightward impact must now fire a balanced shotgun cone INTO the wall,
+       not the old 360-degree wheel. Every mote advances right; mirrored pairs
+       keep the lateral centroid on the impact line while still filling both
+       halves of a broad cone. */
+    float moteX[28], moteY[28];
+    const int moteCount = projGlowMoteSnapshot(moteX, moteY, 28);
+    float lateralSum = 0.0f;
+    bool above = false, below = false;
+    for (int i = 0; i < moteCount; ++i) {
+        if (moteX[i] <= 701.5f) {
+            fprintf(stderr, "glowflare shotgun sent a mote away from its wall\n"); return 62;
+        }
+        lateralSum += moteY[i] - 700.5f;
+        above = above || moteY[i] < 699.5f;
+        below = below || moteY[i] > 701.5f;
+    }
+    if (moteCount != 28 || !above || !below ||
+        lateralSum < -0.01f || lateralSum > 0.01f) {
+        fprintf(stderr, "glowflare shotgun was not a balanced randomized cone\n"); return 63;
+    }
+    /* The slower dust remains fully populated after fifty motion frames, and
+       its gentler drag still carries the leading light substantially deeper
+       into the wall than the first two-frame fan above. */
+    for (int frame = 0; frame < 50; ++frame) projUpdate(w);
+    float lateX[28], lateY[28];
+    const int lateCount = projGlowMoteSnapshot(lateX, lateY, 28);
+    float farthestX = 0.0f;
+    for (int i = 0; i < lateCount; ++i)
+        if (lateX[i] > farthestX) farthestX = lateX[i];
+    if (lateCount != 28 || farthestX < 770.0f) {
+        fprintf(stderr, "glowflare motes did not persist deeper into rock\n"); return 64;
+    }
     for (int frame = 0; frame < 50; ++frame) projUpdate(w);
     if (projGlowMoteCount() != 0) {
         fprintf(stderr, "glowflare motes did not decay\n"); return 61;
+    }
+    if (projGlowAfterglowCount() == 0) {
+        fprintf(stderr, "glowflare path did not retain an afterglow\n"); return 65;
+    }
+    lightClearDynamic();
+    projRegisterLights();
+    lightCompute(w, 640, 640);
+    if (lightAt(61, 60) < 35) {
+        fprintf(stderr, "glowflare impact faded before its afterglow elapsed\n"); return 66;
+    }
+    for (int frame = 0; frame < 130; ++frame) projUpdate(w);
+    if (projGlowAfterglowCount() != 0) {
+        fprintf(stderr, "glowflare afterglow did not finish fading\n"); return 67;
     }
 
     /* Any light now reads forty world cells into solid material. At thirty
@@ -341,6 +386,34 @@ int main() {
     lightCompute(w, 350, 450);
     if (lightAt(79, 50) == 0) {
         fprintf(stderr, "light did not penetrate thirty cells into solid material\n"); return 62;
+    }
+    /* Water has exactly half an ordinary liquid's attenuation. Verify the
+       resulting solve as well as the table: across a sealed 44-cell pool the
+       same source remains visible through water and is exhausted by wax. */
+    if (g_matOpacity[MAT_WATER] * 2 != g_matOpacity[MAT_WAX]) {
+        fprintf(stderr, "water light attenuation was not halved\n"); return 68;
+    }
+    w.reset();
+    for (int y = 430; y <= 570; ++y)
+        for (int x2 = 380; x2 <= 620; ++x2)
+            w.setCell(x2, y, (x2 < 388 || x2 > 612 || y < 438 || y > 562)
+                               ? MAT_STONE : MAT_WATER);
+    lightClearDynamic();
+    lightAddDynamic(420, 500, 255);
+    lightCompute(w, 350, 450);
+    const int throughWater = lightAt(114, 50);
+    w.reset();
+    for (int y = 430; y <= 570; ++y)
+        for (int x2 = 380; x2 <= 620; ++x2)
+            w.setCell(x2, y, (x2 < 388 || x2 > 612 || y < 438 || y > 562)
+                               ? MAT_STONE : MAT_WAX);
+    lightClearDynamic();
+    lightAddDynamic(420, 500, 255);
+    lightCompute(w, 350, 450);
+    const int throughWax = lightAt(114, 50);
+    if (throughWater < 40 || throughWax != 0) {
+        fprintf(stderr, "water permeability did not double in the light solve (%d/%d)\n",
+                throughWater, throughWax); return 69;
     }
     /* A torch is now a fixture: it can be installed under water without
        consuming the pool, and its footprint cannot catch falling loot. */
@@ -783,10 +856,56 @@ int main() {
        it is heavier than water when cool and lighter at working temperature.
        The sealed one-cell column removes lateral flow from the measurement, so
        rising and falling can only come from parcel density. */
-    const int waterDensity = materialDensityQ8(MAT_WATER, degC(20));
-    if (materialDensityQ8(MAT_WAX, degC(20)) <= waterDensity ||
-        materialDensityQ8(MAT_WAX, degC(90)) >= waterDensity) {
-        fprintf(stderr, "wax density does not cross water across its working range\n"); return 91;
+    const int coolWaterDensity = materialDensityQ8(MAT_WATER, degC(20));
+    const int warmWaterDensity = materialDensityQ8(MAT_WATER, degC(45));
+    if (MATS[MAT_WAX].dryA != 0xF1E9D8 ||
+        MATS[MAT_WAX].dryB != MATS[MAT_WAX].dryA ||
+        MATS[MAT_WAX].wetA != MATS[MAT_WAX].dryA ||
+        MATS[MAT_WAX].wetB != MATS[MAT_WAX].dryA) {
+        fprintf(stderr, "wax was not a uniform ivory colour\n"); return 118;
+    }
+    if (materialDensityQ8(MAT_WAX, degC(20)) <= coolWaterDensity ||
+        materialDensityQ8(MAT_WAX, degC(45)) >= warmWaterDensity) {
+        fprintf(stderr, "wax density does not cross water below boiling\n"); return 91;
+    }
+    /* A marked hot parcel in a wall-hugging wax column used to swap directly
+       with another wax cell three rows above. Track that exact parcel through
+       several turns: density exchange with Water and internal wax convection
+       must both remain local, never moving it more than one cell per frame. */
+    w.reset();
+    const int wallWaxX = 640, wallWaxTop = 570, wallWaxBottom = 587;
+    w.setLiveWindow(wallWaxX - 4, wallWaxTop - 4,
+                    wallWaxX + 8, wallWaxBottom + 4);
+    for (int y = wallWaxTop - 1; y <= wallWaxBottom; ++y) {
+        w.setCell(wallWaxX - 1, y, MAT_STONE);
+        w.setCell(wallWaxX + 4, y, MAT_STONE);
+    }
+    for (int x = wallWaxX - 1; x <= wallWaxX + 4; ++x)
+        w.setCell(x, wallWaxBottom, MAT_STONE);
+    for (int y = wallWaxTop; y < wallWaxBottom; ++y)
+        for (int x = wallWaxX; x < wallWaxX + 4; ++x)
+            w.setCell(x, y, MAT_WATER);
+    for (int y = wallWaxBottom - 5; y < wallWaxBottom; ++y)
+        w.setCell(wallWaxX, y, MAT_WAX);
+    int markedWaxX = wallWaxX, markedWaxY = wallWaxBottom - 1;
+    w.cells[markedWaxY * SIM_W + markedWaxX].moisture = 123;
+    for (int tick = 0; tick < 8; ++tick) {
+        w.temp[markedWaxY * SIM_W + markedWaxX] = degC(55);
+        w.dirtyPoint(markedWaxX, markedWaxY);
+        const int oldX = markedWaxX, oldY = markedWaxY;
+        w.step();
+        bool foundMarkedWax = false;
+        for (int y = wallWaxTop; y < wallWaxBottom; ++y)
+            for (int x = wallWaxX; x < wallWaxX + 4; ++x)
+                if (w.at(x, y).mat == MAT_WAX && w.at(x, y).moisture == 123) {
+                    markedWaxX = x; markedWaxY = y; foundMarkedWax = true;
+                }
+        const int move = (markedWaxX > oldX ? markedWaxX - oldX : oldX - markedWaxX) +
+                         (markedWaxY > oldY ? markedWaxY - oldY : oldY - markedWaxY);
+        if (!foundMarkedWax || move > 1) {
+            fprintf(stderr, "wall-adjacent wax parcel teleported (%d,%d -> %d,%d)\n",
+                    oldX, oldY, markedWaxX, markedWaxY); return 116;
+        }
     }
     w.reset();
     const int lampX = 660, lampTop = 600, lampBottom = 621;
@@ -803,7 +922,9 @@ int main() {
     for (int tick = 0; tick < 12; ++tick) {
         for (int y = lampTop; y < lampBottom; ++y)
             if (w.at(lampX, y).mat == MAT_WAX) { waxY = y; break; }
-        w.temp[waxY * SIM_W + lampX] = degC(90);
+        /* 55 C is enough for the doubled expansion to produce the same strong
+           rise that previously required holding wax near 90 C. */
+        w.temp[waxY * SIM_W + lampX] = degC(55);
         w.dirtyPoint(lampX, waxY);
         w.step();
     }
@@ -829,6 +950,158 @@ int main() {
     if (waxCount != 1 || waxY <= waxHighY + 7) {
         fprintf(stderr, "cooled wax did not sink back through water (%d -> %d, count %d)\n",
                 waxHighY, waxY, waxCount); return 93;
+    }
+
+    /* A dense immiscible liquid must finish leveling promptly after it reaches
+       the bottom of a water vessel. Start Fuel as a substantial 36-cell,
+       six-row pyramid. It must become one flat bottom row in well under a
+       second rather than eroding one blocky edge cell at a time. */
+    w.reset();
+    const int fuelLeft = 700, fuelRight = 763;
+    const int fuelTop = 600, fuelBottom = 620;
+    w.setLiveWindow(fuelLeft - 4, fuelTop - 4, fuelRight + 4, fuelBottom + 4);
+    for (int y = fuelTop - 1; y <= fuelBottom; ++y) {
+        w.setCell(fuelLeft - 1, y, MAT_STONE);
+        w.setCell(fuelRight + 1, y, MAT_STONE);
+    }
+    for (int x = fuelLeft - 1; x <= fuelRight + 1; ++x)
+        w.setCell(x, fuelBottom, MAT_STONE);
+    for (int y = fuelTop; y < fuelBottom; ++y)
+        for (int x = fuelLeft; x <= fuelRight; ++x)
+            w.setCell(x, y, MAT_WATER);
+    const int fuelCenter = 731;
+    int expectedFuel = 0;
+    for (int layer = 0; layer < 6; ++layer) {
+        const int half = 5 - layer;
+        for (int x = fuelCenter - half; x <= fuelCenter + half; ++x) {
+            w.setCell(x, fuelBottom - 1 - layer, MAT_FUEL);
+            ++expectedFuel;
+        }
+    }
+    int fuelFlatTick = -1;
+    for (int tick = 1; tick <= 12; ++tick) {
+        w.step();
+        int bottom = 0;
+        for (int x = fuelLeft; x <= fuelRight; ++x)
+            if (w.at(x, fuelBottom - 1).mat == MAT_FUEL) ++bottom;
+        if (bottom == expectedFuel) { fuelFlatTick = tick; break; }
+    }
+    int fuelCount = 0, bottomFuel = 0;
+    for (int y = fuelTop; y < fuelBottom; ++y)
+        for (int x = fuelLeft; x <= fuelRight; ++x)
+            if (w.at(x, y).mat == MAT_FUEL) {
+                ++fuelCount;
+                if (y == fuelBottom - 1) ++bottomFuel;
+            }
+    if (fuelCount != expectedFuel || bottomFuel != expectedFuel || fuelFlatTick < 0) {
+        fprintf(stderr, "submerged Fuel did not flatten quickly (%d total, %d bottom, tick %d)\n",
+                fuelCount, bottomFuel, fuelFlatTick);
+        for (int y = fuelTop; y < fuelBottom; ++y)
+            for (int x = fuelLeft; x <= fuelRight; ++x)
+                if (w.at(x, y).mat == MAT_FUEL)
+                    fprintf(stderr, "  Fuel at %d,%d\n", x, y);
+        return 117;
+    }
+
+    /* This is density behavior, not a Fuel exception. Cool Wax is only a
+       little denser than Water, but a five-row wax mound must use the same
+       submerged leveling path and settle into a flat bottom layer. */
+    w.reset();
+    w.setLiveWindow(fuelLeft - 4, fuelTop - 4, fuelRight + 4, fuelBottom + 4);
+    for (int y = fuelTop - 1; y <= fuelBottom; ++y) {
+        w.setCell(fuelLeft - 1, y, MAT_STONE);
+        w.setCell(fuelRight + 1, y, MAT_STONE);
+    }
+    for (int x = fuelLeft - 1; x <= fuelRight + 1; ++x)
+        w.setCell(x, fuelBottom, MAT_STONE);
+    for (int y = fuelTop; y < fuelBottom; ++y)
+        for (int x = fuelLeft; x <= fuelRight; ++x)
+            w.setCell(x, y, MAT_WATER);
+    int expectedWax = 0;
+    for (int layer = 0; layer < 5; ++layer) {
+        const int half = 4 - layer;
+        for (int x = fuelCenter - half; x <= fuelCenter + half; ++x) {
+            w.setCell(x, fuelBottom - 1 - layer, MAT_WAX);
+            ++expectedWax;
+        }
+    }
+    int waxFlatTick = -1;
+    for (int tick = 1; tick <= 12; ++tick) {
+        w.step();
+        int bottom = 0;
+        for (int x = fuelLeft; x <= fuelRight; ++x)
+            if (w.at(x, fuelBottom - 1).mat == MAT_WAX) ++bottom;
+        if (bottom == expectedWax) { waxFlatTick = tick; break; }
+    }
+    int flatWaxCount = 0, bottomWax = 0;
+    for (int y = fuelTop; y < fuelBottom; ++y)
+        for (int x = fuelLeft; x <= fuelRight; ++x)
+            if (w.at(x, y).mat == MAT_WAX) {
+                ++flatWaxCount;
+                if (y == fuelBottom - 1) ++bottomWax;
+            }
+    if (flatWaxCount != expectedWax || bottomWax != expectedWax || waxFlatTick < 0) {
+        fprintf(stderr, "submerged Wax did not flatten quickly (%d total, %d bottom, tick %d)\n",
+                flatWaxCount, bottomWax, waxFlatTick); return 119;
+    }
+
+    /* The real failure was not a flat tank: Fuel and Wax stood as separate
+       sheer-sided blocks in a curved lake bed. Reproduce that geometry with
+       two tall deposits on opposite slopes. At equilibrium density must sort
+       vertically (Water, then Wax, then Fuel), and neither dense material may
+       retain anything resembling its original thirty-cell wall. */
+    w.reset();
+    const int bowlCX = 820, bowlLeft = 756, bowlRight = 884;
+    const int bowlWaterTop = 560, bowlBase = 680;
+    w.setLiveWindow(bowlLeft - 4, bowlWaterTop - 4,
+                    bowlRight + 4, bowlBase + 4);
+    for (int x = bowlLeft; x <= bowlRight; ++x) {
+        const int adx = x > bowlCX ? x - bowlCX : bowlCX - x;
+        const int floorY = bowlBase - adx / 2;
+        for (int y = bowlWaterTop; y < floorY; ++y) w.setCell(x, y, MAT_WATER);
+        for (int y = floorY; y <= bowlBase + 2; ++y) w.setCell(x, y, MAT_STONE);
+    }
+    for (int y = bowlWaterTop - 1; y <= bowlBase + 2; ++y) {
+        w.setCell(bowlLeft - 1, y, MAT_STONE);
+        w.setCell(bowlRight + 1, y, MAT_STONE);
+    }
+    int bowlFuelExpected = 0, bowlWaxExpected = 0;
+    for (int x = 780; x < 792; ++x) {
+        const int floorY = bowlBase - (bowlCX - x) / 2;
+        for (int y = floorY - 30; y < floorY; ++y) {
+            w.setCell(x, y, MAT_FUEL); ++bowlFuelExpected;
+        }
+    }
+    for (int x = 849; x < 861; ++x) {
+        const int floorY = bowlBase - (x - bowlCX) / 2;
+        for (int y = floorY - 30; y < floorY; ++y) {
+            w.setCell(x, y, MAT_WAX); ++bowlWaxExpected;
+        }
+    }
+    for (int tick = 0; tick < 120; ++tick) w.step();
+    int bowlFuel = 0, bowlWax = 0, maxFuelColumn = 0, maxWaxColumn = 0;
+    int densityInversions = 0;
+    for (int x = bowlLeft; x <= bowlRight; ++x) {
+        int fuelColumn = 0, waxColumn = 0;
+        int previousLiquidDensity = 0;
+        for (int y = bowlWaterTop; y < bowlBase; ++y) {
+            const u8 bm = w.at(x, y).mat;
+            if (bm == MAT_FUEL) { ++bowlFuel; ++fuelColumn; }
+            if (bm == MAT_WAX)  { ++bowlWax;  ++waxColumn; }
+            if (MATS[bm].kind != KIND_LIQUID) continue;
+            const int density = materialDensityQ8(bm, w.temp[y * SIM_W + x]);
+            if (previousLiquidDensity > density + 64) ++densityInversions;
+            previousLiquidDensity = density;
+        }
+        if (fuelColumn > maxFuelColumn) maxFuelColumn = fuelColumn;
+        if (waxColumn > maxWaxColumn) maxWaxColumn = waxColumn;
+    }
+    if (bowlFuel != bowlFuelExpected || bowlWax != bowlWaxExpected ||
+        maxFuelColumn > 18 || maxWaxColumn > 12 || densityInversions != 0) {
+        fprintf(stderr, "curved-basin liquids kept walls (%d/%d Fuel max %d, %d/%d Wax max %d, inversions %d)\n",
+                bowlFuel, bowlFuelExpected, maxFuelColumn,
+                bowlWax, bowlWaxExpected, maxWaxColumn, densityInversions);
+        return 120;
     }
 
     /* Boiling stores expansion locally, then releases two connected gas
@@ -1481,7 +1754,7 @@ int main() {
     }
 
     /* The packed-pool fast path must retain convection. This marked hot parcel
-       has all eight neighbours occupied by Wax, so only that path can move
+       has all eight neighbours occupied by Fuel, so only that path can move
        it during this frame. */
     w.reset();
     const int packedX0 = 760, packedX1 = 766;
@@ -1497,7 +1770,7 @@ int main() {
         w.setCell(packedX0 - 1, y, MAT_RUBBER);
         w.setCell(packedX1 + 1, y, MAT_RUBBER);
         for (int x = packedX0; x <= packedX1; ++x) {
-            w.setCell(x, y, MAT_WAX);
+            w.setCell(x, y, MAT_FUEL);
             w.temp[y * SIM_W + x] = AMBIENT_TEMP;
         }
     }
@@ -1507,7 +1780,7 @@ int main() {
     w.step();
     int packedMarkerAfterY = packedMarkerY;
     for (int y = packedTop; y <= packedBottom; ++y)
-        if (w.at(packedMarkerX, y).mat == MAT_WAX &&
+        if (w.at(packedMarkerX, y).mat == MAT_FUEL &&
             w.at(packedMarkerX, y).moisture == 124) packedMarkerAfterY = y;
     if (packedMarkerAfterY > packedMarkerY - 2) {
         fprintf(stderr, "packed-fluid fast path suppressed convection (%d -> %d)\n",

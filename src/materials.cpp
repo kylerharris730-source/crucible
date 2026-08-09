@@ -849,10 +849,10 @@ MatInfo MATS[MAT_COUNT] = {
   { "Sieve", KIND_STATIC, 255, 0, 0, 0, 0, 0, 0, 60, 0, 0, 0, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, 0x9CA8A8, 0x687878, 0x9CA8A8, 0x687878, 0 },
   { "GasSieve", KIND_STATIC, 255, 0, 0, 0, 0, 0, 0, 60, 0, 0, 0, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, 0xB49CE0, 0x7860A0, 0xB49CE0, 0x7860A0, 0 },
   /* Slightly heavier than water at room temperature, but deliberately very
-     expansive: around 60 C it crosses water's density and starts rising.
+     expansive: around 41 C it crosses water's density and starts rising.
      Viscous enough to travel as slow amber bodies instead of spraying like
      water. Cohesion is a later, independently testable tuning layer. */
-  { "Wax", KIND_LIQUID, 104, 0, 0, 3, 150, 0, 0, 55, 1, 0, 0, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, 0xE4B84E, 0xA66A24, 0xE4B84E, 0xA66A24, 0 },
+  { "Wax", KIND_LIQUID, 104, 0, 0, 3, 150, 0, 0, 55, 1, 0, 0, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, 0xF1E9D8, 0xF1E9D8, 0xF1E9D8, 0xF1E9D8, 0 },
 };
 
 u32 g_colorLut[MAT_COUNT * 256];
@@ -1091,9 +1091,10 @@ static void initStrength() {
    can be reasoned about: light of strength s crosses s/opacity cells, so at
    LIGHT_MAX these are
 
-       air        3  ->  85 cells    daylight into a cave, a lamp's radius
+       air        2  -> 127 cells    daylight into a cave, a lamp's radius
        gas        5  ->  51          smoke and steam dim a room a little
-       liquid    12  ->  21          you can see underwater, not far
+       liquid     8  ->  32          ordinary fluid
+       water      4  ->  63          clear enough for long underwater sight
        solid     38  ->   6          six cells of rock and it is properly dark
 
    Air started at 6, for 42 cells. Both revisions of that number came from
@@ -1148,13 +1149,18 @@ static void initLight() {
            a lamp sat just outside the frame. */
         case KIND_EMPTY:  g_matOpacity[m] = 2;  break;
         case KIND_GAS:    g_matOpacity[m] = 5;  break;
-        /* Water used to stop a torch at ~21 cells. At 8 it carries useful
-           light roughly 32 cells: still murkier than air, but an underwater
-           tunnel is navigable and a submerged torch earns its place. */
+        /* Ordinary liquids remain murkier than gases. Water is overridden
+           below because it is the common environment the player actually
+           needs to see and build through. */
         case KIND_LIQUID: g_matOpacity[m] = 8;  break;
         default:          g_matOpacity[m] = 38; break;
         }
     }
+
+    /* Halving attenuation doubles useful reach: full light travels about 63
+       water cells rather than 32. Keep this water-specific so wax, acid and
+       industrial molten fluids retain their heavier optical character. */
+    g_matOpacity[MAT_WATER] = 4;
 
     /* The lamp is the only thing you build for light, so it is the brightest
        and everything else is measured against it. */
@@ -1827,14 +1833,15 @@ static void initUnseen() {
 
 void initMaterials() {
     /* Ordinary fluids expand subtly; wax is exaggerated on purpose so its
-       density crosses water's inside an achievable lamp temperature band.
-       Kept outside MatInfo to avoid another mostly-zero initializer column. */
+       density crosses water's around 41 C and has useful buoyancy by 50-55 C,
+       well clear of boiling. Kept outside MatInfo to avoid another mostly-zero
+       initializer column. */
     memset(g_matThermalExpansionQ8, 0, sizeof(g_matThermalExpansionQ8));
     for (int m = 0; m < MAT_COUNT; ++m) {
         if (MATS[m].kind == KIND_LIQUID) g_matThermalExpansionQ8[m] = 1;
         if (MATS[m].kind == KIND_GAS)    g_matThermalExpansionQ8[m] = 4;
     }
-    g_matThermalExpansionQ8[MAT_WAX] = 26;
+    g_matThermalExpansionQ8[MAT_WAX] = 52;
 
     for (int m = 0; m < MAT_COUNT; ++m) g_matGasExpansion[m] = 1;
     /* Water boiling should create a useful pressure pulse without turning a

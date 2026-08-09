@@ -134,3 +134,7 @@ void projRegisterLights();
 void projDraw(u32* px, int camX, int camY);
 int  projCount();
 int  projGlowMoteCount();
+int  projGlowAfterglowCount();
+/* Copies live mote positions for diagnostics and deterministic regression
+   tests. Returns the number copied, capped by capacity. */
+int  projGlowMoteSnapshot(float* xs, float* ys, int capacity);

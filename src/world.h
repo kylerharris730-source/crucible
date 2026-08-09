@@ -783,7 +783,8 @@ private:
     bool moveFilterFluid(int sx, int sy, int tx, int ty);
     void convert(int x, int y, u8 mat);
     void phaseChange(int x, int y, u8 mat);
-    bool tryMove(int sx, int sy, int tx, int ty);
+    bool tryMove(int sx, int sy, int tx, int ty,
+                 bool allowOwnedLiquidDisplacement = false);
 };
 
 extern World g_world;

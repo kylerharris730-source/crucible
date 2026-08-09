@@ -73,7 +73,10 @@ static const int GAS_PRESSURE_POCKET_NODES   = 2048;
 static const int GAS_PRESSURE_POCKET_BUDGET  = 128;
 static const int GAS_PRESSURE_EXPANSION_BURST = 5;
 static const int FLUID_CONVECTION_REACH       = 3;
+static const int WAX_CONVECTION_REACH         = 1;
 static const int FLUID_CONVECTION_DELTA       = 2;
+static const int SUBMERGED_LEVEL_REACH         = 64;
+static const int SUBMERGED_SINK_REACH          = 8;
 
 /* Divide a heat transfer by 2^shift to get the temperature change a material of
    that thermal mass actually feels, carrying the remainder stochastically so
@@ -295,7 +298,8 @@ static_assert(MAT_COUNT <= 128,
               "sparse occupants reserve bit 7 for gas volume provenance");
 static inline u8 occupantMat(u8 packed) { return (u8)(packed & GAS_EXCESS_MASK); }
 
-bool World::tryMove(int sx, int sy, int tx, int ty) {
+bool World::tryMove(int sx, int sy, int tx, int ty,
+                    bool allowOwnedLiquidDisplacement) {
     /* Nothing moves into an occupied entity box -- see the note in world.h.
        First test in the function and first comparison of the box test, so the
        common case (no entity, or nowhere near it) costs one predictable
@@ -393,6 +397,20 @@ bool World::tryMove(int sx, int sy, int tx, int ty) {
                                           tx == sx && ty == sy - 1;
             if (tm.kind != KIND_LIQUID && tm.kind != KIND_GAS &&
                 !gasPercolatingUp) return false;
+            /* General unlike-liquid exchange is owned by updateConvection's
+               LOWER, lighter parcel. A separate, explicit call below may let a
+               supported denser liquid level sideways/downward through a
+               lighter one. In that case the target parcel must not already
+               have moved or taken its turn this frame. That stamp check is the
+               piece that prevents a row of Water cells from relay-displacing
+               one Wax parcel sixteen times along a vessel wall. */
+            if (sm.kind == KIND_LIQUID && tm.kind == KIND_LIQUID) {
+                /* General gravity moves do not exchange unlike liquids. The
+                   explicit submerged-leveling calls in updateLiquid may opt
+                   in when they have proved that THIS source is the denser,
+                   exposed parcel moving toward a supported lower level. */
+                if (!allowOwnedLiquidDisplacement) return false;
+            }
             const int sourceDensity = materialDensityQ8(s.mat, temp[si]);
             const int targetDensity = materialDensityQ8(t.mat, temp[ti]);
             /* Gases invert the density test: they displace anything *heavier*,
@@ -610,12 +628,18 @@ void World::updatePowder(int x, int y) {
     tryMove(x, y, x - dx, y + 1);
 }
 
-/* Buoyant parcel convection. Every same-material liquid or gas uses the
+/* Buoyant parcel convection. Ordinary same-material liquids and gases use the
    three-cell vertical reach and two-degree threshold first tuned for Water.
    This carries an actual hot parcel upward rather than teleporting heat,
    making a heated fluid body form a warm upper layer without globally
    accelerating conduction through walls or solids. Different fluids exchange
    when the lower parcel's effective thermal density is meaningfully lighter.
+
+   Wax is the visible exception: its colour and coherent blobs make a
+   three-cell parcel swap read as matter teleporting, especially in the narrow
+   column against a vessel wall. Its internal convection is adjacent-only.
+   Wax/Water buoyancy was already adjacent-only below, so this changes neither
+   its density crossover nor its ability to rise through the surrounding pool.
 
    Alternating source-row parity and movement stamps keep each parcel to one
    bounded convection move of at most three cells per frame.
@@ -631,7 +655,8 @@ bool World::updateConvection(int x, int y) {
     const u8 aboveMat = cells[above].mat;
     if (MATS[aboveMat].kind != kind) return false;
     if (aboveMat == mat) {
-        const int reach = FLUID_CONVECTION_REACH;
+        const int reach = mat == MAT_WAX ? WAX_CONVECTION_REACH
+                                         : FLUID_CONVECTION_REACH;
         const int delta = FLUID_CONVECTION_DELTA;
         int target = i;
         for (int d = 1; d <= reach && y - d >= PLAY_Y0; ++d) {
@@ -694,7 +719,71 @@ void World::updateLiquid(int x, int y) {
     }
 
     if (tryMove(x, y, x, y + 1)) return;
+    /* A lone/exposed parcel may sink directly into a lighter liquid. Requiring
+       no same-material parcel immediately above is the anti-relay ownership
+       rule: the bottom cell of a Water column cannot repeatedly push one hot
+       Wax parcel upward through the whole column. Thick layers are sorted from
+       below by updateConvection instead. */
+    const u8 belowMat = cells[i + SIM_W].mat;
+    if (belowMat != c.mat && MATS[belowMat].kind == KIND_LIQUID &&
+        cells[i - SIM_W].mat != c.mat &&
+        tryMove(x, y, x, y + 1, true)) return;
     if (updateConvection(x, y)) return;
+
+    int dx = (c.flags & F_DIR) ? 1 : -1;
+
+    /* Submerged density leveling. Vertical swaps correctly sort materials but
+       leave the denser liquid as a steep mound once its bottom row is full.
+       Only a TOP parcel with the same liquid directly below enters this path.
+       It looks across the lower row for its first edge against a lighter
+       liquid, follows that lighter column downward for up to eight cells, then
+       trades places with the deepest parcel reached. Following the column is
+       what makes this work in a bowl rather than only on the perfectly flat
+       floor the first regression happened to use. This is the same bounded
+       pressure-flow approximation ordinary liquids use in air, now applied to
+       an immiscible interface.
+
+       Several top parcels can find successive edge cells in one frame, making
+       a mound relax promptly instead of opening and filling one blocky hole at
+       a time. A one-cell-deep layer has no source parcel above it, so it stops
+       exactly flat rather than diffusing sideways forever. */
+    const u8 aboveLevelMat = cells[i - SIM_W].mat;
+    const int sourceDensity = materialDensityQ8(mat, temp[i]);
+    if (aboveLevelMat != mat && MATS[aboveLevelMat].kind == KIND_LIQUID &&
+        cells[i + SIM_W].mat == mat &&
+        sourceDensity > materialDensityQ8(aboveLevelMat, temp[i - SIM_W]) +
+                        DENSITY_SWAP_EPS_Q8) {
+        for (int attempt = 0; attempt < 2; ++attempt) {
+            const int dir = attempt == 0 ? dx : -dx;
+            for (int step = 1; step <= SUBMERGED_LEVEL_REACH; ++step) {
+                const int tx = x + dir * step;
+                if (tx < PLAY_X0 || tx > PLAY_X1) break;
+                const int ti = (y + 1) * SIM_W + tx;
+                const u8 target = cells[ti].mat;
+                if (target == mat) continue;
+                if (MATS[target].kind != KIND_LIQUID ||
+                    sourceDensity <= materialDensityQ8(target, temp[ti]) + DENSITY_SWAP_EPS_Q8)
+                    break;
+                int targetY = y + 1;
+                for (int sink = 1; sink < SUBMERGED_SINK_REACH; ++sink) {
+                    const int nextY = targetY + 1;
+                    if (nextY > PLAY_Y1) break;
+                    const int nextI = nextY * SIM_W + tx;
+                    const u8 next = cells[nextI].mat;
+                    if (MATS[next].kind != KIND_LIQUID ||
+                        sourceDensity <= materialDensityQ8(next, temp[nextI]) +
+                                         DENSITY_SWAP_EPS_Q8)
+                        break;
+                    targetY = nextY;
+                }
+                if (tryMove(x, y, tx, targetY, true)) {
+                    dirtyArea(imin(x, tx), y, imax(x, tx), targetY);
+                    return;
+                }
+                break;
+            }
+        }
+    }
 
     /* Viscosity. For a liquid the `jitter` byte is a chance out of 255 that the
        cell simply refuses to flow sideways this frame -- see the note on the
@@ -718,7 +807,6 @@ void World::updateLiquid(int x, int y) {
         return;
     }
 
-    int dx = (c.flags & F_DIR) ? 1 : -1;
     if (tryMove(x, y, x + dx, y + 1)) return;
     if (tryMove(x, y, x - dx, y + 1)) return;
 
