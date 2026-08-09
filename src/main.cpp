@@ -246,6 +246,18 @@ static HBITMAP g_matIconBmp[MAT_COUNT];
 static ItemId  g_hoverItem = ITEM_NONE;
 static RECT    g_hoverRect;
 static int     g_mx = 0, g_my = 0;
+/* GetAsyncKeyState reports the keyboard, not this window. Without a focus gate
+   an unfocused Crucible walks your character while you type somewhere else --
+   and four local windows in a loopback test all move as one.
+
+   Asked of the system every time rather than tracked through WM_ACTIVATEAPP.
+   A flag has to start somewhere, and a window which has never been focused is
+   never sent a deactivation, so it would sit at its initial value and keep
+   reading the keyboard -- which is exactly the bug this gate exists to fix. */
+static HWND    g_hwnd = 0;
+static bool keyHeld(int vk) {
+    return g_hwnd && GetForegroundWindow() == g_hwnd && (GetAsyncKeyState(vk) & 0x8000) != 0;
+}
 static bool inRect(const RECT& r, int x, int y);
 
 static u32 iconLight(u32 c, int add) {
@@ -1979,7 +1991,7 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
            one that takes a modifier -- but it stays on the bare wheel whenever
            the hotbar is not on screen, since then there is nothing to select. */
         const bool hotbarUp = g_survival && g_playerOn;
-        if (!hotbarUp || (GetAsyncKeyState('Q') & 0x8000)) {
+        if (!hotbarUp || keyHeld('Q')) {
             changeSize(dir);
         } else {
             /* Up scrolls left along the bar, matching the usual convention. */
@@ -2257,11 +2269,11 @@ static PlayerCommand localPlayerCommand() {
     for (int mat = 0; mat < MAT_COUNT; ++mat)
         if (g_digFilterMat[mat]) c.digFilter[mat >> 3] |= (u8)(1u << (mat & 7));
     if (!g_menuOpen && !g_creativeOpen && !g_craftOpen && g_chestOpen < 0 && !g_mapOpen) {
-        if ((GetAsyncKeyState('A') & 0x8000) || (GetAsyncKeyState(VK_LEFT) & 0x8000)) c.bits |= PCMD_LEFT;
-        if ((GetAsyncKeyState('D') & 0x8000) || (GetAsyncKeyState(VK_RIGHT) & 0x8000)) c.bits |= PCMD_RIGHT;
-        if ((GetAsyncKeyState('W') & 0x8000) || (GetAsyncKeyState(VK_UP) & 0x8000) ||
-            (GetAsyncKeyState(VK_SPACE) & 0x8000)) c.bits |= PCMD_JUMP;
-        if ((GetAsyncKeyState('S') & 0x8000) || (GetAsyncKeyState(VK_DOWN) & 0x8000)) c.bits |= PCMD_DOWN;
+        if (keyHeld('A') || keyHeld(VK_LEFT)) c.bits |= PCMD_LEFT;
+        if (keyHeld('D') || keyHeld(VK_RIGHT)) c.bits |= PCMD_RIGHT;
+        if (keyHeld('W') || keyHeld(VK_UP) ||
+            keyHeld(VK_SPACE)) c.bits |= PCMD_JUMP;
+        if (keyHeld('S') || keyHeld(VK_DOWN)) c.bits |= PCMD_DOWN;
         if (g_lmb && !g_uiCapture) c.bits |= PCMD_USE_LEFT;
         if (g_rmb && !g_uiCapture) c.bits |= PCMD_USE_RIGHT;
         if (g_interactPulse) c.bits |= PCMD_INTERACT;
@@ -2390,8 +2402,11 @@ static void remoteVisualTick() {
     }
 }
 
-static PlayerCommand g_remoteInput;
-static int g_remoteInputAge = 1000;
+/* One held command per remote slot. Held input persists between packets, so a
+   shared latest-command would apply whoever spoke last to every other player
+   and leave the quiet ones motionless. */
+static PlayerCommand g_remoteInput[MAX_PLAYERS];
+static int g_remoteInputAge[MAX_PLAYERS] = { 1000, 1000, 1000, 1000 };
 static PlayerCommand g_localInput;
 
 static Aim commandAimFor(const PlayerSession& session, const PlayerCommand& command) {
@@ -2858,7 +2873,7 @@ static void processPlayerActions() {
     int budget = 128;
     while (budget > 0 && popLocalAction(&action)) { applyPlayerAction(action); --budget; }
     while (budget > 0 && netPopRemoteAction(&action)) {
-        applyPlayerAction(action); netMarkRemoteActionApplied(action.sequence); --budget;
+        applyPlayerAction(action); netMarkRemoteActionApplied(action.player, action.sequence); --budget;
     }
 }
 
@@ -2897,16 +2912,20 @@ static void updatePlayerFromCommand(int slot, PlayerSession& session, PlayerComm
     command.pressed = 0; /* edge verbs are consumed once, even if this held command is reused */
 }
 
-static void updateRemotePlayerFromCommand(bool allowMovement) {
-    PlayerCommand fresh;
-    if (netPopRemoteCommand(&fresh)) { g_remoteInput = fresh; g_remoteInputAge = 0; }
-    else if (g_remoteInputAge < 1000) ++g_remoteInputAge;
-    if (g_remoteInputAge > 30) g_remoteInput.bits = 0; /* dropped connection cannot leave movement held */
-
-    const int slot = playerSessionSlotForNetworkId(g_remoteInput.player);
-    if (slot < 1 || slot >= MAX_PLAYERS) return;
-    updatePlayerFromCommand(slot, g_playerSessions[slot], g_remoteInput, allowMovement);
-    netMarkRemoteCommandApplied(g_remoteInput.sequence);
+static void updateRemotePlayersFromCommands(bool allowMovement) {
+    for (int slot = 1; slot < MAX_PLAYERS; ++slot) {
+        if (!g_playerSessions[slot].connected) { g_remoteInputAge[slot] = 1000; continue; }
+        PlayerCommand fresh;
+        if (netPopRemoteCommand((PlayerId)slot, &fresh)) {
+            g_remoteInput[slot] = fresh; g_remoteInputAge[slot] = 0;
+        } else if (g_remoteInputAge[slot] < 1000) ++g_remoteInputAge[slot];
+        /* A dropped or stalled connection must not leave movement held down. */
+        if (g_remoteInputAge[slot] > 30) g_remoteInput[slot].bits = 0;
+        if (g_remoteInputAge[slot] >= 1000) continue; /* never heard from */
+        if (playerSessionSlotForNetworkId(g_remoteInput[slot].player) != slot) continue;
+        updatePlayerFromCommand(slot, g_playerSessions[slot], g_remoteInput[slot], allowMovement);
+        netMarkRemoteCommandApplied((PlayerId)slot, g_remoteInput[slot].sequence);
+    }
 }
 
 /* Wiring is normally aiming for an existing terminal or wire, not the empty
@@ -4132,8 +4151,8 @@ static void drawCursor(HDC hdc) {
     /* Q is already the size modifier. Holding it also reveals the exact disc
        the next brush action will affect, which makes large heat/terrain edits
        deliberate instead of a guess from a number in the sidebar. */
-    if ((GetAsyncKeyState('Q') & 0x8000) && !g_wireMode && !g_circuitWireMode) {
-        const bool digging = g_survival && g_playerOn && (GetAsyncKeyState(VK_RBUTTON) & 0x8000);
+    if (keyHeld('Q') && !g_wireMode && !g_circuitWireMode) {
+        const bool digging = g_survival && g_playerOn && keyHeld(VK_RBUTTON);
         drawBrushOutline(hdc, ax, ay, digging ? digRadius() : buildRadius());
     }
 
@@ -5221,7 +5240,7 @@ static void serverTick(const LARGE_INTEGER& perfFrequency) {
             !g_creativeOpen && !g_craftOpen && g_chestOpen < 0 && !g_mapOpen;
         updatePlayerFromCommand(0, g_playerSessions[0], g_localInput, localCanMove);
     }
-    if (onlineHost) updateRemotePlayerFromCommand(!g_paused || singleStep);
+    if (onlineHost) updateRemotePlayersFromCommands(!g_paused || singleStep);
     processPlayerActions();
     refreshHostLogisticsPause();
 
@@ -5267,10 +5286,10 @@ static void clientCameraTick() {
     if (!g_playerOn && !g_menuOpen && !g_creativeOpen && !g_craftOpen && g_chestOpen < 0) {
         const float pan = 6.0f;
         float dx = 0.0f, dy = 0.0f;
-        if ((GetAsyncKeyState('A') & 0x8000) || (GetAsyncKeyState(VK_LEFT)  & 0x8000)) dx -= pan;
-        if ((GetAsyncKeyState('D') & 0x8000) || (GetAsyncKeyState(VK_RIGHT) & 0x8000)) dx += pan;
-        if ((GetAsyncKeyState('W') & 0x8000) || (GetAsyncKeyState(VK_UP)    & 0x8000)) dy -= pan;
-        if ((GetAsyncKeyState('S') & 0x8000) || (GetAsyncKeyState(VK_DOWN)  & 0x8000)) dy += pan;
+        if (keyHeld('A') || keyHeld(VK_LEFT)) dx -= pan;
+        if (keyHeld('D') || keyHeld(VK_RIGHT)) dx += pan;
+        if (keyHeld('W') || keyHeld(VK_UP)) dy -= pan;
+        if (keyHeld('S') || keyHeld(VK_DOWN)) dy += pan;
         if (dx != 0.0f || dy != 0.0f) panCamera(dx, dy);
     }
     remoteVisualTick();
@@ -5489,13 +5508,19 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR commandLine, int) {
     RECT r = { 0, 0, WIN_W, WIN_H };
     AdjustWindowRect(&r, style, FALSE);
 
-    const char* windowTitle = (savedTestHost || emptyTestHost) ? "Crucible - LOCAL HOST" :
-                              joinSwitch ? "Crucible - LOCAL CLIENT" : "Crucible";
+    /* Several local clients otherwise share one title, which makes a
+       four-window loopback session impossible to tell apart on screen. */
+    char windowTitle[64];
+    strcpy(windowTitle, (savedTestHost || emptyTestHost) ? "Crucible - LOCAL HOST" :
+                        joinSwitch ? "Crucible - LOCAL CLIENT" : "Crucible");
+    const char* labelSwitch = commandLine ? strstr(commandLine, "--label ") : 0;
+    if (labelSwitch) sprintf(windowTitle + strlen(windowTitle), " %d", atoi(labelSwitch + 8));
     HWND hwnd = CreateWindowA("CrucibleWnd", windowTitle, style,
                               CW_USEDEFAULT, CW_USEDEFAULT,
                               r.right - r.left, r.bottom - r.top,
                               NULL, NULL, hInst, NULL);
     if (!hwnd) return 1;
+    g_hwnd = hwnd;   /* keyHeld() compares this against the foreground window */
     ShowWindow(hwnd, SW_SHOW);
 
     g_font = CreateFontA(14, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,

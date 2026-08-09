@@ -2,9 +2,7 @@
 
 ## Playable target
 
-- Two players in cooperative survival today: one host and one joined peer.
-- The session/world model already has four stable slots; accepting more than
-  one remote socket is a later transport extension, not a world-state rewrite.
+- Four players in cooperative survival: one host and up to three joined peers.
 - One player's game is the authoritative host and owns the save.
 - Another computer joins by entering the host's IPv4 address. Port 27841 is
   fixed for this first version.
@@ -52,6 +50,18 @@ activation is a union of chunk islands: each remote player contributes a live
 core around their body rather than stretching one huge rectangle between
 distant players. Simulation cost therefore scales with active areas, not the
 distance separating them.
+
+The transport holds one `Peer` per connection rather than a single socket.
+Buffers, handshake progress, the assigned slot, the acknowledgement watermarks
+and the chunk replica the host believes that client holds are all per peer:
+two players in different caves must not share one chunk-hash table, and one
+shared acknowledgement watermark would tell every client that input it never
+sent had been applied, discarding its own pending movement. Held commands are
+coalesced per player for the same reason. A connection may only drive the
+player it was given, so a packet naming somebody else's id is discarded rather
+than applied. The world half of a state packet is serialized and compressed
+once per host frame and framed per peer behind its own watermarks. A fourth
+joiner is told the game is full.
 
 The transport is nonblocking TCP. A protocol and exact-build handshake runs
 before world data is accepted. A clean build identifies its Git revision; a
@@ -127,12 +137,16 @@ private network.
 The command-line equivalents, mainly for repeatable testing, are
 `crucible.exe --host` and `crucible.exe --join 192.168.x.x`.
 
-For iteration on one computer, run `multiplayer_test.bat`. It launches the
-same built executable twice over loopback, labels the windows LOCAL HOST and
-LOCAL CLIENT, and creates a small deterministic arena with inventory stacks.
-This exercises the
+For iteration on one computer, run `multiplayer_test.bat`, optionally with a
+client count: `multiplayer_test.bat 3` launches a full four-window session.
+It runs the same built executable over loopback, labels the windows LOCAL HOST
+and LOCAL CLIENT n, and creates a small deterministic arena with inventory
+stacks. This exercises the
 real socket, snapshot, prediction, correction, inventory, and rendering paths
-without copying a build to another machine. The automated two-process smoke
+without copying a build to another machine. Note that keyboard input is gated
+on the foreground window: `GetAsyncKeyState` reports the keyboard rather than
+one window, so without that gate every local window would move as one (and an
+unfocused Crucible would walk your character while you typed elsewhere). The automated two-process smoke
 test remains the fast headless check; the launcher is the playable check.
 
 The checked-in two-process smoke test creates a real loopback TCP peer and
@@ -140,14 +154,18 @@ asserts handshake, full snapshot load, player mapping, readiness, held command
 framing, authoritative command acknowledgement, ordered discrete-action framing,
 and automatic repair after deliberately corrupting a client chunk. A second test
 compiles two different build IDs and
-proves the client is rejected before world synchronization. The production
+proves the client is rejected before world synchronization. A third runs four
+real processes: it asserts three sockets are accepted into three distinct
+slots, that each connection drives only the player it was given (one client
+deliberately sends a command impersonating another player, which must never
+reach the host), that no two slots share an aim, and that a fourth joiner is
+refused rather than admitted or left hanging. The production
 executable also has a headless local-loopback test for placement, crafting, and
 inventory transfer, and has been run as two simultaneous full processes with a
 sustained established session.
 
 ## Remaining extensions
 
-- Accept sockets for player slots two and three.
 - Optional LAN discovery, NAT traversal/relay, dedicated server, and host
   migration.
 - Replace ABI blocks with portable field-wise overlay encoding before

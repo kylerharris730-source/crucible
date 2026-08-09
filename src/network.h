@@ -100,13 +100,18 @@ void netMarkPredictedWorldEdit(int x0, int y0, int x1, int y1, int radius,
                                u32 commandSequence);
 
 bool netSendCommand(const PlayerCommand& command);
-bool netPopRemoteCommand(PlayerCommand* command);
+/* Held input is coalesced per player, so the caller names the slot it is about
+   to tick. A single queue would let one player's packet rate decide how often
+   another player moved. */
+bool netPopRemoteCommand(PlayerId player, PlayerCommand* command);
 /* The host acknowledges a command only after the authoritative player tick has
    consumed it. Clients use that watermark to replay only inputs which the host
-   state does not contain yet, rather than snapping back on every snapshot. */
-void netMarkRemoteCommandApplied(u32 sequence);
+   state does not contain yet, rather than snapping back on every snapshot.
+   The watermark is per connection: telling one client that another client's
+   sequence had been applied would discard its own pending movement. */
+void netMarkRemoteCommandApplied(PlayerId player, u32 sequence);
 u32 netAcknowledgedCommand();
-void netMarkRemoteActionApplied(u32 sequence);
+void netMarkRemoteActionApplied(PlayerId player, u32 sequence);
 u32 netAcknowledgedAction();
 u32 netStateSerial();
 bool netSendAction(const NetAction& action);
@@ -114,6 +119,8 @@ bool netPopRemoteAction(NetAction* action);
 
 NetRole netRole();
 bool netConnected();
+/* Live joined sockets. Zero on a host that is only listening. */
+int netPeerCount();
 bool netReady();
 bool netClientReady();
 PlayerId netAssignedPlayer();

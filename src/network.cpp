@@ -15,6 +15,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 #ifndef CRUCIBLE_BUILD_ID
 #ifdef CRUCIBLE_TEST_MISMATCH_BUILD
@@ -25,8 +26,8 @@
 #endif
 
 static const u32 NET_MAGIC = 0x54454E43u; /* CNET on little endian */
-static const u32 NET_PROTOCOL = 11;
-static const u32 NET_STATE_SCHEMA = 9;
+static const u32 NET_PROTOCOL = 12;
+static const u32 NET_STATE_SCHEMA = 10;
 static const u32 NET_MAX_PACKET = 256u * 1024u * 1024u;
 
 enum PacketType {
@@ -76,24 +77,66 @@ struct Reader {
     }
 };
 
+/* Slot zero is the host itself, so a full game is the host plus this many
+   joined sockets. The world model already carried four stable slots; only the
+   transport assumed one. */
+static const int MAX_PEERS = MAX_PLAYERS - 1;
+
+/* Everything one connection owns. Each of these was a file-scope global while
+   the host accepted a single socket, and every one of them turned out to be
+   per-connection the moment a second player could exist: two peers are at
+   different points in the handshake, are owed different acknowledgement
+   watermarks, and hold different parts of the world. Sharing any of them
+   between peers is the failure mode this struct exists to prevent. */
+struct Peer {
+    SOCKET sock;
+    std::vector<u8> recv, send;
+    size_t sendAt;
+    bool connecting, handshake, ready;
+    PlayerId assigned;      /* host: the player slot given to this connection */
+    u32 appliedCommand;     /* newest command from THIS peer the host consumed */
+    u32 appliedAction;
+    int scanCursor, urgentCursor, frame;
+    /* The host's belief about the replica this peer holds. Two players standing
+       in different caves must not share one hash table, or each would
+       permanently invalidate the other's chunks. */
+    u32 chunkHash[CHUNK_COUNT];
+    u8 urgentChunk[CHUNK_COUNT];
+
+    Peer() { sock = INVALID_SOCKET; clear(); }
+    void clear() {
+        recv.clear(); send.clear(); sendAt = 0;
+        connecting = handshake = ready = false; assigned = PLAYER_NONE;
+        appliedCommand = appliedAction = 0;
+        scanCursor = urgentCursor = frame = 0;
+        memset(chunkHash, 0, sizeof(chunkHash));
+        memset(urgentChunk, 0, sizeof(urgentChunk));
+    }
+    bool live() const { return sock != INVALID_SOCKET; }
+};
+
+/* A client uses exactly one of these, index zero, for its outbound connection.
+   Host and client therefore share the framing, handshake and pump code rather
+   than growing a second copy of it. */
+static Peer g_peers[MAX_PEERS];
+
 static NetRole g_role = NET_OFF;
-static SOCKET g_listen = INVALID_SOCKET, g_peer = INVALID_SOCKET;
-static bool g_wsa = false, g_connecting = false, g_handshake = false;
-static bool g_ready = false;
-static PlayerId g_assigned = PLAYER_NONE;
+static SOCKET g_listen = INVALID_SOCKET;
+static bool g_wsa = false;
 static char g_status[192] = "Offline";
 static char g_localAddress[64] = "127.0.0.1";
-static std::vector<u8> g_recv, g_send;
-static size_t g_sendAt = 0;
-static PlayerCommand g_remoteCommand;
-static bool g_haveRemoteCommand = false;
-static u32 g_appliedRemoteCommand = 0;
+/* Client-side only. The host's equivalents live on each Peer. */
+static PlayerId g_assigned = PLAYER_NONE;
+static bool g_clientReady = false;
 static u32 g_acknowledgedCommand = 0;
-static u32 g_appliedRemoteAction = 0;
 static u32 g_acknowledgedAction = 0;
 static u32 g_stateSerial = 0;
+/* One held command per player slot. Coalescing has to be per player: folding
+   two players' inputs into a single latest-command slot would let a fast
+   sender starve a slow one, and would apply one player's aim to another. */
+static PlayerCommand g_remoteCommand[MAX_PLAYERS];
+static bool g_haveRemoteCommand[MAX_PLAYERS];
 static std::deque<NetAction> g_remoteActions;
-static u32 g_chunkHash[CHUNK_COUNT];
 /* Hash of the last AUTHORITATIVE contents received for each client chunk.
    Client-side world prediction is allowed to change g_world between packets;
    reporting that speculative hash would make the host continuously undo it. */
@@ -101,9 +144,6 @@ static u32 g_clientAuthorityHash[CHUNK_COUNT];
 /* Highest unacknowledged local world-edit command touching each chunk. A
    chunk packet captured before that command must not erase its prediction. */
 static u32 g_clientPredictedChunkCommand[CHUNK_COUNT];
-static bool g_urgentChunk[CHUNK_COUNT];
-static int g_urgentChunkCursor = 0;
-static int g_netFrame = 0;
 
 static void packBytes(Writer& out, const u8* src, size_t n);
 static bool unpackBytes(Reader& in, std::vector<u8>& out);
@@ -146,35 +186,51 @@ static void closeSocket(SOCKET& s) {
     if (s != INVALID_SOCKET) { closesocket(s); s = INVALID_SOCKET; }
 }
 
-static void disconnectPeer(const char* reason) {
-    closeSocket(g_peer);
-    if (g_role == NET_HOST && g_assigned != PLAYER_NONE) {
-        playerSessionClose(g_assigned);
+static int connectedPeerCount() {
+    int n = 0;
+    for (int i = 0; i < MAX_PEERS; ++i) if (g_peers[i].live()) ++n;
+    return n;
+}
+
+/* Drop one connection without touching anybody else's. The player slot is
+   released so a later joiner can reuse it; the generation counter in that slot
+   is what stops this peer's in-flight packets acting on its replacement. */
+static void disconnectPeer(Peer& peer, const char* reason) {
+    closeSocket(peer.sock);
+    if (g_role == NET_HOST && peer.assigned != PLAYER_NONE) {
+        const PlayerId gone = peer.assigned;
+        playerSessionClose(gone);
+        if (gone < MAX_PLAYERS) g_haveRemoteCommand[gone] = false;
+        /* Queued actions from a departed player would otherwise be applied to
+           whoever inherits the slot. */
+        for (size_t i = g_remoteActions.size(); i-- > 0;)
+            if (g_remoteActions[i].player == gone)
+                g_remoteActions.erase(g_remoteActions.begin() + (long)i);
     }
-    g_assigned = PLAYER_NONE; g_ready = g_handshake = g_connecting = false;
-    g_recv.clear(); g_send.clear(); g_sendAt = 0;
-    g_haveRemoteCommand = false; g_remoteActions.clear();
-    g_appliedRemoteCommand = g_acknowledgedCommand = 0;
-    g_appliedRemoteAction = g_acknowledgedAction = 0; g_stateSerial = 0;
-    memset(g_clientAuthorityHash, 0, sizeof(g_clientAuthorityHash));
-    memset(g_clientPredictedChunkCommand, 0, sizeof(g_clientPredictedChunkCommand));
-    memset(g_urgentChunk, 0, sizeof(g_urgentChunk));
-    if (g_role == NET_HOST) statusf("Player left -- waiting for player");
-    else statusf(reason ? reason : "Disconnected from host");
+    peer.clear();
+    if (g_role == NET_HOST) {
+        const int left = connectedPeerCount();
+        if (left > 0) sprintf(g_status, "Player left -- %d connected", left);
+        else statusf("Player left -- waiting for player");
+    } else {
+        g_clientReady = false; g_assigned = PLAYER_NONE;
+        g_acknowledgedCommand = g_acknowledgedAction = 0; g_stateSerial = 0;
+        memset(g_clientAuthorityHash, 0, sizeof(g_clientAuthorityHash));
+        memset(g_clientPredictedChunkCommand, 0, sizeof(g_clientPredictedChunkCommand));
+        statusf(reason ? reason : "Disconnected from host");
+    }
 }
 
 void netStop() {
     const bool wasClient = g_role == NET_CLIENT;
-    closeSocket(g_peer); closeSocket(g_listen);
-    g_recv.clear(); g_send.clear(); g_sendAt = 0;
-    g_connecting = g_handshake = g_ready = false;
-    g_assigned = PLAYER_NONE; g_haveRemoteCommand = false;
+    for (int i = 0; i < MAX_PEERS; ++i) { closeSocket(g_peers[i].sock); g_peers[i].clear(); }
+    closeSocket(g_listen);
+    g_assigned = PLAYER_NONE; g_clientReady = false;
+    for (int i = 0; i < MAX_PLAYERS; ++i) g_haveRemoteCommand[i] = false;
     g_remoteActions.clear();
-    g_appliedRemoteCommand = g_acknowledgedCommand = 0;
-    g_appliedRemoteAction = g_acknowledgedAction = 0; g_stateSerial = 0;
+    g_acknowledgedCommand = g_acknowledgedAction = 0; g_stateSerial = 0;
     memset(g_clientAuthorityHash, 0, sizeof(g_clientAuthorityHash));
     memset(g_clientPredictedChunkCommand, 0, sizeof(g_clientPredictedChunkCommand));
-    memset(g_urgentChunk, 0, sizeof(g_urgentChunk));
     if (g_role == NET_HOST)
         for (int i = 1; i < MAX_PLAYERS; ++i) {
             playerSessionClose((PlayerId)i);
@@ -190,7 +246,8 @@ bool netHost(u16 port) {
     BOOL reuse = TRUE; setsockopt(g_listen, SOL_SOCKET, SO_REUSEADDR, (const char*)&reuse, sizeof(reuse));
     sockaddr_in a; memset(&a, 0, sizeof(a)); a.sin_family = AF_INET;
     a.sin_addr.s_addr = htonl(INADDR_ANY); a.sin_port = htons(port);
-    if (bind(g_listen, (sockaddr*)&a, sizeof(a)) == SOCKET_ERROR || listen(g_listen, 1) == SOCKET_ERROR) {
+    if (bind(g_listen, (sockaddr*)&a, sizeof(a)) == SOCKET_ERROR ||
+        listen(g_listen, MAX_PEERS) == SOCKET_ERROR) {
         closeSocket(g_listen); statusf("Could not bind LAN host port"); return false;
     }
     if (!nonblocking(g_listen)) {
@@ -203,37 +260,41 @@ bool netHost(u16 port) {
 
 bool netJoin(const char* ipv4, u16 port) {
     netStop(); if (!startup()) return false;
-    g_peer = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (g_peer == INVALID_SOCKET) { statusf("Could not create client socket"); return false; }
-    if (!nonblocking(g_peer)) {
-        closeSocket(g_peer); statusf("Could not configure client socket"); return false;
+    Peer& peer = g_peers[0];
+    peer.sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (peer.sock == INVALID_SOCKET) { statusf("Could not create client socket"); return false; }
+    if (!nonblocking(peer.sock)) {
+        closeSocket(peer.sock); statusf("Could not configure client socket"); return false;
     }
-    preferLowLatency(g_peer);
+    preferLowLatency(peer.sock);
     sockaddr_in a; memset(&a, 0, sizeof(a)); a.sin_family = AF_INET;
     a.sin_addr.s_addr = inet_addr(ipv4); a.sin_port = htons(port);
-    if (a.sin_addr.s_addr == INADDR_NONE) { closeSocket(g_peer); statusf("Enter a numeric IPv4 address"); return false; }
-    const int r = connect(g_peer, (sockaddr*)&a, sizeof(a));
+    if (a.sin_addr.s_addr == INADDR_NONE) { closeSocket(peer.sock); statusf("Enter a numeric IPv4 address"); return false; }
+    const int r = connect(peer.sock, (sockaddr*)&a, sizeof(a));
     if (r == SOCKET_ERROR) {
         const int e = WSAGetLastError();
         if (e != WSAEWOULDBLOCK && e != WSAEINPROGRESS) {
-            closeSocket(g_peer); statusf("Could not start connection"); return false;
+            closeSocket(peer.sock); statusf("Could not start connection"); return false;
         }
     }
-    g_role = NET_CLIENT; g_connecting = r == SOCKET_ERROR;
+    g_role = NET_CLIENT; peer.connecting = r == SOCKET_ERROR;
     sprintf(g_status, "Connecting to %s:%u", ipv4, (unsigned)port);
     return true;
 }
 
-static void queuePacket(u8 type, const std::vector<u8>& payload) {
+static void queuePacket(Peer& peer, u8 type, const std::vector<u8>& payload) {
+    if (!peer.live()) return;
     const u32 len = (u32)payload.size() + 1;
-    for (int i = 0; i < 4; ++i) g_send.push_back((u8)(len >> (i * 8)));
-    g_send.push_back(type);
-    g_send.insert(g_send.end(), payload.begin(), payload.end());
+    for (int i = 0; i < 4; ++i) peer.send.push_back((u8)(len >> (i * 8)));
+    peer.send.push_back(type);
+    peer.send.insert(peer.send.end(), payload.begin(), payload.end());
 }
 
-static void queueHello() {
+static size_t backlog(const Peer& peer) { return peer.send.size() - peer.sendAt; }
+
+static void queueHello(Peer& peer) {
     Writer w; w.u32v(NET_MAGIC); w.u32v(NET_PROTOCOL); w.string(CRUCIBLE_BUILD_ID);
-    queuePacket(PK_HELLO, w.b); g_handshake = true;
+    queuePacket(peer, PK_HELLO, w.b); peer.handshake = true;
     statusf("Connected -- checking game build");
 }
 
@@ -263,21 +324,23 @@ static bool ensureSnapshotDirectory() {
     return GetLastError() == 183u;
 }
 
-static void sendSnapshot(World& world) {
+static void sendSnapshot(Peer& peer, World& world) {
     const char* path = "build\\net-host-snapshot.tmp";
     if (!ensureSnapshotDirectory()) { statusf("Could not create snapshot directory"); return; }
     if (!saveWrite(path, world)) { statusf("Could not make join snapshot"); return; }
     std::vector<u8> bytes;
     if (!readWholeFile(path, bytes)) { remove(path); statusf("Could not read join snapshot"); return; }
-    remove(path); queuePacket(PK_WORLD_SNAPSHOT, bytes);
+    remove(path); queuePacket(peer, PK_WORLD_SNAPSHOT, bytes);
     statusf("Sending world snapshot");
 }
 
+/* The world half of a state packet is identical for everybody; only the two
+   acknowledgement watermarks are per peer. Keeping those outside the packed
+   block lets one serialization and one compression pass serve every peer,
+   instead of doing that work once per connection every state frame. */
 static void sendState() {
     Writer w;
     w.u32v(NET_STATE_SCHEMA);
-    w.u32v(g_appliedRemoteCommand);
-    w.u32v(g_appliedRemoteAction);
     w.u32v((u32)sizeof(Player)); w.u32v((u32)sizeof(Inventory));
     w.u32v((u32)sizeof(Entity)); w.u32v((u32)sizeof(Pickup));
     w.u32v((u32)sizeof(Projectile)); w.u32v((u32)sizeof(Device));
@@ -305,7 +368,14 @@ static void sendState() {
     w.u32v(g_worldTime); w.u32v(g_bossesBeaten); w.u32v(g_rng);
     Writer packed;
     packBytes(packed, w.b.empty() ? 0 : &w.b[0], w.b.size());
-    queuePacket(PK_STATE, packed.b);
+    for (int i = 0; i < MAX_PEERS; ++i) {
+        Peer& peer = g_peers[i];
+        if (!peer.live() || !peer.ready) continue;
+        Writer out;
+        out.u32v(peer.appliedCommand); out.u32v(peer.appliedAction);
+        out.bytes(packed.b.empty() ? 0 : &packed.b[0], packed.b.size());
+        queuePacket(peer, PK_STATE, out.b);
+    }
 }
 
 static u32 hashChunk(const World& world, int cx, int cy) {
@@ -409,13 +479,14 @@ static bool unpackPlane(Reader& in, u8* dst, int n) {
     return true;
 }
 
-static void sendChunk(const World& world, int cx, int cy) {
+static void sendChunk(Peer& peer, const World& world, int cx, int cy) {
     static u8 plane[CHUNK * CHUNK];
     Writer w; w.u16v((u16)cx); w.u16v((u16)cy);
-    /* This is the newest remote input represented by the snapshot. The client
-       uses it to distinguish a correction from a packet that was already old
-       when its locally predicted placement happened. */
-    w.u32v(g_appliedRemoteCommand);
+    /* This is the newest input from THIS peer represented by the snapshot. The
+       client uses it to distinguish a correction from a packet that was already
+       old when its locally predicted placement happened. Another player's
+       command sequence would be meaningless here. */
+    w.u32v(peer.appliedCommand);
     const int x0 = cx << CHUNK_SHIFT, y0 = cy << CHUNK_SHIFT;
     for (int field = 0; field < 6; ++field) {
         int p = 0;
@@ -430,11 +501,11 @@ static void sendChunk(const World& world, int cx, int cy) {
         }
         packPlane(w, plane, CHUNK * CHUNK);
     }
-    queuePacket(PK_CHUNK, w.b);
+    queuePacket(peer, PK_CHUNK, w.b);
 }
 
-static void sendChangedChunks(const World& world) {
-    const int slot = playerSessionSlotForNetworkId(g_assigned);
+static void sendChangedChunks(Peer& peer, const World& world) {
+    const int slot = playerSessionSlotForNetworkId(peer.assigned);
     if (slot < 0) return;
     const Player& p = g_playerSessions[slot].body;
     const int x0 = imax(0, (int)p.centreX() - 512), x1 = imin(SIM_W - 1, (int)p.centreX() + 512);
@@ -443,23 +514,25 @@ static void sendChangedChunks(const World& world) {
     const int cy0 = y0 >> CHUNK_SHIFT, cy1 = y1 >> CHUNK_SHIFT;
     const int width = cx1 - cx0 + 1, height = cy1 - cy0 + 1;
     const int total = width * height;
-    static int scanCursor = 0;
+    if (total <= 0) return;
     /* Hashing the entire interest rectangle fifteen times a second was tens of
        millions of byte operations even in a settled cave. A rotating budget
        covers the full view-plus-margin in about a second, while command/player
-       state keeps its low latency. */
+       state keeps its low latency. The cursor is per peer: a shared one would
+       advance three times as fast and leave each player's own surroundings
+       scanned a third as often. */
     const int budget = imin(48, total);
     for (int n = 0; n < budget; ++n) {
         /* A dirty/random chunk can be much larger than its settled equivalent.
            Bound the batch itself, not merely the queue before entering here. */
-        if (g_send.size() - g_sendAt >= 1024u * 1024u) break;
-        const int at = (scanCursor + n) % total;
+        if (backlog(peer) >= 1024u * 1024u) break;
+        const int at = (peer.scanCursor + n) % total;
         const int cx = cx0 + at % width, cy = cy0 + at / width;
         const int ci = cy * CHUNKS_X + cx; const u32 h = hashChunk(world, cx, cy);
-        if (g_chunkHash[ci] == h) continue;
-        g_chunkHash[ci] = h; sendChunk(world, cx, cy);
+        if (peer.chunkHash[ci] == h) continue;
+        peer.chunkHash[ci] = h; sendChunk(peer, world, cx, cy);
     }
-    scanCursor = (scanCursor + budget) % total;
+    peer.scanCursor = (peer.scanCursor + budget) % total;
 }
 
 /* A client reports a rotating sample of the chunks it actually has. TCP makes
@@ -469,7 +542,7 @@ static void sendChangedChunks(const World& world) {
    into a closed loop. The host compares against authoritative state and sends
    the ordinary full chunk packet on any mismatch. */
 static void sendClientChunkHashes(const World& world) {
-    if (g_role != NET_CLIENT || !g_ready || g_peer == INVALID_SOCKET ||
+    if (g_role != NET_CLIENT || !g_clientReady || !g_peers[0].live() ||
         !g_playerSessions[0].connected) return;
     const Player& p = g_playerSessions[0].body;
     const int x0 = imax(0, (int)p.centreX() - 512), x1 = imin(SIM_W - 1, (int)p.centreX() + 512);
@@ -490,7 +563,7 @@ static void sendClientChunkHashes(const World& world) {
         w.u16v((u16)cx); w.u16v((u16)cy); w.u32v(g_clientAuthorityHash[ci]);
     }
     cursor = (cursor + count) % total;
-    queuePacket(PK_CHUNK_HASHES, w.b);
+    queuePacket(g_peers[0], PK_CHUNK_HASHES, w.b);
 }
 
 static void rememberClientInterestHashes(const World& world) {
@@ -510,8 +583,6 @@ static void applyState(Reader& r) {
     const bool hadPredictedLocal = g_role == NET_CLIENT && predictedLocal.connected &&
                                    predictedLocal.networkId == g_assigned;
     const u32 schema = r.u32v();
-    const u32 acknowledgedCommand = r.u32v();
-    const u32 acknowledgedAction = r.u32v();
     const u32 playerSize = r.u32v(), invSize = r.u32v(), entitySize = r.u32v();
     const u32 pickupSize = r.u32v(), projSize = r.u32v(), deviceSize = r.u32v();
     const u32 droneSize = r.u32v();
@@ -571,10 +642,6 @@ static void applyState(Reader& r) {
         if (r.ok) torchLoad(fixtures.empty() ? 0 : &fixtures[0], (int)fixtures.size());
     }
     g_worldTime = r.u32v() % DAY_LENGTH; g_bossesBeaten = r.u32v(); g_rng = r.u32v();
-    if (r.ok) {
-        g_acknowledgedCommand = acknowledgedCommand;
-        g_acknowledgedAction = acknowledgedAction;
-    }
 }
 
 static void applyChunk(World& world, Reader& r) {
@@ -609,13 +676,17 @@ static void applyChunk(World& world, Reader& r) {
     world.dirtyArea(x0, y0, x0 + CHUNK - 1, y0 + CHUNK - 1);
 }
 
-static void handlePacket(u8 type, const u8* data, size_t len, World& world) {
+static void handlePacket(Peer& peer, u8 type, const u8* data, size_t len, World& world) {
     Reader r(data, len);
     if (type == PK_HELLO && g_role == NET_HOST) {
         char build[80]; const u32 magic = r.u32v(), protocol = r.u32v(); r.string(build, sizeof(build));
         if (!r.ok || magic != NET_MAGIC || protocol != NET_PROTOCOL || strcmp(build, CRUCIBLE_BUILD_ID) != 0) {
-            Writer reject; reject.string("Game builds do not match"); queuePacket(PK_REJECT, reject.b); return;
+            Writer reject; reject.string("Game builds do not match"); queuePacket(peer, PK_REJECT, reject.b); return;
         }
+        /* One socket must never be handed a second player slot. Without this a
+           repeated HELLO would leak sessions until the game reported itself
+           full with nobody else actually connected. */
+        if (peer.assigned != PLAYER_NONE) { r.ok = false; return; }
         float sx = g_player.centreX() + PLAYER_W + 8.0f, sy = g_player.centreY();
         /* Prefer beside the host, but never knowingly create the joining body
            inside the wall the host happens to be mining against. */
@@ -633,14 +704,22 @@ static void handlePacket(u8 type, const u8* data, size_t len, World& world) {
                     sx = tx; sy = ty; found = true; break;
                 }
         }
-        g_assigned = playerSessionOpen(false, sx, sy);
-        if (g_assigned == PLAYER_NONE) { Writer reject; reject.string("Game is full"); queuePacket(PK_REJECT, reject.b); return; }
-        PlayerSession& joined = g_playerSessions[g_assigned];
+        /* Two players joining seconds apart would otherwise be placed on the
+           same clear cell beside the host and start the session overlapping. */
+        for (int i = 0; i < MAX_PLAYERS; ++i) {
+            const PlayerSession& other = g_playerSessions[i];
+            if (!other.connected) continue;
+            if (fabsf(other.body.centreX() - sx) < PLAYER_W &&
+                fabsf(other.body.centreY() - sy) < PLAYER_H) { sx += PLAYER_W + 8.0f; i = -1; }
+        }
+        peer.assigned = playerSessionOpen(false, sx, sy);
+        if (peer.assigned == PLAYER_NONE) { Writer reject; reject.string("Game is full"); queuePacket(peer, PK_REJECT, reject.b); return; }
+        PlayerSession& joined = g_playerSessions[peer.assigned];
         joined.inventory.add(ITEM_BOLTER, 1); joined.inventory.add(ITEM_FLINT, 1);
-        Writer welcome; welcome.u8v(g_assigned); welcome.u16v(joined.generation);
-        queuePacket(PK_WELCOME, welcome.b); sendSnapshot(world);
+        Writer welcome; welcome.u8v(peer.assigned); welcome.u16v(joined.generation);
+        queuePacket(peer, PK_WELCOME, welcome.b); sendSnapshot(peer, world);
     } else if (type == PK_REJECT && g_role == NET_CLIENT) {
-        char reason[128]; r.string(reason, sizeof(reason)); statusf("Join rejected: %s", reason); closeSocket(g_peer);
+        char reason[128]; r.string(reason, sizeof(reason)); statusf("Join rejected: %s", reason); closeSocket(peer.sock);
     } else if (type == PK_WELCOME && g_role == NET_CLIENT) {
         g_assigned = r.u8v(); (void)r.u16v(); statusf("Accepted -- receiving world");
     } else if (type == PK_WORLD_SNAPSHOT && g_role == NET_CLIENT) {
@@ -651,11 +730,13 @@ static void handlePacket(u8 type, const u8* data, size_t len, World& world) {
         }
         memset(g_clientAuthorityHash, 0, sizeof(g_clientAuthorityHash));
         memset(g_clientPredictedChunkCommand, 0, sizeof(g_clientPredictedChunkCommand));
-        remove(path); Writer ready; queuePacket(PK_READY, ready.b);
+        remove(path); Writer ready; queuePacket(peer, PK_READY, ready.b);
         lightInvalidate(); statusf("World received -- syncing players");
     } else if (type == PK_READY && g_role == NET_HOST) {
-        g_ready = true; memset(g_chunkHash, 0, sizeof(g_chunkHash));
-        statusf("Player joined"); sendState(); sendChangedChunks(world);
+        if (peer.assigned == PLAYER_NONE) { r.ok = false; return; }
+        peer.ready = true; memset(peer.chunkHash, 0, sizeof(peer.chunkHash));
+        sprintf(g_status, "Player joined -- %d connected", connectedPeerCount());
+        sendState(); sendChangedChunks(peer, world);
     } else if (type == PK_COMMAND && g_role == NET_HOST) {
         PlayerCommand c;
         c.sequence = r.u32v(); c.player = r.u8v(); c.generation = r.u16v();
@@ -666,22 +747,30 @@ static void handlePacket(u8 type, const u8* data, size_t len, World& world) {
         c.lineStartX = r.i32v(); c.lineStartY = r.i32v();
         c.digFilterOn = r.u8v() != 0; r.bytes(c.digFilter, sizeof(c.digFilter));
         c.aimX = r.i32v(); c.aimY = r.i32v();
-        const int slot = playerSessionSlotForNetworkId(c.player);
-        if (r.ok && slot >= 0 && g_playerSessions[slot].generation == c.generation &&
-            (!g_haveRemoteCommand || c.sequence > g_remoteCommand.sequence)) {
-            if (g_haveRemoteCommand) c.pressed |= g_remoteCommand.pressed;
-            g_remoteCommand = c; g_haveRemoteCommand = true;
+        /* A connection may only drive the player it was given. Trusting the id
+           in the packet would let any client move, mine and spend the inventory
+           of everybody else in the game. */
+        const int slot = c.player == peer.assigned ? playerSessionSlotForNetworkId(c.player) : -1;
+        if (r.ok && slot >= 0 && slot < MAX_PLAYERS &&
+            g_playerSessions[slot].generation == c.generation &&
+            (!g_haveRemoteCommand[slot] || c.sequence > g_remoteCommand[slot].sequence)) {
+            if (g_haveRemoteCommand[slot]) c.pressed |= g_remoteCommand[slot].pressed;
+            g_remoteCommand[slot] = c; g_haveRemoteCommand[slot] = true;
         }
     } else if (type == PK_STATE && g_role == NET_CLIENT) {
+        const u32 acknowledgedCommand = r.u32v();
+        const u32 acknowledgedAction = r.u32v();
         std::vector<u8> raw;
-        if (unpackBytes(r, raw)) {
+        if (r.ok && unpackBytes(r, raw)) {
             Reader state(raw.empty() ? 0 : &raw[0], raw.size());
             applyState(state);
             if (!state.ok || state.at != state.n) r.ok = false;
         }
         if (r.ok) {
-            if (!g_ready) rememberClientInterestHashes(world);
-            ++g_stateSerial; g_ready = true; statusf("Joined host");
+            g_acknowledgedCommand = acknowledgedCommand;
+            g_acknowledgedAction = acknowledgedAction;
+            if (!g_clientReady) rememberClientInterestHashes(world);
+            ++g_stateSerial; g_clientReady = true; statusf("Joined host");
         }
     } else if (type == PK_CHUNK && g_role == NET_CLIENT) {
         applyChunk(world, r); if (r.ok) lightInvalidate();
@@ -690,11 +779,11 @@ static void handlePacket(u8 type, const u8* data, size_t len, World& world) {
         a.sequence = r.u32v(); a.player = r.u8v(); a.generation = r.u16v();
         a.type = r.u8v(); a.container = r.u8v(); a.a = r.u8v(); a.b = r.u8v(); a.flags = r.u8v();
         a.x = r.i32v(); a.y = r.i32v();
-        const int slot = playerSessionSlotForNetworkId(a.player);
+        const int slot = a.player == peer.assigned ? playerSessionSlotForNetworkId(a.player) : -1;
         if (r.ok && slot >= 1 && g_playerSessions[slot].generation == a.generation &&
             g_remoteActions.size() < 256) g_remoteActions.push_back(a);
-    } else if (type == PK_CHUNK_HASHES && g_role == NET_HOST && g_ready) {
-        const int slot = playerSessionSlotForNetworkId(g_assigned);
+    } else if (type == PK_CHUNK_HASHES && g_role == NET_HOST && peer.ready) {
+        const int slot = playerSessionSlotForNetworkId(peer.assigned);
         const int count = r.u8v();
         if (slot < 1 || count > 16) { r.ok = false; }
         for (int n = 0; r.ok && n < count; ++n) {
@@ -710,9 +799,9 @@ static void handlePacket(u8 type, const u8* data, size_t len, World& world) {
                 abs(centreY - (int)p.centreY()) > 448 + CHUNK) continue;
             const int ci = cy * CHUNKS_X + cx;
             const u32 authorityHash = hashChunk(world, cx, cy);
-            g_chunkHash[ci] = authorityHash;
-            if (clientHash != authorityHash && g_send.size() - g_sendAt < 1024u * 1024u)
-                sendChunk(world, cx, cy);
+            peer.chunkHash[ci] = authorityHash;
+            if (clientHash != authorityHash && backlog(peer) < 1024u * 1024u)
+                sendChunk(peer, world, cx, cy);
         }
     }
     if (!r.ok) {
@@ -721,126 +810,162 @@ static void handlePacket(u8 type, const u8* data, size_t len, World& world) {
     }
 }
 
-static void pumpReceive(World& world) {
+static void pumpReceive(Peer& peer, World& world) {
     u8 temp[64 * 1024];
     size_t received = 0;
     /* A single recv per rendered frame imposed an artificial 3.75 MiB/s cap.
        Snapshot traffic could therefore take seconds to drain on a perfectly
        healthy LAN. Drain a bounded batch while the nonblocking socket has it. */
     while (received < 512u * 1024u) {
-        const int n = recv(g_peer, (char*)temp, sizeof(temp), 0);
-        if (n > 0) { g_recv.insert(g_recv.end(), temp, temp + n); received += (size_t)n; continue; }
-        if (n == 0) { disconnectPeer("Host disconnected"); return; }
+        const int n = recv(peer.sock, (char*)temp, sizeof(temp), 0);
+        if (n > 0) { peer.recv.insert(peer.recv.end(), temp, temp + n); received += (size_t)n; continue; }
+        if (n == 0) { disconnectPeer(peer, "Host disconnected"); return; }
         const int e = WSAGetLastError();
-        if (e != WSAEWOULDBLOCK) disconnectPeer("Network receive failed");
+        if (e != WSAEWOULDBLOCK) disconnectPeer(peer, "Network receive failed");
         break;
     }
     size_t used = 0;
-    while (g_recv.size() - used >= 5) {
-        const u8* p = &g_recv[used];
+    while (peer.live() && peer.recv.size() - used >= 5) {
+        const u8* p = &peer.recv[used];
         const u32 len = (u32)p[0] | ((u32)p[1] << 8) | ((u32)p[2] << 16) | ((u32)p[3] << 24);
-        if (len < 1 || len > NET_MAX_PACKET) { statusf("Invalid network packet size"); closeSocket(g_peer); break; }
-        if (g_recv.size() - used < (size_t)len + 4) break;
-        handlePacket(p[4], p + 5, len - 1, world); used += len + 4;
+        if (len < 1 || len > NET_MAX_PACKET) {
+            statusf("Invalid network packet size"); disconnectPeer(peer, "Invalid network packet size"); return;
+        }
+        if (peer.recv.size() - used < (size_t)len + 4) break;
+        handlePacket(peer, p[4], p + 5, len - 1, world); used += len + 4;
     }
-    if (used) g_recv.erase(g_recv.begin(), g_recv.begin() + used);
+    /* A rejected or failed peer has already had its buffers cleared; erasing a
+       range from the fresh empty buffer would be an out-of-bounds iterator. */
+    if (used && peer.live() && used <= peer.recv.size())
+        peer.recv.erase(peer.recv.begin(), peer.recv.begin() + (long)used);
 }
 
-static void pumpSend() {
+static void pumpSend(Peer& peer) {
     size_t sent = 0;
-    while (g_peer != INVALID_SOCKET && g_sendAt < g_send.size() && sent < 512u * 1024u) {
-        const size_t left = g_send.size() - g_sendAt;
+    while (peer.live() && peer.sendAt < peer.send.size() && sent < 512u * 1024u) {
+        const size_t left = peer.send.size() - peer.sendAt;
         const int ask = (int)(left > 64 * 1024 ? 64 * 1024 : left);
-        const int n = send(g_peer, (const char*)&g_send[g_sendAt], ask, 0);
-        if (n > 0) { g_sendAt += n; sent += (size_t)n; }
+        const int n = send(peer.sock, (const char*)&peer.send[peer.sendAt], ask, 0);
+        if (n > 0) { peer.sendAt += (size_t)n; sent += (size_t)n; }
         else {
             const int e = WSAGetLastError();
-            if (e != WSAEWOULDBLOCK) disconnectPeer("Network send failed");
+            if (e != WSAEWOULDBLOCK) disconnectPeer(peer, "Network send failed");
             break;
         }
     }
-    if (g_sendAt == g_send.size()) { g_send.clear(); g_sendAt = 0; }
+    if (peer.live() && peer.sendAt == peer.send.size()) { peer.send.clear(); peer.sendAt = 0; }
+}
+
+static void pollPeer(Peer& peer, World& world) {
+    if (g_role == NET_CLIENT && peer.connecting) {
+        fd_set writeSet, errSet; FD_ZERO(&writeSet); FD_ZERO(&errSet);
+        FD_SET(peer.sock, &writeSet); FD_SET(peer.sock, &errSet); timeval tv = { 0, 0 };
+        const int n = select(0, 0, &writeSet, &errSet, &tv);
+        if (n > 0) {
+            int err = 0; int len = sizeof(err); getsockopt(peer.sock, SOL_SOCKET, SO_ERROR, (char*)&err, &len);
+            if (err || FD_ISSET(peer.sock, &errSet)) { statusf("Connection failed"); closeSocket(peer.sock); }
+            else { peer.connecting = false; queueHello(peer); }
+        }
+        return;
+    }
+    if (g_role == NET_CLIENT && !peer.handshake) queueHello(peer);
+    fd_set readSet, writeSet;
+    FD_ZERO(&readSet); FD_ZERO(&writeSet);
+    FD_SET(peer.sock, &readSet);
+    if (peer.sendAt < peer.send.size()) FD_SET(peer.sock, &writeSet);
+    timeval tv = { 0, 0 };
+    const int n = select(0, &readSet, &writeSet, 0, &tv);
+    if (n == SOCKET_ERROR) { disconnectPeer(peer, "Network poll failed"); return; }
+    /* Sending first guarantees a just-connected client can deliver HELLO
+       before either side waits for an answer. One bounded operation per
+       readiness result also makes an accidental blocking socket harmless. */
+    if (FD_ISSET(peer.sock, &writeSet)) pumpSend(peer);
+    if (peer.live() && FD_ISSET(peer.sock, &readSet)) pumpReceive(peer, world);
 }
 
 void netPoll(World& world) {
-    if (g_role == NET_HOST && g_peer == INVALID_SOCKET && g_listen != INVALID_SOCKET) {
-        SOCKET s = accept(g_listen, 0, 0);
-        if (s != INVALID_SOCKET) {
-            if (!nonblocking(s)) {
-                closesocket(s); statusf("Could not configure joined socket"); return;
-            }
+    if (g_role == NET_HOST && g_listen != INVALID_SOCKET) {
+        /* Accept in a loop: several people can click Join within one frame,
+           and an unaccepted backlog entry would otherwise wait a whole frame
+           each. A socket arriving with no free slot is told the game is full
+           rather than left hanging on an unanswered handshake. */
+        for (;;) {
+            SOCKET s = accept(g_listen, 0, 0);
+            if (s == INVALID_SOCKET) break;
+            if (!nonblocking(s)) { closesocket(s); statusf("Could not configure joined socket"); break; }
             preferLowLatency(s);
-            g_peer = s; g_recv.clear(); g_send.clear(); g_sendAt = 0;
-            statusf("Player connected -- waiting for handshake");
+            int free = -1;
+            for (int i = 0; i < MAX_PEERS && free < 0; ++i) if (!g_peers[i].live()) free = i;
+            if (free < 0) { closesocket(s); statusf("Refused a join -- game is full"); break; }
+            g_peers[free].clear(); g_peers[free].sock = s;
+            sprintf(g_status, "Player connecting -- %d connected", connectedPeerCount());
         }
     }
-    if (g_role == NET_CLIENT && g_connecting && g_peer != INVALID_SOCKET) {
-        fd_set writeSet, errSet; FD_ZERO(&writeSet); FD_ZERO(&errSet);
-        FD_SET(g_peer, &writeSet); FD_SET(g_peer, &errSet); timeval tv = { 0, 0 };
-        const int n = select(0, 0, &writeSet, &errSet, &tv);
-        if (n > 0) {
-            int err = 0; int len = sizeof(err); getsockopt(g_peer, SOL_SOCKET, SO_ERROR, (char*)&err, &len);
-            if (err || FD_ISSET(g_peer, &errSet)) { statusf("Connection failed"); closeSocket(g_peer); }
-            else { g_connecting = false; queueHello(); }
-        }
-    } else if (g_role == NET_CLIENT && !g_connecting && !g_handshake && g_peer != INVALID_SOCKET) {
-        queueHello();
-    }
-    if (g_peer != INVALID_SOCKET && !g_connecting) {
-        fd_set readSet, writeSet;
-        FD_ZERO(&readSet); FD_ZERO(&writeSet);
-        FD_SET(g_peer, &readSet);
-        if (g_sendAt < g_send.size()) FD_SET(g_peer, &writeSet);
-        timeval tv = { 0, 0 };
-        const int n = select(0, &readSet, &writeSet, 0, &tv);
-        if (n == SOCKET_ERROR) {
-            disconnectPeer("Network poll failed");
-            return;
-        }
-        /* Sending first guarantees a just-connected client can deliver HELLO
-           before either side waits for an answer. One bounded operation per
-           readiness result also makes an accidental blocking socket harmless. */
-        if (FD_ISSET(g_peer, &writeSet)) pumpSend();
-        if (g_peer != INVALID_SOCKET && FD_ISSET(g_peer, &readSet)) pumpReceive(world);
-    }
+    for (int i = 0; i < MAX_PEERS; ++i) if (g_peers[i].live()) pollPeer(g_peers[i], world);
 }
 
 void netHostFrame(World& world) {
-    if (g_role != NET_HOST || !g_ready || g_peer == INVALID_SOCKET) return;
-    ++g_netFrame;
-    int urgentBudget = 8;
-    for (int n = 0; n < CHUNK_COUNT && urgentBudget > 0; ++n) {
-        const int ci = (g_urgentChunkCursor + n) % CHUNK_COUNT;
-        if (!g_urgentChunk[ci]) continue;
-        if (g_send.size() - g_sendAt >= 1024u * 1024u) break;
-        g_urgentChunk[ci] = false;
-        const int cx = ci % CHUNKS_X, cy = ci / CHUNKS_X;
-        g_chunkHash[ci] = hashChunk(world, cx, cy);
-        sendChunk(world, cx, cy); --urgentBudget;
-        g_urgentChunkCursor = (ci + 1) % CHUNK_COUNT;
+    if (g_role != NET_HOST) return;
+    bool anyReady = false;
+    for (int i = 0; i < MAX_PEERS; ++i) if (g_peers[i].live() && g_peers[i].ready) anyReady = true;
+    if (!anyReady) return;
+
+    /* State is one shared serialization, so it is produced once per host frame
+       rather than once per peer. Chunk traffic stays per peer because each
+       player has a different interest rectangle and a different replica. */
+    static int stateFrame = 0;
+    ++stateFrame;
+    bool stateBudget = true, scanBudget = true;
+    for (int i = 0; i < MAX_PEERS; ++i) {
+        const Peer& peer = g_peers[i];
+        if (!peer.live() || !peer.ready) continue;
+        /* Never manufacture seconds of stale authoritative state. A peer whose
+           queue is already deep holds off the shared state packet, since
+           sending it only to the others would desynchronize acknowledgement. */
+        if (backlog(peer) >= 256u * 1024u) stateBudget = false;
+        if (backlog(peer) >= 1024u * 1024u) scanBudget = false;
     }
-    /* Never manufacture seconds of stale authoritative state. One state may
-       exceed this threshold; subsequent ones wait until that packet drains. */
-    if (g_netFrame % 6 == 0 && g_send.size() - g_sendAt < 256u * 1024u) sendState();
-    if (g_netFrame % 12 == 0 && g_send.size() - g_sendAt < 1024u * 1024u) sendChangedChunks(world);
-    /* TCP prevents packet loss, but a periodic forced refresh also repairs a
-       client-side bad write or future decoder bug without rejoining. Spread by
-       the scan budget, so this is not a one-frame bandwidth spike. */
-    if (g_netFrame % 3600 == 0) memset(g_chunkHash, 0, sizeof(g_chunkHash));
+    if (stateFrame % 6 == 0 && stateBudget) sendState();
+
+    for (int i = 0; i < MAX_PEERS; ++i) {
+        Peer& peer = g_peers[i];
+        if (!peer.live() || !peer.ready) continue;
+        ++peer.frame;
+        int urgentBudget = 8;
+        for (int n = 0; n < CHUNK_COUNT && urgentBudget > 0; ++n) {
+            const int ci = (peer.urgentCursor + n) % CHUNK_COUNT;
+            if (!peer.urgentChunk[ci]) continue;
+            if (backlog(peer) >= 1024u * 1024u) break;
+            peer.urgentChunk[ci] = 0;
+            const int cx = ci % CHUNKS_X, cy = ci / CHUNKS_X;
+            peer.chunkHash[ci] = hashChunk(world, cx, cy);
+            sendChunk(peer, world, cx, cy); --urgentBudget;
+            peer.urgentCursor = (ci + 1) % CHUNK_COUNT;
+        }
+        if (peer.frame % 12 == 0 && scanBudget) sendChangedChunks(peer, world);
+        /* TCP prevents packet loss, but a periodic forced refresh also repairs
+           a client-side bad write or future decoder bug without rejoining.
+           Spread by the scan budget, so this is not a one-frame spike. */
+        if (peer.frame % 3600 == 0) memset(peer.chunkHash, 0, sizeof(peer.chunkHash));
+    }
 }
 
 void netMarkWorldEdit(int x, int y, int radius) {
-    if (g_role != NET_HOST || !g_ready) return;
+    if (g_role != NET_HOST) return;
     const int x0 = imax(0, x - radius), x1 = imin(SIM_W - 1, x + radius);
     const int y0 = imax(0, y - radius), y1 = imin(SIM_H - 1, y + radius);
-    for (int cy = y0 >> CHUNK_SHIFT; cy <= (y1 >> CHUNK_SHIFT); ++cy)
-        for (int cx = x0 >> CHUNK_SHIFT; cx <= (x1 >> CHUNK_SHIFT); ++cx)
-            g_urgentChunk[cy * CHUNKS_X + cx] = true;
+    for (int i = 0; i < MAX_PEERS; ++i) {
+        Peer& peer = g_peers[i];
+        if (!peer.live() || !peer.ready) continue;
+        for (int cy = y0 >> CHUNK_SHIFT; cy <= (y1 >> CHUNK_SHIFT); ++cy)
+            for (int cx = x0 >> CHUNK_SHIFT; cx <= (x1 >> CHUNK_SHIFT); ++cx)
+                peer.urgentChunk[cy * CHUNKS_X + cx] = 1;
+    }
 }
 
 void netMarkPredictedWorldEdit(int x0, int y0, int x1, int y1, int radius,
                                u32 commandSequence) {
-    if (g_role != NET_CLIENT || !g_ready || !commandSequence) return;
+    if (g_role != NET_CLIENT || !g_clientReady || !commandSequence) return;
     if (x0 > x1) { const int t = x0; x0 = x1; x1 = t; }
     if (y0 > y1) { const int t = y0; y0 = y1; y1 = t; }
     x0 = imax(0, x0 - radius); x1 = imin(SIM_W - 1, x1 + radius);
@@ -861,7 +986,7 @@ void netClientFrame(World& world) {
 }
 
 bool netSendCommand(const PlayerCommand& c) {
-    if (g_role != NET_CLIENT || !g_ready || g_peer == INVALID_SOCKET) return false;
+    if (g_role != NET_CLIENT || !g_clientReady || !g_peers[0].live()) return false;
     Writer w; w.u32v(c.sequence); w.u8v(c.player); w.u16v(c.generation);
     w.u8v(c.bits); w.u8v(c.pressed); w.u8v(c.selected); w.u8v(c.brushRadius);
     w.u16v((u16)c.brush);
@@ -870,33 +995,43 @@ bool netSendCommand(const PlayerCommand& c) {
     w.u8v(c.lineCommit ? 1 : 0); w.u8v(c.lineCommitBits);
     w.i32v(c.lineStartX); w.i32v(c.lineStartY);
     w.u8v(c.digFilterOn ? 1 : 0); w.bytes(c.digFilter, sizeof(c.digFilter));
-    w.i32v(c.aimX); w.i32v(c.aimY); queuePacket(PK_COMMAND, w.b); return true;
+    w.i32v(c.aimX); w.i32v(c.aimY); queuePacket(g_peers[0], PK_COMMAND, w.b); return true;
 }
 
-bool netPopRemoteCommand(PlayerCommand* command) {
-    if (!g_haveRemoteCommand || !command) return false;
-    *command = g_remoteCommand; g_haveRemoteCommand = false; return true;
+static Peer* peerForPlayer(PlayerId player) {
+    if (g_role != NET_HOST || player == PLAYER_NONE) return 0;
+    for (int i = 0; i < MAX_PEERS; ++i)
+        if (g_peers[i].live() && g_peers[i].assigned == player) return &g_peers[i];
+    return 0;
 }
 
-void netMarkRemoteCommandApplied(u32 sequence) {
-    if (g_role == NET_HOST && sequence > g_appliedRemoteCommand)
-        g_appliedRemoteCommand = sequence;
+bool netPopRemoteCommand(PlayerId player, PlayerCommand* command) {
+    if (!command || player >= MAX_PLAYERS || !g_haveRemoteCommand[player]) return false;
+    *command = g_remoteCommand[player]; g_haveRemoteCommand[player] = false; return true;
+}
+
+/* Acknowledgement is per connection. One shared watermark would tell every
+   client that the host had consumed input it has never seen, and each of them
+   would stop replaying its own genuinely pending movement. */
+void netMarkRemoteCommandApplied(PlayerId player, u32 sequence) {
+    Peer* peer = peerForPlayer(player);
+    if (peer && sequence > peer->appliedCommand) peer->appliedCommand = sequence;
 }
 
 u32 netAcknowledgedCommand() { return g_acknowledgedCommand; }
-void netMarkRemoteActionApplied(u32 sequence) {
-    if (g_role == NET_HOST && sequence > g_appliedRemoteAction)
-        g_appliedRemoteAction = sequence;
+void netMarkRemoteActionApplied(PlayerId player, u32 sequence) {
+    Peer* peer = peerForPlayer(player);
+    if (peer && sequence > peer->appliedAction) peer->appliedAction = sequence;
 }
 u32 netAcknowledgedAction() { return g_acknowledgedAction; }
 u32 netStateSerial() { return g_stateSerial; }
 
 bool netSendAction(const NetAction& a) {
-    if (g_role != NET_CLIENT || !g_ready || g_peer == INVALID_SOCKET) return false;
+    if (g_role != NET_CLIENT || !g_clientReady || !g_peers[0].live()) return false;
     Writer w; w.u32v(a.sequence); w.u8v(a.player); w.u16v(a.generation);
     w.u8v(a.type); w.u8v(a.container); w.u8v(a.a); w.u8v(a.b); w.u8v(a.flags);
     w.i32v(a.x); w.i32v(a.y);
-    queuePacket(PK_ACTION, w.b); return true;
+    queuePacket(g_peers[0], PK_ACTION, w.b); return true;
 }
 
 bool netPopRemoteAction(NetAction* action) {
@@ -905,9 +1040,17 @@ bool netPopRemoteAction(NetAction* action) {
 }
 
 NetRole netRole() { return g_role; }
-bool netConnected() { return g_peer != INVALID_SOCKET; }
-bool netReady() { return g_ready; }
-bool netClientReady() { return g_role != NET_CLIENT || g_ready; }
+/* Unchanged meaning: at least one live socket. Deliberately NOT true for a
+   host that is merely listening, because callers use this to decide whether
+   tearing down the session is necessary before replacing the world. */
+bool netConnected() { return connectedPeerCount() > 0; }
+int netPeerCount() { return connectedPeerCount(); }
+bool netReady() {
+    if (g_role != NET_HOST) return g_clientReady;
+    for (int i = 0; i < MAX_PEERS; ++i) if (g_peers[i].live() && g_peers[i].ready) return true;
+    return false;
+}
+bool netClientReady() { return g_role != NET_CLIENT || g_clientReady; }
 PlayerId netAssignedPlayer() { return g_assigned; }
 const char* netStatus() { return g_status; }
 const char* netLocalAddress() { startup(); return g_localAddress; }

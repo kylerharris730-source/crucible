@@ -72,7 +72,7 @@ int main(int argc, char** argv) {
         if (host) {
             netHostFrame(g_world);
             PlayerCommand c;
-            if (netPopRemoteCommand(&c)) {
+            if (netPopRemoteCommand(1, &c)) {
                 if (c.player != 1 || c.aimX != 777 || c.aimY != 888 ||
                     !(c.bits & PCMD_RIGHT) || !c.line || c.brush != MAT_WATER ||
                     !c.lineCommit || c.lineCommitBits != PCMD_USE_LEFT ||
@@ -80,7 +80,7 @@ int main(int argc, char** argv) {
                     !c.digFilterOn || !(c.digFilter[MAT_SAND >> 3] & (1u << (MAT_SAND & 7)))) {
                     fprintf(stderr, "host received corrupt command\n"); return 4;
                 }
-                netMarkRemoteCommandApplied(c.sequence);
+                netMarkRemoteCommandApplied(c.player, c.sequence);
                 /* Force an authoritative post-command image. A pre-command
                    scan may already be queued; the client must ignore that one
                    without ignoring this correction. */
@@ -99,7 +99,7 @@ int main(int argc, char** argv) {
                 else if (action.type == NACT_CLOSE_DEVICE && action.x == 9999)
                     gotActionReceipt = true;
                 else { fprintf(stderr, "host received corrupt action\n"); return 9; }
-                netMarkRemoteActionApplied(action.sequence);
+                netMarkRemoteActionApplied(action.player, action.sequence);
             }
             if (gotCommand && gotAction && gotRepairAck && gotActionReceipt) {
                 netStop();
