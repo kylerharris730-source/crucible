@@ -325,9 +325,54 @@ int main() {
     if (projGlowMoteCount() != 28) {
         fprintf(stderr, "glowflare motes collided with solid blocks\n"); return 60;
     }
+    /* A rightward impact must now fire a balanced shotgun cone INTO the wall,
+       not the old 360-degree wheel. Every mote advances right; mirrored pairs
+       keep the lateral centroid on the impact line while still filling both
+       halves of a broad cone. */
+    float moteX[28], moteY[28];
+    const int moteCount = projGlowMoteSnapshot(moteX, moteY, 28);
+    float lateralSum = 0.0f;
+    bool above = false, below = false;
+    for (int i = 0; i < moteCount; ++i) {
+        if (moteX[i] <= 701.5f) {
+            fprintf(stderr, "glowflare shotgun sent a mote away from its wall\n"); return 62;
+        }
+        lateralSum += moteY[i] - 700.5f;
+        above = above || moteY[i] < 699.5f;
+        below = below || moteY[i] > 701.5f;
+    }
+    if (moteCount != 28 || !above || !below ||
+        lateralSum < -0.01f || lateralSum > 0.01f) {
+        fprintf(stderr, "glowflare shotgun was not a balanced randomized cone\n"); return 63;
+    }
+    /* The slower dust remains fully populated after fifty motion frames, and
+       its gentler drag still carries the leading light substantially deeper
+       into the wall than the first two-frame fan above. */
+    for (int frame = 0; frame < 50; ++frame) projUpdate(w);
+    float lateX[28], lateY[28];
+    const int lateCount = projGlowMoteSnapshot(lateX, lateY, 28);
+    float farthestX = 0.0f;
+    for (int i = 0; i < lateCount; ++i)
+        if (lateX[i] > farthestX) farthestX = lateX[i];
+    if (lateCount != 28 || farthestX < 770.0f) {
+        fprintf(stderr, "glowflare motes did not persist deeper into rock\n"); return 64;
+    }
     for (int frame = 0; frame < 50; ++frame) projUpdate(w);
     if (projGlowMoteCount() != 0) {
         fprintf(stderr, "glowflare motes did not decay\n"); return 61;
+    }
+    if (projGlowAfterglowCount() == 0) {
+        fprintf(stderr, "glowflare path did not retain an afterglow\n"); return 65;
+    }
+    lightClearDynamic();
+    projRegisterLights();
+    lightCompute(w, 640, 640);
+    if (lightAt(61, 60) < 35) {
+        fprintf(stderr, "glowflare impact faded before its afterglow elapsed\n"); return 66;
+    }
+    for (int frame = 0; frame < 130; ++frame) projUpdate(w);
+    if (projGlowAfterglowCount() != 0) {
+        fprintf(stderr, "glowflare afterglow did not finish fading\n"); return 67;
     }
 
     /* Any light now reads forty world cells into solid material. At thirty
@@ -341,6 +386,34 @@ int main() {
     lightCompute(w, 350, 450);
     if (lightAt(79, 50) == 0) {
         fprintf(stderr, "light did not penetrate thirty cells into solid material\n"); return 62;
+    }
+    /* Water has exactly half an ordinary liquid's attenuation. Verify the
+       resulting solve as well as the table: across a sealed 44-cell pool the
+       same source remains visible through water and is exhausted by wax. */
+    if (g_matOpacity[MAT_WATER] * 2 != g_matOpacity[MAT_WAX]) {
+        fprintf(stderr, "water light attenuation was not halved\n"); return 68;
+    }
+    w.reset();
+    for (int y = 430; y <= 570; ++y)
+        for (int x2 = 380; x2 <= 620; ++x2)
+            w.setCell(x2, y, (x2 < 388 || x2 > 612 || y < 438 || y > 562)
+                               ? MAT_STONE : MAT_WATER);
+    lightClearDynamic();
+    lightAddDynamic(420, 500, 255);
+    lightCompute(w, 350, 450);
+    const int throughWater = lightAt(114, 50);
+    w.reset();
+    for (int y = 430; y <= 570; ++y)
+        for (int x2 = 380; x2 <= 620; ++x2)
+            w.setCell(x2, y, (x2 < 388 || x2 > 612 || y < 438 || y > 562)
+                               ? MAT_STONE : MAT_WAX);
+    lightClearDynamic();
+    lightAddDynamic(420, 500, 255);
+    lightCompute(w, 350, 450);
+    const int throughWax = lightAt(114, 50);
+    if (throughWater < 40 || throughWax != 0) {
+        fprintf(stderr, "water permeability did not double in the light solve (%d/%d)\n",
+                throughWater, throughWax); return 69;
     }
     /* A torch is now a fixture: it can be installed under water without
        consuming the pool, and its footprint cannot catch falling loot. */
@@ -775,8 +848,850 @@ int main() {
     w.step();
     const int ctrlAboveT = w.temp[(ctrlBottom - 1) * SIM_W + convX];
     if (!convMatsStayed || convAboveT <= ctrlAboveT) {
-        fprintf(stderr, "water convection did not beat conduction-only control (conv %d/%d, control above %d)\n",
+        fprintf(stderr, "non-Water convection did not beat conduction-only control (conv %d/%d, control above %d)\n",
                 convBelowT, convAboveT, ctrlAboveT); return 49;
+    }
+
+    /* Fixed-point thermal density gives lamp wax a real buoyancy inversion:
+       it is heavier than water when cool and lighter at working temperature.
+       The sealed one-cell column removes lateral flow from the measurement, so
+       rising and falling can only come from parcel density. */
+    const int coolWaterDensity = materialDensityQ8(MAT_WATER, degC(20));
+    const int warmWaterDensity = materialDensityQ8(MAT_WATER, degC(45));
+    if (MATS[MAT_WAX].dryA != 0xF1E9D8 ||
+        MATS[MAT_WAX].dryB != 0xE9DFCC ||
+        MATS[MAT_WAX].wetA != MATS[MAT_WAX].dryA ||
+        MATS[MAT_WAX].wetB != MATS[MAT_WAX].dryB) {
+        fprintf(stderr, "wax did not keep its subtle ivory palette\n"); return 118;
+    }
+    if (materialDensityQ8(MAT_WAX, degC(20)) <= coolWaterDensity ||
+        materialDensityQ8(MAT_WAX, degC(45)) >= warmWaterDensity) {
+        fprintf(stderr, "wax density does not cross water below boiling\n"); return 91;
+    }
+    /* Inert Fluid is intentionally Water with the phase-change columns
+       removed. Matching the fixed-point density curve matters more than just
+       matching the table's ambient integer: otherwise a hot bath would change
+       the wax buoyancy experiment even though both said density 100. */
+    if (MATS[MAT_INERT_FLUID].kind != KIND_LIQUID ||
+        MATS[MAT_INERT_FLUID].density != MATS[MAT_WATER].density ||
+        MATS[MAT_INERT_FLUID].dispersion != MATS[MAT_WATER].dispersion ||
+        MATS[MAT_INERT_FLUID].heatCond != MATS[MAT_WATER].heatCond ||
+        MATS[MAT_INERT_FLUID].heatSpread != MATS[MAT_WATER].heatSpread ||
+        MATS[MAT_INERT_FLUID].coolTemp != 0 ||
+        MATS[MAT_INERT_FLUID].boilTemp != 0 ||
+        MATS[MAT_INERT_FLUID].igniteTemp != 0 ||
+        g_matThermalExpansionQ8[MAT_INERT_FLUID] !=
+            g_matThermalExpansionQ8[MAT_WATER] ||
+        materialDensityQ8(MAT_INERT_FLUID, degC(20)) !=
+            materialDensityQ8(MAT_WATER, degC(20)) ||
+        materialDensityQ8(MAT_INERT_FLUID, degC(90)) !=
+            materialDensityQ8(MAT_WATER, degC(90)) ||
+        materialDensityQ8(MAT_INERT_FLUID, degC(215)) !=
+            materialDensityQ8(MAT_WATER, degC(215))) {
+        fprintf(stderr, "Inert Fluid does not match Water's non-phase physical properties\n"); return 121;
+    }
+    /* Exercise the actual phase-change update at the hottest representable
+       temperature, rather than trusting the zero table entries alone. */
+    w.reset();
+    const int inertX = 620, inertY = 550;
+    w.setLiveWindow(inertX - 3, inertY - 3, inertX + 3, inertY + 3);
+    for (int y = inertY - 1; y <= inertY + 1; ++y)
+        for (int x = inertX - 1; x <= inertX + 1; ++x)
+            w.setCell(x, y, (x == inertX && y == inertY) ?
+                      MAT_INERT_FLUID : MAT_STONE);
+    w.temp[inertY * SIM_W + inertX] = degC(215);
+    w.dirtyPoint(inertX, inertY);
+    for (int tick = 0; tick < 30; ++tick) w.step();
+    if (w.at(inertX, inertY).mat != MAT_INERT_FLUID) {
+        fprintf(stderr, "Inert Fluid changed phase at maximum temperature\n"); return 122;
+    }
+    /* A marked hot parcel in a wall-hugging wax column used to swap directly
+       with another wax cell three rows above. Track that exact parcel through
+       several turns: density exchange with Water and internal wax convection
+       must both remain local, never moving it more than one cell per frame. */
+    w.reset();
+    const int wallWaxX = 640, wallWaxTop = 570, wallWaxBottom = 587;
+    w.setLiveWindow(wallWaxX - 4, wallWaxTop - 4,
+                    wallWaxX + 8, wallWaxBottom + 4);
+    for (int y = wallWaxTop - 1; y <= wallWaxBottom; ++y) {
+        w.setCell(wallWaxX - 1, y, MAT_STONE);
+        w.setCell(wallWaxX + 4, y, MAT_STONE);
+    }
+    for (int x = wallWaxX - 1; x <= wallWaxX + 4; ++x)
+        w.setCell(x, wallWaxBottom, MAT_STONE);
+    for (int y = wallWaxTop; y < wallWaxBottom; ++y)
+        for (int x = wallWaxX; x < wallWaxX + 4; ++x)
+            w.setCell(x, y, MAT_WATER);
+    for (int y = wallWaxBottom - 5; y < wallWaxBottom; ++y)
+        w.setCell(wallWaxX, y, MAT_WAX);
+    int markedWaxX = wallWaxX, markedWaxY = wallWaxBottom - 1;
+    w.cells[markedWaxY * SIM_W + markedWaxX].moisture = 123;
+    for (int tick = 0; tick < 8; ++tick) {
+        w.temp[markedWaxY * SIM_W + markedWaxX] = degC(55);
+        w.dirtyPoint(markedWaxX, markedWaxY);
+        const int oldX = markedWaxX, oldY = markedWaxY;
+        w.step();
+        bool foundMarkedWax = false;
+        for (int y = wallWaxTop; y < wallWaxBottom; ++y)
+            for (int x = wallWaxX; x < wallWaxX + 4; ++x)
+                if (w.at(x, y).mat == MAT_WAX && w.at(x, y).moisture == 123) {
+                    markedWaxX = x; markedWaxY = y; foundMarkedWax = true;
+                }
+        const int move = (markedWaxX > oldX ? markedWaxX - oldX : oldX - markedWaxX) +
+                         (markedWaxY > oldY ? markedWaxY - oldY : oldY - markedWaxY);
+        if (!foundMarkedWax || move > 1) {
+            fprintf(stderr, "wall-adjacent wax parcel teleported (%d,%d -> %d,%d)\n",
+                    oldX, oldY, markedWaxX, markedWaxY); return 116;
+        }
+    }
+    w.reset();
+    const int lampX = 660, lampTop = 600, lampBottom = 621;
+    w.setLiveWindow(lampX - 4, lampTop - 4, lampX + 4, lampBottom + 4);
+    for (int y = lampTop - 1; y <= lampBottom; ++y) {
+        w.setCell(lampX - 1, y, MAT_STONE);
+        w.setCell(lampX + 1, y, MAT_STONE);
+    }
+    w.setCell(lampX, lampBottom, MAT_STONE);
+    for (int y = lampTop; y < lampBottom; ++y) w.setCell(lampX, y, MAT_WATER);
+    w.setCell(lampX, lampBottom - 1, MAT_WAX);
+    const int waxStartY = lampBottom - 1;
+    int waxY = waxStartY;
+    for (int tick = 0; tick < 12; ++tick) {
+        for (int y = lampTop; y < lampBottom; ++y)
+            if (w.at(lampX, y).mat == MAT_WAX) { waxY = y; break; }
+        /* 55 C is enough for the doubled expansion to produce the same strong
+           rise that previously required holding wax near 90 C. */
+        w.temp[waxY * SIM_W + lampX] = degC(55);
+        w.dirtyPoint(lampX, waxY);
+        w.step();
+    }
+    for (int y = lampTop; y < lampBottom; ++y)
+        if (w.at(lampX, y).mat == MAT_WAX) { waxY = y; break; }
+    if (waxY >= waxStartY - 7) {
+        fprintf(stderr, "heated wax did not convect upward through water (%d -> %d)\n",
+                waxStartY, waxY); return 92;
+    }
+    const int waxHighY = waxY;
+    for (int tick = 0; tick < 18; ++tick) {
+        for (int y = lampTop; y < lampBottom; ++y)
+            if (w.at(lampX, y).mat == MAT_WAX) { waxY = y; break; }
+        w.temp[waxY * SIM_W + lampX] = degC(20);
+        w.dirtyPoint(lampX, waxY);
+        w.step();
+    }
+    int waxCount = 0;
+    for (int y = lampTop; y < lampBottom; ++y) {
+        if (w.at(lampX, y).mat != MAT_WAX) continue;
+        waxY = y; ++waxCount;
+    }
+    if (waxCount != 1 || waxY <= waxHighY + 7) {
+        fprintf(stderr, "cooled wax did not sink back through water (%d -> %d, count %d)\n",
+                waxHighY, waxY, waxCount); return 93;
+    }
+
+    /* A dense immiscible liquid must finish leveling promptly after it reaches
+       the bottom of a water vessel. Start Fuel as a substantial 36-cell,
+       six-row pyramid. It must become one flat bottom row in well under a
+       second rather than eroding one blocky edge cell at a time. */
+    w.reset();
+    const int fuelLeft = 700, fuelRight = 763;
+    const int fuelTop = 600, fuelBottom = 620;
+    w.setLiveWindow(fuelLeft - 4, fuelTop - 4, fuelRight + 4, fuelBottom + 4);
+    for (int y = fuelTop - 1; y <= fuelBottom; ++y) {
+        w.setCell(fuelLeft - 1, y, MAT_STONE);
+        w.setCell(fuelRight + 1, y, MAT_STONE);
+    }
+    for (int x = fuelLeft - 1; x <= fuelRight + 1; ++x)
+        w.setCell(x, fuelBottom, MAT_STONE);
+    for (int y = fuelTop; y < fuelBottom; ++y)
+        for (int x = fuelLeft; x <= fuelRight; ++x)
+            w.setCell(x, y, MAT_WATER);
+    const int fuelCenter = 731;
+    int expectedFuel = 0;
+    for (int layer = 0; layer < 6; ++layer) {
+        const int half = 5 - layer;
+        for (int x = fuelCenter - half; x <= fuelCenter + half; ++x) {
+            w.setCell(x, fuelBottom - 1 - layer, MAT_FUEL);
+            ++expectedFuel;
+        }
+    }
+    int fuelFlatTick = -1;
+    for (int tick = 1; tick <= 12; ++tick) {
+        w.step();
+        int bottom = 0;
+        for (int x = fuelLeft; x <= fuelRight; ++x)
+            if (w.at(x, fuelBottom - 1).mat == MAT_FUEL) ++bottom;
+        if (bottom == expectedFuel) { fuelFlatTick = tick; break; }
+    }
+    int fuelCount = 0, bottomFuel = 0;
+    for (int y = fuelTop; y < fuelBottom; ++y)
+        for (int x = fuelLeft; x <= fuelRight; ++x)
+            if (w.at(x, y).mat == MAT_FUEL) {
+                ++fuelCount;
+                if (y == fuelBottom - 1) ++bottomFuel;
+            }
+    if (fuelCount != expectedFuel || bottomFuel != expectedFuel || fuelFlatTick < 0) {
+        fprintf(stderr, "submerged Fuel did not flatten quickly (%d total, %d bottom, tick %d)\n",
+                fuelCount, bottomFuel, fuelFlatTick);
+        for (int y = fuelTop; y < fuelBottom; ++y)
+            for (int x = fuelLeft; x <= fuelRight; ++x)
+                if (w.at(x, y).mat == MAT_FUEL)
+                    fprintf(stderr, "  Fuel at %d,%d\n", x, y);
+        return 117;
+    }
+
+    /* This is density behavior, not a Fuel exception. Cool Wax is only a
+       little denser than Water, but a five-row wax mound must use the same
+       submerged leveling path and settle into a flat bottom layer. */
+    w.reset();
+    w.setLiveWindow(fuelLeft - 4, fuelTop - 4, fuelRight + 4, fuelBottom + 4);
+    for (int y = fuelTop - 1; y <= fuelBottom; ++y) {
+        w.setCell(fuelLeft - 1, y, MAT_STONE);
+        w.setCell(fuelRight + 1, y, MAT_STONE);
+    }
+    for (int x = fuelLeft - 1; x <= fuelRight + 1; ++x)
+        w.setCell(x, fuelBottom, MAT_STONE);
+    for (int y = fuelTop; y < fuelBottom; ++y)
+        for (int x = fuelLeft; x <= fuelRight; ++x)
+            w.setCell(x, y, MAT_WATER);
+    int expectedWax = 0;
+    for (int layer = 0; layer < 5; ++layer) {
+        const int half = 4 - layer;
+        for (int x = fuelCenter - half; x <= fuelCenter + half; ++x) {
+            w.setCell(x, fuelBottom - 1 - layer, MAT_WAX);
+            ++expectedWax;
+        }
+    }
+    int waxFlatTick = -1;
+    for (int tick = 1; tick <= 12; ++tick) {
+        w.step();
+        int bottom = 0;
+        for (int x = fuelLeft; x <= fuelRight; ++x)
+            if (w.at(x, fuelBottom - 1).mat == MAT_WAX) ++bottom;
+        if (bottom == expectedWax) { waxFlatTick = tick; break; }
+    }
+    int flatWaxCount = 0, bottomWax = 0;
+    for (int y = fuelTop; y < fuelBottom; ++y)
+        for (int x = fuelLeft; x <= fuelRight; ++x)
+            if (w.at(x, y).mat == MAT_WAX) {
+                ++flatWaxCount;
+                if (y == fuelBottom - 1) ++bottomWax;
+            }
+    if (flatWaxCount != expectedWax || bottomWax != expectedWax || waxFlatTick < 0) {
+        fprintf(stderr, "submerged Wax did not flatten quickly (%d total, %d bottom, tick %d)\n",
+                flatWaxCount, bottomWax, waxFlatTick); return 119;
+    }
+
+    /* The real failure was not a flat tank: Fuel and Wax stood as separate
+       sheer-sided blocks in a curved lake bed. Reproduce that geometry with
+       two tall deposits on opposite slopes. At equilibrium density must sort
+       vertically (Water, then Wax, then Fuel), and neither dense material may
+       retain anything resembling its original thirty-cell wall. */
+    w.reset();
+    const int bowlCX = 820, bowlLeft = 756, bowlRight = 884;
+    const int bowlWaterTop = 560, bowlBase = 680;
+    w.setLiveWindow(bowlLeft - 4, bowlWaterTop - 4,
+                    bowlRight + 4, bowlBase + 4);
+    for (int x = bowlLeft; x <= bowlRight; ++x) {
+        const int adx = x > bowlCX ? x - bowlCX : bowlCX - x;
+        const int floorY = bowlBase - adx / 2;
+        for (int y = bowlWaterTop; y < floorY; ++y) w.setCell(x, y, MAT_WATER);
+        for (int y = floorY; y <= bowlBase + 2; ++y) w.setCell(x, y, MAT_STONE);
+    }
+    for (int y = bowlWaterTop - 1; y <= bowlBase + 2; ++y) {
+        w.setCell(bowlLeft - 1, y, MAT_STONE);
+        w.setCell(bowlRight + 1, y, MAT_STONE);
+    }
+    int bowlFuelExpected = 0, bowlWaxExpected = 0;
+    for (int x = 780; x < 792; ++x) {
+        const int floorY = bowlBase - (bowlCX - x) / 2;
+        for (int y = floorY - 30; y < floorY; ++y) {
+            w.setCell(x, y, MAT_FUEL); ++bowlFuelExpected;
+        }
+    }
+    for (int x = 849; x < 861; ++x) {
+        const int floorY = bowlBase - (x - bowlCX) / 2;
+        for (int y = floorY - 30; y < floorY; ++y) {
+            w.setCell(x, y, MAT_WAX); ++bowlWaxExpected;
+        }
+    }
+    for (int tick = 0; tick < 120; ++tick) w.step();
+    int bowlFuel = 0, bowlWax = 0, maxFuelColumn = 0, maxWaxColumn = 0;
+    int densityInversions = 0;
+    for (int x = bowlLeft; x <= bowlRight; ++x) {
+        int fuelColumn = 0, waxColumn = 0;
+        int previousLiquidDensity = 0;
+        for (int y = bowlWaterTop; y < bowlBase; ++y) {
+            const u8 bm = w.at(x, y).mat;
+            if (bm == MAT_FUEL) { ++bowlFuel; ++fuelColumn; }
+            if (bm == MAT_WAX)  { ++bowlWax;  ++waxColumn; }
+            if (MATS[bm].kind != KIND_LIQUID) continue;
+            const int density = materialDensityQ8(bm, w.temp[y * SIM_W + x]);
+            if (previousLiquidDensity > density + 64) ++densityInversions;
+            previousLiquidDensity = density;
+        }
+        if (fuelColumn > maxFuelColumn) maxFuelColumn = fuelColumn;
+        if (waxColumn > maxWaxColumn) maxWaxColumn = waxColumn;
+    }
+    if (bowlFuel != bowlFuelExpected || bowlWax != bowlWaxExpected ||
+        maxFuelColumn > 18 || maxWaxColumn > 12 || densityInversions != 0) {
+        fprintf(stderr, "curved-basin liquids kept walls (%d/%d Fuel max %d, %d/%d Wax max %d, inversions %d)\n",
+                bowlFuel, bowlFuelExpected, maxFuelColumn,
+                bowlWax, bowlWaxExpected, maxWaxColumn, densityInversions);
+        return 120;
+    }
+
+    /* Boiling stores expansion locally, then releases two connected gas
+       volumes in one open-space burst. Two daughters are volume-only; the one
+       owner token is what lets all three Steam cells condense back to exactly one
+       Water cell. */
+    w.reset();
+    const int pressureX = 760, pressureY = 640;
+    w.setLiveWindow(pressureX - 40, pressureY - 40,
+                    pressureX + 40, pressureY + 20);
+    w.setCell(pressureX, pressureY, MAT_WATER);
+    w.temp[pressureY * SIM_W + pressureX] = degC(215);
+    w.dirtyPoint(pressureX, pressureY);
+    w.step();
+    if (w.at(pressureX, pressureY).mat != MAT_STEAM ||
+        (w.at(pressureX, pressureY).moisture & GAS_EXCESS_MASK) != 2 ||
+        (w.at(pressureX, pressureY).moisture & GAS_VOLUME_ONLY)) {
+        fprintf(stderr, "boiling water did not store two expansion volumes\n"); return 94;
+    }
+    /* Open Steam releases the full two-volume expansion charge in one turn. */
+    w.step();
+    int pressureSteamCount = 0, ownerCount = 0, excessSum = 0;
+    for (int y = pressureY - 40; y <= pressureY + 10; ++y)
+        for (int x = pressureX - 40; x <= pressureX + 40; ++x) {
+            const Cell& pc = w.at(x, y);
+            if (pc.mat != MAT_STEAM) continue;
+            ++pressureSteamCount;
+            excessSum += pc.moisture & GAS_EXCESS_MASK;
+            if (!(pc.moisture & GAS_VOLUME_ONLY)) ++ownerCount;
+        }
+    if (pressureSteamCount != 3 || ownerCount != 1 || excessSum != 0) {
+        fprintf(stderr, "steam did not expand to three conserved volumes (%d steam, %d owner, %d excess)\n",
+                pressureSteamCount, ownerCount, excessSum); return 95;
+    }
+    for (int y = pressureY - 40; y <= pressureY + 10; ++y)
+        for (int x = pressureX - 40; x <= pressureX + 40; ++x)
+            if (w.at(x, y).mat == MAT_STEAM) {
+                w.temp[y * SIM_W + x] = degC(0);
+                w.dirtyPoint(x, y);
+            }
+    w.step();
+    int condensedWater = 0, remainingSteam = 0;
+    for (int y = pressureY - 40; y <= pressureY + 10; ++y)
+        for (int x = pressureX - 40; x <= pressureX + 40; ++x) {
+            if (w.at(x, y).mat == MAT_WATER) ++condensedWater;
+            if (w.at(x, y).mat == MAT_STEAM) ++remainingSteam;
+        }
+    if (condensedWater != 1 || remainingSteam != 0) {
+        fprintf(stderr, "expanded steam did not condense back to one water (%d/%d)\n",
+                condensedWater, remainingSteam); return 96;
+    }
+
+    /* With no free volume, pressure remains stored and the chunk may sleep;
+       opening the chamber later will dirty and wake the compressed parcel. */
+    w.reset();
+    w.setLiveWindow(pressureX - 4, pressureY - 4, pressureX + 4, pressureY + 4);
+    for (int oy = -1; oy <= 1; ++oy) for (int ox = -1; ox <= 1; ++ox)
+        if (ox || oy) w.setCell(pressureX + ox, pressureY + oy, MAT_STONE);
+    w.setCell(pressureX, pressureY, MAT_WATER);
+    w.temp[pressureY * SIM_W + pressureX] = degC(215);
+    w.dirtyPoint(pressureX, pressureY);
+    w.step();
+    for (int tick = 0; tick < 7; ++tick) {
+        w.temp[pressureY * SIM_W + pressureX] = degC(120);
+        w.dirtyPoint(pressureX, pressureY);
+        w.step();
+    }
+    if (w.at(pressureX, pressureY).mat != MAT_STEAM ||
+        (w.at(pressureX, pressureY).moisture & GAS_EXCESS_MASK) != 2) {
+        fprintf(stderr, "sealed steam did not retain its pressure (mat %u moisture %u temp %u)\n",
+                w.at(pressureX, pressureY).mat, w.at(pressureX, pressureY).moisture,
+                w.temp[pressureY * SIM_W + pressureX]); return 97;
+    }
+    w.setCell(pressureX, pressureY - 1, MAT_EMPTY);
+    for (int tick = 0; tick < 8; ++tick) {
+        for (int y = pressureY - 12; y <= pressureY + 2; ++y)
+            for (int x = pressureX - 12; x <= pressureX + 12; ++x)
+                if (w.at(x, y).mat == MAT_STEAM) {
+                    w.temp[y * SIM_W + x] = degC(120);
+                    w.dirtyPoint(x, y);
+                }
+        w.step();
+    }
+    pressureSteamCount = excessSum = 0;
+    for (int y = pressureY - 12; y <= pressureY + 2; ++y)
+        for (int x = pressureX - 12; x <= pressureX + 12; ++x)
+            if (w.at(x, y).mat == MAT_STEAM) {
+                ++pressureSteamCount;
+                excessSum += w.at(x, y).moisture & GAS_EXCESS_MASK;
+            }
+    if (pressureSteamCount != 3 || excessSum != 0) {
+        fprintf(stderr, "opened chamber did not release stored steam (%d/%d)\n",
+                pressureSteamCount, excessSum); return 98;
+    }
+
+    /* Connected sealed gas shares pressure without creating or deleting it. */
+    w.reset();
+    for (int y = pressureY - 1; y <= pressureY + 1; ++y)
+        for (int x = pressureX - 1; x <= pressureX + 2; ++x)
+            w.setCell(x, y, MAT_STONE);
+    w.setCell(pressureX, pressureY, MAT_STEAM);
+    w.setCell(pressureX + 1, pressureY, MAT_STEAM);
+    w.cells[pressureY * SIM_W + pressureX].moisture = 6;
+    w.temp[pressureY * SIM_W + pressureX] = degC(120);
+    w.temp[pressureY * SIM_W + pressureX + 1] = degC(120);
+    w.setLiveWindow(pressureX - 4, pressureY - 4, pressureX + 5, pressureY + 4);
+    for (int tick = 0; tick < 3; ++tick) w.step();
+    const int leftPressure = w.at(pressureX, pressureY).moisture & GAS_EXCESS_MASK;
+    const int rightPressure = w.at(pressureX + 1, pressureY).moisture & GAS_EXCESS_MASK;
+    if (leftPressure + rightPressure != 6 ||
+        (leftPressure > rightPressure ? leftPressure - rightPressure
+                                      : rightPressure - leftPressure) > 1) {
+        fprintf(stderr, "sealed gas did not equalize pressure (%d/%d)\n",
+                leftPressure, rightPressure); return 99;
+    }
+
+    /* Sieve transit preserves whether a gas cell is an expansion-only volume;
+       otherwise passing through a mesh would manufacture condensation mass. */
+    w.reset();
+    w.setLiveWindow(pressureX - 4, pressureY - 6, pressureX + 4, pressureY + 4);
+    w.setCell(pressureX, pressureY - 1, MAT_GAS_SIEVE);
+    w.setCell(pressureX - 1, pressureY, MAT_STONE);
+    w.setCell(pressureX + 1, pressureY, MAT_STONE);
+    w.setCell(pressureX, pressureY, MAT_STEAM);
+    w.cells[pressureY * SIM_W + pressureX].moisture = GAS_VOLUME_ONLY;
+    w.temp[pressureY * SIM_W + pressureX] = degC(215);
+    w.step();
+    if (!(w.at(pressureX, pressureY - 1).moisture & GAS_VOLUME_ONLY)) {
+        fprintf(stderr, "gas sieve did not pack expansion provenance on entry (%u/%u)\n",
+                w.at(pressureX, pressureY - 1).mat,
+                w.at(pressureX, pressureY - 1).moisture); return 100;
+    }
+    w.step();
+    bool volumeExited = false;
+    for (int y = pressureY - 5; y < pressureY; ++y)
+        for (int x = pressureX - 4; x <= pressureX + 4; ++x)
+            if (w.at(x, y).mat == MAT_STEAM &&
+                (w.at(x, y).moisture & GAS_VOLUME_ONLY)) volumeExited = true;
+    if (!volumeExited) {
+        fprintf(stderr, "gas sieve lost expansion-volume provenance (below %u/%u sieve %u/%u above %u/%u)\n",
+                w.at(pressureX, pressureY).mat, w.at(pressureX, pressureY).moisture,
+                w.at(pressureX, pressureY - 1).mat, w.at(pressureX, pressureY - 1).moisture,
+                w.at(pressureX, pressureY - 2).mat, w.at(pressureX, pressureY - 2).moisture);
+        return 101;
+    }
+
+    /* Steam can occupy the Coal cell itself. Four stored volumes percolate up
+       a supported column one by one, and each is consumed into exactly one
+       Fuel cell; the Coal pile is never pushed or swapped as a shortcut. */
+    w.reset();
+    const int poreX = 900, poreBottom = 720, poreCount = 4;
+    w.setLiveWindow(poreX - 5, poreBottom - poreCount - 5,
+                    poreX + 5, poreBottom + 5);
+    for (int y = poreBottom - poreCount - 2; y <= poreBottom + 1; ++y) {
+        w.setCell(poreX - 1, y, MAT_STONE);
+        w.setCell(poreX + 1, y, MAT_STONE);
+    }
+    w.setCell(poreX, poreBottom + 1, MAT_STONE);
+    for (int y = poreBottom - poreCount; y < poreBottom; ++y)
+        w.setCell(poreX, y, MAT_COAL);
+    w.setCell(poreX, poreBottom, MAT_STEAM);
+    w.cells[poreBottom * SIM_W + poreX].moisture = poreCount - 1;
+    w.temp[poreBottom * SIM_W + poreX] = degC(120);
+    w.dirtyPoint(poreX, poreBottom);
+
+    bool sawOccupiedCoal = false;
+    for (int tick = 0; tick < 40; ++tick) {
+        for (int y = poreBottom - poreCount - 2; y <= poreBottom; ++y) {
+            Cell& pc = w.cells[y * SIM_W + poreX];
+            if (pc.mat == MAT_STEAM) {
+                w.temp[y * SIM_W + poreX] = degC(120);
+                w.dirtyPoint(poreX, y);
+            }
+            if (pc.mat == MAT_COAL && (pc.moisture & GAS_EXCESS_MASK) == MAT_STEAM)
+                sawOccupiedCoal = true;
+        }
+        w.step();
+    }
+    int poreCoal = 0, poreFuel = 0, poreSteam = 0;
+    for (int y = poreBottom - poreCount - 2; y <= poreBottom + 1; ++y) {
+        const Cell& pc = w.at(poreX, y);
+        if (pc.mat == MAT_COAL) ++poreCoal;
+        if (pc.mat == MAT_FUEL) ++poreFuel;
+        if (pc.mat == MAT_STEAM) ++poreSteam;
+    }
+    if (!sawOccupiedCoal || poreCoal != 0 || poreFuel != poreCount || poreSteam != 0) {
+        fprintf(stderr, "steam did not percolate through coal (%d occupied, %d coal, %d fuel, %d steam)\n",
+                sawOccupiedCoal ? 1 : 0, poreCoal, poreFuel, poreSteam); return 104;
+    }
+
+    /* Stored pressure can shift a short powder plug into a real empty outlet.
+       Three Sand cells require pressure four (base two plus two more cells),
+       then exactly one expansion volume occupies the vacated face. */
+    w.reset();
+    const int pushX = 940, pushY = 720;
+    w.setLiveWindow(pushX - 5, pushY - 10, pushX + 5, pushY + 5);
+    for (int y = pushY - 8; y <= pushY + 1; ++y) {
+        w.setCell(pushX - 1, y, MAT_STONE);
+        w.setCell(pushX + 1, y, MAT_STONE);
+    }
+    w.setCell(pushX, pushY + 1, MAT_STONE);
+    for (int y = pushY - 3; y < pushY; ++y) w.setCell(pushX, y, MAT_SAND);
+    w.setCell(pushX, pushY, MAT_STEAM);
+    w.cells[pushY * SIM_W + pushX].moisture = 4;
+    w.temp[pushY * SIM_W + pushX] = degC(120);
+    w.dirtyPoint(pushX, pushY);
+    w.step();
+    int pushedSand = 0, pushedSteam = 0, pushedExcess = 0;
+    for (int y = pushY - 5; y <= pushY; ++y) {
+        const Cell& pc = w.at(pushX, y);
+        if (pc.mat == MAT_SAND) ++pushedSand;
+        if (pc.mat == MAT_STEAM) {
+            ++pushedSteam;
+            pushedExcess += pc.moisture & GAS_EXCESS_MASK;
+        }
+    }
+    if (pushedSand != 3 || pushedSteam != 2 || pushedExcess != 3 ||
+        w.at(pushX, pushY - 4).mat != MAT_SAND ||
+        w.at(pushX, pushY - 1).mat != MAT_STEAM) {
+        fprintf(stderr, "pressure did not conserve a shifted powder plug (%d sand, %d steam, %d excess, top %u, face %u)\n",
+                pushedSand, pushedSteam, pushedExcess,
+                w.at(pushX, pushY - 4).mat, w.at(pushX, pushY - 1).mat); return 105;
+    }
+
+    /* Supported horizontal plugs isolate pressure from gravity: one stored
+       unit cannot shift two Sand cells, and five cells exceed pressure four. */
+    w.reset();
+    w.setLiveWindow(pushX - 5, pushY - 5, pushX + 10, pushY + 5);
+    w.setCell(pushX - 1, pushY, MAT_STONE);
+    w.setCell(pushX - 1, pushY - 1, MAT_STONE);
+    w.setCell(pushX, pushY + 1, MAT_STONE);
+    for (int x = pushX; x <= pushX + 3; ++x)
+        w.setCell(x, pushY - 1, MAT_STONE);
+    for (int x = pushX + 1; x <= pushX + 2; ++x) {
+        w.setCell(x, pushY, MAT_SAND);
+    }
+    for (int x = pushX + 1; x <= pushX + 3; ++x)
+        w.setCell(x, pushY + 1, MAT_STONE);
+    w.setCell(pushX, pushY, MAT_STEAM);
+    w.cells[pushY * SIM_W + pushX].moisture = 1;
+    w.temp[pushY * SIM_W + pushX] = degC(120);
+    w.dirtyPoint(pushX, pushY);
+    w.step();
+    if (w.at(pushX + 1, pushY).mat != MAT_SAND ||
+        w.at(pushX + 2, pushY).mat != MAT_SAND ||
+        w.at(pushX + 3, pushY).mat != MAT_EMPTY ||
+        w.at(pushX, pushY).mat != MAT_STEAM ||
+        (w.at(pushX, pushY).moisture & GAS_EXCESS_MASK) != 1) {
+        fprintf(stderr, "low pressure moved Sand (%u %u %u, gas %u/%u)\n",
+                w.at(pushX + 1, pushY).mat,
+                w.at(pushX + 2, pushY).mat,
+                w.at(pushX + 3, pushY).mat,
+                w.at(pushX, pushY).mat,
+                w.at(pushX, pushY).moisture); return 106;
+    }
+
+    w.reset();
+    w.setLiveWindow(pushX - 5, pushY - 5, pushX + 12, pushY + 5);
+    w.setCell(pushX - 1, pushY, MAT_STONE);
+    w.setCell(pushX - 1, pushY - 1, MAT_STONE);
+    w.setCell(pushX, pushY + 1, MAT_STONE);
+    for (int x = pushX; x <= pushX + 6; ++x)
+        w.setCell(x, pushY - 1, MAT_STONE);
+    for (int x = pushX + 1; x <= pushX + 5; ++x) {
+        w.setCell(x, pushY, MAT_SAND);
+    }
+    for (int x = pushX + 1; x <= pushX + 6; ++x)
+        w.setCell(x, pushY + 1, MAT_STONE);
+    w.setCell(pushX, pushY, MAT_STEAM);
+    w.cells[pushY * SIM_W + pushX].moisture = 4;
+    w.temp[pushY * SIM_W + pushX] = degC(120);
+    w.dirtyPoint(pushX, pushY);
+    w.step();
+    if (w.at(pushX + 6, pushY).mat != MAT_EMPTY ||
+        w.at(pushX + 1, pushY).mat != MAT_SAND ||
+        (w.at(pushX, pushY).moisture & GAS_EXCESS_MASK) != 4 ||
+        g_matPressureResistance[MAT_STONE] != 255 ||
+        g_matPressureResistance[MAT_COPPER_ORE] <= 5) {
+        fprintf(stderr, "packed or immovable material yielded to insufficient pressure\n"); return 107;
+    }
+
+    /* Pressure in the interior of a Steam pocket routes to a remote Coal face,
+       then lifts the loose grain before falling back to Coal's permeable Steam
+       reaction when a packed pile cannot move. Fresh Steam's two stored units
+       are enough for this single-grain shove. */
+    w.reset();
+    const int coalPushX = 960, coalGasTop = 700, coalGasBottom = 710;
+    w.setLiveWindow(coalPushX - 4, coalGasTop - 5,
+                    coalPushX + 4, coalGasBottom + 4);
+    for (int y = coalGasTop - 2; y <= coalGasBottom + 1; ++y) {
+        w.setCell(coalPushX - 1, y, MAT_STONE);
+        w.setCell(coalPushX + 1, y, MAT_STONE);
+    }
+    w.setCell(coalPushX, coalGasBottom + 1, MAT_STONE);
+    for (int y = coalGasTop; y <= coalGasBottom; ++y) {
+        w.setCell(coalPushX, y, MAT_STEAM);
+        w.temp[y * SIM_W + coalPushX] = degC(120);
+    }
+    w.setCell(coalPushX, coalGasTop - 1, MAT_COAL);
+    w.cells[coalGasBottom * SIM_W + coalPushX].moisture = 2;
+    w.dirtyPoint(coalPushX, coalGasBottom);
+    w.step();
+    int coalPushSteam = 0, coalPushExcess = 0;
+    for (int y = coalGasTop - 2; y <= coalGasBottom; ++y) {
+        if (w.at(coalPushX, y).mat == MAT_STEAM) {
+            ++coalPushSteam;
+            coalPushExcess += w.at(coalPushX, y).moisture & GAS_EXCESS_MASK;
+        }
+    }
+    if (w.at(coalPushX, coalGasTop - 2).mat != MAT_COAL ||
+        w.at(coalPushX, coalGasTop - 1).mat != MAT_STEAM ||
+        coalPushSteam != 12 || coalPushExcess != 1) {
+        fprintf(stderr, "shared Steam pressure did not lift Coal (%u/%u, %d steam, %d excess)\n",
+                w.at(coalPushX, coalGasTop - 2).mat,
+                w.at(coalPushX, coalGasTop - 1).mat,
+                coalPushSteam, coalPushExcess); return 111;
+    }
+
+    /* Unpressurized Steam percolates through a Sand pile one cell per frame.
+       With a bottom-to-top in-place scan, allowing the powder to own this swap
+       relays the same Steam parcel through the entire pile in one turn. */
+    w.reset();
+    const int sandSinkX = 970, pileTop = 680, pileBottom = 689;
+    const int initialSteamY = pileBottom + 1;
+    w.setLiveWindow(sandSinkX - 4, pileTop - 4,
+                    sandSinkX + 4, initialSteamY + 4);
+    for (int y = pileTop - 1; y <= initialSteamY + 1; ++y) {
+        w.setCell(sandSinkX - 1, y, MAT_STONE);
+        w.setCell(sandSinkX + 1, y, MAT_STONE);
+    }
+    w.setCell(sandSinkX, initialSteamY + 1, MAT_STONE);
+    for (int y = pileTop; y <= pileBottom; ++y)
+        w.setCell(sandSinkX, y, MAT_SAND);
+    w.setCell(sandSinkX, initialSteamY, MAT_STEAM);
+    w.temp[initialSteamY * SIM_W + sandSinkX] = degC(120);
+    w.step();
+    if (w.at(sandSinkX, pileBottom).mat != MAT_STEAM ||
+        w.at(sandSinkX, initialSteamY).mat != MAT_SAND) {
+        fprintf(stderr, "Steam did not percolate exactly one Sand cell (%u at %d, %u below)\n",
+                w.at(sandSinkX, pileBottom).mat, pileBottom,
+                w.at(sandSinkX, initialSteamY).mat); return 113;
+    }
+
+    for (int tick = 0; tick < 4; ++tick) {
+        for (int y = pileTop; y <= initialSteamY; ++y)
+            if (w.at(sandSinkX, y).mat == MAT_STEAM) {
+                w.temp[y * SIM_W + sandSinkX] = degC(120);
+                w.dirtyPoint(sandSinkX, y);
+            }
+        w.step();
+    }
+    int sunkSand = 0, sinkSteam = 0, sinkSteamY = -1, sinkExcess = 0;
+    for (int y = pileTop; y <= initialSteamY; ++y) {
+        if (w.at(sandSinkX, y).mat == MAT_SAND) ++sunkSand;
+        if (w.at(sandSinkX, y).mat == MAT_STEAM) {
+            ++sinkSteam;
+            sinkSteamY = y;
+            sinkExcess += w.at(sandSinkX, y).moisture & GAS_EXCESS_MASK;
+        }
+    }
+    if (sunkSand != 10 || sinkSteam != 1 ||
+        sinkSteamY != initialSteamY - 5 || sinkExcess != 0) {
+        fprintf(stderr, "Steam percolation did not remain one cell per frame (%d Sand, %d Steam at y %d, %d excess)\n",
+                sunkSand, sinkSteam, sinkSteamY, sinkExcess); return 113;
+    }
+
+    /* Pressure stored throughout the center of a broad Steam pocket reaches
+       its Water boundary in one turn. Adjacent-only equalization needs twenty
+       turns just to reach this 41-cell blob's skin, so no new visible gas
+       volume would exist after this step under the old rule. */
+    w.reset();
+    const int blobX = 980, blobTop = 700, blobSize = 41;
+    const int blobBottom = blobTop + blobSize - 1;
+    w.setLiveWindow(blobX - 6, blobTop - 10,
+                    blobX + blobSize + 5, blobBottom + 5);
+    for (int y = blobTop - 10; y <= blobBottom + 1; ++y) {
+        w.setCell(blobX - 1, y, MAT_STONE);
+        w.setCell(blobX + blobSize, y, MAT_STONE);
+    }
+    for (int x = blobX; x < blobX + blobSize; ++x) {
+        w.setCell(x, blobBottom + 1, MAT_STONE);
+        for (int y = blobTop; y <= blobBottom; ++y)
+            w.setCell(x, y, MAT_STEAM);
+        for (int y = blobTop - 4; y < blobTop; ++y)
+            w.setCell(x, y, MAT_WATER);
+    }
+    const int blobCenterX = blobX + blobSize / 2;
+    const int blobCenterY = blobTop + blobSize / 2;
+    const int chargedRadius = 4;
+    const int chargedCells = (chargedRadius * 2 + 1) * (chargedRadius * 2 + 1);
+    for (int y = blobCenterY - chargedRadius; y <= blobCenterY + chargedRadius; ++y)
+        for (int x = blobCenterX - chargedRadius; x <= blobCenterX + chargedRadius; ++x) {
+            w.cells[y * SIM_W + x].moisture = 5;
+            w.temp[y * SIM_W + x] = degC(120);
+            w.dirtyPoint(x, y);
+        }
+    w.step();
+    int blobSteam = 0, blobWater = 0, blobExcess = 0;
+    for (int y = blobTop - 10; y <= blobBottom; ++y)
+        for (int x = blobX; x < blobX + blobSize; ++x) {
+            const Cell& bc = w.at(x, y);
+            if (bc.mat == MAT_STEAM) {
+                ++blobSteam;
+                blobExcess += bc.moisture & GAS_EXCESS_MASK;
+            }
+            if (bc.mat == MAT_WATER) ++blobWater;
+        }
+    const int initialBlobSteam = blobSize * blobSize;
+    const int initialBlobVolume = initialBlobSteam + chargedCells * 5;
+    if (blobSteam != initialBlobSteam + blobSize * 5 || blobWater != blobSize * 4 ||
+        blobSteam + blobExcess != initialBlobVolume) {
+        fprintf(stderr, "shared pocket pressure did not decompress broad Steam blob (%d steam, %d water, %d excess)\n",
+                blobSteam, blobWater, blobExcess); return 108;
+    }
+
+    /* A crooked connected pocket cannot use any straight pressure ray. The
+       bounded flood must carry the charge around the corner to the Water face
+       without changing the number of pre-existing gas or liquid cells. */
+    w.reset();
+    const int curveX = 1100, curveY = 720;
+    w.setLiveWindow(curveX - 6, curveY - 16, curveX + 12, curveY + 5);
+    for (int y = curveY - 12; y <= curveY + 2; ++y)
+        for (int x = curveX - 2; x <= curveX + 7; ++x)
+            w.setCell(x, y, MAT_STONE);
+    for (int x = curveX; x <= curveX + 5; ++x)
+        w.setCell(x, curveY, MAT_STEAM);
+    for (int y = curveY - 6; y < curveY; ++y)
+        w.setCell(curveX + 5, y, MAT_STEAM);
+    for (int y = curveY - 10; y < curveY - 6; ++y)
+        w.setCell(curveX + 5, y, MAT_WATER);
+    w.setCell(curveX + 5, curveY - 11, MAT_EMPTY);
+    w.cells[curveY * SIM_W + curveX].moisture = 5;
+    w.temp[curveY * SIM_W + curveX] = degC(120);
+    w.dirtyPoint(curveX, curveY);
+    w.step();
+    int curvedSteam = 0, curvedWater = 0, curvedExcess = 0;
+    for (int y = curveY - 11; y <= curveY; ++y)
+        for (int x = curveX; x <= curveX + 5; ++x) {
+            const Cell& cc = w.at(x, y);
+            if (cc.mat == MAT_STEAM) {
+                ++curvedSteam;
+                curvedExcess += cc.moisture & GAS_EXCESS_MASK;
+            }
+            if (cc.mat == MAT_WATER) ++curvedWater;
+        }
+    if (curvedSteam != 13 || curvedWater != 4 || curvedExcess != 4 ||
+        curvedSteam + curvedExcess != 17) {
+        fprintf(stderr, "shared pressure did not follow curved Steam pocket (%d steam, %d water, %d excess)\n",
+                curvedSteam, curvedWater, curvedExcess); return 109;
+    }
+
+    /* Pressure lifts a connected water column immediately instead of waiting
+       for the original steam cell to bubble through it one pixel per frame. */
+    w.reset();
+    const int liftX = 820, liftY = 700, liftDepth = 24;
+    w.setLiveWindow(liftX - 4, liftY - liftDepth - 4, liftX + 4, liftY + 4);
+    for (int y = liftY - liftDepth; y <= liftY; ++y) {
+        w.setCell(liftX - 1, y, MAT_STONE);
+        w.setCell(liftX + 1, y, MAT_STONE);
+    }
+    w.setCell(liftX, liftY + 1, MAT_STONE);
+    for (int y = liftY - liftDepth + 1; y < liftY; ++y)
+        w.setCell(liftX, y, MAT_WATER);
+    w.setCell(liftX, liftY, MAT_STEAM);
+    w.cells[liftY * SIM_W + liftX].moisture = 5;
+    w.temp[liftY * SIM_W + liftX] = degC(120);
+    w.dirtyPoint(liftX, liftY);
+    w.step();
+    int liftedWater = 0, liftedSteam = 0, liftedExcess = 0;
+    for (int y = liftY - liftDepth - 4; y <= liftY; ++y) {
+        if (w.at(liftX, y).mat == MAT_WATER) ++liftedWater;
+        if (w.at(liftX, y).mat == MAT_STEAM) {
+            ++liftedSteam;
+            liftedExcess += w.at(liftX, y).moisture & GAS_EXCESS_MASK;
+        }
+    }
+    if (liftedWater != liftDepth - 1 || liftedSteam != 6 || liftedExcess != 0 ||
+        w.at(liftX, liftY - liftDepth - 4).mat != MAT_WATER) {
+        fprintf(stderr, "steam pressure did not lift deep water (%d water, %d steam, %d excess, top %u)\n",
+                liftedWater, liftedSteam, liftedExcess,
+                w.at(liftX, liftY - liftDepth - 4).mat); return 102;
+    }
+
+    /* A genuinely deep lake must route pressure to its distant surface. The
+       pressure source also touches a sealed side pocket of Water: merely
+       touching liquid is not an outlet and must not trap the pocket's shared
+       pressure at this underwater dead end. */
+    w.reset();
+    const int lakeX = 1260, lakeGasTop = 830, lakeGasBottom = 930;
+    const int lakeDepth = 160, lakeSurface = lakeGasTop - lakeDepth;
+    w.setLiveWindow(lakeX - 5, lakeSurface - 8, lakeX + 5, lakeGasBottom + 4);
+    for (int y = lakeSurface - 1; y <= lakeGasBottom + 1; ++y) {
+        w.setCell(lakeX - 1, y, MAT_STONE);
+        w.setCell(lakeX + 1, y, MAT_STONE);
+    }
+    w.setCell(lakeX, lakeGasBottom + 1, MAT_STONE);
+    for (int y = lakeSurface; y < lakeGasTop; ++y)
+        w.setCell(lakeX, y, MAT_WATER);
+    for (int y = lakeGasTop; y <= lakeGasBottom; ++y) {
+        w.setCell(lakeX, y, MAT_STEAM);
+        w.temp[y * SIM_W + lakeX] = degC(120);
+    }
+    const int lakeSourceY = lakeGasTop + 75;
+    w.setCell(lakeX - 1, lakeSourceY, MAT_WATER);
+    w.setCell(lakeX - 2, lakeSourceY, MAT_STONE);
+    w.cells[lakeSourceY * SIM_W + lakeX].moisture = 5;
+    w.dirtyPoint(lakeX, lakeSourceY);
+    w.step();
+    int lakeWater = 0, lakeSteam = 0, lakeExcess = 0;
+    for (int y = lakeSurface - 8; y <= lakeGasBottom; ++y)
+        for (int x = lakeX - 1; x <= lakeX; ++x) {
+            if (w.at(x, y).mat == MAT_WATER) ++lakeWater;
+            if (w.at(x, y).mat == MAT_STEAM) {
+                ++lakeSteam;
+                lakeExcess += w.at(x, y).moisture & GAS_EXCESS_MASK;
+            }
+        }
+    const int initialLakeSteam = lakeGasBottom - lakeGasTop + 1;
+    if (lakeWater != lakeDepth + 1 || lakeSteam != initialLakeSteam + 5 ||
+        lakeExcess != 0) {
+        fprintf(stderr, "deep-lake pressure chose a false underwater outlet (%d water, %d steam, %d excess)\n",
+                lakeWater, lakeSteam, lakeExcess); return 110;
+    }
+
+    /* The bounded liquid search follows a bent connected path to its outlet;
+       this catches implementations that only special-case a vertical column. */
+    w.reset();
+    const int bendX = 860, bendY = 700;
+    w.setLiveWindow(bendX - 6, bendY - 7, bendX + 9, bendY + 4);
+    for (int y = bendY - 4; y <= bendY + 1; ++y)
+        for (int x = bendX - 2; x <= bendX + 6; ++x)
+            w.setCell(x, y, MAT_STONE);
+    const int pathX[5] = { bendX, bendX, bendX + 1, bendX + 2, bendX + 3 };
+    const int pathY[5] = { bendY - 1, bendY - 2, bendY - 2, bendY - 2, bendY - 2 };
+    for (int k = 0; k < 5; ++k) w.setCell(pathX[k], pathY[k], MAT_WATER);
+    w.setCell(bendX + 4, bendY - 2, MAT_EMPTY);
+    w.setCell(bendX, bendY, MAT_STEAM);
+    w.cells[bendY * SIM_W + bendX].moisture = 5;
+    w.temp[bendY * SIM_W + bendX] = degC(120);
+    w.dirtyPoint(bendX, bendY);
+    w.step();
+    int bentWater = 0, bentSteam = 0;
+    for (int y = bendY - 4; y <= bendY; ++y)
+        for (int x = bendX - 1; x <= bendX + 4; ++x) {
+            if (w.at(x, y).mat == MAT_WATER) ++bentWater;
+            if (w.at(x, y).mat == MAT_STEAM) ++bentSteam;
+        }
+    if (bentWater != 5 || bentSteam != 2 ||
+        w.at(bendX + 4, bendY - 2).mat != MAT_WATER ||
+        w.at(bendX, bendY - 1).mat != MAT_STEAM) {
+        fprintf(stderr, "steam pressure did not follow bent liquid outlet (%d water, %d steam, outlet %u, inlet %u)\n",
+                bentWater, bentSteam, w.at(bendX + 4, bendY - 2).mat,
+                w.at(bendX, bendY - 1).mat); return 103;
     }
 
     /* Water's short reach makes a horizontal heat front advance three cells in
@@ -805,6 +1720,108 @@ int main() {
                 (unsigned)w.temp[waterHeatY * SIM_W + waterHeatX + 3],
                 (unsigned)w.at(waterHeatX, waterHeatY).mat,
                 (unsigned)w.at(waterHeatX + 3, waterHeatY).mat); return 51;
+    }
+
+    /* Water convection carries the hot parcel upward three cells per frame;
+       this is directional heat transport, separate from symmetric conduction. */
+    w.reset();
+    const int convectX = 730, convectBottom = 680, convectHeight = 16;
+    w.setLiveWindow(convectX - 4, convectBottom - convectHeight - 4,
+                    convectX + 4, convectBottom + 4);
+    for (int y = convectBottom - convectHeight; y <= convectBottom + 1; ++y) {
+        w.setCell(convectX - 1, y, MAT_RUBBER);
+        w.setCell(convectX + 1, y, MAT_RUBBER);
+    }
+    w.setCell(convectX, convectBottom + 1, MAT_RUBBER);
+    for (int y = convectBottom - convectHeight + 1; y <= convectBottom; ++y) {
+        w.setCell(convectX, y, MAT_WATER);
+        w.temp[y * SIM_W + convectX] = AMBIENT_TEMP;
+    }
+    w.temp[convectBottom * SIM_W + convectX] = degC(90);
+    w.cells[convectBottom * SIM_W + convectX].moisture = 123;
+    w.dirtyPoint(convectX, convectBottom);
+    w.step();
+    int hottestWaterY = convectBottom, hottestWaterTemp = -1;
+    int markedWaterY = convectBottom;
+    for (int y = convectBottom; y > convectBottom - convectHeight; --y) {
+        if (w.at(convectX, y).mat == MAT_WATER &&
+            (int)w.temp[y * SIM_W + convectX] > hottestWaterTemp) {
+            hottestWaterTemp = w.temp[y * SIM_W + convectX];
+            hottestWaterY = y;
+        }
+        if (w.at(convectX, y).mat == MAT_WATER &&
+            w.at(convectX, y).moisture == 123) markedWaterY = y;
+    }
+    if (markedWaterY > convectBottom - 2) {
+        fprintf(stderr, "Water convection did not carry its hot parcel upward quickly (marker y %d, hottest %d at y %d; %u %u %u %u)\n",
+                markedWaterY, hottestWaterTemp, hottestWaterY,
+                (unsigned)w.temp[convectBottom * SIM_W + convectX],
+                (unsigned)w.temp[(convectBottom - 1) * SIM_W + convectX],
+                (unsigned)w.temp[(convectBottom - 2) * SIM_W + convectX],
+                (unsigned)w.temp[(convectBottom - 3) * SIM_W + convectX]); return 112;
+    }
+
+    /* The stronger reach is a fluid rule, not a Water special case. Repeat
+       the marked-parcel check with Glowfluid, which has no phase transition
+       that could satisfy the test by replacing the parcel. */
+    w.reset();
+    const int glowConvectX = convectX + 20;
+    w.setLiveWindow(glowConvectX - 4, convectBottom - convectHeight - 4,
+                    glowConvectX + 4, convectBottom + 4);
+    for (int y = convectBottom - convectHeight; y <= convectBottom + 1; ++y) {
+        w.setCell(glowConvectX - 1, y, MAT_RUBBER);
+        w.setCell(glowConvectX + 1, y, MAT_RUBBER);
+    }
+    w.setCell(glowConvectX, convectBottom + 1, MAT_RUBBER);
+    for (int y = convectBottom - convectHeight + 1; y <= convectBottom; ++y) {
+        w.setCell(glowConvectX, y, MAT_GLOWFLUID);
+        w.temp[y * SIM_W + glowConvectX] = AMBIENT_TEMP;
+    }
+    w.temp[convectBottom * SIM_W + glowConvectX] = degC(90);
+    w.cells[convectBottom * SIM_W + glowConvectX].moisture = 123;
+    w.dirtyPoint(glowConvectX, convectBottom);
+    w.step();
+    int markedGlowY = convectBottom;
+    for (int y = convectBottom; y > convectBottom - convectHeight; --y)
+        if (w.at(glowConvectX, y).mat == MAT_GLOWFLUID &&
+            w.at(glowConvectX, y).moisture == 123) markedGlowY = y;
+    if (markedGlowY > convectBottom - 2) {
+        fprintf(stderr, "Glowfluid did not use full-strength convection (marker y %d)\n",
+                markedGlowY); return 114;
+    }
+
+    /* The packed-pool fast path must retain convection. This marked hot parcel
+       has all eight neighbours occupied by Fuel, so only that path can move
+       it during this frame. */
+    w.reset();
+    const int packedX0 = 760, packedX1 = 766;
+    const int packedTop = 710, packedBottom = 720, packedMarkerX = 763;
+    const int packedMarkerY = 718;
+    w.setLiveWindow(packedX0 - 4, packedTop - 4,
+                    packedX1 + 4, packedBottom + 4);
+    for (int x = packedX0 - 1; x <= packedX1 + 1; ++x) {
+        w.setCell(x, packedTop - 1, MAT_RUBBER);
+        w.setCell(x, packedBottom + 1, MAT_RUBBER);
+    }
+    for (int y = packedTop; y <= packedBottom; ++y) {
+        w.setCell(packedX0 - 1, y, MAT_RUBBER);
+        w.setCell(packedX1 + 1, y, MAT_RUBBER);
+        for (int x = packedX0; x <= packedX1; ++x) {
+            w.setCell(x, y, MAT_FUEL);
+            w.temp[y * SIM_W + x] = AMBIENT_TEMP;
+        }
+    }
+    w.temp[packedMarkerY * SIM_W + packedMarkerX] = degC(90);
+    w.cells[packedMarkerY * SIM_W + packedMarkerX].moisture = 124;
+    w.dirtyPoint(packedMarkerX, packedMarkerY);
+    w.step();
+    int packedMarkerAfterY = packedMarkerY;
+    for (int y = packedTop; y <= packedBottom; ++y)
+        if (w.at(packedMarkerX, y).mat == MAT_FUEL &&
+            w.at(packedMarkerX, y).moisture == 124) packedMarkerAfterY = y;
+    if (packedMarkerAfterY > packedMarkerY - 2) {
+        fprintf(stderr, "packed-fluid fast path suppressed convection (%d -> %d)\n",
+                packedMarkerY, packedMarkerAfterY); return 115;
     }
 
     /* A submerged gas plume may rise diagonally, but never makes a pure

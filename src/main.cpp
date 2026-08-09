@@ -131,6 +131,8 @@ static const BrushDef BRUSHES[] = {
     { MAT_NITROGEN,"Liquid N2"},
     { MAT_ACID,    "Acid"     },
     { MAT_GLOWFLUID,"Glowfluid"},
+    { MAT_WAX,     "Wax"      },
+    { MAT_INERT_FLUID, "Inert Fluid" },
     /* Mercury only. Its vapour and frozen forms are still fully simulated -- a
        mercury pool boiled past 150 C still gives off vapour, and chilled past
        -30 C still freezes solid -- they are just not PLACEABLE. They are
@@ -215,7 +217,7 @@ static const int PALETTE_VISIBLE_ROWS = 14;
 static RECT g_paletteRect[N_PALETTE];
 static RECT g_paletteArea, g_paletteScrollTrack, g_paletteScrollThumb;
 static RECT g_actRect[N_ACT];
-static RECT g_sizeDec, g_sizeInc, g_sizeBox;
+static RECT g_sizeDec, g_sizeInc, g_sizeBox, g_sizeTrack;
 static RECT g_speedRect[N_SPEED];
 static RECT g_zoomRect[N_ZOOM];
 
@@ -439,7 +441,10 @@ static int  g_brushMat = MAT_SAND;
 static int  g_paletteDevice = -1;
 static int  g_paletteScroll = 0;
 static int  g_paletteMaxScroll = 0;
+static const int BRUSH_RADIUS_MIN = 1;
+static const int BRUSH_RADIUS_MAX = 64;
 static int  g_brushRadius = 6;
+static bool g_sizeDragging = false;
 static bool g_paused = false;
 
 /* --- the map ------------------------------------------------------------
@@ -790,15 +795,18 @@ static bool hoverCell(char* out, int cap, u32* colOut) {
     const Cell& c = g_world.at(cx, cy);
     const int t = (int)g_world.temp[cy * SIM_W + cx] - TEMP_OFFSET;
     const char* name = (c.mat == MAT_EMPTY) ? "Air" : MATS[c.mat].name;
+    char pressure[24] = "";
+    if (MATS[c.mat].kind == KIND_GAS && (c.moisture & GAS_EXCESS_MASK))
+        sprintf(pressure, "  pressure %u", (unsigned)(c.moisture & GAS_EXCESS_MASK));
     /* Names what is BEHIND as well as in front, because in background mode the
        thing you are about to act on is the one you cannot otherwise identify --
        a backdrop is deliberately too dark to tell apart by colour alone. */
     const u8 b = g_world.bgAt(cx, cy);
     if (b != MAT_EMPTY)
-        _snprintf(out, cap, "%s  %+d C  / %s%s", name, t, MATS[b].name,
+        _snprintf(out, cap, "%s  %+d C%s  / %s%s", name, t, pressure, MATS[b].name,
                   g_world.bgPlaced(cx, cy) ? " (built)" : "");
     else
-        _snprintf(out, cap, "%s  %+d C", name, t);
+        _snprintf(out, cap, "%s  %+d C%s", name, t, pressure);
     out[cap - 1] = 0;
     if (colOut) {
         /* the material's own dry colour, so the label is tinted like the thing
@@ -838,7 +846,7 @@ static void layoutPanel() {
     /* The scrollable two-column catalog deliberately has a fixed visible
        height.  Materials and devices therefore compete for neither panel
        height nor readability as the catalog grows. */
-    const int rowCount  = PALETTE_VISIBLE_ROWS + 3 + N_ACT; /* + size, speed, zoom */
+    const int rowCount  = PALETTE_VISIBLE_ROWS + 4 + N_ACT; /* + size label, slider, speed, zoom */
 
     int pitch = (statsTop - top - sepTotal) / rowCount;
     if (pitch > 30) pitch = 30;
@@ -886,10 +894,14 @@ static void layoutPanel() {
     }
 
     y += 6;
-    /* brush size: [-]  size N  [+] */
+    /* Brush size keeps the precise stepper, with a full-width slider beneath
+       it for crossing the 1..64 range quickly. Giving the rail its own row
+       keeps the numeric readout legible instead of drawing text through it. */
     SetRect(&g_sizeDec, pad,            y, pad + 24,     y + h);
     SetRect(&g_sizeBox, pad + 24 + 4,   y, pad + w - 28, y + h);
     SetRect(&g_sizeInc, pad + w - 24,   y, pad + w,      y + h);
+    y += pitch;
+    SetRect(&g_sizeTrack, pad, y, pad + w, y + h);
     y += pitch;
 
     /* speed: [1x][2x][4x], one segment each, as a radio row rather than a
@@ -1560,7 +1572,31 @@ static void panCamera(float dx, float dy) {
 }
 
 static void cycleView()      { g_view = (g_view + 1) % VIEW_COUNT; }
-static void changeSize(int d){ g_brushRadius = imax(1, imin(64, g_brushRadius + d)); }
+static void changeSize(int d){
+    g_brushRadius = imax(BRUSH_RADIUS_MIN,
+                         imin(BRUSH_RADIUS_MAX, g_brushRadius + d));
+}
+
+/* The thumb's centre represents the selected radius. The same geometry drives
+   drawing and pointer mapping, so size 1/64 land exactly on the rail ends and
+   the displayed thumb cannot disagree with the value a click produces. */
+static RECT sizeThumbRect() {
+    static const int thumbW = 12;
+    const int travel = imax(1, g_sizeTrack.right - g_sizeTrack.left - thumbW);
+    const int range = BRUSH_RADIUS_MAX - BRUSH_RADIUS_MIN;
+    const int at = (g_brushRadius - BRUSH_RADIUS_MIN) * travel / range;
+    RECT r = { g_sizeTrack.left + at, g_sizeTrack.top + 1,
+               g_sizeTrack.left + at + thumbW, g_sizeTrack.bottom - 1 };
+    return r;
+}
+
+static void setSizeFromSlider(int mx) {
+    static const int thumbW = 12;
+    const int travel = imax(1, g_sizeTrack.right - g_sizeTrack.left - thumbW);
+    const int at = imax(0, imin(travel, mx - g_sizeTrack.left - thumbW / 2));
+    const int range = BRUSH_RADIUS_MAX - BRUSH_RADIUS_MIN;
+    g_brushRadius = BRUSH_RADIUS_MIN + (at * range + travel / 2) / travel;
+}
 static void changeZoom(int d) {
     const int oldW = viewCellsW(), oldH = viewCellsH();
     const int next = imax(0, imin(N_ZOOM - 1, g_zoomIdx + d));
@@ -1666,6 +1702,11 @@ static bool handlePanelClick(int mx, int my) {
     for (int i = 0; i < N_ZOOM; ++i) {
         if (inRect(g_zoomRect[i], mx, my)) { changeZoom(i - g_zoomIdx); return true; }
     }
+    if (inRect(g_sizeTrack, mx, my)) {
+        setSizeFromSlider(mx);
+        g_sizeDragging = true;
+        return true;
+    }
     if (inRect(g_sizeDec, mx, my)) { changeSize(-1); return true; }
     if (inRect(g_sizeInc, mx, my)) { changeSize(+1); return true; }
     if (inRect(g_actRect[ACT_OVERWRITE], mx, my)) { g_overwrite = !g_overwrite; return true; }
@@ -1733,6 +1774,7 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_MOUSEMOVE:
         g_mx = (short)LOWORD(lp);
         g_my = (short)HIWORD(lp);
+        if (g_sizeDragging) setSizeFromSlider(g_mx);
         return 0;
 
     case WM_CHAR:
@@ -1771,7 +1813,8 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_LBUTTONUP:
         commitWire();       /* before the button clears -- see commitLine */
         commitLine();
-        g_lmb = false; g_useLatch = false; g_uiCapture = false; ReleaseCapture(); return 0;
+        g_lmb = false; g_useLatch = false; g_uiCapture = false;
+        g_sizeDragging = false; ReleaseCapture(); return 0;
     case WM_RBUTTONDOWN:
         g_mx = (short)LOWORD(lp);
         g_my = (short)HIWORD(lp);
@@ -1838,6 +1881,10 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_RBUTTONUP:
         commitLine();
         g_rmb = false; ReleaseCapture(); return 0;
+
+    case WM_CAPTURECHANGED:
+        g_sizeDragging = false;
+        return 0;
 
     case WM_SETCURSOR:
         /* Hide the arrow over the playfield so the crosshair is the only
@@ -4119,6 +4166,19 @@ static void drawPanel(HDC hdc) {
         else        sprintf(s, "Size %d", g_brushRadius);
         SetTextColor(hdc, capped ? RGB(226, 190, 90) : RGB(214, 216, 224));
         DrawTextA(hdc, s, -1, &rr, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    }
+    {
+        /* A scrollbar-style rail rather than a progress bar: the thumb is the
+           value, and clicking or dragging anywhere on the row moves it. */
+        RECT rail = g_sizeTrack;
+        FillRect(hdc, &rail, inRect(rail, g_mx, g_my) ? g_btnBgHot : g_btnBg);
+        FrameRect(hdc, &rail, g_borderBrush);
+        RECT groove = { rail.left + 6, (rail.top + rail.bottom) / 2 - 2,
+                        rail.right - 6, (rail.top + rail.bottom) / 2 + 2 };
+        FillRect(hdc, &groove, g_panelBg);
+        RECT thumb = sizeThumbRect();
+        FillRect(hdc, &thumb, g_sizeDragging ? g_btnBgSel : g_btnBgHot);
+        FrameRect(hdc, &thumb, g_accentBrush);
     }
 
     /* speed row */

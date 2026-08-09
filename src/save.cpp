@@ -488,13 +488,24 @@ bool saveRead(const char* path, World& w) {
         } else if (tag == fourcc("CMOI")) {
             if (!rleRead(f, g_plane, SIM_W * SIM_H)) { sprintf(g_err, "bad moisture data"); fclose(f); return false; }
             for (int i = 0; i < SIM_W * SIM_H; ++i) {
-                /* A sieve's moisture byte is a fluid material id. Remap it by
-                   name just like the foreground plane; ordinary moisture is a
-                   scalar and must remain untouched. */
+                /* A sieve's or reactive powder's moisture byte is a fluid
+                   material id. Remap it by name just like the foreground
+                   plane; ordinary moisture is a scalar and must remain
+                   untouched. */
                 const u8 raw = g_plane[i];
-                w.cells[i].moisture = ((w.cells[i].mat == MAT_SIEVE ||
-                                        w.cells[i].mat == MAT_GAS_SIEVE) && raw)
-                                      ? g_remap[raw] : raw;
+                const u8 host = w.cells[i].mat;
+                const bool sparseOccupant = host == MAT_SIEVE ||
+                                            host == MAT_GAS_SIEVE ||
+                                            (MATS[host].kind == KIND_POWDER &&
+                                             g_matWetInto[host] != MAT_EMPTY &&
+                                             MATS[g_matWetBy[host]].kind == KIND_GAS);
+                if (sparseOccupant && raw) {
+                    const u8 volumeOnly = raw & GAS_VOLUME_ONLY;
+                    const u8 occupant = raw & GAS_EXCESS_MASK;
+                    w.cells[i].moisture = (u8)(g_remap[occupant] | volumeOnly);
+                } else {
+                    w.cells[i].moisture = raw;
+                }
             }
             statAdd("cell moisture", len + 12);
         } else if (tag == fourcc("TEMP")) {

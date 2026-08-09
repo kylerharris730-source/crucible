@@ -364,6 +364,14 @@ enum MatId {
     MAT_SIEVE,
     MAT_GAS_SIEVE,
 
+    /* Lamp wax is the first material whose buoyancy changes visibly with
+       temperature. Appended for save-id stability. */
+    MAT_WAX,
+
+    /* A water-density test bath with no phase transitions. Appended so older
+       saves keep every existing material id. */
+    MAT_INERT_FLUID,
+
     MAT_COUNT
 };
 
@@ -491,6 +499,31 @@ struct MatInfo {
 };
 
 extern MatInfo MATS[MAT_COUNT];
+
+/* Density is compared in Q8 fixed point so thermal expansion can matter well
+   before it rounds to a whole density unit. The coefficient is Q8 density
+   lost per stored degree above 20 C; zero keeps legacy fixed density exactly. */
+extern u8 g_matThermalExpansionQ8[MAT_COUNT];
+static inline int materialDensityQ8(u8 mat, u8 temperature) {
+    int density = (int)MATS[mat].density << 8;
+    const u8 expansion = g_matThermalExpansionQ8[mat];
+    if (expansion)
+        density -= (int)expansion * ((int)temperature - (int)degC(20));
+    if (density < 1) density = 1;
+    if (density > 65535) density = 65535;
+    return density;
+}
+
+/* Total free-space cells represented when one liquid cell boils into this gas.
+   One means legacy one-for-one conversion; Steam deliberately expands. */
+extern u8 g_matGasExpansion[MAT_COUNT];
+
+/* Minimum stored gas-volume pressure needed to start moving a powder cell.
+   Each additional cell in a pushed line adds one to the requirement. 255 means
+   pressure-immovable; this is explicit rather than derived from mining
+   strength because hardness and willingness to shift as loose material are
+   different properties (ore is hard to break but still granular). */
+extern u8 g_matPressureResistance[MAT_COUNT];
 
 /* Cell -> pixel, precomputed. Indexed by
       (mat << 8) | (moisture & 0xF0) | (tint >> 4)

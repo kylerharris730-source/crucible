@@ -54,6 +54,30 @@ static const int NB_DY[4] = { -1,  1,  0,  0 };
 static const int NB8_DX[8] = {  0,  0, -1,  1, -1,  1, -1,  1 };
 static const int NB8_DY[8] = { -1,  1,  0,  0, -1, -1,  1,  1 };
 
+/* A quarter of one legacy density point. Fixed-point thermal density would
+   otherwise make two almost-identical parcels swap every time heat jitters by
+   one degree, turning a calm interface into permanent pixel vibration. */
+static const int DENSITY_SWAP_EPS_Q8 = 64;
+
+/* Pressure can lift a reasonably deep column cheaply, while the more
+   expensive sideways search stays tightly local. These are deliberately two
+   limits: the common case is a straight column of water above a steam pocket,
+   and making that pay for a square flood fill would punish boilers for no
+   visual benefit. */
+static const int GAS_PRESSURE_VERTICAL_REACH = 512;
+static const int GAS_PRESSURE_LIQUID_RADIUS  = 16;
+static const int GAS_PRESSURE_POWDER_REACH   = 8;
+static const int GAS_PRESSURE_POCKET_RAY     = 512;
+static const int GAS_PRESSURE_POCKET_RADIUS  = 32;
+static const int GAS_PRESSURE_POCKET_NODES   = 2048;
+static const int GAS_PRESSURE_POCKET_BUDGET  = 128;
+static const int GAS_PRESSURE_EXPANSION_BURST = 5;
+static const int FLUID_CONVECTION_REACH       = 3;
+static const int WAX_CONVECTION_REACH         = 1;
+static const int FLUID_CONVECTION_DELTA       = 2;
+static const int SUBMERGED_LEVEL_REACH         = 64;
+static const int SUBMERGED_SINK_REACH          = 8;
+
 /* Divide a heat transfer by 2^shift to get the temperature change a material of
    that thermal mass actually feels, carrying the remainder stochastically so
    small transfers average out correctly instead of truncating to nothing.
@@ -105,6 +129,7 @@ void World::reset() {
     memset(felledMark, 0, sizeof(felledMark));
     frame  = 0;
     activeChunks = 0;
+    pressureRoutesRemaining = 0;
     clearDirty(cur);
     clearDirty(next);
 
@@ -250,7 +275,31 @@ static bool filterAllows(u8 filter, u8 moving) {
     return false;
 }
 
-bool World::tryMove(int sx, int sy, int tx, int ty) {
+/* A reactive powder may briefly share its cell with the gas that transforms
+   it. This is deliberately narrower than generic porosity: Coal accepts Steam
+   because that exact pair is already registered as Coal -> Fuel, while fire,
+   mercury vapour, and gases with no powder reaction remain ordinary cells.
+   Every accepted occupant is therefore guaranteed to be consumed on the
+   powder's next turn rather than becoming a second long-lived simulation
+   layer hidden in Cell::moisture. */
+static bool reactivePowderAllowsGas(u8 powder, u8 moving) {
+    return MATS[powder].kind == KIND_POWDER &&
+           g_matWetInto[powder] != MAT_EMPTY &&
+           g_matWetBy[powder] == moving &&
+           moving < MAT_COUNT && MATS[moving].kind == KIND_GAS;
+}
+
+/* A sieve or reactive-powder occupant packs one gas provenance bit above its
+   material id. This is the only current reason the material table must remain
+   below 128 entries; pressure itself still has the full byte while the gas is
+   in an ordinary cell. If the catalog approaches this bound, sparse occupants
+   need a sidecar rather than silently stealing another bit. */
+static_assert(MAT_COUNT <= 128,
+              "sparse occupants reserve bit 7 for gas volume provenance");
+static inline u8 occupantMat(u8 packed) { return (u8)(packed & GAS_EXCESS_MASK); }
+
+bool World::tryMove(int sx, int sy, int tx, int ty,
+                    bool allowOwnedLiquidDisplacement) {
     /* Nothing moves into an occupied entity box -- see the note in world.h.
        First test in the function and first comparison of the box test, so the
        common case (no entity, or nowhere near it) costs one predictable
@@ -272,20 +321,36 @@ bool World::tryMove(int sx, int sy, int tx, int ty) {
     Cell& s = cells[si];
     Cell& t = cells[ti];
 
-    /* Filters are fixed mesh cells with one sparse occupant slot in moisture.
-       A permitted fluid enters that slot while the sieve remains the cell's
-       material, then advances through the mesh one cell per frame. This is what
-       lets steam inside a sieve actually touch coal resting on its surface.
-       Powders never enter this branch. */
-    if (filterAllows(t.mat, s.mat)) {
-        if (t.moisture) return false;   /* one fluid parcel per mesh cell */
-        t.moisture = s.mat;
+    /* Filters and reactive powders have one sparse occupant slot in moisture.
+       A permitted fluid enters while the host remains the cell's material.
+       Filter occupants advance through connected mesh; a reactive-powder
+       occupant is consumed into its registered product on the next turn. */
+    const bool enteringFilter = filterAllows(t.mat, s.mat);
+    const bool enteringReactivePowder = reactivePowderAllowsGas(t.mat, s.mat);
+    if (enteringFilter || enteringReactivePowder) {
+        if (t.moisture) return false;   /* one occupant parcel per host cell */
+        const bool gas = MATS[s.mat].kind == KIND_GAS;
+        const u8 volumeOnly = gas ? (u8)(s.moisture & GAS_VOLUME_ONLY) : 0;
+        const u8 excess = gas ? (u8)(s.moisture & GAS_EXCESS_MASK) : 0;
+        /* A compressed parcel emits one expansion volume into the mesh rather
+           than moving all its stored pressure into a one-cell occupant slot. */
+        t.moisture = (u8)(s.mat | (gas ? GAS_VOLUME_ONLY : 0));
         temp[ti] = temp[si];
-        s.mat = MAT_EMPTY;
-        s.moisture = 0;
-        temp[si] = AMBIENT_TEMP;
+        if (excess) {
+            s.moisture = (u8)(volumeOnly | (excess - 1));
+        } else {
+            t.moisture = (u8)(s.mat | volumeOnly);
+            s.mat = MAT_EMPTY;
+            s.moisture = 0;
+            temp[si] = AMBIENT_TEMP;
+        }
         const u8 st = (u8)(stamp() << STAMP_SHIFT);
-        t.flags = (u8)((s.flags & F_DIR) | st);
+        /* A sieve borrows bit zero for its occupant's flow direction. A powder
+           owns that same bit as F_FALL, so preserve the powder's state while
+           the steam waits for its reaction turn. */
+        const u8 targetLow = enteringFilter ? (u8)(s.flags & F_DIR)
+                                            : (u8)(t.flags & F_FALL);
+        t.flags = (u8)(targetLow | st);
         s.flags = (u8)((s.flags & F_DIR) | st);
         dirtyPoint(sx, sy); dirtyPoint(tx, ty);
         return true;
@@ -295,6 +360,7 @@ bool World::tryMove(int sx, int sy, int tx, int ty) {
 
     if (t.mat != MAT_EMPTY) {
         const MatInfo& tm = MATS[t.mat];
+        const MatInfo& sm = MATS[s.mat];
         /* A seed falls through anything that GREW, and this is the one
            exception to "powders do not enter solids". Without it the whole
            harvest is stuck: a pod broken high in a crown leaves its seed
@@ -322,22 +388,47 @@ bool World::tryMove(int sx, int sy, int tx, int ty) {
         const bool throughFoliage = g_matIsSeed[s.mat]
                                  && g_matIsPlant[t.mat] && !g_matIsSeed[t.mat];
         if (!throughFoliage) {
-        if (tm.kind != KIND_LIQUID && tm.kind != KIND_GAS) return false;
-        const MatInfo& sm = MATS[s.mat];
-        /* Gases invert the density test: they displace anything *heavier*,
-           which is how steam bubbles up through water. */
-        if (sm.kind == KIND_GAS) { if (tm.density <= sm.density) return false; }
-        else {
-            if (tm.density >= sm.density) return false;
-            /* Gas owns the swap with liquid, on the gas cell's turn. Letting
-               liquid push a gas target sounds symmetric but is not under an
-               in-place scan: neighbouring water cells can relay one stamped
-               steam cell sideways/upward many times before it gets a turn.
-               Waiting costs at most one frame; then the bubble rises itself. */
-            if (tm.kind == KIND_GAS) {
-                return false;
+            /* Gas may percolate straight upward through one denser powder cell
+               on the gas parcel's own turn. Restricting this exception to
+               (0,-1) prevents flit/dispersion from tunnelling sideways through
+               a pile and lets the movement stamp cap it at one cell per frame. */
+            const bool gasPercolatingUp = sm.kind == KIND_GAS &&
+                                          tm.kind == KIND_POWDER &&
+                                          tx == sx && ty == sy - 1;
+            if (tm.kind != KIND_LIQUID && tm.kind != KIND_GAS &&
+                !gasPercolatingUp) return false;
+            /* General unlike-liquid exchange is owned by updateConvection's
+               LOWER, lighter parcel. A separate, explicit call below may let a
+               supported denser liquid level sideways/downward through a
+               lighter one. In that case the target parcel must not already
+               have moved or taken its turn this frame. That stamp check is the
+               piece that prevents a row of Water cells from relay-displacing
+               one Wax parcel sixteen times along a vessel wall. */
+            if (sm.kind == KIND_LIQUID && tm.kind == KIND_LIQUID) {
+                /* General gravity moves do not exchange unlike liquids. The
+                   explicit submerged-leveling calls in updateLiquid may opt
+                   in when they have proved that THIS source is the denser,
+                   exposed parcel moving toward a supported lower level. */
+                if (!allowOwnedLiquidDisplacement) return false;
             }
-        }
+            const int sourceDensity = materialDensityQ8(s.mat, temp[si]);
+            const int targetDensity = materialDensityQ8(t.mat, temp[ti]);
+            /* Gases invert the density test: they displace anything *heavier*,
+               which is how steam bubbles up through water. */
+            if (sm.kind == KIND_GAS) {
+                if (targetDensity <= sourceDensity + DENSITY_SWAP_EPS_Q8) return false;
+            }
+            else {
+                if (sourceDensity <= targetDensity + DENSITY_SWAP_EPS_Q8) return false;
+                /* Gas owns a LIQUID/Gas swap on the gas cell's turn. Letting a
+                   liquid push a gas target sounds symmetric but is not under
+                   an in-place scan: neighbouring water cells can relay one
+                   stamped Steam cell sideways/upward many times before it gets
+                   a turn. Powders use the same ownership rule now: gas rises
+                   through one powder cell on its turn, so a displaced parcel
+                   cannot relay up an entire pile during the scan. */
+                if (tm.kind == KIND_GAS) return false;
+            }
         }
     }
 
@@ -366,16 +457,18 @@ bool World::moveFilterFluid(int sx, int sy, int tx, int ty) {
     const int si = sy * SIM_W + sx, ti = ty * SIM_W + tx;
     Cell& s = cells[si];
     Cell& t = cells[ti];
-    const u8 moving = s.moisture;
+    const u8 packed = s.moisture;
+    const u8 moving = occupantMat(packed);
     if (!moving) return false;
 
     if (filterAllows(t.mat, moving)) {
         if (t.moisture) return false;
-        t.moisture = moving;
+        t.moisture = packed;
     } else {
         if (t.mat != MAT_EMPTY || blocksCell(tx, ty)) return false;
         t.mat = moving;
-        t.moisture = 0;
+        t.moisture = MATS[moving].kind == KIND_GAS
+                   ? (u8)(packed & GAS_VOLUME_ONLY) : 0;
     }
 
     s.moisture = 0;
@@ -392,7 +485,8 @@ bool World::moveFilterFluid(int sx, int sy, int tx, int ty) {
 void World::updateFilterFluid(int x, int y) {
     const int i = y * SIM_W + x;
     Cell& c = cells[i];
-    const u8 moving = c.moisture;
+    const u8 packed = c.moisture;
+    const u8 moving = occupantMat(packed);
     if (!moving) return;
 
     /* Contact reactions see through the mesh. This is table-driven in the same
@@ -534,38 +628,162 @@ void World::updatePowder(int x, int y) {
     tryMove(x, y, x - dx, y + 1);
 }
 
-/* Temperature-only convection for every fluid. It is intentionally limited to
-   two cells of the SAME material: conduction already handles heat crossing a
-   water/lava or gas/liquid boundary, while exchanging parcels across that
-   boundary without moving their materials would be false mixing.
+/* Buoyant parcel convection. Ordinary same-material liquids and gases use the
+   three-cell vertical reach and two-degree threshold first tuned for Water.
+   This carries an actual hot parcel upward rather than teleporting heat,
+   making a heated fluid body form a warm upper layer without globally
+   accelerating conduction through walls or solids. Different fluids exchange
+   when the lower parcel's effective thermal density is meaningfully lighter.
 
-   Alternating non-overlapping row pairs prevents a hot parcel from racing up
-   several cells during one bottom-to-top scan. Position/frame parity replaces
-   an RNG roll, so convection adds no RNG consumption and cannot alter the
-   established movement silhouette of a fluid body. */
-void World::updateConvection(int x, int y) {
+   Wax is the visible exception: its colour and coherent blobs make a
+   three-cell parcel swap read as matter teleporting, especially in the narrow
+   column against a vessel wall. Its internal convection is adjacent-only.
+   Wax/Water buoyancy was already adjacent-only below, so this changes neither
+   its density crossover nor its ability to rise through the surrounding pool.
+
+   Alternating source-row parity and movement stamps keep each parcel to one
+   bounded convection move of at most three cells per frame.
+   No RNG is consumed, preserving the deterministic movement silhouette. */
+bool World::updateConvection(int x, int y) {
     const int i = y * SIM_W + x;
     const u8 mat = cells[i].mat;
     const u8 kind = MATS[mat].kind;
     if ((kind != KIND_LIQUID && kind != KIND_GAS) ||
-        (((u32)y ^ frame) & 1u) != 0u) return;
+        (((u32)y ^ frame) & 1u) != 0u) return false;
 
-    const int above = i - SIM_W;
-    if (cells[above].mat != mat || (int)temp[i] <= (int)temp[above] + 4) return;
+    int above = i - SIM_W;
+    const u8 aboveMat = cells[above].mat;
+    if (MATS[aboveMat].kind != kind) return false;
+    if (aboveMat == mat) {
+        const int reach = mat == MAT_WAX ? WAX_CONVECTION_REACH
+                                         : FLUID_CONVECTION_REACH;
+        const int delta = FLUID_CONVECTION_DELTA;
+        int target = i;
+        for (int d = 1; d <= reach && y - d >= PLAY_Y0; ++d) {
+            const int candidate = i - d * SIM_W;
+            if (cells[candidate].mat != mat) break;
+            /* Conduction runs before movement and can smooth the immediately
+               adjacent pair below the threshold while a cooler parcel still
+               exists two or three cells up. Inspect the whole short column;
+               only a parcel at least as hot as this one blocks its rise. */
+            if ((int)temp[candidate] >= (int)temp[i]) break;
+            if ((int)temp[i] > (int)temp[candidate] + delta)
+                target = candidate;
+        }
+        if (target == i) return false;
+        above = target;
+    } else {
+        const int belowDensity = materialDensityQ8(mat, temp[i]);
+        const int aboveDensity = materialDensityQ8(aboveMat, temp[above]);
+        if (belowDensity + DENSITY_SWAP_EPS_Q8 >= aboveDensity) return false;
+    }
 
-    const u8 parcel = temp[i];
+    Cell parcel = cells[i];
+    cells[i] = cells[above];
+    cells[above] = parcel;
+    const u8 parcelTemp = temp[i];
     temp[i] = temp[above];
-    temp[above] = parcel;
-    dirtyPoint(x, y);
-    dirtyPoint(x, y - 1);
+    temp[above] = parcelTemp;
+    const u8 st = (u8)(stamp() << STAMP_SHIFT);
+    cells[i].flags = (u8)((cells[i].flags & F_DIR) | st);
+    cells[above].flags = (u8)((cells[above].flags & F_DIR) | st);
+    dirtyArea(x, above / SIM_W, x, y);
+    return true;
 }
 
 void World::updateLiquid(int x, int y) {
-    Cell& c = cells[y * SIM_W + x];
+    const int i = y * SIM_W + x;
+    Cell& c = cells[i];
     const MatInfo& m = MATS[c.mat];
 
+    /* The interior of a large single-material pool has no possible gravity or
+       flow move, yet the ordinary path asks tryMove several times, scans for
+       hydrostatic reach, and may walk sideways through more of the same fluid
+       for every hot cell on every frame. Eight matching neighbours prove this
+       parcel is not on an interface. Convection still gets its full turn—this
+       optimization removes only movement attempts that cannot immediately
+       change the local arrangement. Boundary and mixed-fluid cells keep the
+       complete path below. */
+    const u8 mat = c.mat;
+    const bool packedSame = cells[i - SIM_W - 1].mat == mat &&
+                            cells[i - SIM_W    ].mat == mat &&
+                            cells[i - SIM_W + 1].mat == mat &&
+                            cells[i - 1].mat == mat &&
+                            cells[i + 1].mat == mat &&
+                            cells[i + SIM_W - 1].mat == mat &&
+                            cells[i + SIM_W    ].mat == mat &&
+                            cells[i + SIM_W + 1].mat == mat;
+    if (packedSame) {
+        updateConvection(x, y);
+        return;
+    }
+
     if (tryMove(x, y, x, y + 1)) return;
-    updateConvection(x, y);
+    /* A lone/exposed parcel may sink directly into a lighter liquid. Requiring
+       no same-material parcel immediately above is the anti-relay ownership
+       rule: the bottom cell of a Water column cannot repeatedly push one hot
+       Wax parcel upward through the whole column. Thick layers are sorted from
+       below by updateConvection instead. */
+    const u8 belowMat = cells[i + SIM_W].mat;
+    if (belowMat != c.mat && MATS[belowMat].kind == KIND_LIQUID &&
+        cells[i - SIM_W].mat != c.mat &&
+        tryMove(x, y, x, y + 1, true)) return;
+    if (updateConvection(x, y)) return;
+
+    int dx = (c.flags & F_DIR) ? 1 : -1;
+
+    /* Submerged density leveling. Vertical swaps correctly sort materials but
+       leave the denser liquid as a steep mound once its bottom row is full.
+       Only a TOP parcel with the same liquid directly below enters this path.
+       It looks across the lower row for its first edge against a lighter
+       liquid, follows that lighter column downward for up to eight cells, then
+       trades places with the deepest parcel reached. Following the column is
+       what makes this work in a bowl rather than only on the perfectly flat
+       floor the first regression happened to use. This is the same bounded
+       pressure-flow approximation ordinary liquids use in air, now applied to
+       an immiscible interface.
+
+       Several top parcels can find successive edge cells in one frame, making
+       a mound relax promptly instead of opening and filling one blocky hole at
+       a time. A one-cell-deep layer has no source parcel above it, so it stops
+       exactly flat rather than diffusing sideways forever. */
+    const u8 aboveLevelMat = cells[i - SIM_W].mat;
+    const int sourceDensity = materialDensityQ8(mat, temp[i]);
+    if (aboveLevelMat != mat && MATS[aboveLevelMat].kind == KIND_LIQUID &&
+        cells[i + SIM_W].mat == mat &&
+        sourceDensity > materialDensityQ8(aboveLevelMat, temp[i - SIM_W]) +
+                        DENSITY_SWAP_EPS_Q8) {
+        for (int attempt = 0; attempt < 2; ++attempt) {
+            const int dir = attempt == 0 ? dx : -dx;
+            for (int step = 1; step <= SUBMERGED_LEVEL_REACH; ++step) {
+                const int tx = x + dir * step;
+                if (tx < PLAY_X0 || tx > PLAY_X1) break;
+                const int ti = (y + 1) * SIM_W + tx;
+                const u8 target = cells[ti].mat;
+                if (target == mat) continue;
+                if (MATS[target].kind != KIND_LIQUID ||
+                    sourceDensity <= materialDensityQ8(target, temp[ti]) + DENSITY_SWAP_EPS_Q8)
+                    break;
+                int targetY = y + 1;
+                for (int sink = 1; sink < SUBMERGED_SINK_REACH; ++sink) {
+                    const int nextY = targetY + 1;
+                    if (nextY > PLAY_Y1) break;
+                    const int nextI = nextY * SIM_W + tx;
+                    const u8 next = cells[nextI].mat;
+                    if (MATS[next].kind != KIND_LIQUID ||
+                        sourceDensity <= materialDensityQ8(next, temp[nextI]) +
+                                         DENSITY_SWAP_EPS_Q8)
+                        break;
+                    targetY = nextY;
+                }
+                if (tryMove(x, y, tx, targetY, true)) {
+                    dirtyArea(imin(x, tx), y, imax(x, tx), targetY);
+                    return;
+                }
+                break;
+            }
+        }
+    }
 
     /* Viscosity. For a liquid the `jitter` byte is a chance out of 255 that the
        cell simply refuses to flow sideways this frame -- see the note on the
@@ -589,7 +807,6 @@ void World::updateLiquid(int x, int y) {
         return;
     }
 
-    int dx = (c.flags & F_DIR) ? 1 : -1;
     if (tryMove(x, y, x + dx, y + 1)) return;
     if (tryMove(x, y, x - dx, y + 1)) return;
 
@@ -646,9 +863,434 @@ void World::updateLiquid(int x, int y) {
     /* Boxed in both ways: nothing was dirtied, so this pool can go to sleep. */
 }
 
+/* Spend or redistribute one compressed gas parcel's excess volume. Expansion
+   is local and visible: up to five connected cells through open air or a
+   straight liquid column, never a teleport to a distant opening. Bent liquid
+   and powder paths still move one conserved volume at a time. If the parcel is
+   sealed, its excess remains in the cell and costs nothing once equalized;
+   changing a boundary dirties the neighbourhood and wakes it again. */
+bool World::updateGasPressure(int x, int y) {
+    const int i = y * SIM_W + x;
+    Cell& c = cells[i];
+    const u8 excess = (u8)(c.moisture & GAS_EXCESS_MASK);
+    if (!excess) return false;
+
+    const int dir = (c.flags & F_DIR) ? 1 : -1;
+    const int dx[4] = { 0, dir, -dir, 0 };
+    const int dy[4] = { -1, 0, 0, 1 };
+    const u8 gasMat = c.mat;
+    const u8 gasTemp = temp[i];
+    const u8 pressureStamp = (u8)(stamp() << STAMP_SHIFT);
+    const u8 gasDir = (u8)(c.flags & F_DIR);
+
+    /* Open space has essentially no resistance, so release a whole ordinary
+       boiling charge instead of growing one pixel per frame. This is a tiny
+       connected flood rooted at the source: every new cell is reached through
+       a cell spawned earlier in this same burst, never placed across a wall or
+       disconnected pocket. Radius three is already far more room than the
+       largest ordinary gas-expansion charge can consume. */
+    {
+        static const int R = 3, SIDE = R * 2 + 1, CAP = SIDE * SIDE;
+        i16 queue[CAP];
+        u8 seen[CAP] = { 0 };
+        int head = 0, tail = 0, spawned = 0;
+        const int center = R * SIDE + R;
+        queue[tail++] = (i16)center;
+        seen[center] = 1;
+        const int burst = imin((int)excess, GAS_PRESSURE_EXPANSION_BURST);
+        while (head < tail && spawned < burst) {
+            const int li = queue[head++];
+            const int lx = li % SIDE, ly = li / SIDE;
+            for (int k = 0; k < 4 && spawned < burst; ++k) {
+                const int nlx = lx + dx[k], nly = ly + dy[k];
+                if (nlx < 0 || nlx >= SIDE || nly < 0 || nly >= SIDE) continue;
+                const int niLocal = nly * SIDE + nlx;
+                if (seen[niLocal]) continue;
+                seen[niLocal] = 1;
+                const int nx = x - R + nlx, ny = y - R + nly;
+                if (nx < PLAY_X0 || nx > PLAY_X1 || ny < PLAY_Y0 || ny > PLAY_Y1) continue;
+                const int ni = ny * SIM_W + nx;
+                Cell& n = cells[ni];
+                if (n.mat != MAT_EMPTY || blocksCell(nx, ny)) continue;
+                n.mat = gasMat;
+                n.moisture = GAS_VOLUME_ONLY;
+                n.tint = (u8)rngBits(8);
+                n.flags = (u8)(gasDir | pressureStamp);
+                temp[ni] = gasTemp;
+                dirtyPoint(nx, ny);
+                queue[tail++] = (i16)niLocal;
+                ++spawned;
+            }
+        }
+        if (spawned) {
+            c.moisture = (u8)((c.moisture & GAS_VOLUME_ONLY) |
+                              ((int)excess - spawned));
+            c.flags = (u8)(gasDir | pressureStamp);
+            dirtyPoint(x, y);
+            return true;
+        }
+    }
+
+    /* A compressed parcel under liquid should not have to wait for its owner
+       cell to bubble all the way to the surface before any of the stored
+       volume can appear. Pressure shifts the connected vertical liquid column
+       by as many as five cells in one burst and occupies the vacated cells.
+       Whole Cells and temperatures move together, just like tryMove(). */
+    const auto finishExpansion = [&](int di) {
+        Cell& d = cells[di];
+        d.mat = gasMat;
+        d.moisture = GAS_VOLUME_ONLY;
+        d.tint = (u8)rngBits(8);
+        d.flags = (u8)(gasDir | pressureStamp);
+        temp[di] = gasTemp;
+        c.moisture = (u8)((c.moisture & GAS_VOLUME_ONLY) | (excess - 1));
+        c.flags = (u8)(gasDir | pressureStamp);
+        dirtyPoint(x, y);
+        dirtyPoint(di % SIM_W, di / SIM_W);
+    };
+
+    /* Fast path: the overwhelmingly common boiler geometry is liquid directly
+       above the gas with open air above that column. Shift from the surface
+       downward so no parcel is overwritten before it has been copied. */
+    int outletY = -1;
+    for (int d = 1; d <= GAS_PRESSURE_VERTICAL_REACH && y - d >= PLAY_Y0; ++d) {
+        const u8 mat = cells[(y - d) * SIM_W + x].mat;
+        if (mat == MAT_EMPTY) { outletY = y - d; break; }
+        if (MATS[mat].kind != KIND_LIQUID) break;
+    }
+    if (outletY >= 0 && !blocksCell(x, outletY)) {
+        int burst = 0;
+        const int wanted = imin((int)excess, GAS_PRESSURE_EXPANSION_BURST);
+        for (; burst < wanted; ++burst) {
+            const int ey = outletY - burst;
+            if (ey < PLAY_Y0 || cells[ey * SIM_W + x].mat != MAT_EMPTY ||
+                blocksCell(x, ey)) break;
+        }
+        for (int sy = outletY + 1; sy < y; ++sy) {
+            const int my = sy - burst;
+            const int dst = my * SIM_W + x;
+            const int src = sy * SIM_W + x;
+            cells[dst] = cells[src];
+            temp[dst] = temp[src];
+            cells[dst].flags = (u8)((cells[dst].flags & F_DIR) | pressureStamp);
+        }
+        for (int gy = y - burst; gy < y; ++gy) {
+            const int gi = gy * SIM_W + x;
+            Cell& g = cells[gi];
+            g.mat = gasMat;
+            g.moisture = GAS_VOLUME_ONLY;
+            g.tint = (u8)rngBits(8);
+            g.flags = (u8)(gasDir | pressureStamp);
+            temp[gi] = gasTemp;
+        }
+        if (burst) {
+            c.moisture = (u8)((c.moisture & GAS_VOLUME_ONLY) |
+                              ((int)excess - burst));
+            c.flags = (u8)(gasDir | pressureStamp);
+            dirtyArea(x, outletY - burst, x, y);
+            return true;
+        }
+    }
+
+    /* Powders transmit a shove only along a straight, short line. Unlike the
+       liquid search below this deliberately does not turn corners: pressure
+       can lift a plug or slide a small bank into free space, but it cannot find
+       a winding route through a mountain and make the far side jump.
+
+       Resistance is a THRESHOLD, not a number of volumes consumed. The gas
+       still expands by one volume when the line yields; adding another powder
+       cell raises the required pressure by one, so long packed masses stop the
+       search even when every individual grain is easy to move. */
+    int powderDir = -1, powderCount = 0, powderRequired = 256;
+    for (int k = 0; k < 4; ++k) {
+        int count = 0, required = 0;
+        for (int d = 1; d <= GAS_PRESSURE_POWDER_REACH + 1; ++d) {
+            const int nx = x + dx[k] * d, ny = y + dy[k] * d;
+            if (nx < PLAY_X0 || nx > PLAY_X1 || ny < PLAY_Y0 || ny > PLAY_Y1) break;
+            const Cell& n = cells[ny * SIM_W + nx];
+            if (n.mat == MAT_EMPTY) {
+                if (count && !blocksCell(nx, ny) && required <= (int)excess &&
+                    (required < powderRequired ||
+                     (required == powderRequired && count < powderCount))) {
+                    powderDir = k;
+                    powderCount = count;
+                    powderRequired = required;
+                }
+                break;
+            }
+            if (MATS[n.mat].kind != KIND_POWDER) break;
+            const int resistance = g_matPressureResistance[n.mat];
+            if (resistance == 255) break;
+            required = imax(required, resistance + count);
+            ++count;
+            if (required > (int)excess) break;
+        }
+    }
+
+    if (powderDir >= 0) {
+        const int pdx = dx[powderDir], pdy = dy[powderDir];
+        for (int d = powderCount + 1; d >= 2; --d) {
+            const int tx = x + pdx * d, ty = y + pdy * d;
+            const int sx = x + pdx * (d - 1), sy = y + pdy * (d - 1);
+            const int dst = ty * SIM_W + tx, src = sy * SIM_W + sx;
+            cells[dst] = cells[src];
+            temp[dst] = temp[src];
+            /* Only a downward shove is a straight fall for collision purposes;
+               upward and sideways movement must not leave F_FALL stale. */
+            const u8 fall = (pdx == 0 && pdy == 1) ? F_FALL : 0;
+            cells[dst].flags = (u8)(fall | pressureStamp);
+            dirtyPoint(tx, ty);
+        }
+        finishExpansion((y + dy[powderDir]) * SIM_W + x + dx[powderDir]);
+        return true;
+    }
+
+    /* Pressure belongs to a connected gas pocket, not to whichever pixel
+       happened to inherit the hidden volume when liquid boiled. The old
+       adjacent equalizer made an interior charge crawl through a large Steam
+       blob one cell per frame; only after reaching the skin could it displace
+       Water, producing the long-lived dense blob seen in large boilers.
+
+       Route pressure directly to a lower-pressure boundary parcel. Straight
+       rays cover the common large round pocket for a handful of reads. A
+       bounded local flood handles crooked pockets without a world-sized
+       pressure plane or an unbounded component walk. The receiver performs the
+       ordinary visible expansion/displacement on its own turn, so this moves
+       no material and manufactures no volume. */
+    const auto hasPressureRelief = [&](int gx, int gy) {
+        for (int k = 0; k < 4; ++k) {
+            const int nx = gx + dx[k], ny = gy + dy[k];
+            const Cell& n = cells[ny * SIM_W + nx];
+            if (n.mat == MAT_EMPTY && !blocksCell(nx, ny)) return true;
+            if (filterAllows(n.mat, gasMat) ||
+                reactivePowderAllowsGas(n.mat, gasMat)) return true;
+        }
+
+        /* Merely touching liquid is not relief. In a deep lake that mistake
+           labels the sides and bottom of a Steam blob as outlets even though
+           neither can create volume; shared pressure then piles up there and
+           waits for bubbles to crawl upward. A straight liquid column counts
+           only when it actually reaches open space within the lift bound. Bent
+           local outlets are still handled by the bounded liquid search below. */
+        for (int d = 1; d <= GAS_PRESSURE_VERTICAL_REACH && gy - d >= PLAY_Y0; ++d) {
+            const int ny = gy - d;
+            const Cell& n = cells[ny * SIM_W + gx];
+            if (n.mat == MAT_EMPTY) return !blocksCell(gx, ny);
+            if (MATS[n.mat].kind != KIND_LIQUID) break;
+        }
+
+        /* A non-reactive powder face is relief only when the complete short
+           plug can move into a real empty cell. Treating any adjacent powder
+           as an outlet strands pressure against packed terrain; ignoring it
+           makes interior pressure take many frames to reach a movable pile. */
+        for (int k = 0; k < 4; ++k) {
+            int count = 0, required = 0;
+            for (int d = 1; d <= GAS_PRESSURE_POWDER_REACH + 1; ++d) {
+                const int nx = gx + dx[k] * d, ny = gy + dy[k] * d;
+                if (nx < PLAY_X0 || nx > PLAY_X1 ||
+                    ny < PLAY_Y0 || ny > PLAY_Y1) break;
+                const Cell& n = cells[ny * SIM_W + nx];
+                if (n.mat == MAT_EMPTY) {
+                    if (count && !blocksCell(nx, ny) &&
+                        required <= (int)excess) return true;
+                    break;
+                }
+                if (MATS[n.mat].kind != KIND_POWDER) break;
+                const int resistance = g_matPressureResistance[n.mat];
+                if (resistance == 255) break;
+                required = imax(required, resistance + count);
+                ++count;
+                if (required > (int)excess) break;
+            }
+        }
+        return false;
+    };
+
+    if (!hasPressureRelief(x, y) && pressureRoutesRemaining > 0) {
+        --pressureRoutesRemaining;
+        int receiver = -1, receiverDistance = 1000000, receiverExcess = 256;
+        for (int k = 0; k < 4; ++k) {
+            for (int d = 1; d <= GAS_PRESSURE_POCKET_RAY; ++d) {
+                const int nx = x + dx[k] * d, ny = y + dy[k] * d;
+                if (nx < PLAY_X0 || nx > PLAY_X1 || ny < PLAY_Y0 || ny > PLAY_Y1) break;
+                const int ni = ny * SIM_W + nx;
+                const Cell& n = cells[ni];
+                if (n.mat != gasMat) break;
+                const int nExcess = n.moisture & GAS_EXCESS_MASK;
+                if (nExcess < (int)excess && hasPressureRelief(nx, ny) &&
+                    (d < receiverDistance ||
+                     (d == receiverDistance && nExcess < receiverExcess))) {
+                    receiver = ni;
+                    receiverDistance = d;
+                    receiverExcess = nExcess;
+                    break;
+                }
+            }
+        }
+
+        if (receiver < 0) {
+            static const int R = GAS_PRESSURE_POCKET_RADIUS;
+            static const int SIDE = R * 2 + 1;
+            static const int CAP = SIDE * SIDE;
+            static u16 seen[CAP] = { 0 };
+            static i16 queue[GAS_PRESSURE_POCKET_NODES];
+            static u16 epoch = 0;
+            if (++epoch == 0) {
+                memset(seen, 0, sizeof(seen));
+                epoch = 1;
+            }
+
+            const int center = R * SIDE + R;
+            int head = 0, tail = 0;
+            seen[center] = epoch;
+            queue[tail++] = (i16)center;
+            while (head < tail && receiver < 0) {
+                const int li = queue[head++];
+                const int lx = li % SIDE, ly = li / SIDE;
+                for (int k = 0; k < 4; ++k) {
+                    const int nlx = lx + dx[k], nly = ly + dy[k];
+                    if (nlx < 0 || nlx >= SIDE || nly < 0 || nly >= SIDE) continue;
+                    const int niLocal = nly * SIDE + nlx;
+                    if (seen[niLocal] == epoch) continue;
+                    seen[niLocal] = epoch;
+                    const int nx = x - R + nlx, ny = y - R + nly;
+                    if (nx < PLAY_X0 || nx > PLAY_X1 || ny < PLAY_Y0 || ny > PLAY_Y1) continue;
+                    const int ni = ny * SIM_W + nx;
+                    const Cell& n = cells[ni];
+                    if (n.mat != gasMat) continue;
+                    const int nExcess = n.moisture & GAS_EXCESS_MASK;
+                    if (nExcess < (int)excess && hasPressureRelief(nx, ny)) {
+                        receiver = ni;
+                        receiverExcess = nExcess;
+                        break;
+                    }
+                    if (tail < GAS_PRESSURE_POCKET_NODES)
+                        queue[tail++] = (i16)niLocal;
+                }
+            }
+        }
+
+        if (receiver >= 0) {
+            Cell& r = cells[receiver];
+            const int room = GAS_EXCESS_MASK - receiverExcess;
+            /* Raise the boundary to the donor's pressure level. An empty skin
+               cell therefore receives the whole charge and the next donor
+               seeks another lower-pressure outlet instead of piling onto the
+               same column. A partially charged receiver only takes the
+               difference, preserving the ordinary equalization behaviour. */
+            int give = imax(1, (int)excess - receiverExcess);
+            give = imin(give, room);
+            give = imin(give, (int)excess);
+            c.moisture = (u8)((c.moisture & GAS_VOLUME_ONLY) | ((int)excess - give));
+            r.moisture = (u8)((r.moisture & GAS_VOLUME_ONLY) | (receiverExcess + give));
+            dirtyPoint(x, y);
+            dirtyPoint(receiver % SIM_W, receiver / SIM_W);
+            return true;
+        }
+    }
+
+    /* A short bent pipe, cavity, or sloping shoreline needs more than a
+       vertical ray. Search only a 33x33 box around the gas. parent[] is both
+       the visited set and the path back to the first adjacent liquid, so the
+       work and stack storage have hard upper bounds independent of world or
+       lake size. */
+    static const int R = GAS_PRESSURE_LIQUID_RADIUS;
+    static const int SIDE = R * 2 + 1;
+    static const int CAP = SIDE * SIDE;
+    i16 parent[CAP];
+    i16 queue[CAP];
+    for (int k = 0; k < CAP; ++k) parent[k] = -2;
+
+    const int orderDx[4] = { 0, dir, -dir, 0 };
+    const int orderDy[4] = { -1, 0, 0, 1 };
+    int head = 0, tail = 0;
+    for (int k = 0; k < 4; ++k) {
+        const int nx = x + orderDx[k], ny = y + orderDy[k];
+        if (nx < PLAY_X0 || nx > PLAY_X1 || ny < PLAY_Y0 || ny > PLAY_Y1) continue;
+        if (MATS[cells[ny * SIM_W + nx].mat].kind != KIND_LIQUID) continue;
+        const int li = (ny - (y - R)) * SIDE + (nx - (x - R));
+        if (parent[li] != -2) continue;
+        parent[li] = -1;
+        queue[tail++] = (i16)li;
+    }
+
+    int goal = -1, outletX = 0, outletSearchY = 0;
+    while (head < tail && goal < 0) {
+        const int li = queue[head++];
+        const int lx = li % SIDE, ly = li / SIDE;
+        const int wx = x - R + lx, wy = y - R + ly;
+        for (int k = 0; k < 4; ++k) {
+            const int nx = wx + orderDx[k], ny = wy + orderDy[k];
+            if (nx < PLAY_X0 || nx > PLAY_X1 || ny < PLAY_Y0 || ny > PLAY_Y1) continue;
+            const Cell& n = cells[ny * SIM_W + nx];
+            if (n.mat == MAT_EMPTY && !blocksCell(nx, ny)) {
+                goal = li; outletX = nx; outletSearchY = ny; break;
+            }
+        }
+        if (goal >= 0) break;
+
+        for (int k = 0; k < 4; ++k) {
+            const int nlx = lx + orderDx[k], nly = ly + orderDy[k];
+            if (nlx < 0 || nlx >= SIDE || nly < 0 || nly >= SIDE) continue;
+            const int ni = nly * SIDE + nlx;
+            if (parent[ni] != -2) continue;
+            const int nx = x - R + nlx, ny = y - R + nly;
+            if (nx < PLAY_X0 || nx > PLAY_X1 || ny < PLAY_Y0 || ny > PLAY_Y1) continue;
+            if (MATS[cells[ny * SIM_W + nx].mat].kind != KIND_LIQUID) continue;
+            parent[ni] = (i16)li;
+            queue[tail++] = (i16)ni;
+        }
+    }
+
+    if (goal >= 0) {
+        int dst = outletSearchY * SIM_W + outletX;
+        int path = goal;
+        while (path >= 0) {
+            const int px = x - R + path % SIDE;
+            const int py = y - R + path / SIDE;
+            const int src = py * SIM_W + px;
+            cells[dst] = cells[src];
+            temp[dst] = temp[src];
+            cells[dst].flags = (u8)((cells[dst].flags & F_DIR) | pressureStamp);
+            dirtyPoint(dst % SIM_W, dst / SIM_W);
+            dst = src;
+            path = parent[path];
+        }
+        finishExpansion(dst);
+        return true;
+    }
+
+    /* No free volume here. Move pressure toward the least-compressed adjacent
+       parcel of the same gas so a connected pocket can reach an opening at its
+       edge. Stamp the receiver to prevent one unit relaying across a room in a
+       single bottom-to-top scan. */
+    int best = -1, bestExcess = 256;
+    for (int k = 0; k < 4; ++k) {
+        const int nx = x + NB_DX[k], ny = y + NB_DY[k];
+        const int ni = ny * SIM_W + nx;
+        const Cell& n = cells[ni];
+        if (n.mat != c.mat) continue;
+        const int nExcess = n.moisture & GAS_EXCESS_MASK;
+        if (nExcess < bestExcess) { bestExcess = nExcess; best = ni; }
+    }
+    if (best < 0 || (int)excess <= bestExcess + 1) return false;
+
+    Cell& n = cells[best];
+    const int give = imax(1, ((int)excess - bestExcess) / 2);
+    c.moisture = (u8)((c.moisture & GAS_VOLUME_ONLY) | ((int)excess - give));
+    n.moisture = (u8)((n.moisture & GAS_VOLUME_ONLY) | (bestExcess + give));
+    const u8 st = (u8)(stamp() << STAMP_SHIFT);
+    n.flags = (u8)((n.flags & F_DIR) | st);
+    dirtyPoint(x, y);
+    dirtyPoint(best % SIM_W, best / SIM_W);
+    return true;
+}
+
 void World::updateGas(int x, int y) {
     Cell& c = cells[y * SIM_W + x];
     const MatInfo& m = MATS[c.mat];
+
+    if (updateGasPressure(x, y)) return;
 
     /* A submerged bubble gets one upward step per turn, but that step may be
        diagonal. This widens a plume naturally without restoring the old bug:
@@ -677,7 +1319,7 @@ void World::updateGas(int x, int y) {
 
     /* A mirror of updateLiquid with the vertical sense flipped. */
     if (tryMove(x, y, x, y - 1)) return;
-    updateConvection(x, y);
+    if (updateConvection(x, y)) return;
 
     int dx = (c.flags & F_DIR) ? 1 : -1;
     if (tryMove(x, y, x + dx, y - 1)) return;
@@ -690,10 +1332,16 @@ void World::updateGas(int x, int y) {
             if (nx < PLAY_X0 || nx > PLAY_X1) break;
             const Cell& n = cells[y * SIM_W + nx];
             if (n.mat != MAT_EMPTY) {
-                if (filterAllows(n.mat, c.mat)) {
+                if (filterAllows(n.mat, c.mat) ||
+                    reactivePowderAllowsGas(n.mat, c.mat)) {
                     const int beyond = nx + dx;
-                    if (beyond >= PLAY_X0 && beyond <= PLAY_X1 &&
-                        cells[y * SIM_W + beyond].mat == MAT_EMPTY) moveToX = nx;
+                    /* Mesh traversal still wants an exit beyond the filter.
+                       Reactive powder is itself the destination: Steam only
+                       needs to touch Coal to be consumed into Fuel. */
+                    if (reactivePowderAllowsGas(n.mat, c.mat) ||
+                        (beyond >= PLAY_X0 && beyond <= PLAY_X1 &&
+                         cells[y * SIM_W + beyond].mat == MAT_EMPTY))
+                        moveToX = nx;
                     break;
                 }
                 if (n.mat == c.mat) { moveFromX = nx; continue; }
@@ -961,6 +1609,20 @@ void World::updateHeat(int x, int y) {
     dirtyPoint(x, y);
 }
 
+/* Table-driven phase conversion plus gas expansion charge. `convert` remains
+   the right operation for chemistry and combustion; only a LIQUID becoming a
+   GAS owns the volume increase that later becomes pressure. */
+void World::phaseChange(int x, int y, u8 mat) {
+    Cell& c = cells[y * SIM_W + x];
+    const u8 from = c.mat;
+    const bool expands = MATS[from].kind == KIND_LIQUID &&
+                         MATS[mat].kind == KIND_GAS;
+    convert(x, y, mat);
+    if (!expands) return;
+    const int volumes = imax(1, (int)g_matGasExpansion[mat]);
+    c.moisture = (u8)imin((int)GAS_EXCESS_MASK, volumes - 1);
+}
+
 /* ======================================================================
    Moisture: absorption, percolation, drainage
 
@@ -1206,7 +1868,7 @@ void World::updateEvaporation(int x, int y) {
     const u32 chance = 2u + (u32)(over * over);
     if ((rngNext() & 0xFFFF) >= chance) return;
 
-    convert(x, y, m.boilsTo);
+    phaseChange(x, y, m.boilsTo);
     temp[i] = latentDrain((int)temp[i]);
 }
 
@@ -1336,6 +1998,18 @@ void World::updateCell(int x, int y) {
         return;
     }
 
+    /* Reactive powders have one equally sparse gas-occupant state. Unlike a
+       sieve this is never long-lived: the admission rule above only accepts
+       the exact gas named by wetBy, so consuming the occupant and converting
+       the powder is unconditional here. It runs before ignition for the same
+       reason the adjacent slaking rule does -- 115 C Steam must make Fuel, not
+       light the Coal before the wet reaction gets a chance. */
+    if (c.moisture && reactivePowderAllowsGas(c.mat, occupantMat(c.moisture))) {
+        const u8 into = g_matWetInto[c.mat];
+        convert(x, y, into);          /* also clears the consumed gas occupant */
+        return;
+    }
+
     /* --- a seed that has come to rest ---------------------------------
        Reported, not acted on: whether this becomes a tree is tree.cpp's
        business and depends on a table this file has no reason to know about.
@@ -1375,7 +2049,7 @@ void World::updateCell(int x, int y) {
         u8 into = m.boilsTo;
         if (g_matSmeltYield[c.mat] && !rngChance(g_matSmeltYield[c.mat]))
             into = MAT_SLAG_MELT;
-        convert(x, y, into);
+        phaseChange(x, y, into);
         /* Boiling absorbs latent heat. Without this a single hot cell flashes
            an entire pool to steam in one frame instead of simmering. */
         temp[i] = latentDrain(t);
@@ -1398,11 +2072,25 @@ void World::updateCell(int x, int y) {
             const int j = ny * SIM_W + nx;
             if (cells[j].mat != g_matWetBy[c.mat]) continue;
             convert(x, y, g_matWetInto[c.mat]);
-            /* The steam is consumed. That is what stops fuel being free -- it costs
-               a boiler, which costs water and a heat source, which is why there is
-               a lake and why coal is the thing you find first. */
-            spawnCell(nx, ny, MAT_EMPTY);
-            dirtyPoint(nx, ny);
+            /* One reagent VOLUME is consumed. For an ordinary Steam cell that
+               means removing the cell, as before. A compressed cell also owns
+               hidden expansion volumes, though, and deleting it wholesale
+               would let one Coal contact erase an entire boiler charge. Spend
+               one excess unit first and leave the visible owner/provenance
+               volume in place; only the last unit becomes Empty. */
+            Cell& reagent = cells[j];
+            const u8 reagentExcess = MATS[reagent.mat].kind == KIND_GAS
+                                   ? (u8)(reagent.moisture & GAS_EXCESS_MASK) : 0;
+            if (reagentExcess) {
+                reagent.moisture = (u8)((reagent.moisture & GAS_VOLUME_ONLY) |
+                                        (reagentExcess - 1));
+                reagent.flags = (u8)((reagent.flags & F_DIR) |
+                                     (stamp() << STAMP_SHIFT));
+                dirtyPoint(nx, ny);
+            } else {
+                spawnCell(nx, ny, MAT_EMPTY);
+                dirtyPoint(nx, ny);
+            }
             return;
         }
     }
@@ -1457,7 +2145,15 @@ void World::updateCell(int x, int y) {
         }
     }
     if (m.coolTemp && t < (int)m.coolTemp) {
-        convert(x, y, m.coolsTo);   /* fire burns out, steam condenses, lava sets */
+        /* Expansion-only gas volumes carry pressure but no condensation mass
+           token. They collapse to empty; exactly one owner parcel from the
+           original liquid returns to liquid, so 1 Water -> 3 Steam -> 1 Water
+           rather than multiplying matter on the round trip. */
+        if (m.kind == KIND_GAS && MATS[m.coolsTo].kind == KIND_LIQUID &&
+            (c.moisture & GAS_VOLUME_ONLY))
+            convert(x, y, MAT_EMPTY);
+        else
+            phaseChange(x, y, m.coolsTo); /* fire dies, steam condenses, lava sets */
         return;
     }
     /* Expiry on a timer rather than by temperature. Only cold fire uses this,
@@ -1728,6 +2424,11 @@ void World::updateCell(int x, int y) {
 }
 
 void World::step() {
+    /* Pocket sharing is the only pressure operation that searches farther than
+       its immediate material path. Bound it across the whole world, not per
+       chunk, so a pathological mass-boil drains over several frames instead of
+       turning one frame into an unbounded collection of 2,048-node walks. */
+    pressureRoutesRemaining = GAS_PRESSURE_POCKET_BUDGET;
     /* Last frame's accumulated rects become this frame's work list. */
     memcpy(cur, next, sizeof(cur));
     clearDirty(next);

@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
+#include <string.h>
 
 /* One row per material, in enum order. The zero-heavy columns read cleanly if
    you think of them as "off unless set": most materials have no phase changes.
@@ -839,14 +840,24 @@ MatInfo MATS[MAT_COUNT] = {
      mineral rather than sinking through a heap. */
   { "Chitin", KIND_POWDER,  90,  70,   40,   0,   0,   0,  0,   14,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY, degC(120), MAT_FIRE, 0,  0x9A7A4E, 0x6E5434, 0x9A7A4E, 0x6E5434, 0 },
 
-  /* Heavier than water (90 to its 100 in this table's inverse ordering), so a poured glowfluid charge sinks
+  /* Heavier than water, so a poured glowfluid charge sinks
      through a pool and settles at the bottom. It has no heat reaction: it is
      a lighting/building material, not another route around the metal ladder. */
-  { "Glowfluid", KIND_LIQUID,  90, 0, 0, 8, 0, 0, 0, 150, 0, 0, 0, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, 0x8CE8B8, 0x3CA878, 0x8CE8B8, 0x3CA878, 0 },
+  { "Glowfluid", KIND_LIQUID, 140, 0, 0, 8, 0, 0, 0, 150, 0, 0, 0, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, 0x8CE8B8, 0x3CA878, 0x8CE8B8, 0x3CA878, 0 },
   /* Filters remain solid material cells; world.cpp lets the permitted flow
      kinds hop across them while powders stay caught on the mesh. */
   { "Sieve", KIND_STATIC, 255, 0, 0, 0, 0, 0, 0, 60, 0, 0, 0, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, 0x9CA8A8, 0x687878, 0x9CA8A8, 0x687878, 0 },
   { "GasSieve", KIND_STATIC, 255, 0, 0, 0, 0, 0, 0, 60, 0, 0, 0, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, 0xB49CE0, 0x7860A0, 0xB49CE0, 0x7860A0, 0 },
+  /* Slightly heavier than water at room temperature, but deliberately very
+     expansive: around 41 C it crosses water's density and starts rising.
+     Viscous enough to travel as slow amber bodies instead of spraying like
+     water. Cohesion is a later, independently testable tuning layer. */
+  { "Wax", KIND_LIQUID, 104, 0, 0, 3, 150, 0, 0, 55, 1, 0, 0, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, 0xF1E9D8, 0xE9DFCC, 0xF1E9D8, 0xE9DFCC, 0 },
+  /* Water's density, flow and thermal transport, but deliberately no freezing
+     or boiling transition. This is a stable heat bath for wax experiments:
+     wax still crosses its buoyancy point normally, while driving the bath to
+     the top of the temperature scale cannot replace it with gas. */
+  { "Inert Fluid", KIND_LIQUID, 100, 0, 0, 5, 0, 0, 0, 180, 0, 3, 0, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, 0xB992DA, 0xAA82CC, 0xB992DA, 0xAA82CC, 0 },
 };
 
 u32 g_colorLut[MAT_COUNT * 256];
@@ -873,6 +884,9 @@ u8  g_matConducts[MAT_COUNT];
 u8  g_matWetInto[MAT_COUNT];
 u8  g_matWetBy[MAT_COUNT];
 u8  g_matAlloyWith[MAT_COUNT];
+u8  g_matThermalExpansionQ8[MAT_COUNT];
+u8  g_matGasExpansion[MAT_COUNT];
+u8  g_matPressureResistance[MAT_COUNT];
 u8  g_matAlloysTo[MAT_COUNT];
 u8  g_bgHeat[MAT_COUNT];
 u8  g_bgRetain[MAT_COUNT];
@@ -1082,9 +1096,10 @@ static void initStrength() {
    can be reasoned about: light of strength s crosses s/opacity cells, so at
    LIGHT_MAX these are
 
-       air        3  ->  85 cells    daylight into a cave, a lamp's radius
+       air        2  -> 127 cells    daylight into a cave, a lamp's radius
        gas        5  ->  51          smoke and steam dim a room a little
-       liquid    12  ->  21          you can see underwater, not far
+       liquid     8  ->  32          ordinary fluid
+       water      4  ->  63          clear enough for long underwater sight
        solid     38  ->   6          six cells of rock and it is properly dark
 
    Air started at 6, for 42 cells. Both revisions of that number came from
@@ -1139,13 +1154,18 @@ static void initLight() {
            a lamp sat just outside the frame. */
         case KIND_EMPTY:  g_matOpacity[m] = 2;  break;
         case KIND_GAS:    g_matOpacity[m] = 5;  break;
-        /* Water used to stop a torch at ~21 cells. At 8 it carries useful
-           light roughly 32 cells: still murkier than air, but an underwater
-           tunnel is navigable and a submerged torch earns its place. */
+        /* Ordinary liquids remain murkier than gases. Water is overridden
+           below because it is the common environment the player actually
+           needs to see and build through. */
         case KIND_LIQUID: g_matOpacity[m] = 8;  break;
         default:          g_matOpacity[m] = 38; break;
         }
     }
+
+    /* Halving attenuation doubles useful reach: full light travels about 63
+       water cells rather than 32. Keep this water-specific so wax, acid and
+       industrial molten fluids retain their heavier optical character. */
+    g_matOpacity[MAT_WATER] = 4;
 
     /* The lamp is the only thing you build for light, so it is the brightest
        and everything else is measured against it. */
@@ -1487,6 +1507,37 @@ static void initSlaking() {
     g_matAlloysTo[MAT_TIN_MELT]     = MAT_BRONZE_MELT;
 }
 
+/* Physical resistance to being shifted by gas pressure. This is intentionally
+   a short explicit powder list rather than KIND_POWDER => one number: a seed,
+   a bank of damp dirt, and tungsten ore should not all yield to the same boiler
+   merely because they share a movement rule. Values are compared with stored
+   excess volume, whose freshly boiled Steam range is now 0..2. */
+static void initPressureResistance() {
+    memset(g_matPressureResistance, 0xFF, sizeof(g_matPressureResistance));
+
+    g_matPressureResistance[MAT_SAND]        = 1;
+    g_matPressureResistance[MAT_OAK_SEED]    = 2;
+    g_matPressureResistance[MAT_BIRCH_SEED]  = 2;
+    g_matPressureResistance[MAT_WHEAT_SEED]  = 2;
+    g_matPressureResistance[MAT_FLAX_SEED]   = 2;
+    g_matPressureResistance[MAT_COTTON_SEED] = 2;
+    g_matPressureResistance[MAT_CHITIN]      = 2;
+
+    g_matPressureResistance[MAT_DIRT]  = 3;
+    g_matPressureResistance[MAT_GRASS] = 3;
+    g_matPressureResistance[MAT_CLAY]  = 4;
+    g_matPressureResistance[MAT_COAL]  = 2;
+
+    /* Ore can be shifted by a future high-pressure machine, but ordinary
+       Water -> Steam expansion cannot rearrange a vein. */
+    g_matPressureResistance[MAT_COPPER_ORE]   = 6;
+    g_matPressureResistance[MAT_IRON_ORE]     = 6;
+    g_matPressureResistance[MAT_TIN_ORE]      = 6;
+    g_matPressureResistance[MAT_GOLD_ORE]     = 6;
+    g_matPressureResistance[MAT_TITANIUM_ORE] = 7;
+    g_matPressureResistance[MAT_TUNGSTEN_ORE] = 8;
+}
+
 /* See g_matStation in materials.h. Four entries, one per tier, and the enum
    value already IS the tier -- see CraftStation in craft.h, which this table
    exists to answer questions from without either side knowing about the
@@ -1786,7 +1837,27 @@ static void initUnseen() {
 }
 
 void initMaterials() {
+    /* Ordinary fluids expand subtly; wax is exaggerated on purpose so its
+       density crosses water's around 41 C and has useful buoyancy by 50-55 C,
+       well clear of boiling. Kept outside MatInfo to avoid another mostly-zero
+       initializer column. */
+    memset(g_matThermalExpansionQ8, 0, sizeof(g_matThermalExpansionQ8));
+    for (int m = 0; m < MAT_COUNT; ++m) {
+        if (MATS[m].kind == KIND_LIQUID) g_matThermalExpansionQ8[m] = 1;
+        if (MATS[m].kind == KIND_GAS)    g_matThermalExpansionQ8[m] = 4;
+    }
+    g_matThermalExpansionQ8[MAT_WAX] = 52;
+
+    for (int m = 0; m < MAT_COUNT; ++m) g_matGasExpansion[m] = 1;
+    /* Water boiling should create a useful pressure pulse without turning a
+       modest pool into an overwhelming amount of Steam. Transport remains
+       fast; only the represented volume changes from six cells to three. */
+    g_matGasExpansion[MAT_STEAM] = 3;
+    g_matGasExpansion[MAT_MERCURY_GAS] = 6;
+    g_matGasExpansion[MAT_COLDFIRE] = 4;
+
     initStrength();
+    initPressureResistance();
     initPassable();
     initClimb();
     initPlatform();

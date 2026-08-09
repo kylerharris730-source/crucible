@@ -13,33 +13,114 @@ Projectile g_proj[MAX_PROJ];
    not even receive a World in their tick, which makes the promise that they
    pass through rock structural rather than a collision exception somebody can
    accidentally remove later. Their only effects are a moving dynamic light
-   source and a bright pixel; after well under a second both decay away. */
+   source and a bright pixel. As they travel they leave bounded, invisible
+   afterglow points so the rock stays revealed briefly after the visible mote
+   has passed. */
 struct GlowMote {
     float x, y, vx, vy;
+    float lastGlowX, lastGlowY;
+    i16 life;
+    bool alive;
+};
+
+struct GlowAfterglow {
+    float x, y;
     i16 life;
     bool alive;
 };
 
 static const int MAX_GLOW_MOTES = 256;
 static const int GLOW_BURST_MOTES = 28;
+static const int MAX_GLOW_AFTERGLOWS = 2048;
+static const int GLOW_AFTERGLOW_HOLD = 60;
+static const int GLOW_AFTERGLOW_FADE = 50;
+static const int GLOW_AFTERGLOW_LIFE = GLOW_AFTERGLOW_HOLD + GLOW_AFTERGLOW_FADE;
+static const float GLOW_TRAIL_SPACING = 6.0f;
 static GlowMote g_glowMotes[MAX_GLOW_MOTES];
+static GlowAfterglow g_glowAfterglows[MAX_GLOW_AFTERGLOWS];
+static int g_glowAfterglowCursor = 0;
 
-static void glowBurst(float x, float y) {
-    static const float TAU = 6.28318530718f;
-    const int seed = (((int)x * 17) ^ ((int)y * 31)) & 255;
-    const float phase = TAU * (float)seed / 256.0f;
+static void glowAfterglowSpawn(float x, float y) {
+    /* Reuse a dead slot when possible. If several flares somehow fill the
+       bounded pool, replace the oldest ring position: fresh reveal is more
+       useful than preserving the tail end of an already fading trail. */
+    int slot = g_glowAfterglowCursor;
+    for (int scanned = 0; scanned < MAX_GLOW_AFTERGLOWS; ++scanned) {
+        const int candidate = (g_glowAfterglowCursor + scanned) % MAX_GLOW_AFTERGLOWS;
+        if (!g_glowAfterglows[candidate].alive) { slot = candidate; break; }
+    }
+    GlowAfterglow& glow = g_glowAfterglows[slot];
+    glow.x = x;
+    glow.y = y;
+    glow.life = GLOW_AFTERGLOW_LIFE;
+    glow.alive = true;
+    g_glowAfterglowCursor = (slot + 1) % MAX_GLOW_AFTERGLOWS;
+}
+
+static void glowAfterglowsTick() {
+    for (int i = 0; i < MAX_GLOW_AFTERGLOWS; ++i) {
+        GlowAfterglow& glow = g_glowAfterglows[i];
+        if (glow.alive && --glow.life <= 0) glow.alive = false;
+    }
+}
+
+static float glowBurstRandom(u32& state) {
+    /* A local generator keeps the slight scatter deterministic without
+       consuming the world's simulation RNG. Replaying the same impact thus
+       reveals the same rock and cannot perturb unrelated material motion. */
+    state ^= state << 13;
+    state ^= state >> 17;
+    state ^= state << 5;
+    return (float)(state & 0xffffu) / 65535.0f;
+}
+
+static void glowBurst(float x, float y, float impactVx, float impactVy) {
+    static const float HALF_CONE = 0.68f; /* about 78 degrees edge-to-edge */
+    static const int PAIRS = GLOW_BURST_MOTES / 2;
+
+    float length = sqrtf(impactVx * impactVx + impactVy * impactVy);
+    if (length < 0.001f) { impactVx = 1.0f; impactVy = 0.0f; length = 1.0f; }
+    const float forwardX = impactVx / length;
+    const float forwardY = impactVy / length;
+    const float sideX = -forwardY;
+    const float sideY = forwardX;
+
+    u32 random = (u32)((int)(x * 16.0f) * 0x9e3779b9u)
+               ^ (u32)((int)(y * 16.0f) * 0x85ebca6bu)
+               ^ (u32)((int)(forwardX * 1024.0f) * 0xc2b2ae35u)
+               ^ (u32)((int)(forwardY * 1024.0f) * 0x27d4eb2fu)
+               ^ 0xa341316cu;
+    glowAfterglowSpawn(x, y);
     int made = 0;
-    for (int slot = 0; slot < MAX_GLOW_MOTES && made < GLOW_BURST_MOTES; ++slot) {
-        GlowMote& m = g_glowMotes[slot];
-        if (m.alive) continue;
-        const float a = phase + TAU * (float)made / (float)GLOW_BURST_MOTES;
-        const float speed = 2.4f + 0.42f * (float)(made % 6);
-        m.x = x; m.y = y;
-        m.vx = cosf(a) * speed;
-        m.vy = sinf(a) * speed;
-        m.life = (i16)(34 + made % 9);
-        m.alive = true;
-        ++made;
+    for (int pair = 0; pair < PAIRS && made < GLOW_BURST_MOTES; ++pair) {
+        /* Stratify the cone so random variation cannot leave a conspicuous
+           empty wedge. Mirroring every randomized ray makes it a balanced
+           shotgun fan rather than the old perfect wheel or a lopsided spray. */
+        const float band = ((float)pair + 0.30f + 0.40f * glowBurstRandom(random))
+                         / (float)PAIRS;
+        const float angle = HALF_CONE * band;
+        const float along = cosf(angle);
+        const float across = sinf(angle);
+        /* Slower launch plus gentler drag lets the fan read as glowing dust
+           travelling through rock instead of a one-frame flash. The longer
+           life more than compensates for that speed: motes ultimately reach
+           a little farther than before, then linger along the revealed path. */
+        const float speed = 2.1f + 1.8f * glowBurstRandom(random);
+        const i16 life = (i16)(78 + (int)(17.0f * glowBurstRandom(random)));
+
+        for (int side = -1; side <= 1; side += 2) {
+            int slot = 0;
+            while (slot < MAX_GLOW_MOTES && g_glowMotes[slot].alive) ++slot;
+            if (slot == MAX_GLOW_MOTES) return;
+            GlowMote& m = g_glowMotes[slot];
+            m.x = x; m.y = y;
+            m.vx = (forwardX * along + sideX * across * (float)side) * speed;
+            m.vy = (forwardY * along + sideY * across * (float)side) * speed;
+            m.lastGlowX = x; m.lastGlowY = y;
+            m.life = life;
+            m.alive = true;
+            ++made;
+        }
     }
 }
 
@@ -47,12 +128,23 @@ static void glowMotesTick() {
     for (int i = 0; i < MAX_GLOW_MOTES; ++i) {
         GlowMote& m = g_glowMotes[i];
         if (!m.alive) continue;
-        if (--m.life <= 0) { m.alive = false; continue; }
+        if (--m.life <= 0) {
+            glowAfterglowSpawn(m.x, m.y);
+            m.alive = false;
+            continue;
+        }
         /* No cell query here: motes cross liquids, walls, ores and machines.
            Drag makes the burst expand quickly and then hang for only a moment
            around the rock it just revealed. */
         m.x += m.vx; m.y += m.vy;
-        m.vx *= 0.94f; m.vy *= 0.94f;
+        m.vx *= 0.975f; m.vy *= 0.975f;
+        const float glowDx = m.x - m.lastGlowX;
+        const float glowDy = m.y - m.lastGlowY;
+        if (glowDx * glowDx + glowDy * glowDy >=
+            GLOW_TRAIL_SPACING * GLOW_TRAIL_SPACING) {
+            glowAfterglowSpawn(m.x, m.y);
+            m.lastGlowX = m.x; m.lastGlowY = m.y;
+        }
         if (m.x < PLAY_X0 || m.x > PLAY_X1 || m.y < PLAY_Y0 || m.y > PLAY_Y1)
             m.alive = false;
     }
@@ -122,6 +214,8 @@ int projExplosionsThisFrame = 0;
 void projClear() {
     for (int i = 0; i < MAX_PROJ; ++i) g_proj[i].alive = false;
     for (int i = 0; i < MAX_GLOW_MOTES; ++i) g_glowMotes[i].alive = false;
+    for (int i = 0; i < MAX_GLOW_AFTERGLOWS; ++i) g_glowAfterglows[i].alive = false;
+    g_glowAfterglowCursor = 0;
 }
 
 bool projSpawn(float x, float y, float vx, float vy,
@@ -145,6 +239,7 @@ bool projSpawn(float x, float y, float vx, float vy,
 int projUpdate(World& w) {
     int destroyed = 0;
     projExplosionsThisFrame = 0;
+    glowAfterglowsTick();
     glowMotesTick();
 
     for (int i = 0; i < MAX_PROJ; ++i) {
@@ -320,7 +415,7 @@ int projUpdate(World& w) {
             w.setCell(dropX, dropY, p.payload);
         }
         if (blocked && p.effect == PROJ_EFFECT_GLOWFLARE && dropX >= 0)
-            glowBurst(p.x, p.y);
+            glowBurst(p.x, p.y, p.vx, p.vy);
     }
     return destroyed;
 }
@@ -335,7 +430,28 @@ void projRegisterLights() {
         const GlowMote& m = g_glowMotes[i];
         if (!m.alive) continue;
         const int level = imin(255, (int)m.life * 8);
-        lightAddDynamic((int)m.x, (int)m.y, (u8)level);
+        const int x = (int)m.x, y = (int)m.y;
+        lightAddDynamic(x, y, (u8)level);
+        /* The core is already at the lighting system's 255 ceiling. A softer
+           source in each neighbouring light sample makes that energy occupy
+           an area instead of a single four-cell sample, so thick stone is
+           visibly brighter without changing global rock opacity. */
+        const u8 halo = (u8)imin(220, (int)m.life * 6);
+        lightAddDynamic(x - LIGHT_CELL, y, halo);
+        lightAddDynamic(x + LIGHT_CELL, y, halo);
+        lightAddDynamic(x, y - LIGHT_CELL, halo);
+        lightAddDynamic(x, y + LIGHT_CELL, halo);
+    }
+    for (int i = 0; i < MAX_GLOW_AFTERGLOWS; ++i) {
+        const GlowAfterglow& glow = g_glowAfterglows[i];
+        if (!glow.alive) continue;
+        /* Hold for one second, then take most of another to disappear. The
+           trail is invisible: only the moving dust is drawn, while these
+           points preserve the glimpse it opened in the stone. */
+        const int level = glow.life > GLOW_AFTERGLOW_FADE
+                        ? 220
+                        : (220 * (int)glow.life) / GLOW_AFTERGLOW_FADE;
+        lightAddDynamic((int)glow.x, (int)glow.y, (u8)level);
     }
 }
 
@@ -418,5 +534,23 @@ int projCount() {
 int projGlowMoteCount() {
     int n = 0;
     for (int i = 0; i < MAX_GLOW_MOTES; ++i) if (g_glowMotes[i].alive) ++n;
+    return n;
+}
+
+int projGlowAfterglowCount() {
+    int n = 0;
+    for (int i = 0; i < MAX_GLOW_AFTERGLOWS; ++i)
+        if (g_glowAfterglows[i].alive) ++n;
+    return n;
+}
+
+int projGlowMoteSnapshot(float* xs, float* ys, int capacity) {
+    int n = 0;
+    for (int i = 0; i < MAX_GLOW_MOTES && n < capacity; ++i) {
+        if (!g_glowMotes[i].alive) continue;
+        xs[n] = g_glowMotes[i].x;
+        ys[n] = g_glowMotes[i].y;
+        ++n;
+    }
     return n;
 }
