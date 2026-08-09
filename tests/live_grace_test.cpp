@@ -113,6 +113,33 @@ int main() {
         w.at(betweenX, liveY + 1).mat == MAT_SAND) {
         fprintf(stderr, "disjoint player live windows collapsed into one region\n"); return 128;
     }
+    /* Hostile overlays choose the body actually crossed, and companion state
+       is banked by player rather than remote equipment replacing the host's
+       drones. These are the two easiest singleton regressions to reintroduce. */
+    w.reset(); playerSessionsReset(); projClear(); droneReset();
+    g_player.reset(220.0f, 320.0f);
+    const PlayerId combatRemote = playerSessionOpen(false, 420.0f, 320.0f);
+    PlayerSession& remoteSession = g_playerSessions[combatRemote];
+    const int hostHp = g_player.hp, remoteHp = remoteSession.body.hp;
+    projSpawn(remoteSession.body.left() - 3.0f, remoteSession.body.centreY(),
+              6.0f, 0.0f, STR_NOTHING, 1, 10, 0xFFFFFF, 0,
+              MAT_EMPTY, 7, true, 0.0f);
+    projUpdate(w);
+    if (g_player.hp != hostHp || remoteSession.body.hp >= remoteHp) {
+        fprintf(stderr, "hostile projectile did not damage the remote body independently\n"); return 129;
+    }
+    g_inv.equip[EQ_LIGHT_DRONE].item = ITEM_LIGHT_DRONE;
+    g_inv.equip[EQ_LIGHT_DRONE].count = 1;
+    remoteSession.inventory.equip[EQ_DRONE_A].item = ITEM_ATTACK_DRONE;
+    remoteSession.inventory.equip[EQ_DRONE_A].count = 1;
+    droneTickFor(0, w, g_player, g_inv);
+    droneTickFor(combatRemote, w, remoteSession.body, remoteSession.inventory);
+    if (g_dronesByPlayer[0][0].type != DRONE_LIGHT ||
+        g_dronesByPlayer[combatRemote][1].type != DRONE_ATTACK ||
+        g_dronesByPlayer[0][1].type != DRONE_NONE) {
+        fprintf(stderr, "per-player drone banks overwrote one another\n"); return 130;
+    }
+    playerSessionClose(combatRemote);
     Inventory droneInv; droneInv.clear();
     droneInv.equip[EQ_LIGHT_DRONE].item = ITEM_LIGHT_DRONE;
     droneInv.equip[EQ_LIGHT_DRONE].count = 1;

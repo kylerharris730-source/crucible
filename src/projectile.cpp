@@ -3,6 +3,7 @@
 #include "item.h"     /* the nearest-first disc table, for explosions */
 #include "render.h"   /* VIEW_CELLS_W/H */
 #include "light.h"
+#include "multiplayer.h"
 #include <math.h>
 
 Projectile g_proj[MAX_PROJ];
@@ -337,20 +338,22 @@ int projUpdate(World& w) {
                         dropX = px_; dropY = py_;
                         break;
                     }
-                } else if (g_player.alive
-                           && cx >= g_player.left() && cx <= g_player.right()
-                           && cy >= g_player.top()  && cy <= g_player.bottom()) {
-                    /* Armour applies here for the same reason it does to a
-                       creature's touch: this is the only other way the player
-                       takes damage from something alive, and a resistance that
-                       covered one and not the other would be a resistance
-                       nobody could reason about. */
-                    const int dmg = imax(1, p.damage - g_inv.armour());
-                    g_player.damage((float)dmg);
-                    g_player.hurtFlash = 10;
-                    p.alive = false; blocked = true;
-                    dropX = px_; dropY = py_;
-                    break;
+                } else {
+                    for (int slot = 0; slot < MAX_PLAYERS; ++slot) {
+                        PlayerSession& session = g_playerSessions[slot];
+                        Player& player = session.body;
+                        if (!session.connected || !player.alive ||
+                            cx < player.left() || cx > player.right() ||
+                            cy < player.top() || cy > player.bottom()) continue;
+                        /* Armour belongs to the player actually struck; remote
+                           gear never protects the host by accident. */
+                        const int dmg = imax(1, p.damage - session.inventory.armour());
+                        player.damage((float)dmg); player.hurtFlash = 10;
+                        p.alive = false; blocked = true;
+                        dropX = px_; dropY = py_;
+                        break;
+                    }
+                    if (blocked) break;
                 }
             }
 

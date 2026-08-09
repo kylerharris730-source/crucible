@@ -14,8 +14,27 @@ static const PlayerId LOCAL_PLAYER_ID = 0;
 struct PlayerSession {
     Player body;
     Inventory inventory;
+    ItemStack cursor;
+    ItemStack trash;
+    /* Host-only input/runtime state. It belongs to the player rather than the
+       window: two people can hold use, mine on cooldown, and rest in different
+       beds independently. These fields are harmless on clients and are reset
+       at every generation boundary. */
+    i32 previousAimX, previousAimY;
+    i32 digCooldown;
+    i32 restBed;
+    i32 openDevice;
+    i32 wireX, wireY;
+    i32 circuitWireFrom;
+    u8 circuitWirePort;
+    bool suppressRightUse;
+    bool lineActive;
+    u8 lineBits, lineSelected, lineRadius;
+    bool lineBackground, lineOverwrite;
+    u8 previousCommandBits;
     bool connected;
     bool local;
+    PlayerId networkId;  /* authority's id; differs from local slot on clients */
     u16 generation;
 };
 
@@ -36,4 +55,4 @@ void playerSessionsReset();
 PlayerId playerSessionOpen(bool local, float spawnX, float spawnY);
 void playerSessionClose(PlayerId id);
 bool playerSessionConnected(PlayerId id);
-
+int playerSessionSlotForNetworkId(PlayerId networkId);

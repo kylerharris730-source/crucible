@@ -1,4 +1,5 @@
 #include "entity.h"
+#include "multiplayer.h"
 #include "sprite.h"
 #include "light.h"
 #include "projectile.h"
@@ -214,17 +215,31 @@ static bool pickupSpawn(ItemId item, int count, float x, float y) {
     return false;
 }
 
-static void pickupTick(World& w, const Player& player, Inventory& inv) {
+static void pickupTickMode(World& w, const Player& fallbackPlayer, Inventory& fallbackInv,
+                           bool multiplayer) {
     static const float PICKUP_RADIUS = 20.0f;
     for (int i = 0; i < MAX_PICKUPS; ++i) {
         Pickup& p = g_pickups[i];
         if (!p.used) continue;
 
-        const float dx = player.centreX() - p.x, dy = player.centreY() - p.y;
-        if (dx * dx + dy * dy <= PICKUP_RADIUS * PICKUP_RADIUS) {
-            const int left = inv.add(p.item, p.count);
-            p.count = (i16)left;
-            if (p.count == 0) { p.used = false; continue; }
+        if (multiplayer) {
+            for (int slot = 0; slot < MAX_PLAYERS && p.used; ++slot) {
+                PlayerSession& session = g_playerSessions[slot];
+                if (!session.connected || !session.body.alive) continue;
+                const float dx = session.body.centreX() - p.x;
+                const float dy = session.body.centreY() - p.y;
+                if (dx * dx + dy * dy > PICKUP_RADIUS * PICKUP_RADIUS) continue;
+                p.count = (i16)session.inventory.add(p.item, p.count);
+                if (!p.count) p.used = false;
+            }
+            if (!p.used) continue;
+        } else {
+            const float dx = fallbackPlayer.centreX() - p.x;
+            const float dy = fallbackPlayer.centreY() - p.y;
+            if (dx * dx + dy * dy <= PICKUP_RADIUS * PICKUP_RADIUS) {
+                p.count = (i16)fallbackInv.add(p.item, p.count);
+                if (!p.count) { p.used = false; continue; }
+            }
         }
 
         /* Pickup physics is intentionally a POINT: these are loose items, not
@@ -689,11 +704,31 @@ static void broodTick(World& w, Entity& e, const Player& p) {
     }
 }
 
-void entTick(World& w, Player& p, Inventory& inv) {
+static void entTickMode(World& w, Player& fallbackPlayer, Inventory& fallbackInv,
+                        bool multiplayer) {
     for (int i = 0; i < MAX_ENTITIES; ++i) {
         Entity& e = g_entities[i];
         if (e.type == ENT_NONE) continue;
         if (e.hp <= 0) { entDie(w, e); continue; }
+
+        Player* targetPlayer = &fallbackPlayer;
+        Inventory* targetInventory = &fallbackInv;
+        if (multiplayer) {
+            float best2 = 1e30f;
+            for (int slot = 0; slot < MAX_PLAYERS; ++slot) {
+                PlayerSession& session = g_playerSessions[slot];
+                if (!session.connected || !session.body.alive) continue;
+                const float dx = session.body.centreX() - e.centreX();
+                const float dy = session.body.centreY() - e.centreY();
+                const float d2 = dx * dx + dy * dy;
+                if (d2 < best2) {
+                    best2 = d2; targetPlayer = &session.body;
+                    targetInventory = &session.inventory;
+                }
+            }
+        }
+        Player& p = *targetPlayer;
+        Inventory& inv = *targetInventory;
 
         /* --- far enough away to stop existing ----------------------------
            Checked before anything else, so a creature the player will never
@@ -763,7 +798,7 @@ void entTick(World& w, Player& p, Inventory& inv) {
         if (e.touchTimer == 0 && p.alive
             && e.right()  >= p.left() && e.left() <= p.right()
             && e.bottom() >= p.top()  && e.top()  <= p.bottom()) {
-            const int dmg = imax(1, d.touchDamage - g_inv.armour());
+            const int dmg = imax(1, d.touchDamage - inv.armour());
             p.damage((float)dmg);
             p.hurtFlash = 10;
             e.touchTimer = d.touchCooldown;
@@ -771,7 +806,15 @@ void entTick(World& w, Player& p, Inventory& inv) {
 
         if (e.hp <= 0) entDie(w, e);
     }
-    pickupTick(w, p, inv);
+    pickupTickMode(w, fallbackPlayer, fallbackInv, multiplayer);
+}
+
+void entTick(World& w, Player& p, Inventory& inv) {
+    entTickMode(w, p, inv, false);
+}
+
+void entTickPlayers(World& w) {
+    entTickMode(w, g_player, g_inv, true);
 }
 
 int entDamageKnockbackDisc(int cx, int cy, int radius, int damage, float knockback) {
@@ -864,9 +907,13 @@ static int entSpawnedCount() {
     return n;
 }
 
-void entSpawnTick(World& w, const Player& p, int camX, int camY) {
+void entSpawnTick(World& w, const Player& p, int camX, int camY, bool lightFieldValid) {
     if (g_spawnCool > 0) { --g_spawnCool; return; }
-    if (entSpawnedCount() >= ENT_MAX_ALIVE) return;
+    int connected = 0;
+    for (int slot = 0; slot < MAX_PLAYERS; ++slot)
+        if (g_playerSessions[slot].connected && g_playerSessions[slot].body.alive) ++connected;
+    if (connected < 1) connected = 1;
+    if (entSpawnedCount() >= ENT_MAX_ALIVE * connected) return;
 
     for (int attempt = 0; attempt < SPAWN_TRIES; ++attempt) {
         /* Drawn from the padded light rectangle, then rejected if it lands on
@@ -898,7 +945,7 @@ void entSpawnTick(World& w, const Player& p, int camX, int camY) {
         const u8 zone = w.zoneAt(x, y);
         const bool surface = (zone == ZONE_SKY);
         if (surface && !isNight()) continue;
-        if (g_lightOn && lightRow(ly)[lx] > SPAWN_DARK) continue;
+        if (lightFieldValid && g_lightOn && lightRow(ly)[lx] > SPAWN_DARK) continue;
 
         /* --- yours? -------------------------------------------------------
            Player-placed background makes a place safe. Checked over the whole

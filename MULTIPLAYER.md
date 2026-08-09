@@ -1,14 +1,16 @@
 # Multiplayer architecture
 
-## First playable target
+## Playable target
 
-- Two to four players in cooperative survival.
+- Two players in cooperative survival today: one host and one joined peer.
+- The session/world model already has four stable slots; accepting more than
+  one remote socket is a later transport extension, not a world-state rewrite.
 - One player's game is the authoritative host and owns the save.
-- Another computer joins by entering the host's IPv4 address and port.
-- The first transport milestone is LAN/direct IP. Discovery, NAT traversal,
-  matchmaking, dedicated servers, host migration, and cross-version play are
-  explicitly later work.
-- Every peer must run the exact same build/protocol version.
+- Another computer joins by entering the host's IPv4 address. Port 27841 is
+  fixed for this first version.
+- LAN/direct IP is the baseline. Discovery, NAT traversal, matchmaking,
+  dedicated servers, host migration, and cross-version play are later work.
+- Every peer must run the exact same build and protocol.
 
 On an ordinary home LAN, the host's private address is sufficient. The host
 machine may still need to allow Crucible through Windows Firewall. Guest Wi-Fi,
@@ -25,57 +27,83 @@ The host owns all durable and gameplay-relevant state:
 - enemies, pickups, drones, projectiles, devices, rooms, and circuits;
 - time, bosses, saving, and loading.
 
-Clients send input/intent, never results. A client asks to use the selected
+Clients send input or intent, never results. A client asks to use the selected
 item at an aim point; it does not announce that a block disappeared or an item
-was added. The host validates reach, inventory, cooldown, and world state, then
-performs the same operation single-player uses.
+was added. The host validates identity, generation, reach, inventory, equipment
+fit, recipes, cooldowns, and world state before applying the same operations
+single-player uses.
 
 Menus and cameras are client-local. Opening inventory must not pause the host.
-Simulation speed, saving, loading, and debug stepping are host-only controls.
+Simulation speed, pausing, saving, loading, stepping, and world reset are
+host-only controls.
 
-## Current foundation
+## Current implementation
 
 `PlayerSession` supplies four stable player slots. Slot zero backs the legacy
-`g_player` and `g_inv` references, so converting ownership can proceed system
-by system without maintaining two copies of the local player.
+`g_player` and `g_inv` references, so ordinary single-player code has no second
+copy of local state. Each session has a generation counter. Packet references
+are `(PlayerId, generation)`, preventing a delayed packet from a disconnected
+client from acting on whoever later reuses that slot.
 
-Each session has a generation counter. Future packet references are
-`(PlayerId, generation)`, preventing a delayed packet from a disconnected
-client from acting on a new player who later reused the same slot.
+World material occupancy supports four independent player shapes. World
+activation is a union of chunk islands: each remote player contributes a live
+core around their body rather than stretching one huge rectangle between
+distant players. Simulation cost therefore scales with active areas, not the
+distance separating them.
 
-World material occupancy supports four independent player shapes. The common
-single-player path checks only the active slot, preserving the movement-loop
-cost until more players actually exist.
+The transport is nonblocking TCP. A version/build handshake runs before world
+data is accepted. The host sends a normal compressed save as the initial
+snapshot, followed by explicit command/action packets, replicated overlay
+state, and PackBits-compressed changed chunks around the joined player. Chunk
+hashing is amortized across frames and periodically forced so a client repairs
+itself without rejoining. A bounded send backlog prevents a slow peer from
+growing memory indefinitely.
 
-World activation is a union of chunk islands. The local camera establishes the
-primary core and its adaptive activity fingers; each remote player contributes
-another core around their body. The world never constructs a bounding box
-between distant players, so simulation cost scales with the number of active
-areas rather than the distance separating them.
+Commands carry held movement/use state plus preserved rising edges. Discrete
+inventory, equipment, crafting, chest, machine configuration, copper-wire, and
+circuit-wire gestures use an ordered action queue. The client predicts only its
+own body movement; world cells and gameplay results are never client-authored.
 
-## Next implementation slices
+Enemies target the nearest connected living player. Contact damage, hostile
+shots, pickups, accessories, and each player's three-drone bank use that
+player's body and inventory. Player and drone shots do not friendly-fire. Time
+passes at 4x only when every connected living player rests in a valid bed.
 
-1. Introduce a fixed-tick `PlayerCommand` representation and route local
-   movement, aiming, using, interaction, crafting, and inventory operations
-   through the same host command queue remote players will use.
-2. Split authoritative simulation ticking from local UI/input/rendering while
-   retaining an in-process single-player host.
-3. Make enemy targeting, pickups, doors, drones, accessories, and projectile
-   ownership operate on `PlayerId` rather than the slot-zero aliases.
-4. Add a versioned packet encoder and direct-IP host/join handshake. Do not
-   transmit raw C++ structs: padding and later field additions are not a wire
-   format.
-5. Send an initial compressed snapshot, then measure and transmit compressed
-   changed-chunk and overlay-state updates. Add sequence numbers, acknowledgments,
-   periodic hashes, and targeted chunk resynchronization.
-6. Decide cooperative rules for sleeping, death/respawn, boss rewards, pausing,
-   disconnect grace, and joining an in-progress world.
+State packets use explicit framing and scalar fields for commands and actions.
+High-frequency overlay arrays currently use exact-build, size/schema-guarded
+C++ blocks for efficiency. That is safe for the enforced same executable on
+this Windows LAN milestone, but must become field-wise serialization before
+cross-compiler or cross-platform play is promised.
+
+## Starting and joining
+
+Open Escape on the host and click **Host LAN**. The button shows its private IP
+and the fixed port. On the other computer, open Escape, enter that IPv4 address,
+and click **Join**. Windows Firewall may ask the host to allow Crucible on the
+private network.
+
+The command-line equivalents, mainly for repeatable testing, are
+`crucible.exe --host` and `crucible.exe --join 192.168.x.x`.
+
+The checked-in two-process smoke test creates a real loopback TCP peer and
+asserts handshake, full snapshot load, player mapping, readiness, held command
+framing, and ordered discrete-action framing. The full executable has also been
+run as two simultaneous processes with an established loopback session.
+
+## Remaining extensions
+
+- Accept sockets for player slots two and three.
+- Optional LAN discovery, NAT traversal/relay, dedicated server, and host
+  migration.
+- Replace ABI blocks with portable field-wise overlay encoding before
+  non-identical compilers or platforms are supported.
+- Add latency/loss simulation and longer soak tests for prediction and backlog
+  tuning.
 
 ## Replication rule
 
-Do not add network calls inside material behaviors. The host records or compares
-changed active chunks and replicates those changes generically. New materials,
-heat rules, and fluid reactions should therefore require no multiplayer code.
-New player-directed actions need a command and validation; new overlay entities
-need owner/target and replicated state. Cosmetic rendering needs neither.
-
+Do not add network calls inside material behaviours. The host compares changed
+interest chunks and replicates them generically. New materials, heat rules, and
+fluid reactions therefore require no multiplayer code. New player-directed
+actions need a validated command/action; new overlay entities need ownership,
+targeting, and replicated state. Cosmetic rendering needs neither.

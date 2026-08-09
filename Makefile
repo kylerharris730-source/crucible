@@ -1,6 +1,8 @@
 CXX      := g++
 CXXFLAGS := -std=c++11 -O2 -Wall -Wextra
-LDFLAGS  := -mwindows -lgdi32 -luser32 -lwinmm -lmsimg32
+BUILD_ID := $(shell git rev-parse --short=12 HEAD 2>/dev/null || echo unknown)
+CXXFLAGS += -DCRUCIBLE_BUILD_ID=\"$(BUILD_ID)\"
+LDFLAGS  := -mwindows -lgdi32 -luser32 -lwinmm -lmsimg32 -lws2_32
 
 # Discovered, not listed -- see the note in build.bat. The two scripts drifted
 # apart once already and the cost was a deleted executable.

@@ -6,7 +6,7 @@
 #include <math.h>
 #include <string.h>
 
-Drone g_drones[MAX_DRONES];
+Drone g_dronesByPlayer[4][MAX_DRONES];
 
 static const int ATTACK_DRONE_DAMAGE = 3;
 static const int ATTACK_DRONE_COOLDOWN = 28;
@@ -263,10 +263,10 @@ static void steerArrive(Drone& d, float tx, float ty, float maxSpeed, float slow
     d.vy += (wantY - d.vy) * response;
 }
 
-static void addSeparation(Drone& d, int self) {
+static void addSeparation(Drone* drones, Drone& d, int self) {
     for (int i = 0; i < MAX_DRONES; ++i) {
-        if (i == self || g_drones[i].type == DRONE_NONE) continue;
-        const float dx = d.x - g_drones[i].x, dy = d.y - g_drones[i].y;
+        if (i == self || drones[i].type == DRONE_NONE) continue;
+        const float dx = d.x - drones[i].x, dy = d.y - drones[i].y;
         const float d2 = dx * dx + dy * dy;
         if (d2 >= 100.0f || d2 < 0.01f) continue;
         const float dist = sqrtf(d2);
@@ -275,12 +275,12 @@ static void addSeparation(Drone& d, int self) {
     }
 }
 
-void droneTick(const World& w, const Player& p, Inventory& inv) {
+static void droneTickBank(Drone* drones, const World& w, const Player& p, Inventory& inv) {
     g_taskX = p.centreX(); g_taskY = p.centreY();
     g_homeX = p.centreX(); g_homeY = (float)p.top() - (float)DRONE_HOME_ABOVE;
 
     for (int i = 0; i < MAX_DRONES; ++i) {
-        Drone& d = g_drones[i];
+        Drone& d = drones[i];
         const u8 want = equippedDrone(inv, i);
         if (d.type != want) {
             memset(&d, 0, sizeof(d));
@@ -335,7 +335,7 @@ void droneTick(const World& w, const Player& p, Inventory& inv) {
         }
         if (d.type == DRONE_LIGHT && !escapingLight)
             repelLightFromSurfaces(w, d);
-        addSeparation(d, i);
+        addSeparation(drones, d, i);
         d.x += d.vx; d.y += d.vy;
 
         if (d.type == DRONE_ATTACK) {
@@ -376,15 +376,26 @@ void droneTick(const World& w, const Player& p, Inventory& inv) {
     }
 }
 
+void droneTick(const World& w, const Player& p, Inventory& inv) {
+    droneTickBank(g_dronesByPlayer[0], w, p, inv);
+}
+
+void droneTickFor(int playerSlot, const World& w, const Player& p, Inventory& inv) {
+    if (playerSlot < 0 || playerSlot >= 4) return;
+    droneTickBank(g_dronesByPlayer[playerSlot], w, p, inv);
+}
+
 void droneRegisterLights() {
-    for (int i = 0; i < MAX_DRONES; ++i)
-        if (g_drones[i].type == DRONE_LIGHT)
-            lightAddDynamic((int)g_drones[i].x, (int)g_drones[i].y, 210);
+    for (int player = 0; player < 4; ++player)
+        for (int i = 0; i < MAX_DRONES; ++i)
+            if (g_dronesByPlayer[player][i].type == DRONE_LIGHT)
+                lightAddDynamic((int)g_dronesByPlayer[player][i].x,
+                                (int)g_dronesByPlayer[player][i].y, 210);
 }
 
 void droneDraw(u32* px, int camX, int camY, bool lit) {
-    for (int i = 0; i < MAX_DRONES; ++i) {
-        const Drone& d = g_drones[i];
+    for (int player = 0; player < 4; ++player) for (int i = 0; i < MAX_DRONES; ++i) {
+        const Drone& d = g_dronesByPlayer[player][i];
         if (d.type == DRONE_NONE) continue;
         const int x = (int)d.x - camX, y = (int)d.y - camY;
         const u32 c = d.type == DRONE_LIGHT  ? 0xA8EEFF

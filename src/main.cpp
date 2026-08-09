@@ -24,6 +24,7 @@
 #include "accessory.h"
 #include "save.h"
 #include "multiplayer.h"
+#include "network.h"
 
 /* The window is a fixed-size left-hand tool panel plus the sim viewport. The
    viewport keeps a clean integer scale so pixels stay crisp and the
@@ -370,6 +371,11 @@ static bool g_uiCapture = false;   /* the click landed on the panel, not the sim
 static bool g_overwrite = false;   /* false = placement only fills empty space */
 static int  g_view      = VIEW_NORMAL;
 static bool g_lmb = false, g_rmb = false;
+/* A right-click on an interactable is a one-frame command, distinct from the
+   held right-button mining verb. The client cannot operate the local replica;
+   it asks the host and receives the resulting device/door state back. */
+static bool g_interactPulse = false;
+static bool g_respawnPulse = false;
 /* One consumable use per click rather than one per frame. Most left-click actions
    in the game wants to repeat while held -- digging, building, sowing -- so the
    rate limiting they share is a cooldown rather than a latch. Eggs, food and
@@ -469,7 +475,7 @@ static int  g_zoomIdx = 0;       /* index into ZOOMS; zoom-in only */
 static bool g_playerOn = true;
 /* Index rather than a Device pointer: removing or rebuilding a bed cannot
    leave rest state pointing at recycled device storage. -1 is awake. */
-static int  g_restBed = -1;
+static int& g_restBed = g_playerSessions[0].restBed;
 /* The pause menu. Escape opens it rather than quitting outright -- an unprompted
    Escape-to-quit is fine in a toy you are drawing in, and hostile in a game you
    have built something in. Quitting now takes a deliberate second action. */
@@ -493,7 +499,9 @@ static bool g_bgLayer = false;
    square space, and the row still spans well under half the viewport. */
 static const int HOTBAR_SLOT = 42;   /* screen pixels per hotbar cell */
 static RECT g_hotRect[HOTBAR_SLOTS];
-static RECT g_menuResume, g_menuQuit, g_menuPanel;
+static RECT g_menuResume, g_menuHost, g_menuJoin, g_menuIp, g_menuStop, g_menuQuit, g_menuPanel;
+static char g_joinIp[64] = "127.0.0.1";
+static bool g_joinIpFocus = false;
 
 /* --- the creative inventory ----------------------------------------------
 
@@ -605,7 +613,7 @@ static int  g_signalPickerField = CIR_PICK_NONE;
    two slots to the left would be the worst possible bug to ship in a feature
    whose entire purpose is rearranging things. */
 static RECT g_packRect[INV_SLOTS];
-static ItemStack g_drag = { ITEM_NONE, 0, 0 };
+static ItemStack& g_drag = g_playerSessions[0].cursor;
 static int g_chestOpen = -1;
 static ItemStack g_chestStack = { ITEM_NONE, 0, 0 };
 static RECT g_chestPanel, g_chestSlot, g_chestPack[INV_SLOTS], g_chestClose;
@@ -649,7 +657,7 @@ static RECT g_droneModuleRect[MAX_DRONES][Inventory::DRONE_MODULE_SLOTS_MAX];
    slot that survives sessions, which is the opposite of throwing something
    away. */
 static RECT      g_trashRect;
-static ItemStack g_trash;
+static ItemStack& g_trash = g_playerSessions[0].trash;
 
 /* --- the camera ----------------------------------------------------------
    Top-left cell of the visible window. Kept as floats so the follow can be
@@ -688,6 +696,12 @@ static Aim currentAim();
 static Aim currentWireAim();
 static void applyBrush();
 static void circuitWireClick();
+static bool sendClientAction(u8 type, u8 container = 0, u8 a = 0, u8 b = 0, u8 flags = 0,
+                             i32 x = 0, i32 y = 0);
+static void fireToolFor(Player& player, Inventory& inventory, const Aim& aim);
+static bool throwGlowflareFor(Player& player, Inventory& inventory, const Aim& aim);
+static void placeDeviceStrokeFor(Inventory& inventory, int& previousX, int& previousY,
+                                 u8 type, bool consume, const Aim& aim);
 
 /* Lay down the line and end the drag. g_pmx/g_pmy still hold the press point,
    which is the whole trick -- applyBrush interpolates from there to the current
@@ -710,6 +724,7 @@ static void commitLine() {
     if (!g_lineOn) return;
     g_lineOn   = false;
     g_lineDrew = true;      /* so releasing R does not also respawn */
+    if (netRole() == NET_CLIENT) { g_pmx = -1; return; }
     applyBrush();
     g_pmx = -1;
 }
@@ -719,6 +734,8 @@ static void startWire() {
     const Aim a = currentWireAim();
     g_wireX = a.x; g_wireY = a.y;
     g_wireOn = true;
+    if (netRole() == NET_CLIENT)
+        sendClientAction(NACT_WIRE_POINT, 0, 0, 0, 0, a.ghostX, a.ghostY);
 }
 
 /* Place an intentionally narrow, 4-connected copper route. A normal pixel
@@ -739,6 +756,10 @@ static void commitWire() {
     if (!g_wireOn) return;
     g_wireOn = false;
     const Aim a = currentWireAim();
+    if (netRole() == NET_CLIENT) {
+        sendClientAction(NACT_WIRE_POINT, 0, 0, 0, 1, a.ghostX, a.ghostY);
+        return;
+    }
     int x = g_wireX, y = g_wireY;
     const int dx = abs(a.x - x), sx = x < a.x ? 1 : -1;
     const int dy = abs(a.y - y), sy = y < a.y ? 1 : -1;
@@ -963,14 +984,18 @@ static const KeyHint KEY_HINTS[] = {
 static const int N_KEY_HINTS = (int)(sizeof(KEY_HINTS) / sizeof(KEY_HINTS[0]));
 
 static void layoutMenu() {
-    const int w = 344, h = 150 + N_KEY_HINTS * 15 + 22
+    const int w = 380, h = 300 + N_KEY_HINTS * 15 + 22
                     + (saveTotalBytes() > 0 ? 26 + 8 * 15 : 0);
     const int cx = PANEL_W + VIEW_W / 2, cy = VIEW_H / 2;
     SetRect(&g_menuPanel, cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2);
     const int bw = w - 120, bx = cx - bw / 2;
     const int top = g_menuPanel.top;
     SetRect(&g_menuResume, bx, top + 42, bx + bw, top + 74);
-    SetRect(&g_menuQuit,   bx, top + 82, bx + bw, top + 114);
+    SetRect(&g_menuHost,   bx, top + 82, bx + bw, top + 114);
+    SetRect(&g_menuIp,     bx, top + 122, bx + bw - 88, top + 154);
+    SetRect(&g_menuJoin,   bx + bw - 80, top + 122, bx + bw, top + 154);
+    SetRect(&g_menuStop,   bx, top + 162, bx + bw, top + 194);
+    SetRect(&g_menuQuit,   bx, top + 202, bx + bw, top + 234);
 }
 
 /* Laid out fresh on open, like the pause menu, and for the same reason: it is
@@ -1157,6 +1182,18 @@ static void layoutCreative() {
 
    Returns whether anything happened, so a caller can tell a handled click from
    one that landed on the background. */
+static bool sendClientAction(u8 type, u8 container, u8 a, u8 b, u8 flags, i32 x, i32 y) {
+    if (netRole() != NET_CLIENT || !netClientReady()) return false;
+    static u32 sequence = 0;
+    NetAction action; memset(&action, 0, sizeof(action));
+    action.sequence = ++sequence; action.player = netAssignedPlayer();
+    action.generation = g_playerSessions[0].generation;
+    action.type = type; action.container = container;
+    action.a = a; action.b = b; action.flags = flags;
+    action.x = x; action.y = y;
+    return netSendAction(action);
+}
+
 static bool slotClick(ItemStack& st, bool right) {
     if (g_drag.empty()) {
         if (st.empty()) return false;
@@ -1285,6 +1322,11 @@ static void openChest(int index) {
 }
 
 static void closeChest() {
+    if (netRole() == NET_CLIENT) {
+        sendClientAction(NACT_CLOSE_DEVICE);
+        g_chestOpen = -1; g_logisticsUiOpen = false;
+        return;
+    }
     if (g_chestOpen >= 0 && g_chestOpen < MAX_DEVICES && g_devices[g_chestOpen].used) {
         Device& d = g_devices[g_chestOpen];
         d.mat = g_chestStack.empty() ? (u8)MAT_EMPTY : (u8)g_chestStack.item;
@@ -1296,9 +1338,17 @@ static void closeChest() {
 static bool handleChestClick(int mx, int my, bool right) {
     if (g_chestOpen < 0) return false;
     if (inRect(g_chestClose, mx, my)) { closeChest(); return true; }
-    if (inRect(g_chestSlot, mx, my)) { slotClick(g_chestStack, right); return true; }
+    if (inRect(g_chestSlot, mx, my)) {
+        if (netRole() == NET_CLIENT) sendClientAction(NACT_SLOT, NSLOT_CHEST, 0, 0, right ? 1 : 0);
+        else slotClick(g_chestStack, right);
+        return true;
+    }
     for (int i = 0; i < INV_SLOTS; ++i)
-        if (inRect(g_chestPack[i], mx, my)) { slotClick(g_inv.slot[i], right); return true; }
+        if (inRect(g_chestPack[i], mx, my)) {
+            if (netRole() == NET_CLIENT) sendClientAction(NACT_SLOT, NSLOT_PACK, (u8)i, 0, right ? 1 : 0);
+            else slotClick(g_inv.slot[i], right);
+            return true;
+        }
     return true;
 }
 
@@ -1355,7 +1405,8 @@ static bool handleCreativeClick(int mx, int my, bool remove) {
     if (inRect(g_creClear, mx, my)) {
         if (g_signalPickerDevice >= 0) { closeSignalPicker(); return true; }
         if (g_filterDevice >= 0) {
-            g_devices[g_filterDevice].value = 0;
+            if (netRole() == NET_CLIENT) sendClientAction(NACT_DEVICE, 0, NDEV_SET_FILTER, 0);
+            else g_devices[g_filterDevice].value = 0;
             g_filterDevice = -1; g_creativeOpen = false; g_creSearchFocus = false;
             return true;
         }
@@ -1385,7 +1436,8 @@ static bool handleCreativeClick(int mx, int my, bool remove) {
 
     if (g_signalPickerDevice < 0) for (int i = 0; i < INV_SLOTS; ++i)
         if (inRect(g_packRect[i], mx, my)) {
-            slotClick(g_inv.slot[i], remove);
+            if (netRole() == NET_CLIENT) sendClientAction(NACT_SLOT, NSLOT_PACK, (u8)i, 0, remove ? 1 : 0);
+            else slotClick(g_inv.slot[i], remove);
             /* Picking a tool up or putting one down changes whether the bench
                exists, which changes the panel height. */
             layoutCreative();
@@ -1393,11 +1445,19 @@ static bool handleCreativeClick(int mx, int my, bool remove) {
         }
 
     if (g_signalPickerDevice < 0) for (int i = 0; i < EQ_COUNT; ++i)
-        if (inRect(g_eqRect[i], mx, my)) { equipClick(i, remove); layoutCreative(); return true; }
+        if (inRect(g_eqRect[i], mx, my)) {
+            if (netRole() == NET_CLIENT) sendClientAction(NACT_SLOT, NSLOT_EQUIP, (u8)i, 0, remove ? 1 : 0);
+            else equipClick(i, remove);
+            layoutCreative(); return true;
+        }
 
     if (g_signalPickerDevice < 0) for (int d = 0; d < MAX_DRONES; ++d)
         for (int i = 0; i < Inventory::DRONE_MODULE_SLOTS_MAX; ++i)
-            if (inRect(g_droneModuleRect[d][i], mx, my)) { droneModuleClick(d, i, remove); layoutCreative(); return true; }
+            if (inRect(g_droneModuleRect[d][i], mx, my)) {
+                if (netRole() == NET_CLIENT) sendClientAction(NACT_SLOT, NSLOT_DRONE_MODULE, (u8)d, (u8)i, remove ? 1 : 0);
+                else droneModuleClick(d, i, remove);
+                layoutCreative(); return true;
+            }
 
     /* The bin is an ORDINARY slot, clicked with the same slotClick every other
        slot uses -- which is what makes taking something back out work without a
@@ -1410,6 +1470,10 @@ static bool handleCreativeClick(int mx, int my, bool remove) {
        symptom is the 33rd multitool of a session arriving inert, with nothing
        anywhere connecting it to a bin. */
     if (g_signalPickerDevice < 0 && inRect(g_trashRect, mx, my)) {
+        if (netRole() == NET_CLIENT) {
+            sendClientAction(NACT_SLOT, NSLOT_TRASH);
+            return true;
+        }
         if (g_drag.empty()) {
             /* Empty hand: take back whatever is in there. This is the whole
                recovery affordance and it is an ordinary pick-up. */
@@ -1434,7 +1498,12 @@ static bool handleCreativeClick(int mx, int my, bool remove) {
     if (g_signalPickerDevice < 0 && g_toolPackSlot >= 0 && g_inv.slot[g_toolPackSlot].inst) {
         ToolInst& ti = g_toolInst[g_inv.slot[g_toolPackSlot].inst];
         for (int i = 0; i < g_toolSlotCount; ++i)
-            if (inRect(g_toolSlotRect[i], mx, my)) { moduleClick(ti.slot[i], remove); return true; }
+            if (inRect(g_toolSlotRect[i], mx, my)) {
+                if (netRole() == NET_CLIENT) sendClientAction(NACT_SLOT, NSLOT_TOOL_MODULE,
+                                                               (u8)g_toolPackSlot, (u8)i, remove ? 1 : 0);
+                else moduleClick(ti.slot[i], remove);
+                return true;
+            }
         /* The payload slot is a genuine ItemStack, so it speaks slotClick's
            ordinary lift/drop/merge/split language rather than moduleClick's
            unique-item swap -- loading ammunition is a pack interaction, not
@@ -1444,7 +1513,9 @@ static bool handleCreativeClick(int mx, int my, bool remove) {
            accepted and then doing something nobody asked for. */
         if (inRect(g_toolPayloadRect, mx, my)) {
             if (!g_drag.empty() && ITEMS[g_drag.item].kind != ITEMK_MATERIAL) return true;
-            slotClick(ti.payload, remove);
+            if (netRole() == NET_CLIENT) sendClientAction(NACT_SLOT, NSLOT_TOOL_PAYLOAD,
+                                                           (u8)g_toolPackSlot, 0, remove ? 1 : 0);
+            else slotClick(ti.payload, remove);
             return true;
         }
 
@@ -1454,7 +1525,12 @@ static bool handleCreativeClick(int mx, int my, bool remove) {
         if (!inRect(g_creRect[i], mx, my)) continue;
         const int it = g_creItem[i];
         if (g_signalPickerDevice >= 0) {
-            if (g_signalPickerDevice < MAX_DEVICES && g_devices[g_signalPickerDevice].used) {
+            if (netRole() == NET_CLIENT) {
+                const u8 op = g_signalPickerField == CIR_PICK_SIGNAL ? NDEV_SET_SIGNAL :
+                              g_signalPickerField == CIR_PICK_A ? NDEV_SET_A :
+                              g_signalPickerField == CIR_PICK_B ? NDEV_SET_B : NDEV_SET_OUT;
+                sendClientAction(NACT_DEVICE, 0, op, (u8)it);
+            } else if (g_signalPickerDevice < MAX_DEVICES && g_devices[g_signalPickerDevice].used) {
                 CircuitDeviceConfig& cc = g_circuitConfig[g_signalPickerDevice];
                 if      (g_signalPickerField == CIR_PICK_SIGNAL) cc.signal = (u8)it;
                 else if (g_signalPickerField == CIR_PICK_A)      cc.signalA = (u8)it;
@@ -1465,7 +1541,10 @@ static bool handleCreativeClick(int mx, int my, bool remove) {
             return true;
         }
         if (g_filterDevice >= 0) {
-            if (it < MAT_COUNT) g_devices[g_filterDevice].value = it;
+            if (it < MAT_COUNT) {
+                if (netRole() == NET_CLIENT) sendClientAction(NACT_DEVICE, 0, NDEV_SET_FILTER, (u8)it);
+                else g_devices[g_filterDevice].value = it;
+            }
             g_filterDevice = -1; g_creativeOpen = false; g_creSearchFocus = false;
             return true;
         }
@@ -1481,6 +1560,10 @@ static bool handleCreativeClick(int mx, int my, bool remove) {
                 g_digFilterMat[it] = !g_digFilterMat[it];
             return true;
         }
+        /* The creative catalog is host-owned debug state. A joined survival
+           player may rearrange the pack above, but cannot mint or delete items
+           by changing only its local replica. */
+        if (netRole() == NET_CLIENT) return true;
         if (remove) {
             /* Take everything, not one: the point of the right-click is to
                clear a slot out, and holding the button down to drain a hundred
@@ -1670,6 +1753,16 @@ static bool handlePanelClick(int mx, int my) {
        viewport -- otherwise you paint into the world through the overlay. */
     if (g_menuOpen) {
         if (inRect(g_menuResume, mx, my)) { g_menuOpen = false; return true; }
+        if (inRect(g_menuHost, mx, my)) {
+            g_survival = true; g_playerOn = true;
+            netHost(); g_joinIpFocus = false; return true;
+        }
+        if (inRect(g_menuIp, mx, my)) { g_joinIpFocus = true; return true; }
+        if (inRect(g_menuJoin, mx, my)) {
+            g_survival = true; g_playerOn = true;
+            netJoin(g_joinIp); g_joinIpFocus = false; return true;
+        }
+        if (inRect(g_menuStop, mx, my)) { netStop(); g_joinIpFocus = false; return true; }
         if (inRect(g_menuQuit,   mx, my)) { g_running = false; PostQuitMessage(0); return true; }
         return true;
     }
@@ -1698,7 +1791,10 @@ static bool handlePanelClick(int mx, int my) {
         return true;
     }
     for (int i = 0; i < N_SPEED; ++i) {
-        if (inRect(g_speedRect[i], mx, my)) { g_speedIdx = i; return true; }
+        if (inRect(g_speedRect[i], mx, my)) {
+            if (netRole() != NET_CLIENT) g_speedIdx = i;
+            return true;
+        }
     }
     for (int i = 0; i < N_ZOOM; ++i) {
         if (inRect(g_zoomRect[i], mx, my)) { changeZoom(i - g_zoomIdx); return true; }
@@ -1721,6 +1817,7 @@ static bool handlePanelClick(int mx, int my) {
     if (inRect(g_actRect[ACT_VIEW],      mx, my)) { cycleView();                return true; }
     if (inRect(g_actRect[ACT_LIGHT],     mx, my)) { g_lightOn  = !g_lightOn;    return true; }
     if (inRect(g_actRect[ACT_PLAYER],    mx, my)) {
+        if (netRole() != NET_OFF) return true;
         g_playerOn = !g_playerOn;
         /* Into the middle of the VIEW, not the middle of the world -- switching
            the character on should put them where you are looking. */
@@ -1731,7 +1828,10 @@ static bool handlePanelClick(int mx, int my) {
         }
         return true;
     }
-    if (inRect(g_actRect[ACT_PAUSE],     mx, my)) { g_paused = !g_paused;       return true; }
+    if (inRect(g_actRect[ACT_PAUSE],     mx, my)) {
+        if (netRole() != NET_CLIENT) g_paused = !g_paused;
+        return true;
+    }
     if (inRect(g_actRect[ACT_FILTER],    mx, my)) {
         /* On -> off is just off. Off -> on opens the picker, because a filter
            with nothing ticked would silently stop you digging at all, and a
@@ -1756,7 +1856,11 @@ static bool handlePanelClick(int mx, int my) {
         }
         return true;
     }
-    if (inRect(g_actRect[ACT_CLEAR],     mx, my)) { g_world.reset(); makeWorld(); return true; }
+    if (inRect(g_actRect[ACT_CLEAR],     mx, my)) {
+        if (netRole() == NET_CLIENT) return true;
+        if (netConnected()) netStop();
+        g_world.reset(); makeWorld(); return true;
+    }
     /* Any other spot on the panel is dead space: swallow it so it never paints. */
     return mx < PANEL_W;
 }
@@ -1779,6 +1883,17 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
 
     case WM_CHAR:
+        if (g_menuOpen && g_joinIpFocus) {
+            const char ch = (char)wp; int n = (int)strlen(g_joinIp);
+            if (ch == '\b' && n > 0) g_joinIp[n - 1] = 0;
+            else if ((ch == '.' || (ch >= '0' && ch <= '9')) && n < (int)sizeof(g_joinIp) - 1) {
+                g_joinIp[n] = ch; g_joinIp[n + 1] = 0;
+            } else if (ch == '\r') {
+                g_survival = true; g_playerOn = true;
+                netJoin(g_joinIp); g_joinIpFocus = false;
+            }
+            return 0;
+        }
         if (g_creativeOpen && g_creSearchFocus) {
             const char ch = (char)wp;
             int n = (int)strlen(g_creSearch);
@@ -1831,6 +1946,10 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                contraption to a stray drag would be far worse. */
             const Aim a = currentAim();
             Device* d = devAt(a.x, a.y);
+            if (netRole() == NET_CLIENT && (d || isDoor(g_world.at(a.x, a.y).mat))) {
+                g_interactPulse = true;
+                break;
+            }
             if (d) {
                 const int idx = (int)(d - g_devices);
                 if (d->type == DEV_BED) {
@@ -1973,7 +2092,7 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case 'G': g_brushMat = MAT_GRAPHENE; g_paletteDevice = -1; break;
         case 'B': g_brushMat = MAT_WALL;     g_paletteDevice = -1; break;
         case 'E': g_brushMat = MAT_EMPTY;    g_paletteDevice = -1; break;
-        case 'I': g_survival = !g_survival; break;
+        case 'I': if (netRole() == NET_OFF) g_survival = !g_survival; break;
         case 'H': g_brushMat = TOOL_HEAT; g_paletteDevice = -1; break;
         case 'J': g_brushMat = TOOL_COOL; g_paletteDevice = -1; break;
         /* C crafts. Regenerating the world moved to N, which it should
@@ -1984,13 +2103,20 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             g_craftOpen = !g_craftOpen;
             if (g_craftOpen) { layoutCraft(); g_lmb = g_rmb = false; }
             break;
-        case 'N': g_world.reset(); makeWorld(); break;
+        case 'N':
+            if (netRole() == NET_CLIENT) break;
+            if (netConnected()) netStop();
+            g_world.reset(); makeWorld(); break;
 
         /* F5 saves, F9 loads -- the pair every game has used for thirty years,
            and deliberately not on letters: the letters are all brush and tool
            shortcuts, and losing your world to a mistyped one is the failure
            this whole feature exists to prevent. */
         case VK_F5: {
+            if (netRole() == NET_CLIENT) {
+                sprintf(g_saveMsg, "The host owns this world's save");
+                g_saveMsgFrames = 180; break;
+            }
             const bool ok = saveWrite(SAVE_PATH, g_world);
             if (ok) {
                 double mb = (double)saveTotalBytes() / (1024.0 * 1024.0);
@@ -2002,6 +2128,11 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             break;
         }
         case VK_F9: {
+            if (netRole() == NET_CLIENT) {
+                sprintf(g_saveMsg, "Only the host can load this world");
+                g_saveMsgFrames = 180; break;
+            }
+            if (netConnected()) netStop(); /* loaded topology requires a fresh join snapshot */
             const bool ok = saveRead(SAVE_PATH, g_world);
             if (ok) {
                 double mb = (double)saveTotalBytes() / (1024.0 * 1024.0);
@@ -2035,7 +2166,7 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
            space-to-pause is the obvious binding; the moment there is a
            character to control it is the obvious binding for something else,
            and every player will try it. The panel button still pauses too. */
-        case 'P': g_paused = !g_paused; break;
+        case 'P': if (netRole() != NET_CLIENT) g_paused = !g_paused; break;
         /* T for the full map, Z for the corner one.
 
            Q first, and Q was wrong: it is already held for brush resize and the
@@ -2054,7 +2185,7 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case 'Z': g_miniOn = !g_miniOn; break;
         case VK_OEM_PLUS: case VK_ADD:      changeZoom(+1); break;
         case VK_OEM_MINUS: case VK_SUBTRACT: changeZoom(-1); break;
-        case VK_OEM_PERIOD: g_stepOnce = true; break;
+        case VK_OEM_PERIOD: if (netRole() != NET_CLIENT) g_stepOnce = true; break;
         case VK_OEM_4: changeSize(-1); break;  /* [ */
         case VK_OEM_6: changeSize(+1); break;  /* ] */
         case VK_TAB:
@@ -2068,6 +2199,10 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case VK_ESCAPE:
             if (g_mapOpen)           g_mapOpen = false;
             else if (g_chestOpen >= 0) closeChest();
+            else if (g_devPanel >= 0) {
+                if (netRole() == NET_CLIENT) sendClientAction(NACT_CLOSE_DEVICE);
+                g_devPanel = -1;
+            }
             else if (g_craftOpen)    g_craftOpen = false;
             else if (g_creativeOpen) { g_creativeOpen = false; g_filterDevice = -1; g_digFilterPicking = false; g_signalPickerDevice = -1; g_signalPickerField = CIR_PICK_NONE; g_creSearchFocus = false; dragStow(); }
             else                     g_menuOpen = !g_menuOpen;
@@ -2082,9 +2217,11 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                would be an unforgettable way to lose your place. Note this fires
                on the release rather than the press: with the key doing two jobs
                there is nothing to act on until it is known which one it was. */
-            if (!g_lineDrew && g_mx >= PANEL_W && !g_menuOpen && !g_creativeOpen)
-                g_player.reset((float)((g_mx - PANEL_W) / cellPixels() + g_camX),
-                               (float)(g_my / cellPixels() + g_camY));
+            if (!g_lineDrew && g_mx >= PANEL_W && !g_menuOpen && !g_creativeOpen) {
+                if (netRole() == NET_CLIENT) g_respawnPulse = true;
+                else g_player.reset((float)((g_mx - PANEL_W) / cellPixels() + g_camX),
+                                    (float)(g_my / cellPixels() + g_camY));
+            }
             g_lineKey = false;
             g_lineDrew = false;
             /* A drag still in progress when R comes up is committed rather than
@@ -2139,6 +2276,526 @@ static Aim currentAim() {
     return a;
 }
 
+static void syncClientDeviceUi() {
+    if (netRole() != NET_CLIENT || !netClientReady()) return;
+    const int index = g_playerSessions[0].openDevice;
+    if (index >= 0 && index < MAX_DEVICES && g_devices[index].used &&
+        g_devices[index].type == DEV_CHEST) {
+        if (g_chestOpen != index) openChest(index);
+        const Device& d = g_devices[index];
+        g_chestStack.item = d.count ? (ItemId)d.mat : ITEM_NONE;
+        g_chestStack.count = d.count > 0 ? (u32)d.count : 0;
+        g_chestStack.inst = 0;
+        g_devPanel = -1;
+    } else if (index >= 0 && index < MAX_DEVICES && g_devices[index].used) {
+        g_devPanel = index;
+        if (g_chestOpen >= 0) { g_chestOpen = -1; g_logisticsUiOpen = false; }
+    } else {
+        g_devPanel = -1;
+        if (g_chestOpen >= 0) { g_chestOpen = -1; g_logisticsUiOpen = false; }
+    }
+}
+
+/* The local client describes intent in world coordinates. The host remains
+   responsible for reach-clamping, inventory, cooldowns and the resulting
+   mutation; keeping raw cursor pixels out of the command also makes different
+   window sizes and camera positions irrelevant to authority. */
+static PlayerCommand localPlayerCommand() {
+    static u32 sequence = 0;
+    static u8 previousBits = 0;
+    PlayerCommand c; memset(&c, 0, sizeof(c));
+    c.sequence = ++sequence;
+    c.player = netAssignedPlayer();
+    c.generation = g_playerSessions[0].generation;
+    c.selected = (u8)imax(0, imin(HOTBAR_SLOTS - 1, g_inv.selected));
+    c.brushRadius = (u8)g_brushRadius;
+    c.background = g_bgLayer; c.overwrite = g_overwrite;
+    c.line = g_lineOn;
+    if (!g_menuOpen && !g_creativeOpen && !g_craftOpen && g_chestOpen < 0 && !g_mapOpen) {
+        if ((GetAsyncKeyState('A') & 0x8000) || (GetAsyncKeyState(VK_LEFT) & 0x8000)) c.bits |= PCMD_LEFT;
+        if ((GetAsyncKeyState('D') & 0x8000) || (GetAsyncKeyState(VK_RIGHT) & 0x8000)) c.bits |= PCMD_RIGHT;
+        if ((GetAsyncKeyState('W') & 0x8000) || (GetAsyncKeyState(VK_UP) & 0x8000) ||
+            (GetAsyncKeyState(VK_SPACE) & 0x8000)) c.bits |= PCMD_JUMP;
+        if ((GetAsyncKeyState('S') & 0x8000) || (GetAsyncKeyState(VK_DOWN) & 0x8000)) c.bits |= PCMD_DOWN;
+        if (g_lmb && !g_uiCapture) c.bits |= PCMD_USE_LEFT;
+        if (g_rmb && !g_uiCapture) c.bits |= PCMD_USE_RIGHT;
+        if (g_interactPulse) c.bits |= PCMD_INTERACT;
+        if (g_respawnPulse) c.bits |= PCMD_RESPAWN;
+    }
+    c.pressed = (u8)(c.bits & ~previousBits);
+    previousBits = c.bits;
+    const Aim aim = currentAim(); c.aimX = aim.ghostX; c.aimY = aim.ghostY;
+    return c;
+}
+
+static void predictClientPlayer(const PlayerCommand& command) {
+    PlayerSession& session = g_playerSessions[0];
+    if (!session.connected || !session.body.alive || session.restBed >= 0) return;
+    PlayerInput input;
+    input.left = (command.bits & PCMD_LEFT) != 0;
+    input.right = (command.bits & PCMD_RIGHT) != 0;
+    input.jump = (command.bits & PCMD_JUMP) != 0;
+    input.down = (command.bits & PCMD_DOWN) != 0;
+    session.body.fly = flightSpec(session.inventory);
+    session.body.speedMul = 1.0f + (float)session.inventory.speedBonus() / 100.0f;
+    session.body.resist = session.inventory.tempResist();
+    session.body.update(g_world, input);
+}
+
+static PlayerCommand g_remoteInput;
+static int g_remoteInputAge = 1000;
+
+static Aim commandAimFor(const PlayerSession& session, const PlayerCommand& command) {
+    Aim a;
+    a.ghostX = command.aimX; a.ghostY = command.aimY;
+    a.x = a.ghostX; a.y = a.ghostY; a.clamped = false;
+    const float pcx = session.body.centreX(), pcy = session.body.centreY();
+    const float dx = (float)a.x - pcx, dy = (float)a.y - pcy;
+    const float reach = (float)(PLAYER_REACH + session.inventory.reachBonus());
+    const float d2 = dx * dx + dy * dy;
+    if (d2 > reach * reach) {
+        const float d = sqrtf(d2);
+        a.x = (int)(pcx + dx * reach / d);
+        a.y = (int)(pcy + dy * reach / d);
+        a.clamped = true;
+    }
+    a.x = imax(PLAY_X0, imin(PLAY_X1, a.x));
+    a.y = imax(PLAY_Y0, imin(PLAY_Y1, a.y));
+    return a;
+}
+
+static void interactFor(PlayerSession& session, const Aim& aim) {
+    Device* d = devAt(aim.x, aim.y);
+    if (d) {
+        const int idx = (int)(d - g_devices);
+        if (d->type == DEV_BED) {
+            const float px = session.body.centreX(), py = session.body.centreY();
+            const bool atBed = px >= d->x - 4 && px <= d->x + DEV_W + 4 &&
+                               py >= d->y - 8 && py <= d->y + DEV_H + 8;
+            if (session.restBed == idx) session.restBed = -1;
+            else if (atBed) session.restBed = idx;
+        } else if (d->type == DEV_PULSE_BUTTON) {
+            d->poked = true;
+        } else if (d->type == DEV_CHEST) {
+            session.openDevice = session.openDevice == idx ? -1 : idx;
+        } else {
+            session.openDevice = session.openDevice == idx ? -1 : idx;
+        }
+        return;
+    }
+    if (doorToggle(g_world, aim.x, aim.y)) roomsNotifyEdit(g_world, aim.x, aim.y);
+}
+
+static void applyRemoteActions(PlayerSession& session, const PlayerCommand& command) {
+    const u8 bits = command.bits;
+    const u8 pressed = (u8)(command.pressed | (bits & ~session.previousCommandBits));
+    const bool left = (bits & PCMD_USE_LEFT) != 0;
+    bool right = (bits & PCMD_USE_RIGHT) != 0;
+    const Aim aim = commandAimFor(session, command);
+
+    if (command.line && (left || right)) {
+        if (!session.lineActive) {
+            session.lineActive = true;
+            session.lineBits = (u8)(bits & (PCMD_USE_LEFT | PCMD_USE_RIGHT));
+            session.lineSelected = command.selected;
+            session.lineRadius = command.brushRadius;
+            session.lineBackground = command.background;
+            session.lineOverwrite = command.overwrite;
+            session.previousAimX = aim.x; session.previousAimY = aim.y;
+        }
+        if (session.digCooldown > 0) --session.digCooldown;
+        session.previousCommandBits = 0;
+        return;
+    }
+    if (session.lineActive) {
+        PlayerCommand commit = command;
+        commit.bits = session.lineBits; commit.pressed = session.lineBits;
+        commit.selected = session.lineSelected; commit.brushRadius = session.lineRadius;
+        commit.background = session.lineBackground; commit.overwrite = session.lineOverwrite;
+        commit.line = false;
+        session.lineActive = false; session.previousCommandBits = 0;
+        session.inventory.selected = imax(0, imin(HOTBAR_SLOTS - 1, (int)commit.selected));
+        applyRemoteActions(session, commit);
+        return;
+    }
+    if (session.digCooldown > 0) --session.digCooldown;
+
+    if (pressed & PCMD_INTERACT) interactFor(session, aim);
+    if ((pressed & PCMD_USE_RIGHT) &&
+        (devAt(aim.x, aim.y) || isDoor(g_world.at(aim.x, aim.y).mat))) {
+        interactFor(session, aim);
+        session.suppressRightUse = true;
+    }
+    if (!(bits & PCMD_USE_RIGHT)) session.suppressRightUse = false;
+    if (session.suppressRightUse) right = false;
+    if (pressed & PCMD_RESPAWN) {
+        const float x = (float)imax(PLAY_X0, imin(PLAY_X1, command.aimX));
+        const float y = (float)imax(PLAY_Y0, imin(PLAY_Y1, command.aimY));
+        session.body.reset(x, y); session.restBed = -1;
+    }
+    if (!left && !right) {
+        session.previousAimX = session.previousAimY = -1;
+        session.previousCommandBits = bits;
+        return;
+    }
+    if (session.previousAimX < 0) {
+        session.previousAimX = aim.x; session.previousAimY = aim.y;
+    }
+
+    Inventory& inv = session.inventory;
+    Player& player = session.body;
+    const int radius = imax(1, imin(BRUSH_RADIUS_MAX, (int)command.brushRadius));
+    ItemStack& held = inv.held();
+
+    if (left && !right && !held.empty() && ITEMS[held.item].kind == ITEMK_THROWABLE) {
+        if (pressed & PCMD_USE_LEFT) {
+            const ItemId item = held.item;
+            if (throwGlowflareFor(player, inv, aim)) inv.take(item, 1);
+        }
+    } else if (left && !right && !held.empty() && ITEMS[held.item].kind == ITEMK_TOOL) {
+        fireToolFor(player, inv, aim);
+    } else if (left && !right && !command.background && !held.empty() &&
+               ITEMS[held.item].kind == ITEMK_DEVICE) {
+        placeDeviceStrokeFor(inv, session.previousAimX, session.previousAimY,
+                             ITEMS[held.item].deviceType, true, aim);
+    } else if (left && !right && !command.background && !held.empty() &&
+               ITEMS[held.item].kind == ITEMK_SEED) {
+        sowSeeds(g_world, inv, aim.x, aim.y, radius);
+    } else if (left && !right && !command.background && !held.empty() &&
+               ITEMS[held.item].kind == ITEMK_FOOD) {
+        if ((pressed & PCMD_USE_LEFT) && player.hp < PLAYER_HP_MAX) {
+            const ItemId item = held.item;
+            if (inv.take(item, 1) == 1) player.heal(ITEMS[item].heal);
+        }
+    } else if (left && !right && !command.background && !held.empty() &&
+               ITEMS[held.item].kind == ITEMK_IGNITE) {
+        g_world.ignite(aim.x, aim.y, IGNITE_RADIUS);
+    } else if (left && !right && !command.background && !held.empty() &&
+               ITEMS[held.item].kind == ITEMK_EGG) {
+        if (pressed & PCMD_USE_LEFT) {
+            const int type = ITEMS[held.item].summons;
+            const ItemId item = held.item;
+            if (type && entSpawn(g_world, type, (float)aim.x, (float)aim.y) >= 0)
+                inv.take(item, 1);
+        }
+    } else if (command.background) {
+        const ToolSpec tool = miningSpec(inv);
+        if (right) {
+            if (session.digCooldown <= 0) {
+                digBg(g_world, inv, aim.x, aim.y, imin(radius, tool.maxRadius), tool.cellsPerBite);
+                session.digCooldown = tool.cooldown;
+            }
+        } else {
+            placeBg(g_world, inv, aim.x, aim.y, radius);
+        }
+        roomsNotifyEdit(g_world, aim.x, aim.y);
+    } else if (right) {
+        const ToolSpec tool = miningSpec(inv);
+        if (session.digCooldown <= 0) {
+            digInto(g_world, inv, aim.x, aim.y, imin(radius, tool.maxRadius), tool.cellsPerBite,
+                    tool.plantsOnly, tool.power, 0);
+            session.digCooldown = tool.cooldown;
+        }
+        roomsNotifyEdit(g_world, aim.x, aim.y);
+    } else if (left && !held.empty() && ITEMS[held.item].kind == ITEMK_MATERIAL) {
+        if (command.overwrite) {
+            const ToolSpec tool = miningSpec(inv);
+            if (session.digCooldown <= 0) {
+                const int replaced = overwriteFrom(g_world, inv, aim.x, aim.y,
+                    imin(radius, tool.maxRadius), tool.cellsPerBite, tool.power);
+                if (replaced > 0) session.digCooldown = tool.cooldown;
+            }
+        }
+        if (command.overwrite) {
+            placeFrom(g_world, inv, aim.x, aim.y, radius);
+        } else {
+            const int x0 = session.previousAimX, y0 = session.previousAimY;
+            const int steps = imax(abs(aim.x - x0), abs(aim.y - y0));
+            for (int step = 0; step <= steps && !inv.held().empty(); ++step) {
+                const int x = steps ? x0 + (aim.x - x0) * step / steps : aim.x;
+                const int y = steps ? y0 + (aim.y - y0) * step / steps : aim.y;
+                placeFrom(g_world, inv, x, y, radius);
+            }
+        }
+        roomsNotifyEdit(g_world, aim.x, aim.y);
+    }
+    session.previousAimX = aim.x; session.previousAimY = aim.y;
+    session.previousCommandBits = bits;
+}
+
+static bool slotClickFor(ItemStack& cursor, ItemStack& slot, bool right) {
+    if (cursor.empty()) {
+        if (slot.empty()) return false;
+        if (right && slot.count > 1) {
+            const u32 half = (slot.count + 1) / 2;
+            cursor = slot; cursor.count = half; cursor.inst = 0;
+            slot.count -= half;
+            if (!slot.count) slot = ItemStack();
+        } else { cursor = slot; slot = ItemStack(); }
+        return true;
+    }
+    if (slot.empty()) {
+        if (right && cursor.count > 1) {
+            slot.item = cursor.item; slot.count = 1; slot.inst = 0; --cursor.count;
+        } else { slot = cursor; cursor = ItemStack(); }
+        return true;
+    }
+    if (slot.item == cursor.item && !slot.inst && !cursor.inst) {
+        const u32 cap = ITEMS[slot.item].maxStack;
+        const u32 room = cap > slot.count ? cap - slot.count : 0;
+        if (!room) return false;
+        const u32 move = right ? 1u : imin((int)cursor.count, (int)room);
+        slot.count += move; cursor.count -= move;
+        if (!cursor.count) cursor = ItemStack();
+        return true;
+    }
+    if (right) return false;
+    const ItemStack swap = slot; slot = cursor; cursor = swap; return true;
+}
+
+static void applyRemoteSlotAction(PlayerSession& session, const NetAction& action) {
+    Inventory& inv = session.inventory;
+    ItemStack& cursor = session.cursor;
+    const bool right = (action.flags & 1) != 0;
+    switch (action.container) {
+    case NSLOT_PACK:
+        if (action.a < INV_SLOTS) slotClickFor(cursor, inv.slot[action.a], right);
+        break;
+    case NSLOT_EQUIP:
+        if (action.a < EQ_COUNT && !right) {
+            ItemStack& eq = inv.equip[action.a];
+            const int bay = action.a == EQ_LIGHT_DRONE ? 0 : action.a == EQ_DRONE_A ? 1 :
+                            action.a == EQ_DRONE_B ? 2 : -1;
+            if (bay >= 0 && !eq.empty()) {
+                for (int i = 0; i < Inventory::DRONE_MODULE_SLOTS_MAX; ++i)
+                    if (!inv.droneModule[bay][i].empty()) return;
+            }
+            if (!cursor.empty() && !equipFits(cursor.item, action.a)) return;
+            slotClickFor(cursor, eq, false);
+        }
+        break;
+    case NSLOT_DRONE_MODULE:
+        if (action.a < MAX_DRONES && action.b < Inventory::DRONE_MODULE_SLOTS_MAX && !right) {
+            if (!cursor.empty() && (ITEMS[cursor.item].kind != ITEMK_DRONE_MODULE || cursor.count != 1)) return;
+            slotClickFor(cursor, inv.droneModule[action.a][action.b], false);
+        }
+        break;
+    case NSLOT_TOOL_MODULE:
+        if (action.a < INV_SLOTS && action.b < TOOL_SLOTS_MAX && !right) {
+            ItemStack& tool = inv.slot[action.a];
+            if (!tool.inst || !g_toolInst[tool.inst].used ||
+                action.b >= imin((int)ITEMS[tool.item].toolSlots, TOOL_SLOTS_MAX)) return;
+            ItemId& module = g_toolInst[tool.inst].slot[action.b];
+            if (cursor.empty()) {
+                if (module == ITEM_NONE) return;
+                cursor.item = module; cursor.count = 1; cursor.inst = 0; module = ITEM_NONE;
+            } else if (ITEMS[cursor.item].kind == ITEMK_MODULE && cursor.count == 1) {
+                const ItemId old = module; module = cursor.item;
+                if (old == ITEM_NONE) cursor = ItemStack(); else cursor.item = old;
+            }
+        }
+        break;
+    case NSLOT_TOOL_PAYLOAD:
+        if (action.a < INV_SLOTS) {
+            ItemStack& tool = inv.slot[action.a];
+            if (!tool.inst || !g_toolInst[tool.inst].used) return;
+            if (!cursor.empty() && ITEMS[cursor.item].kind != ITEMK_MATERIAL) return;
+            slotClickFor(cursor, g_toolInst[tool.inst].payload, right);
+        }
+        break;
+    case NSLOT_TRASH:
+        if (cursor.empty()) {
+            if (!session.trash.empty()) { cursor = session.trash; session.trash = ItemStack(); }
+        } else {
+            if (session.trash.inst) toolInstFree(session.trash.inst);
+            session.trash = cursor; cursor = ItemStack();
+        }
+        break;
+    case NSLOT_CHEST:
+        if (session.openDevice >= 0 && session.openDevice < MAX_DEVICES) {
+            Device& d = g_devices[session.openDevice];
+            if (!d.used || d.type != DEV_CHEST) { session.openDevice = -1; return; }
+            ItemStack chest;
+            chest.item = d.count ? (ItemId)d.mat : ITEM_NONE;
+            chest.count = d.count > 0 ? (u32)d.count : 0; chest.inst = 0;
+            slotClickFor(cursor, chest, right);
+            d.mat = chest.empty() ? (u8)MAT_EMPTY : (u8)chest.item;
+            d.count = (i32)chest.count;
+        }
+        break;
+    default: break;
+    }
+}
+
+static void applyRemoteDeviceAction(PlayerSession& session, const NetAction& action) {
+    const int index = session.openDevice;
+    if (index < 0 || index >= MAX_DEVICES || !g_devices[index].used) {
+        session.openDevice = -1; return;
+    }
+    Device& d = g_devices[index];
+    const DeviceInfo& info = DEVS[d.type];
+    CircuitDeviceConfig& cc = g_circuitConfig[index];
+    switch (action.a) {
+    case NDEV_DEC:
+        d.value -= d.type == DEV_CONSTANT_COMBINATOR ? 1 : info.vStep;
+        break;
+    case NDEV_INC:
+        d.value += d.type == DEV_CONSTANT_COMBINATOR ? 1 : info.vStep;
+        break;
+    case NDEV_TURN:
+        if (d.type == DEV_ARITHMETIC_COMBINATOR || d.type == DEV_DECIDER_COMBINATOR) {
+            const int first = d.type == DEV_DECIDER_COMBINATOR ? CIR_OP_GREATER : CIR_OP_ADD;
+            const int last = d.type == DEV_DECIDER_COMBINATOR ? CIR_OP_NOT_EQUAL : CIR_OP_MODULO;
+            cc.op = (u8)(cc.op < first || cc.op >= last ? first : cc.op + 1);
+        } else if (info.aimable) d.face = (u8)((d.face + 1) & 3);
+        break;
+    case NDEV_TAKE: {
+        ItemStack& held = session.inventory.held();
+        if ((d.type == DEV_CHEST || d.type == DEV_SPOUT) && !held.empty() &&
+            ITEMS[held.item].kind == ITEMK_MATERIAL && (d.count == 0 || d.mat == held.item)) {
+            const int cap = d.type == DEV_CHEST ? CHEST_CAP : DEV_CAP;
+            const int moved = imin((int)held.count, cap - (int)d.count);
+            d.mat = (u8)held.item; d.count += moved; held.count -= moved;
+            if (!held.count) held = ItemStack();
+        } else if (d.count > 0) {
+            const int moved = session.inventory.add((ItemId)d.mat, (int)d.count);
+            d.count -= moved;
+            if (d.count <= 0) { d.count = 0; d.mat = MAT_EMPTY; }
+        }
+        break;
+    }
+    case NDEV_SET_FILTER: if (action.b < MAT_COUNT) d.value = action.b; break;
+    case NDEV_SET_SIGNAL: cc.signal = action.b; break;
+    case NDEV_SET_A: cc.signalA = action.b; break;
+    case NDEV_SET_B: cc.signalB = action.b; break;
+    case NDEV_SET_OUT: cc.signalOut = action.b; break;
+    default: return;
+    }
+    if (d.value < info.vMin) d.value = info.vMin;
+    if (d.value > info.vMax) d.value = info.vMax;
+    d.latched = false;
+}
+
+static Aim remoteWireAim(const PlayerSession& session, int rawX, int rawY) {
+    PlayerCommand command; memset(&command, 0, sizeof(command));
+    command.aimX = rawX; command.aimY = rawY;
+    Aim aim = commandAimFor(session, command);
+    const int baseX = aim.x, baseY = aim.y;
+    int bestX = baseX, bestY = baseY;
+    const int snap = 4; int bestD2 = snap * snap + 1;
+    for (int y = imax(PLAY_Y0, baseY - snap); y <= imin(PLAY_Y1, baseY + snap); ++y)
+        for (int x = imax(PLAY_X0, baseX - snap); x <= imin(PLAY_X1, baseX + snap); ++x) {
+            const int dx = x - baseX, dy = y - baseY, d2 = dx * dx + dy * dy;
+            if (d2 >= bestD2 || !g_matConducts[g_world.at(x, y).mat]) continue;
+            bestD2 = d2; bestX = x; bestY = y;
+        }
+    aim.x = bestX; aim.y = bestY;
+    return aim;
+}
+
+static void remoteWireCell(PlayerSession& session, int x, int y) {
+    if (x < PLAY_X0 || x > PLAY_X1 || y < PLAY_Y0 || y > PLAY_Y1) return;
+    const u8 old = g_world.at(x, y).mat;
+    if (old == MAT_COPPER || old != MAT_EMPTY) return;
+    if (!session.inventory.take(MAT_COPPER, 1)) return;
+    g_world.setCell(x, y, MAT_COPPER);
+}
+
+static void applyRemoteWirePoint(PlayerSession& session, const NetAction& action) {
+    const Aim aim = remoteWireAim(session, action.x, action.y);
+    if (!(action.flags & 1)) { session.wireX = aim.x; session.wireY = aim.y; return; }
+    if (session.wireX < 0) return;
+    int x = session.wireX, y = session.wireY;
+    const int dx = abs(aim.x - x), sx = x < aim.x ? 1 : -1;
+    const int dy = abs(aim.y - y), sy = y < aim.y ? 1 : -1;
+    int err = dx - dy;
+    for (;;) {
+        remoteWireCell(session, x, y);
+        if (x == aim.x && y == aim.y) break;
+        const int twice = err * 2; const bool moveX = twice > -dy; const bool moveY = twice < dx;
+        int nx = x, ny = y;
+        if (moveX) { err -= dy; nx += sx; }
+        if (moveY) { err += dx; ny += sy; }
+        if (moveX && moveY) remoteWireCell(session, nx, y);
+        x = nx; y = ny;
+    }
+    session.wireX = session.wireY = -1;
+    roomsNotifyEdit(g_world, aim.x, aim.y);
+}
+
+static void processRemoteActions() {
+    NetAction action;
+    int budget = 64;
+    while (budget-- > 0 && netPopRemoteAction(&action)) {
+        const int slot = playerSessionSlotForNetworkId(action.player);
+        if (slot < 1 || slot >= MAX_PLAYERS) continue;
+        PlayerSession& session = g_playerSessions[slot];
+        if (!session.connected || session.generation != action.generation) continue;
+        if (action.type == NACT_SLOT) applyRemoteSlotAction(session, action);
+        else if (action.type == NACT_CRAFT && action.a < N_RECIPES) {
+            craftScanStations(g_world, session.body);
+            const int count = imax(1, imin(50, (int)action.b));
+            for (int i = 0; i < count; ++i) if (!craftMake(session.inventory, action.a)) break;
+        } else if (action.type == NACT_CLOSE_DEVICE) {
+            session.openDevice = -1;
+        } else if (action.type == NACT_DEVICE) {
+            applyRemoteDeviceAction(session, action);
+        } else if (action.type == NACT_WIRE_POINT) {
+            applyRemoteWirePoint(session, action);
+        } else if (action.type == NACT_CIRCUIT_TERMINAL && action.a < MAX_DEVICES &&
+                   g_devices[action.a].used) {
+            if (session.circuitWireFrom < 0) {
+                session.circuitWireFrom = action.a; session.circuitWirePort = action.b & 1;
+            } else {
+                circuitToggleWirePorts(session.circuitWireFrom, session.circuitWirePort,
+                                       action.a, action.b & 1);
+                session.circuitWireFrom = -1; session.circuitWirePort = 0;
+            }
+        }
+    }
+}
+
+static void refreshHostLogisticsPause() {
+    if (netRole() == NET_CLIENT) return;
+    bool open = g_chestOpen >= 0;
+    for (int slot = 1; slot < MAX_PLAYERS && !open; ++slot) {
+        const PlayerSession& session = g_playerSessions[slot];
+        const int d = session.openDevice;
+        open = session.connected && d >= 0 && d < MAX_DEVICES &&
+               g_devices[d].used && g_devices[d].type == DEV_CHEST;
+    }
+    g_logisticsUiOpen = open;
+}
+
+static void updateRemotePlayerFromCommand() {
+    PlayerCommand fresh;
+    if (netPopRemoteCommand(&fresh)) { g_remoteInput = fresh; g_remoteInputAge = 0; }
+    else if (g_remoteInputAge < 1000) ++g_remoteInputAge;
+    if (g_remoteInputAge > 30) g_remoteInput.bits = 0; /* dropped connection cannot leave movement held */
+
+    const int slot = playerSessionSlotForNetworkId(g_remoteInput.player);
+    if (slot < 1 || slot >= MAX_PLAYERS) return;
+    PlayerSession& session = g_playerSessions[slot];
+    if (!session.connected || session.generation != g_remoteInput.generation) return;
+    session.inventory.selected = imax(0, imin(HOTBAR_SLOTS - 1, (int)g_remoteInput.selected));
+    if (session.restBed >= 0 && (!g_devices[session.restBed].used ||
+                                g_devices[session.restBed].type != DEV_BED))
+        session.restBed = -1;
+    PlayerInput in;
+    in.left = (g_remoteInput.bits & PCMD_LEFT) != 0;
+    in.right = (g_remoteInput.bits & PCMD_RIGHT) != 0;
+    in.jump = (g_remoteInput.bits & PCMD_JUMP) != 0;
+    in.down = (g_remoteInput.bits & PCMD_DOWN) != 0;
+    if (session.restBed >= 0 && (in.left || in.right || in.jump || in.down)) session.restBed = -1;
+    session.body.fly = flightSpec(session.inventory);
+    session.body.speedMul = 1.0f + (float)session.inventory.speedBonus() / 100.0f;
+    session.body.resist = session.inventory.tempResist();
+    if (session.restBed < 0) session.body.update(g_world, in);
+    session.body.occupy(g_world, slot);
+    doorAuto(g_world, session.body);
+    applyRemoteActions(session, g_remoteInput);
+}
+
 /* Wiring is normally aiming for an existing terminal or wire, not the empty
    cell beside it. Within four cells, choose the nearest conductive cell as the
    actual endpoint. The tight radius makes it a deliberate finishing assist,
@@ -2165,6 +2822,10 @@ static void circuitWireClick() {
     if (!d) { g_circuitWireFrom = -1; g_circuitWireFromPort = 0; return; }
     const int index = (int)(d - g_devices);
     const int port = circuitHasSeparatePorts(d->type) && a.x >= d->x + DEV_W / 2 ? 1 : 0;
+    if (netRole() == NET_CLIENT) {
+        sendClientAction(NACT_CIRCUIT_TERMINAL, 0, (u8)index, (u8)port);
+        return;
+    }
     if (g_circuitWireFrom < 0) { g_circuitWireFrom = index; g_circuitWireFromPort = port; return; }
     circuitToggleWirePorts(g_circuitWireFrom, g_circuitWireFromPort, index, port);
     g_circuitWireFrom = -1; g_circuitWireFromPort = 0;
@@ -2182,8 +2843,8 @@ static int g_digCool = 0;
    through the player. So the crosshair always points where the shot goes, even
    though the shot itself is not limited by reach -- a thrown thing does not care
    how far your arm is. */
-static void fireTool(const Aim& aim) {
-    ItemStack& h = g_inv.held();
+static void fireToolFor(Player& player, Inventory& inventory, const Aim& aim) {
+    ItemStack& h = inventory.held();
     if (h.empty() || ITEMS[h.item].kind != ITEMK_TOOL || h.inst == 0) return;
 
     const ToolShot s = toolResolve(h);
@@ -2191,9 +2852,9 @@ static void fireTool(const Aim& aim) {
 
     ToolInst& ti = g_toolInst[h.inst];
     if (ti.cooldown > 0) return;
-    ti.cooldown = accessoryShotDelay(g_inv, s.delay);
+    ti.cooldown = accessoryShotDelay(inventory, s.delay);
 
-    const float pcx = g_player.centreX(), pcy = g_player.centreY();
+    const float pcx = player.centreX(), pcy = player.centreY();
     float dx = (float)aim.x - pcx, dy = (float)aim.y - pcy;
     float d = sqrtf(dx * dx + dy * dy);
     if (d < 0.001f) { dx = 1.0f; dy = 0.0f; d = 1.0f; }   /* aimed at own feet */
@@ -2225,7 +2886,7 @@ static void fireTool(const Aim& aim) {
     const bool fired = projSpawn(pcx + dx * MUZZLE, pcy + dy * MUZZLE, vx, vy,
                                  s.power, s.pierce, 90, s.colour, s.blast,
                                  payload, s.damage, false, s.gravity);
-    if (fired && accessoryTwinShot(g_inv)) {
+    if (fired && accessoryTwinShot(inventory)) {
         /* Duplicate the command, as the drone controller does. One payload was
            spent above; the accessory rewards the slot with a second delivery,
            fanned just enough that both projectiles remain individually visible. */
@@ -2236,16 +2897,18 @@ static void fireTool(const Aim& aim) {
     }
 }
 
+static void fireTool(const Aim& aim) { fireToolFor(g_player, g_inv, aim); }
+
 /* A Glowflare is ammunition in its own container, not a durable weapon. It
    therefore owns no ToolInst and fires once per click from an ordinary stack.
    Returning projSpawn's answer matters: a saturated projectile pool has not
    actually used the flare, so it must not quietly consume one. */
-static bool throwGlowflare(const Aim& aim) {
-    const ItemStack& h = g_inv.held();
+static bool throwGlowflareFor(Player& player, Inventory& inventory, const Aim& aim) {
+    const ItemStack& h = inventory.held();
     if (h.empty() || h.item != ITEM_GLOW_FLARE) return false;
     const ItemDef& d = ITEMS[h.item];
 
-    const float pcx = g_player.centreX(), pcy = g_player.centreY();
+    const float pcx = player.centreX(), pcy = player.centreY();
     float dx = (float)aim.x - pcx, dy = (float)aim.y - pcy;
     float len = sqrtf(dx * dx + dy * dy);
     if (len < 0.001f) { dx = 1.0f; dy = 0.0f; len = 1.0f; }
@@ -2261,20 +2924,27 @@ static bool throwGlowflare(const Aim& aim) {
                      PROJ_EFFECT_GLOWFLARE);
 }
 
+static bool throwGlowflare(const Aim& aim) { return throwGlowflareFor(g_player, g_inv, aim); }
+
 /* Devices are discrete, but a drag is still a useful way to lay out a run. Walk
    every crossed cell so a fast pipe stroke cannot skip a lattice slot. devPlace
    rejects overlapping footprints; charging only on success makes that rejection
    free and lets a stroke safely pass across devices already in place. */
-static void placeDeviceStroke(u8 type, bool consume, const Aim& aim) {
-    const int x0 = g_pmx, y0 = g_pmy;
+static void placeDeviceStrokeFor(Inventory& inventory, int& previousX, int& previousY,
+                                 u8 type, bool consume, const Aim& aim) {
+    const int x0 = previousX, y0 = previousY;
     const int steps = imax(abs(aim.x - x0), abs(aim.y - y0));
     for (int s = 0; s <= steps; ++s) {
         const int x = steps ? x0 + (aim.x - x0) * s / steps : aim.x;
         const int y = steps ? y0 + (aim.y - y0) * s / steps : aim.y;
-        if (devPlace(g_world, type, x, y) && consume) g_inv.take(g_inv.held().item, 1);
-        if (consume && g_inv.held().empty()) break;
+        if (devPlace(g_world, type, x, y) && consume) inventory.take(inventory.held().item, 1);
+        if (consume && inventory.held().empty()) break;
     }
-    g_pmx = aim.x; g_pmy = aim.y;
+    previousX = aim.x; previousY = aim.y;
+}
+
+static void placeDeviceStroke(u8 type, bool consume, const Aim& aim) {
+    placeDeviceStrokeFor(g_inv, g_pmx, g_pmy, type, consume, aim);
 }
 
 static void applyBrush() {
@@ -2576,6 +3246,37 @@ static bool handleDevPanelClick(int mx, int my) {
     const DeviceInfo& di = DEVS[d.type];
     const int index = g_devPanel;
     CircuitDeviceConfig& cc = g_circuitConfig[index];
+    if (netRole() == NET_CLIENT) {
+        if (PtInRect(&g_devpClose, pt)) {
+            sendClientAction(NACT_CLOSE_DEVICE); g_devPanel = -1; return true;
+        }
+        if (d.type == DEV_CONSTANT_COMBINATOR) {
+            if (PtInRect(&g_devpDec, pt)) sendClientAction(NACT_DEVICE, 0, NDEV_DEC);
+            else if (PtInRect(&g_devpInc, pt)) sendClientAction(NACT_DEVICE, 0, NDEV_INC);
+            else if (PtInRect(&g_devpTake, pt)) openCircuitSignalPicker(index, CIR_PICK_SIGNAL);
+            return true;
+        }
+        if (d.type == DEV_ARITHMETIC_COMBINATOR || d.type == DEV_DECIDER_COMBINATOR) {
+            if (PtInRect(&g_devpDec, pt)) openCircuitSignalPicker(index, CIR_PICK_A);
+            else if (PtInRect(&g_devpInc, pt)) openCircuitSignalPicker(index, CIR_PICK_B);
+            else if (PtInRect(&g_devpTake, pt)) openCircuitSignalPicker(index, CIR_PICK_OUT);
+            else if (PtInRect(&g_devpTurn, pt)) sendClientAction(NACT_DEVICE, 0, NDEV_TURN);
+            return true;
+        }
+        if (d.type == DEV_PIPE || d.type == DEV_CROSSOVER) return true;
+        if (d.type == DEV_DRAIN && PtInRect(&g_devpTake, pt)) {
+            g_filterDevice = index; g_creativeOpen = true; g_creSearch[0] = 0;
+            g_creScroll = 0; g_creSearchFocus = true; layoutCreative(); return true;
+        }
+        if (d.type == DEV_THERMOCOUPLE && PtInRect(&g_devpTake, pt)) {
+            openCircuitSignalPicker(index, CIR_PICK_SIGNAL); return true;
+        }
+        if (PtInRect(&g_devpDec, pt)) sendClientAction(NACT_DEVICE, 0, NDEV_DEC);
+        else if (PtInRect(&g_devpInc, pt)) sendClientAction(NACT_DEVICE, 0, NDEV_INC);
+        else if (PtInRect(&g_devpTurn, pt) && di.aimable) sendClientAction(NACT_DEVICE, 0, NDEV_TURN);
+        else if (PtInRect(&g_devpTake, pt)) sendClientAction(NACT_DEVICE, 0, NDEV_TAKE);
+        return true;
+    }
     /* Combinators own their whole bottom row. Signal buttons open the same
        searchable inventory browser as filters; cycling was too easy to mistake
        for a numeric adjustment and became miserable once material signals
@@ -3914,8 +4615,11 @@ static bool handleCraftClick(int mx, int my) {
                sixty-four attempts against an empty pack should cost nothing
                and change nothing. */
             const int n = (GetKeyState(VK_SHIFT) & 0x8000) ? CRAFT_SHIFT_BATCH : 1;
-            for (int k = 0; k < n; ++k)
-                if (!craftMake(g_inv, i)) break;
+            if (netRole() == NET_CLIENT)
+                sendClientAction(NACT_CRAFT, 0, (u8)i, (u8)imin(n, 50));
+            else
+                for (int k = 0; k < n; ++k)
+                    if (!craftMake(g_inv, i)) break;
             /* Arm the repeat on THIS row, so sliding the mouse onto another
                recipe mid-hold does not silently start making that one. */
             g_craftHeldRow = i;
@@ -4055,10 +4759,32 @@ static void drawMenu(HDC hdc) {
     RECT title = g_menuPanel;
     title.top += 14;
     SetTextColor(hdc, RGB(226, 190, 90));
-    DrawTextA(hdc, "PAUSED", -1, &title, DT_CENTER | DT_TOP | DT_SINGLELINE);
+    DrawTextA(hdc, netRole() == NET_OFF ? "PAUSED" : "MULTIPLAYER", -1,
+              &title, DT_CENTER | DT_TOP | DT_SINGLELINE);
 
     drawButton(hdc, g_menuResume, "Resume", NULL, false, inRect(g_menuResume, g_mx, g_my));
+    char hostLabel[96];
+    sprintf(hostLabel, "Host LAN  (%s:%u)", netLocalAddress(), (unsigned)NET_DEFAULT_PORT);
+    drawButton(hdc, g_menuHost, hostLabel, NULL, netRole() == NET_HOST,
+               inRect(g_menuHost, g_mx, g_my));
+    {
+        RECT ip = g_menuIp;
+        FillRect(hdc, &ip, inRect(ip, g_mx, g_my) ? g_btnBgHot : g_btnBg);
+        FrameRect(hdc, &ip, g_joinIpFocus ? g_accentBrush : g_borderBrush);
+        char text[80]; sprintf(text, "%s%s", g_joinIp, g_joinIpFocus ? "_" : "");
+        SetTextColor(hdc, RGB(214, 216, 224));
+        ip.left += 8; DrawTextA(hdc, text, -1, &ip, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    }
+    drawButton(hdc, g_menuJoin, "Join", NULL, netRole() == NET_CLIENT,
+               inRect(g_menuJoin, g_mx, g_my));
+    drawButton(hdc, g_menuStop, netRole() == NET_OFF ? "Offline" : "Disconnect / stop hosting",
+               NULL, false, inRect(g_menuStop, g_mx, g_my));
     drawButton(hdc, g_menuQuit,   "Quit",   NULL, false, inRect(g_menuQuit,   g_mx, g_my));
+
+    SetTextColor(hdc, netConnected() ? RGB(150, 210, 155) : RGB(176, 182, 194));
+    RECT netLine = { g_menuPanel.left + 16, g_menuQuit.bottom + 9,
+                     g_menuPanel.right - 16, g_menuQuit.bottom + 29 };
+    DrawTextA(hdc, netStatus(), -1, &netLine, DT_CENTER | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS);
 
     /* Two columns: the key on the left, what it does on the right. Aligned on
        a fixed split rather than measured per row, because the alternative is a
@@ -4066,7 +4792,7 @@ static void drawMenu(HDC hdc) {
        length hard to scan. */
     const int keyX  = g_menuPanel.left + 16;
     const int whatX = g_menuPanel.left + 130;
-    int ry = g_menuQuit.bottom + 14;
+    int ry = g_menuQuit.bottom + 38;
     for (int i = 0; i < N_KEY_HINTS; ++i, ry += 15) {
         SetTextColor(hdc, RGB(226, 190, 90));
         RECT kr = { keyX, ry, whatX - 6, ry + 14 };
@@ -4085,7 +4811,7 @@ static void drawMenu(HDC hdc) {
        Biggest first, and only sections above a kilobyte -- below that a row is
        noise, and eight rows of noise would bury the two that matter. */
     if (saveTotalBytes() > 0) {
-        int ry = g_menuQuit.bottom + 14 + N_KEY_HINTS * 15 + 10;
+        int ry = g_menuQuit.bottom + 38 + N_KEY_HINTS * 15 + 10;
         char s[128];
         sprintf(s, "last save  %.2f MB", (double)saveTotalBytes() / (1024.0 * 1024.0));
         SetTextColor(hdc, RGB(226, 190, 90));
@@ -4305,7 +5031,7 @@ static void drawPanel(HDC hdc) {
     SelectObject(hdc, oldFont);
 }
 
-int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
+int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR commandLine, int) {
     initMaterials();
     g_world.reset();
     initItems();
@@ -4321,6 +5047,20 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         float sx, sy;
         worldSpawnPoint(&sx, &sy);
         g_player.reset(sx, sy);
+    }
+    /* Useful both for repeatable two-process testing and for a host that wants
+       a shortcut. The menu remains the normal player-facing route. */
+    if (commandLine && strstr(commandLine, "--host")) {
+        g_survival = true; g_playerOn = true; netHost();
+    } else if (commandLine) {
+        const char* join = strstr(commandLine, "--join ");
+        if (join) {
+            char ip[64]; int n = 0; join += 7;
+            while (*join == ' ') ++join;
+            while (*join && *join != ' ' && n < (int)sizeof(ip) - 1) ip[n++] = *join++;
+            ip[n] = 0;
+            if (n) { g_survival = true; g_playerOn = true; netJoin(ip); }
+        }
     }
     updateCamera(true);
 
@@ -4409,6 +5149,21 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         }
         if (!g_running) break;
 
+        netPoll(g_world);
+        syncClientDeviceUi();
+        const bool authoritative = netRole() != NET_CLIENT;
+        const bool onlineHost = netRole() == NET_HOST;
+        const bool serverMenuPause = g_menuOpen && !onlineHost;
+        const bool serverActorUiPause = !onlineHost &&
+            (g_menuOpen || g_creativeOpen || g_craftOpen || g_chestOpen >= 0);
+        if (netRole() == NET_CLIENT && netClientReady()) {
+            const PlayerCommand command = localPlayerCommand();
+            netSendCommand(command);
+            predictClientPlayer(command);
+            g_interactPulse = false;
+            g_respawnPulse = false;
+        }
+
         /* --- holding the craft button -------------------------------------
            Repeats while the button stays down on the row it was pressed on,
            accelerating from CRAFT_REPEAT_DELAY toward CRAFT_REPEAT_MIN.
@@ -4416,7 +5171,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
            Driven from the frame loop rather than from mouse messages because
            the rate has to be in FRAMES: WM_MOUSEMOVE arrives when the mouse
            moves, and a held button on a still mouse generates nothing at all. */
-        if (g_craftHeldRow >= 0) {
+        if (authoritative && g_craftHeldRow >= 0) {
             if (!g_lmb || !g_craftOpen) {
                 g_craftHeldRow = -1;
             } else if (--g_craftCool <= 0) {
@@ -4436,16 +5191,16 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
 
         /* Ticked unconditionally, so a cooldown can never outlive the drag that
            set it and the first click after a pause always acts at once. */
-        if (g_digCool > 0) --g_digCool;
+        if (authoritative && g_digCool > 0) --g_digCool;
         /* Tool cooldowns tick on the instance, not on a global, so two tools
            recharge independently and swapping between them does not reset
            either -- which is the whole reason firing state lives on the
            instance rather than beside the input handler. */
-        for (int i = 1; i < MAX_TOOL_INST; ++i)
+        for (int i = 1; authoritative && i < MAX_TOOL_INST; ++i)
             if (g_toolInst[i].used && g_toolInst[i].cooldown > 0) --g_toolInst[i].cooldown;
         /* The map covers the viewport, so a click while it is up must not dig
            the world underneath it -- you cannot see what you would be hitting. */
-        if (!g_menuOpen && !g_creativeOpen && !g_craftOpen && g_chestOpen < 0 && !g_mapOpen)
+        if (authoritative && !g_menuOpen && !g_creativeOpen && !g_craftOpen && g_chestOpen < 0 && !g_mapOpen)
             applyBrush();
         /* Whether the sim actually advanced this frame, so the character moves
            in lockstep with the world -- including on a single frame-advance. */
@@ -4483,20 +5238,20 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
 
         LARGE_INTEGER tA, tB;
         QueryPerformanceCounter(&tA);
-        if (g_stepOnce) {
+        if (authoritative && g_stepOnce) {
             /* Frame-advance stays one step regardless of the multiplier -- the
                whole point of it is to inspect a single frame of the sim. */
             g_world.step();
             g_stepOnce = false;
             steppedThisFrame = true;
-        } else if (!g_paused && !g_menuOpen) {
+        } else if (authoritative && !g_paused && !serverMenuPause) {
             for (int s = 0; s < SPEEDS[g_speedIdx]; ++s) g_world.step();
         }
         /* Projectiles move with the world, so the speed multiplier speeds them
            up too -- a shot that crawled at 1x speed through a 4x world would
            look like it was fired underwater. */
-        if (steppedThisFrame) projUpdate(g_world);
-        else if (!g_paused && !g_menuOpen)
+        if (authoritative && steppedThisFrame) projUpdate(g_world);
+        else if (authoritative && !g_paused && !serverMenuPause)
             for (int s = 0; s < SPEEDS[g_speedIdx]; ++s) projUpdate(g_world);
         QueryPerformanceCounter(&tB);
         g_simMs = 1000.0 * (double)(tB.QuadPart - tA.QuadPart) / (double)freq.QuadPart;
@@ -4516,7 +5271,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
                                (GetAsyncKeyState('W') & 0x8000) || (GetAsyncKeyState('S') & 0x8000) ||
                                (GetAsyncKeyState(VK_SPACE) & 0x8000)))
             g_restBed = -1;
-        if (g_playerOn && g_restBed < 0 && !g_menuOpen && !g_creativeOpen && !g_craftOpen && g_chestOpen < 0
+        if (authoritative && g_playerOn && g_restBed < 0 && !g_menuOpen && !g_creativeOpen && !g_craftOpen && g_chestOpen < 0
             && !g_mapOpen && (!g_paused || steppedThisFrame)) {
             PlayerInput in;
             in.left  = (GetAsyncKeyState('A') & 0x8000) || (GetAsyncKeyState(VK_LEFT)  & 0x8000);
@@ -4540,6 +5295,11 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
             g_player.occupy(g_world);
             doorAuto(g_world, g_player);
         }
+        if (authoritative && netRole() == NET_HOST && !g_paused)
+            updateRemotePlayerFromCommand();
+        if (authoritative && netRole() == NET_HOST)
+            processRemoteActions();
+        if (authoritative) refreshHostLogisticsPause();
 
         /* After the character has moved, so the camera never lags a frame
            behind what it is following. With the character off, the arrow keys
@@ -4576,7 +5336,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
            The frame-advance case runs them too, deliberately: single-stepping
            exists to watch a mechanism work, and a step that moved the sand but
            not the sparks would be useless for the one thing it is for. */
-        if (steppedThisFrame || (!g_paused && !g_menuOpen)) {
+        if (authoritative && (steppedThisFrame || (!g_paused && !serverMenuPause))) {
             roomsTick(g_world);
             devTick(g_world);
             treesTick(g_world);
@@ -4594,11 +5354,15 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
            the sim speed: the speed control is a debugging tool for watching the
            simulation, and having 4x quietly mean "and also make it night four
            times faster" would be a surprise nobody asked for. */
-        if (!g_paused && !g_menuOpen && !g_creativeOpen && !g_craftOpen && g_chestOpen < 0) {
+        if (authoritative && !g_paused && !serverActorUiPause) {
             /* Rest moves the sun and moon four times as quickly, but leaves
                world simulation, machines, and enemies at normal speed. A bed
                is a way to wait through a night, not a 4x simulation switch. */
-            const int daySteps = g_restBed >= 0 ? 4 : 1;
+            bool everyoneResting = true;
+            for (int id = 0; id < MAX_PLAYERS; ++id)
+                if (g_playerSessions[id].connected && g_playerSessions[id].body.alive &&
+                    g_playerSessions[id].restBed < 0) everyoneResting = false;
+            const int daySteps = everyoneResting ? 4 : 1;
             for (int i = 0; i < daySteps; ++i) dayAdvance();
             /* Creatures MOVE whenever there is a character for them to move
                relative to, but they only APPEAR on their own in survival. The
@@ -4607,12 +5371,36 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
                frozen in place until you switched modes would be useless for the
                one job it has. Sandbox stays free of unasked-for wildlife. */
             if (g_playerOn) {
-                entTick(g_world, g_player, g_inv);
-                accessoryTick(g_player, g_inv);
-                droneTick(g_world, g_player, g_inv);
-                if (g_survival) entSpawnTick(g_world, g_player, g_camX, g_camY);
+                entTickPlayers(g_world);
+                for (int slot = 0; slot < MAX_PLAYERS; ++slot) {
+                    PlayerSession& session = g_playerSessions[slot];
+                    if (!session.connected || !session.body.alive) continue;
+                    accessoryTickFor(slot, session.body, session.inventory);
+                    droneTickFor(slot, g_world, session.body, session.inventory);
+                }
+                if (g_survival) {
+                    /* One spawn clock per world, with its probe assigned round-
+                       robin. Calling the spawner once per player would count its
+                       cooldown down twice as fast in a two-player game. */
+                    static int spawnTurn = 0;
+                    for (int tries = 0; tries < MAX_PLAYERS; ++tries) {
+                        const int slot = (spawnTurn + tries) % MAX_PLAYERS;
+                        PlayerSession& session = g_playerSessions[slot];
+                        if (!session.connected || !session.body.alive) continue;
+                        spawnTurn = (slot + 1) % MAX_PLAYERS;
+                        const int spawnCamX = slot == 0 ? g_camX :
+                            (int)session.body.centreX() - viewCellsW() / 2;
+                        const int spawnCamY = slot == 0 ? g_camY :
+                            (int)session.body.centreY() - viewCellsH() / 2;
+                        entSpawnTick(g_world, session.body, spawnCamX, spawnCamY, slot == 0);
+                        break;
+                    }
+                }
             }
         }
+
+        if (authoritative) netHostFrame(g_world);
+        else               netClientFrame(g_world);
 
         /* Light is computed for this camera position and consumed immediately
            by renderView. The two must agree about where the camera is, which
@@ -4638,6 +5426,9 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
             g_player.draw(g_pixels, g_camX, g_camY, g_lightOn);
             if (g_survival) drawHeldTool(g_pixels, currentAim(), g_lightOn);
         }
+        for (int slot = 1; slot < MAX_PLAYERS; ++slot)
+            if (g_playerSessions[slot].connected)
+                g_playerSessions[slot].body.draw(g_pixels, g_camX, g_camY, g_lightOn);
         /* Before sparks and shots so that something being hit is drawn UNDER
            the projectile hitting it, and after the player so a creature in
            front of you cannot hide the character you are steering. */

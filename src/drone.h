@@ -22,10 +22,14 @@ struct Drone {
     int effectCool;
 };
 
-extern Drone g_drones[MAX_DRONES];
+/* One overlay bank per stable player slot. The compatibility macro keeps the
+   original single-player diagnostics aimed at local slot zero. */
+extern Drone g_dronesByPlayer[4][MAX_DRONES];
+#define g_drones (g_dronesByPlayer[0])
 
 void droneReset();
 void droneTick(const World& w, const Player& p, Inventory& inv);
+void droneTickFor(int playerSlot, const World& w, const Player& p, Inventory& inv);
 void droneRegisterLights();
 void droneDraw(u32* px, int camX, int camY, bool lit);
 int  droneCount();

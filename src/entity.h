@@ -178,6 +178,7 @@ int  entSpawn(const World& w, int type, float cx, float cy);
 /* One step for every live creature: senses, movement, contact damage, and
    whatever the archetype does to the world. */
 void entTick(World& w, Player& p, Inventory& inv);
+void entTickPlayers(World& w);
 
 /* Hurt whatever creature covers this cell, if any. Returns true if something
    was hit, so a projectile can spend itself on a body rather than sailing
@@ -200,7 +201,7 @@ int  pickupCount();
 /* --- the spawner -----------------------------------------------------------
    Called once a frame with the camera rectangle. Everything about WHERE a
    creature may appear lives here; see entity.cpp. */
-void entSpawnTick(World& w, const Player& p, int camX, int camY);
+void entSpawnTick(World& w, const Player& p, int camX, int camY, bool lightFieldValid = true);
 
 /* Creatures alive at once. Small on purpose: these are meant to be a hazard you
    meet in a tunnel, not a horde. Enough that a dark cavern feels occupied and
