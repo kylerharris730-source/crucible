@@ -394,12 +394,13 @@ bool World::tryMove(int sx, int sy, int tx, int ty) {
         }
         else {
             if (sourceDensity <= targetDensity + DENSITY_SWAP_EPS_Q8) return false;
-            /* Gas owns the swap with liquid, on the gas cell's turn. Letting
+            /* Gas owns a LIQUID/Gas swap on the gas cell's turn. Letting a
                liquid push a gas target sounds symmetric but is not under an
                in-place scan: neighbouring water cells can relay one stamped
-               steam cell sideways/upward many times before it gets a turn.
-               Waiting costs at most one frame; then the bubble rises itself. */
-            if (tm.kind == KIND_GAS) {
+               Steam cell sideways/upward many times before it gets a turn.
+               Powders are different: gravity must let denser Sand or Coal
+               exchange downward through gas on the powder's own turn. */
+            if (sm.kind == KIND_LIQUID && tm.kind == KIND_GAS) {
                 return false;
             }
         }

@@ -1053,44 +1053,57 @@ int main() {
                 w.at(pushX, pushY - 4).mat, w.at(pushX, pushY - 1).mat); return 105;
     }
 
-    /* One stored unit cannot shift a two-cell Sand plug, and adding two more
-       cells to the three-cell plug raises its requirement beyond pressure four. Both
-       configurations must remain completely still. */
+    /* Supported horizontal plugs isolate pressure from gravity: one stored
+       unit cannot shift two Sand cells, and five cells exceed pressure four. */
     w.reset();
-    w.setLiveWindow(pushX - 5, pushY - 10, pushX + 5, pushY + 5);
-    for (int y = pushY - 8; y <= pushY + 1; ++y) {
-        w.setCell(pushX - 1, y, MAT_STONE);
-        w.setCell(pushX + 1, y, MAT_STONE);
-    }
+    w.setLiveWindow(pushX - 5, pushY - 5, pushX + 10, pushY + 5);
+    w.setCell(pushX - 1, pushY, MAT_STONE);
+    w.setCell(pushX - 1, pushY - 1, MAT_STONE);
     w.setCell(pushX, pushY + 1, MAT_STONE);
-    w.setCell(pushX, pushY - 2, MAT_SAND);
-    w.setCell(pushX, pushY - 1, MAT_SAND);
+    for (int x = pushX; x <= pushX + 3; ++x)
+        w.setCell(x, pushY - 1, MAT_STONE);
+    for (int x = pushX + 1; x <= pushX + 2; ++x) {
+        w.setCell(x, pushY, MAT_SAND);
+    }
+    for (int x = pushX + 1; x <= pushX + 3; ++x)
+        w.setCell(x, pushY + 1, MAT_STONE);
     w.setCell(pushX, pushY, MAT_STEAM);
     w.cells[pushY * SIM_W + pushX].moisture = 1;
     w.temp[pushY * SIM_W + pushX] = degC(120);
     w.dirtyPoint(pushX, pushY);
     w.step();
-    if (w.at(pushX, pushY - 1).mat != MAT_SAND ||
+    if (w.at(pushX + 1, pushY).mat != MAT_SAND ||
+        w.at(pushX + 2, pushY).mat != MAT_SAND ||
+        w.at(pushX + 3, pushY).mat != MAT_EMPTY ||
         w.at(pushX, pushY).mat != MAT_STEAM ||
         (w.at(pushX, pushY).moisture & GAS_EXCESS_MASK) != 1) {
-        fprintf(stderr, "low pressure moved Sand\n"); return 106;
+        fprintf(stderr, "low pressure moved Sand (%u %u %u, gas %u/%u)\n",
+                w.at(pushX + 1, pushY).mat,
+                w.at(pushX + 2, pushY).mat,
+                w.at(pushX + 3, pushY).mat,
+                w.at(pushX, pushY).mat,
+                w.at(pushX, pushY).moisture); return 106;
     }
 
     w.reset();
-    w.setLiveWindow(pushX - 5, pushY - 10, pushX + 5, pushY + 5);
-    for (int y = pushY - 8; y <= pushY + 1; ++y) {
-        w.setCell(pushX - 1, y, MAT_STONE);
-        w.setCell(pushX + 1, y, MAT_STONE);
-    }
+    w.setLiveWindow(pushX - 5, pushY - 5, pushX + 12, pushY + 5);
+    w.setCell(pushX - 1, pushY, MAT_STONE);
+    w.setCell(pushX - 1, pushY - 1, MAT_STONE);
     w.setCell(pushX, pushY + 1, MAT_STONE);
-    for (int y = pushY - 5; y < pushY; ++y) w.setCell(pushX, y, MAT_SAND);
+    for (int x = pushX; x <= pushX + 6; ++x)
+        w.setCell(x, pushY - 1, MAT_STONE);
+    for (int x = pushX + 1; x <= pushX + 5; ++x) {
+        w.setCell(x, pushY, MAT_SAND);
+    }
+    for (int x = pushX + 1; x <= pushX + 6; ++x)
+        w.setCell(x, pushY + 1, MAT_STONE);
     w.setCell(pushX, pushY, MAT_STEAM);
     w.cells[pushY * SIM_W + pushX].moisture = 4;
     w.temp[pushY * SIM_W + pushX] = degC(120);
     w.dirtyPoint(pushX, pushY);
     w.step();
-    if (w.at(pushX, pushY - 6).mat != MAT_EMPTY ||
-        w.at(pushX, pushY - 1).mat != MAT_SAND ||
+    if (w.at(pushX + 6, pushY).mat != MAT_EMPTY ||
+        w.at(pushX + 1, pushY).mat != MAT_SAND ||
         (w.at(pushX, pushY).moisture & GAS_EXCESS_MASK) != 4 ||
         g_matPressureResistance[MAT_STONE] != 255 ||
         g_matPressureResistance[MAT_COPPER_ORE] <= 5) {
@@ -1132,6 +1145,40 @@ int main() {
                 w.at(coalPushX, coalGasTop - 2).mat,
                 w.at(coalPushX, coalGasTop - 1).mat,
                 coalPushSteam, coalPushExcess); return 111;
+    }
+
+    /* Powder density, not pressure, makes Sand sink through ordinary Steam.
+       The Steam carries no excess volume here, so this cannot accidentally be
+       satisfied by the pressure-shove path. */
+    w.reset();
+    const int sandSinkX = 970, sinkTop = 680, sinkBottom = 694;
+    w.setLiveWindow(sandSinkX - 4, sinkTop - 4, sandSinkX + 4, sinkBottom + 4);
+    for (int y = sinkTop - 1; y <= sinkBottom + 1; ++y) {
+        w.setCell(sandSinkX - 1, y, MAT_STONE);
+        w.setCell(sandSinkX + 1, y, MAT_STONE);
+    }
+    w.setCell(sandSinkX, sinkBottom + 1, MAT_STONE);
+    for (int y = sinkTop; y <= sinkBottom; ++y) {
+        w.setCell(sandSinkX, y, MAT_STEAM);
+        w.temp[y * SIM_W + sandSinkX] = degC(120);
+    }
+    w.setCell(sandSinkX, sinkTop - 1, MAT_SAND);
+    w.step();
+    int sunkSand = 0, sunkSandY = -1, sinkSteam = 0, sinkExcess = 0;
+    for (int y = sinkTop - 1; y <= sinkBottom; ++y) {
+        if (w.at(sandSinkX, y).mat == MAT_SAND) {
+            ++sunkSand;
+            sunkSandY = y;
+        }
+        if (w.at(sandSinkX, y).mat == MAT_STEAM) {
+            ++sinkSteam;
+            sinkExcess += w.at(sandSinkX, y).moisture & GAS_EXCESS_MASK;
+        }
+    }
+    if (sunkSand != 1 || sunkSandY != sinkTop ||
+        sinkSteam != sinkBottom - sinkTop + 1 || sinkExcess != 0) {
+        fprintf(stderr, "Sand did not sink through unpressurized Steam (%d at y %d, %d Steam, %d excess)\n",
+                sunkSand, sunkSandY, sinkSteam, sinkExcess); return 113;
     }
 
     /* Pressure stored throughout the center of a broad Steam pocket reaches
