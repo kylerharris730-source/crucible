@@ -10,7 +10,9 @@ else
 BUILD_ID := $(GIT_HEAD)-dirty-$(shell powershell -NoProfile -Command "[guid]::NewGuid().ToString('N')")
 endif
 CXXFLAGS += -DCRUCIBLE_BUILD_ID=\"$(BUILD_ID)\"
-LDFLAGS  := -mwindows -lgdi32 -luser32 -lwinmm -lmsimg32 -lws2_32
+# Keep distributed builds self-contained instead of requiring MinGW runtime
+# DLLs to be copied alongside crucible.exe.
+LDFLAGS  := -mwindows -static-libgcc -static-libstdc++ -lgdi32 -luser32 -lwinmm -lmsimg32 -lws2_32
 
 # Discovered, not listed -- see the note in build.bat. The two scripts drifted
 # apart once already and the cost was a deleted executable.

@@ -42,7 +42,10 @@ REM that fails leaves the last working game exactly where it was. g++ claims
 REM its output file before it knows whether the link will succeed, so compiling
 REM straight to crucible.exe means every failed build costs you the executable
 REM you had -- which is how a missing source file turned into a deleted game.
-g++ -std=c++11 -O2 -Wall -Wextra -mwindows -DCRUCIBLE_BUILD_ID=\"!BUILD_ID!\" !SRC! ^
+REM Embed the MinGW C++ runtimes. Otherwise the EXE works on this development
+REM machine but a copied release also requires libgcc_s_dw2-1.dll and
+REM libstdc++-6.dll beside it.
+g++ -std=c++11 -O2 -Wall -Wextra -mwindows -static-libgcc -static-libstdc++ -DCRUCIBLE_BUILD_ID=\"!BUILD_ID!\" !SRC! ^
     -o build\crucible.new.exe ^
     -lgdi32 -luser32 -lwinmm -lmsimg32 -lws2_32
 

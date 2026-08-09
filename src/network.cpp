@@ -219,8 +219,20 @@ static bool writeWholeFile(const char* path, const u8* p, size_t n) {
     fclose(f); return ok;
 }
 
+/* Repository launches already have this directory; a copied standalone EXE
+   does not. Keep the original fixed snapshot paths that Defender accepts and
+   create only their parent directory, rather than moving received network data
+   into the system temporary directory. */
+static bool ensureSnapshotDirectory() {
+    if (CreateDirectoryA("build", 0)) return true;
+    /* ERROR_ALREADY_EXISTS is 183 in WinError.h; this old MinGW's lean Win32
+       headers expose the APIs but omit that symbolic constant here. */
+    return GetLastError() == 183u;
+}
+
 static void sendSnapshot(World& world) {
     const char* path = "build\\net-host-snapshot.tmp";
+    if (!ensureSnapshotDirectory()) { statusf("Could not create snapshot directory"); return; }
     if (!saveWrite(path, world)) { statusf("Could not make join snapshot"); return; }
     std::vector<u8> bytes;
     if (!readWholeFile(path, bytes)) { remove(path); statusf("Could not read join snapshot"); return; }
@@ -519,6 +531,7 @@ static void handlePacket(u8 type, const u8* data, size_t len, World& world) {
         g_assigned = r.u8v(); (void)r.u16v(); statusf("Accepted -- receiving world");
     } else if (type == PK_WORLD_SNAPSHOT && g_role == NET_CLIENT) {
         const char* path = "build\\net-client-snapshot.tmp";
+        if (!ensureSnapshotDirectory()) { statusf("Could not create snapshot directory"); return; }
         if (!writeWholeFile(path, data, len) || !saveRead(path, world)) {
             remove(path); statusf("Could not load host world snapshot"); return;
         }

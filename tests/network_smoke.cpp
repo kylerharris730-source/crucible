@@ -9,8 +9,10 @@
 /* Two copies of this executable form a real TCP connection over loopback. It
    exercises the handshake, exact-build check, full compressed save snapshot,
    player-state mapping, ready acknowledgement and a client command arriving
-   at the authority. Unit-testing the packet codec alone would miss every
-   socket/framing/order failure in that chain. */
+   at the authority. The child runs from an empty working directory so this
+   also proves a copied standalone EXE creates its snapshot directory.
+   Unit-testing the packet codec alone would miss every socket/framing/order/
+   filesystem failure in that chain. */
 int main(int argc, char** argv) {
     if (argc > 2 || (argc == 2 && strcmp(argv[1], "host") && strcmp(argv[1], "client"))) return 2;
     initMaterials(); initItems(); playerSessionsReset(); g_world.reset(); devClear();
@@ -24,10 +26,19 @@ int main(int argc, char** argv) {
         fprintf(stderr, "%s\n", netStatus()); return 3;
     }
     PROCESS_INFORMATION child; memset(&child, 0, sizeof(child));
+    char childDir[MAX_PATH] = "";
     if (argc == 1) {
         STARTUPINFOA startup; memset(&startup, 0, sizeof(startup)); startup.cb = sizeof(startup);
-        char command[MAX_PATH + 32]; sprintf(command, "\"%s\" client", argv[0]);
-        if (!CreateProcessA(0, command, 0, 0, FALSE, 0, 0, 0, &startup, &child)) {
+        char exePath[MAX_PATH], tempRoot[MAX_PATH];
+        if (!GetFullPathNameA(argv[0], MAX_PATH, exePath, 0) ||
+            !GetTempPathA(MAX_PATH, tempRoot) ||
+            !GetTempFileNameA(tempRoot, "cnt", 0, childDir) ||
+            !DeleteFileA(childDir) || !CreateDirectoryA(childDir, 0)) {
+            fprintf(stderr, "could not make clean client directory: %lu\n", GetLastError()); return 7;
+        }
+        char command[MAX_PATH + 32]; sprintf(command, "\"%s\" client", exePath);
+        if (!CreateProcessA(exePath, command, 0, 0, FALSE, 0, 0, childDir, &startup, &child)) {
+            RemoveDirectoryA(childDir);
             fprintf(stderr, "could not launch network client: %lu\n", GetLastError()); return 7;
         }
     }
@@ -74,6 +85,8 @@ int main(int argc, char** argv) {
                     const DWORD wait = WaitForSingleObject(child.hProcess, 5000);
                     DWORD code = 99; GetExitCodeProcess(child.hProcess, &code);
                     CloseHandle(child.hThread); CloseHandle(child.hProcess);
+                    char childBuild[MAX_PATH + 16]; sprintf(childBuild, "%s\\build", childDir);
+                    RemoveDirectoryA(childBuild); RemoveDirectoryA(childDir);
                     if (wait != WAIT_OBJECT_0 || code != 0) {
                         fprintf(stderr, "network client failed: wait=%lu code=%lu\n", wait, code); return 8;
                     }
@@ -117,6 +130,8 @@ int main(int argc, char** argv) {
     if (child.hProcess) {
         TerminateProcess(child.hProcess, 9);
         CloseHandle(child.hThread); CloseHandle(child.hProcess);
+        char childBuild[MAX_PATH + 16]; sprintf(childBuild, "%s\\build", childDir);
+        RemoveDirectoryA(childBuild); RemoveDirectoryA(childDir);
     }
     netStop(); return 6;
 }
