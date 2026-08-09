@@ -121,11 +121,23 @@ Multiplayer rules are explicit:
   machines, circuits, rooms, trees, torches, time, and boss progression before
   the client becomes ready.
 
-State packets use explicit framing and scalar fields for commands and actions.
-High-frequency overlay arrays currently use exact-build, size/schema-guarded
-C++ blocks for efficiency. That is safe for the enforced same executable on
-this Windows LAN milestone, but must become field-wise serialization before
-cross-compiler or cross-platform play is promised.
+Every packet is field-wise. `codec.h`/`codec.cpp` hold one visitor per struct,
+and each visitor serves both directions: a `Blob` is either storing or
+loading, and the loading mode fills the same references the storing mode
+reads. Two hand-written halves of a codec drift, and a drifting codec corrupts
+state rather than failing. Scalars are little-endian and floats are IEEE-754
+bit patterns, so the format now depends on the CPU rather than on the
+compiler's struct layout, padding and enum widths. Pool sizes are written and
+checked, so a peer built with a different capacity is rejected explicitly
+instead of reading off the end of a buffer.
+
+**The join snapshot is still not portable.** It is an ordinary save file, and
+`save.cpp` writes `Player`, `Inventory`, `Device`, `Entity` and the rest as
+raw `fwrite(&x, sizeof(x))` blocks. Cross-compiler play therefore remains
+blocked by the save format, not by the packets. Converting saves to the same
+visitors is the remaining work, and it is worth doing for a second reason
+that bites today: `PLYR` is loaded only `if (len == sizeof(Player))`, so
+adding one field to the player silently discards every existing character.
 
 ## Starting and joining
 

@@ -10,6 +10,7 @@
 #include "drone.h"
 #include "room.h"
 #include "tree.h"
+#include "codec.h"
 #include <vector>
 #include <deque>
 #include <stdio.h>
@@ -239,13 +240,14 @@ void netStop() {
     g_role = NET_OFF; statusf("Offline");
 }
 
-bool netHost(u16 port) {
+bool netHost(u16 port, bool loopbackOnly) {
     netStop(); if (!startup()) return false;
     g_listen = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (g_listen == INVALID_SOCKET) { statusf("Could not create host socket"); return false; }
     BOOL reuse = TRUE; setsockopt(g_listen, SOL_SOCKET, SO_REUSEADDR, (const char*)&reuse, sizeof(reuse));
     sockaddr_in a; memset(&a, 0, sizeof(a)); a.sin_family = AF_INET;
-    a.sin_addr.s_addr = htonl(INADDR_ANY); a.sin_port = htons(port);
+    a.sin_addr.s_addr = htonl(loopbackOnly ? INADDR_LOOPBACK : INADDR_ANY);
+    a.sin_port = htons(port);
     if (bind(g_listen, (sockaddr*)&a, sizeof(a)) == SOCKET_ERROR ||
         listen(g_listen, MAX_PEERS) == SOCKET_ERROR) {
         closeSocket(g_listen); statusf("Could not bind LAN host port"); return false;
@@ -341,31 +343,19 @@ static void sendSnapshot(Peer& peer, World& world) {
 static void sendState() {
     Writer w;
     w.u32v(NET_STATE_SCHEMA);
-    w.u32v((u32)sizeof(Player)); w.u32v((u32)sizeof(Inventory));
-    w.u32v((u32)sizeof(Entity)); w.u32v((u32)sizeof(Pickup));
-    w.u32v((u32)sizeof(Projectile)); w.u32v((u32)sizeof(Device));
-    w.u32v((u32)sizeof(Drone));
     u8 count = 0;
     for (int i = 0; i < MAX_PLAYERS; ++i) if (g_playerSessions[i].connected) ++count;
     w.u8v(count);
+    Blob blob(w.b);
     for (int i = 0; i < MAX_PLAYERS; ++i) if (g_playerSessions[i].connected) {
-        const PlayerSession& s = g_playerSessions[i];
+        PlayerSession& s = g_playerSessions[i];
         w.u8v(s.networkId); w.u16v(s.generation);
-        w.bytes(&s.body, sizeof(s.body)); w.bytes(&s.inventory, sizeof(s.inventory));
-        w.bytes(&s.cursor, sizeof(s.cursor)); w.bytes(&s.trash, sizeof(s.trash));
-        w.i32v(s.restBed); w.i32v(s.openDevice);
-        w.bytes(s.drones, sizeof(s.drones));
+        codecPlayer(blob, s.body); codecInventory(blob, s.inventory);
+        codecItemStack(blob, s.cursor); codecItemStack(blob, s.trash);
+        blob.i32f(s.restBed); blob.i32f(s.openDevice);
+        for (int d = 0; d < MAX_DRONES; ++d) codecDrone(blob, s.drones[d]);
     }
-    w.bytes(g_toolInst, sizeof(g_toolInst));
-    w.bytes(g_entities, sizeof(g_entities)); w.bytes(g_pickups, sizeof(g_pickups));
-    w.bytes(g_proj, sizeof(g_proj)); w.bytes(g_devices, sizeof(g_devices));
-    w.bytes(g_sparks, sizeof(g_sparks)); w.bytes(g_shed, sizeof(g_shed));
-    w.bytes(g_circuitConfig, sizeof(g_circuitConfig));
-    w.bytes(g_circuitWires, sizeof(g_circuitWires));
-    w.bytes(g_rooms, sizeof(g_rooms)); w.bytes(g_trees, sizeof(g_trees));
-    const int torchN = torchCount(); w.u32v((u32)torchN);
-    if (torchN > 0) w.bytes(torchData(), sizeof(TorchFixture) * (size_t)torchN);
-    w.u32v(g_worldTime); w.u32v(g_bossesBeaten); w.u32v(g_rng);
+    codecOverlay(blob);
     Writer packed;
     packBytes(packed, w.b.empty() ? 0 : &w.b[0], w.b.size());
     for (int i = 0; i < MAX_PEERS; ++i) {
@@ -583,25 +573,27 @@ static void applyState(Reader& r) {
     const bool hadPredictedLocal = g_role == NET_CLIENT && predictedLocal.connected &&
                                    predictedLocal.networkId == g_assigned;
     const u32 schema = r.u32v();
-    const u32 playerSize = r.u32v(), invSize = r.u32v(), entitySize = r.u32v();
-    const u32 pickupSize = r.u32v(), projSize = r.u32v(), deviceSize = r.u32v();
-    const u32 droneSize = r.u32v();
-    if (schema != NET_STATE_SCHEMA || playerSize != sizeof(Player) || invSize != sizeof(Inventory) ||
-        entitySize != sizeof(Entity) || pickupSize != sizeof(Pickup) ||
-        projSize != sizeof(Projectile) || deviceSize != sizeof(Device) ||
-        droneSize != sizeof(Drone)) { r.ok = false; return; }
+    if (schema != NET_STATE_SCHEMA) { r.ok = false; return; }
     playerSessionsReset();
     for (int i = 0; i < MAX_PLAYERS; ++i) g_playerSessions[i].connected = false;
     const int count = r.u8v(); int nextRemoteSlot = 1;
+    /* The reader and the blob walk the same buffer. Player identity stays in
+       the outer framing because the slot mapping is a decision the receiver
+       makes; the bodies themselves are field-wise. */
+    Blob blob(r.p, r.n);
+    blob.at = r.at;
     for (int n = 0; n < count; ++n) {
+        r.at = blob.at;
         const PlayerId wire = r.u8v(); const u16 generation = r.u16v();
+        blob.at = r.at;
         int slot = wire == g_assigned ? 0 : nextRemoteSlot++;
-        if (slot >= MAX_PLAYERS) { r.ok = false; return; }
+        if (slot >= MAX_PLAYERS || !r.ok) { r.ok = false; return; }
         PlayerSession& s = g_playerSessions[slot];
-        r.bytes(&s.body, sizeof(s.body)); r.bytes(&s.inventory, sizeof(s.inventory));
-        r.bytes(&s.cursor, sizeof(s.cursor)); r.bytes(&s.trash, sizeof(s.trash));
-        s.restBed = r.i32v(); s.openDevice = r.i32v();
-        r.bytes(s.drones, sizeof(s.drones));
+        codecPlayer(blob, s.body); codecInventory(blob, s.inventory);
+        codecItemStack(blob, s.cursor); codecItemStack(blob, s.trash);
+        blob.i32f(s.restBed); blob.i32f(s.openDevice);
+        for (int d = 0; d < MAX_DRONES; ++d) codecDrone(blob, s.drones[d]);
+        if (!blob.ok) { r.ok = false; return; }
         s.connected = true; s.local = slot == 0; s.networkId = wire; s.generation = generation;
         if (slot == 0 && hadPredictedLocal && predictedLocal.generation == generation) {
             /* These fields are the client's in-progress interpretation of held
@@ -626,22 +618,10 @@ static void applyState(Reader& r) {
             s.garlicCooldown = predictedLocal.garlicCooldown;
         }
     }
-    r.bytes(g_toolInst, sizeof(g_toolInst));
-    r.bytes(g_entities, sizeof(g_entities)); r.bytes(g_pickups, sizeof(g_pickups));
-    r.bytes(g_proj, sizeof(g_proj)); r.bytes(g_devices, sizeof(g_devices));
-    r.bytes(g_sparks, sizeof(g_sparks)); r.bytes(g_shed, sizeof(g_shed));
-    r.bytes(g_circuitConfig, sizeof(g_circuitConfig));
-    r.bytes(g_circuitWires, sizeof(g_circuitWires));
-    r.bytes(g_rooms, sizeof(g_rooms)); r.bytes(g_trees, sizeof(g_trees));
-    const u32 torchN = r.u32v();
-    if (torchN > 1000000u || (size_t)torchN > (r.n - r.at) / sizeof(TorchFixture)) {
-        r.ok = false;
-    } else {
-        std::vector<TorchFixture> fixtures(torchN);
-        if (torchN) r.bytes(&fixtures[0], sizeof(TorchFixture) * (size_t)torchN);
-        if (r.ok) torchLoad(fixtures.empty() ? 0 : &fixtures[0], (int)fixtures.size());
-    }
-    g_worldTime = r.u32v() % DAY_LENGTH; g_bossesBeaten = r.u32v(); g_rng = r.u32v();
+    codecOverlay(blob);
+    if (!blob.ok) { r.ok = false; return; }
+    g_worldTime %= DAY_LENGTH;
+    r.at = blob.at;   /* hand the cursor back so the caller's length check holds */
 }
 
 static void applyChunk(World& world, Reader& r) {

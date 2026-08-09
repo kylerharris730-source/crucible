@@ -86,7 +86,14 @@ struct NetAction {
 
 static const u16 NET_DEFAULT_PORT = 27841;
 
-bool netHost(u16 port = NET_DEFAULT_PORT);
+/* `loopbackOnly` binds 127.0.0.1 instead of every interface. Windows Firewall
+   prompts the moment a program listens on a real interface, and each freshly
+   built test binary is a new program as far as it is concerned -- so a test
+   run means a stack of dialogs, and until they are answered the listening
+   socket is blocked, which stalls the very test that raised them. Tests only
+   ever talk to themselves, so they ask for loopback and are never seen by the
+   firewall at all. Real hosting still binds everything. */
+bool netHost(u16 port = NET_DEFAULT_PORT, bool loopbackOnly = false);
 bool netJoin(const char* ipv4, u16 port = NET_DEFAULT_PORT);
 void netStop();
 void netPoll(World& world);

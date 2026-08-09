@@ -33,7 +33,7 @@ int main(int argc, char** argv) {
     }
     g_world.setCell(repairX, repairY, MAT_STONE);
     const bool host = argc == 1 || strcmp(argv[1], "host") == 0;
-    if (host ? !netHost(27842) : !netJoin("127.0.0.1", 27842)) {
+    if (host ? !netHost(27842, true) : !netJoin("127.0.0.1", 27842)) {
         fprintf(stderr, "%s\n", netStatus()); return 3;
     }
     PROCESS_INFORMATION child; memset(&child, 0, sizeof(child));

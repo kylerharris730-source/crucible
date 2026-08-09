@@ -18,7 +18,7 @@ int main(int argc, char** argv) {
     if (client) {
         if (!netJoin("127.0.0.1", 27843)) return 3;
     } else {
-        if (!netHost(27843)) return 4;
+        if (!netHost(27843, true)) return 4;
         STARTUPINFOA startup; memset(&startup, 0, sizeof(startup)); startup.cb = sizeof(startup);
         char command[MAX_PATH + 32]; sprintf(command, "\"%s\" client", argv[1]);
         if (!CreateProcessA(0, command, 0, 0, FALSE, 0, 0, 0, &startup, &child)) return 5;

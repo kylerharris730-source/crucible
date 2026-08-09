@@ -137,7 +137,7 @@ int main(int argc, char** argv) {
     if (argc == 2 && strcmp(argv[1], "overflow") == 0) return runOverflow();
     if (argc != 1) return 2;
 
-    if (!netHost(PORT)) { fprintf(stderr, "host: %s\n", netStatus()); return 3; }
+    if (!netHost(PORT, true)) { fprintf(stderr, "host: %s\n", netStatus()); return 3; }
 
     char exePath[MAX_PATH];
     if (!GetFullPathNameA(argv[0], MAX_PATH, exePath, 0)) return 7;
