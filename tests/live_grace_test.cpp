@@ -859,14 +859,51 @@ int main() {
     const int coolWaterDensity = materialDensityQ8(MAT_WATER, degC(20));
     const int warmWaterDensity = materialDensityQ8(MAT_WATER, degC(45));
     if (MATS[MAT_WAX].dryA != 0xF1E9D8 ||
-        MATS[MAT_WAX].dryB != MATS[MAT_WAX].dryA ||
+        MATS[MAT_WAX].dryB != 0xE9DFCC ||
         MATS[MAT_WAX].wetA != MATS[MAT_WAX].dryA ||
-        MATS[MAT_WAX].wetB != MATS[MAT_WAX].dryA) {
-        fprintf(stderr, "wax was not a uniform ivory colour\n"); return 118;
+        MATS[MAT_WAX].wetB != MATS[MAT_WAX].dryB) {
+        fprintf(stderr, "wax did not keep its subtle ivory palette\n"); return 118;
     }
     if (materialDensityQ8(MAT_WAX, degC(20)) <= coolWaterDensity ||
         materialDensityQ8(MAT_WAX, degC(45)) >= warmWaterDensity) {
         fprintf(stderr, "wax density does not cross water below boiling\n"); return 91;
+    }
+    /* Inert Fluid is intentionally Water with the phase-change columns
+       removed. Matching the fixed-point density curve matters more than just
+       matching the table's ambient integer: otherwise a hot bath would change
+       the wax buoyancy experiment even though both said density 100. */
+    if (MATS[MAT_INERT_FLUID].kind != KIND_LIQUID ||
+        MATS[MAT_INERT_FLUID].density != MATS[MAT_WATER].density ||
+        MATS[MAT_INERT_FLUID].dispersion != MATS[MAT_WATER].dispersion ||
+        MATS[MAT_INERT_FLUID].heatCond != MATS[MAT_WATER].heatCond ||
+        MATS[MAT_INERT_FLUID].heatSpread != MATS[MAT_WATER].heatSpread ||
+        MATS[MAT_INERT_FLUID].coolTemp != 0 ||
+        MATS[MAT_INERT_FLUID].boilTemp != 0 ||
+        MATS[MAT_INERT_FLUID].igniteTemp != 0 ||
+        g_matThermalExpansionQ8[MAT_INERT_FLUID] !=
+            g_matThermalExpansionQ8[MAT_WATER] ||
+        materialDensityQ8(MAT_INERT_FLUID, degC(20)) !=
+            materialDensityQ8(MAT_WATER, degC(20)) ||
+        materialDensityQ8(MAT_INERT_FLUID, degC(90)) !=
+            materialDensityQ8(MAT_WATER, degC(90)) ||
+        materialDensityQ8(MAT_INERT_FLUID, degC(215)) !=
+            materialDensityQ8(MAT_WATER, degC(215))) {
+        fprintf(stderr, "Inert Fluid does not match Water's non-phase physical properties\n"); return 121;
+    }
+    /* Exercise the actual phase-change update at the hottest representable
+       temperature, rather than trusting the zero table entries alone. */
+    w.reset();
+    const int inertX = 620, inertY = 550;
+    w.setLiveWindow(inertX - 3, inertY - 3, inertX + 3, inertY + 3);
+    for (int y = inertY - 1; y <= inertY + 1; ++y)
+        for (int x = inertX - 1; x <= inertX + 1; ++x)
+            w.setCell(x, y, (x == inertX && y == inertY) ?
+                      MAT_INERT_FLUID : MAT_STONE);
+    w.temp[inertY * SIM_W + inertX] = degC(215);
+    w.dirtyPoint(inertX, inertY);
+    for (int tick = 0; tick < 30; ++tick) w.step();
+    if (w.at(inertX, inertY).mat != MAT_INERT_FLUID) {
+        fprintf(stderr, "Inert Fluid changed phase at maximum temperature\n"); return 122;
     }
     /* A marked hot parcel in a wall-hugging wax column used to swap directly
        with another wax cell three rows above. Track that exact parcel through

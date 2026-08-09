@@ -368,6 +368,10 @@ enum MatId {
        temperature. Appended for save-id stability. */
     MAT_WAX,
 
+    /* A water-density test bath with no phase transitions. Appended so older
+       saves keep every existing material id. */
+    MAT_INERT_FLUID,
+
     MAT_COUNT
 };
 

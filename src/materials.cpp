@@ -852,7 +852,12 @@ MatInfo MATS[MAT_COUNT] = {
      expansive: around 41 C it crosses water's density and starts rising.
      Viscous enough to travel as slow amber bodies instead of spraying like
      water. Cohesion is a later, independently testable tuning layer. */
-  { "Wax", KIND_LIQUID, 104, 0, 0, 3, 150, 0, 0, 55, 1, 0, 0, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, 0xF1E9D8, 0xF1E9D8, 0xF1E9D8, 0xF1E9D8, 0 },
+  { "Wax", KIND_LIQUID, 104, 0, 0, 3, 150, 0, 0, 55, 1, 0, 0, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, 0xF1E9D8, 0xE9DFCC, 0xF1E9D8, 0xE9DFCC, 0 },
+  /* Water's density, flow and thermal transport, but deliberately no freezing
+     or boiling transition. This is a stable heat bath for wax experiments:
+     wax still crosses its buoyancy point normally, while driving the bath to
+     the top of the temperature scale cannot replace it with gas. */
+  { "Inert Fluid", KIND_LIQUID, 100, 0, 0, 5, 0, 0, 0, 180, 0, 3, 0, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, 0xB992DA, 0xAA82CC, 0xB992DA, 0xAA82CC, 0 },
 };
 
 u32 g_colorLut[MAT_COUNT * 256];
