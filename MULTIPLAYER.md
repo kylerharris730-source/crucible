@@ -65,17 +65,28 @@ whole as well; mostly-unused fixed pools collapse to short zero runs. Chunk
 hashing is amortized across frames. The client reports rotating hashes of the
 chunks it actually holds; the authority sends the ordinary full chunk packet
 whenever one differs, while a slower periodic forced refresh remains a second
-repair path. A bounded send backlog prevents a slow peer from growing memory
-indefinitely.
+repair path. State and chunk production stop behind a small bounded send
+backlog, and each poll drains a bounded batch rather than one 64 KiB fragment;
+a busy scene therefore sheds intermediate snapshots instead of displaying
+seconds-old state. TCP's small-packet coalescing is disabled for input.
 
 Commands carry held movement/use state plus preserved rising edges. Discrete
 inventory, equipment, crafting, chest, machine configuration, copper-wire, and
-circuit-wire gestures use an ordered action queue. The client predicts only its
-own body movement; world cells and gameplay results are never client-authored.
+circuit-wire gestures use an ordered action queue. Every host state acknowledges
+the newest command actually processed. The client restores that authoritative
+body and replays only newer pending movement, so ordinary snapshots do not
+rewind the player while real collision/death disagreements are still corrected.
+Between packets the client also advances its replicated world, heat/fluids,
+machines, actors, projectiles, drones, trees, and clock for smooth presentation.
+Those results are speculative: the client never sends them to the host, and
+authoritative state/chunks correct divergence. Chunk-hash repair reports the
+last authoritative chunk received rather than the locally predicted contents,
+so prediction does not create a self-inflicted correction loop.
 Offline and hosting input uses the same commands and a local loopback action
 queue rather than a trusted direct-mutation path. The main frame is correspondingly
-split into `clientInputTick()`, authoritative `serverTick()`, client camera/UI,
-and `clientRender()`; a joined process never enters `serverTick()`.
+split into `clientInputTick()`, authoritative/predictive branches of
+`serverTick()`, client camera/UI, and `clientRender()`; a joined process never
+enters the authoritative branch or applies gameplay actions locally.
 
 Enemies target the nearest connected living player. Contact damage, hostile
 shots, pickups, accessories, and each player's three-drone bank use that
@@ -116,10 +127,19 @@ private network.
 The command-line equivalents, mainly for repeatable testing, are
 `crucible.exe --host` and `crucible.exe --join 192.168.x.x`.
 
+For iteration on one computer, run `multiplayer_test.bat`. It launches the
+same built executable twice over loopback, labels the windows LOCAL HOST and
+LOCAL CLIENT, and creates a small deterministic arena with inventory stacks.
+This exercises the
+real socket, snapshot, prediction, correction, inventory, and rendering paths
+without copying a build to another machine. The automated two-process smoke
+test remains the fast headless check; the launcher is the playable check.
+
 The checked-in two-process smoke test creates a real loopback TCP peer and
 asserts handshake, full snapshot load, player mapping, readiness, held command
-framing, ordered discrete-action framing, and automatic repair after deliberately
-corrupting a client chunk. A second test compiles two different build IDs and
+framing, authoritative command acknowledgement, ordered discrete-action framing,
+and automatic repair after deliberately corrupting a client chunk. A second test
+compiles two different build IDs and
 proves the client is rejected before world synchronization. The production
 executable also has a headless local-loopback test for placement, crafting, and
 inventory transfer, and has been run as two simultaneous full processes with a

@@ -20,6 +20,17 @@ int main(int argc, char** argv) {
     /* The client deliberately corrupts this authoritative cell after joining.
        Its rotating hash report must make the host resend the chunk. */
     const int repairX = 420, repairY = 400;
+    /* Adversarial PackBits boundary: literal bytes 0..126 are alternating,
+       then a two-byte run begins at 127. The old encoder let that run grow the
+       literal to 129 bytes and turned its length tag into a repeat tag. */
+    const int chunkX0 = (repairX >> CHUNK_SHIFT) << CHUNK_SHIFT;
+    const int chunkY0 = (repairY >> CHUNK_SHIFT) << CHUNK_SHIFT;
+    for (int p = 0; p < CHUNK * CHUNK; ++p) {
+        u8 mat = (p & 1) ? MAT_SAND : MAT_STONE;
+        if (p == 128) mat = MAT_SAND;
+        if (p == 129) mat = MAT_STONE;
+        g_world.setCell(chunkX0 + p % CHUNK, chunkY0 + p / CHUNK, mat);
+    }
     g_world.setCell(repairX, repairY, MAT_STONE);
     const bool host = argc == 1 || strcmp(argv[1], "host") == 0;
     if (host ? !netHost(27842) : !netJoin("127.0.0.1", 27842)) {
@@ -45,9 +56,12 @@ int main(int argc, char** argv) {
     const DWORD start = GetTickCount();
     DWORD lastReport = start;
     bool sent = false, corrupted = false, repairAckSent = false;
-    bool gotCommand = false, gotAction = false, gotRepairAck = false;
+    bool gotCommand = false, gotAction = false, gotRepairAck = false, gotActionReceipt = false;
     while (GetTickCount() - start < 30000) {
         netPoll(g_world);
+        if (strstr(netStatus(), "Malformed") || strstr(netStatus(), "Invalid network")) {
+            fprintf(stderr, "%s saw %s\n", host ? "host" : "client", netStatus()); return 12;
+        }
         if (!host) netClientFrame(g_world);
         if (GetTickCount() - lastReport >= 2000) {
             fprintf(stderr, "%s: connected=%d ready=%d status=%s\n",
@@ -66,6 +80,11 @@ int main(int argc, char** argv) {
                     !c.digFilterOn || !(c.digFilter[MAT_SAND >> 3] & (1u << (MAT_SAND & 7)))) {
                     fprintf(stderr, "host received corrupt command\n"); return 4;
                 }
+                netMarkRemoteCommandApplied(c.sequence);
+                /* Force an authoritative post-command image. A pre-command
+                   scan may already be queued; the client must ignore that one
+                   without ignoring this correction. */
+                netMarkWorldEdit(repairX, repairY, 2);
                 gotCommand = true;
             }
             NetAction action;
@@ -77,9 +96,12 @@ int main(int argc, char** argv) {
                     action.x == 1234 && action.y == 4321) gotAction = true;
                 else if (action.type == NACT_CLOSE_DEVICE && action.x == 2468)
                     gotRepairAck = true;
+                else if (action.type == NACT_CLOSE_DEVICE && action.x == 9999)
+                    gotActionReceipt = true;
                 else { fprintf(stderr, "host received corrupt action\n"); return 9; }
+                netMarkRemoteActionApplied(action.sequence);
             }
-            if (gotCommand && gotAction && gotRepairAck) {
+            if (gotCommand && gotAction && gotRepairAck && gotActionReceipt) {
                 netStop();
                 if (child.hProcess) {
                     const DWORD wait = WaitForSingleObject(child.hProcess, 5000);
@@ -104,6 +126,7 @@ int main(int argc, char** argv) {
             c.lineStartX = 700; c.lineStartY = 701;
             c.digFilter[MAT_SAND >> 3] |= (u8)(1u << (MAT_SAND & 7));
             c.aimX = 777; c.aimY = 888;
+            netMarkPredictedWorldEdit(repairX, repairY, repairX, repairY, 2, c.sequence);
             if (!netSendCommand(c)) return 5;
             NetAction action; memset(&action, 0, sizeof(action));
             action.sequence = 1; action.player = netAssignedPlayer();
@@ -113,13 +136,23 @@ int main(int argc, char** argv) {
             if (!netSendAction(action)) return 10;
             sent = true;
         } else if (sent && corrupted && g_world.at(repairX, repairY).mat == MAT_STONE && !repairAckSent) {
+            const int ci = (repairY >> CHUNK_SHIFT) * CHUNKS_X + (repairX >> CHUNK_SHIFT);
+            if (g_world.next[ci].minX > g_world.next[ci].maxX) {
+                fprintf(stderr, "repaired chunk was not reactivated\n"); return 14;
+            }
             NetAction ack; memset(&ack, 0, sizeof(ack));
             ack.sequence = 2; ack.player = netAssignedPlayer();
             ack.generation = g_playerSessions[0].generation;
             ack.type = NACT_CLOSE_DEVICE; ack.x = 2468;
             if (!netSendAction(ack)) return 11;
             repairAckSent = true;
-        } else if (repairAckSent) {
+        } else if (repairAckSent && netAcknowledgedCommand() == 1 &&
+                   netAcknowledgedAction() == 2 && netStateSerial() > 0) {
+            NetAction receipt; memset(&receipt, 0, sizeof(receipt));
+            receipt.sequence = 3; receipt.player = netAssignedPlayer();
+            receipt.generation = g_playerSessions[0].generation;
+            receipt.type = NACT_CLOSE_DEVICE; receipt.x = 9999;
+            if (!netSendAction(receipt)) return 13;
             /* Give the nonblocking send queue time to drain before exiting. */
             netPoll(g_world); Sleep(250);
             puts("network client smoke passed (chunk resync repaired divergence)"); netStop(); return 0;

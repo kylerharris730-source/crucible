@@ -47,7 +47,8 @@ enum NetActionType {
     NACT_DEVICE,
     NACT_WIRE_POINT,
     NACT_CIRCUIT_TERMINAL,
-    NACT_STOW_CURSOR
+    NACT_STOW_CURSOR,
+    NACT_CREATIVE_ITEM
 };
 
 enum NetDeviceOperation {
@@ -91,9 +92,23 @@ void netStop();
 void netPoll(World& world);
 void netHostFrame(World& world);
 void netClientFrame(World& world);
+void netMarkWorldEdit(int x, int y, int radius);
+/* Protect locally predicted cells from chunk snapshots captured before the
+   host processed the command which created them. The authoritative snapshot
+   carrying this sequence (or a later one) is still accepted as correction. */
+void netMarkPredictedWorldEdit(int x0, int y0, int x1, int y1, int radius,
+                               u32 commandSequence);
 
 bool netSendCommand(const PlayerCommand& command);
 bool netPopRemoteCommand(PlayerCommand* command);
+/* The host acknowledges a command only after the authoritative player tick has
+   consumed it. Clients use that watermark to replay only inputs which the host
+   state does not contain yet, rather than snapping back on every snapshot. */
+void netMarkRemoteCommandApplied(u32 sequence);
+u32 netAcknowledgedCommand();
+void netMarkRemoteActionApplied(u32 sequence);
+u32 netAcknowledgedAction();
+u32 netStateSerial();
 bool netSendAction(const NetAction& action);
 bool netPopRemoteAction(NetAction* action);
 

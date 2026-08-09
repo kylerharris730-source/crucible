@@ -702,6 +702,8 @@ static void applyBrush();
 static void circuitWireClick();
 static bool sendClientAction(u8 type, u8 container = 0, u8 a = 0, u8 b = 0, u8 flags = 0,
                              i32 x = 0, i32 y = 0);
+static void applyPlayerAction(const NetAction& action);
+static void applyPlayerUses(PlayerSession& session, const PlayerCommand& command);
 static void fireToolFor(Player& player, Inventory& inventory, const Aim& aim);
 static bool throwGlowflareFor(Player& player, Inventory& inventory, const Aim& aim);
 static void placeDeviceStrokeFor(Inventory& inventory, int& previousX, int& previousY,
@@ -1193,6 +1195,37 @@ static void layoutCreative() {
    one that landed on the background. */
 static NetAction g_localActions[256];
 static int g_localActionHead = 0, g_localActionCount = 0;
+static NetAction g_predictedActions[256];
+static int g_predictedActionHead = 0, g_predictedActionCount = 0;
+static u32 g_actionPredictionStateSerial = 0;
+
+static void actionPredictionClear() {
+    g_predictedActionHead = g_predictedActionCount = 0;
+    g_actionPredictionStateSerial = netStateSerial();
+}
+
+static void actionPredictionRemember(const NetAction& action) {
+    if (g_predictedActionCount == 256) {
+        g_predictedActionHead = (g_predictedActionHead + 1) % 256;
+        --g_predictedActionCount;
+    }
+    const int tail = (g_predictedActionHead + g_predictedActionCount) % 256;
+    g_predictedActions[tail] = action; ++g_predictedActionCount;
+}
+
+static void actionPredictionReconcile() {
+    const u32 serial = netStateSerial();
+    if (serial == g_actionPredictionStateSerial) return;
+    g_actionPredictionStateSerial = serial;
+    const u32 acknowledged = netAcknowledgedAction();
+    while (g_predictedActionCount > 0 &&
+           (i32)(g_predictedActions[g_predictedActionHead].sequence - acknowledged) <= 0) {
+        g_predictedActionHead = (g_predictedActionHead + 1) % 256;
+        --g_predictedActionCount;
+    }
+    for (int n = 0; n < g_predictedActionCount; ++n)
+        applyPlayerAction(g_predictedActions[(g_predictedActionHead + n) % 256]);
+}
 
 /* One submission API for every player gesture. A joined client serializes it;
    the authority (including ordinary single-player) places the exact same
@@ -1208,7 +1241,12 @@ static bool sendClientAction(u8 type, u8 container, u8 a, u8 b, u8 flags, i32 x,
     action.type = type; action.container = container;
     action.a = a; action.b = b; action.flags = flags;
     action.x = x; action.y = y;
-    if (netRole() == NET_CLIENT) return netSendAction(action);
+    if (netRole() == NET_CLIENT) {
+        if (!netSendAction(action)) return false;
+        actionPredictionRemember(action);
+        applyPlayerAction(action);
+        return true;
+    }
     if (g_localActionCount >= (int)(sizeof(g_localActions) / sizeof(g_localActions[0]))) return false;
     const int tail = (g_localActionHead + g_localActionCount) %
                      (int)(sizeof(g_localActions) / sizeof(g_localActions[0]));
@@ -1447,10 +1485,10 @@ static bool handleCreativeClick(int mx, int my, bool remove) {
                 g_digFilterMat[it] = !g_digFilterMat[it];
             return true;
         }
-        /* The creative catalog is host-owned debug state. A joined survival
-           player may rearrange the pack above, but cannot mint or delete items
-           by changing only its local replica. */
-        if (netRole() == NET_CLIENT) return true;
+        if (netRole() == NET_CLIENT) {
+            sendClientAction(NACT_CREATIVE_ITEM, 0, (u8)it, 0, remove ? 1 : 0);
+            return true;
+        }
         if (remove) {
             /* Take everything, not one: the point of the right-click is to
                clear a slot out, and holding the button down to drain a hundred
@@ -2235,18 +2273,121 @@ static PlayerCommand localPlayerCommand() {
     return c;
 }
 
-static void predictClientPlayer(const PlayerCommand& command) {
+static void predictClientPlayer(const PlayerCommand& command, bool predictUses = false) {
     PlayerSession& session = g_playerSessions[0];
-    if (!session.connected || !session.body.alive || session.restBed >= 0) return;
-    PlayerInput input;
-    input.left = (command.bits & PCMD_LEFT) != 0;
-    input.right = (command.bits & PCMD_RIGHT) != 0;
-    input.jump = (command.bits & PCMD_JUMP) != 0;
-    input.down = (command.bits & PCMD_DOWN) != 0;
-    session.body.fly = flightSpec(session.inventory);
-    session.body.speedMul = 1.0f + (float)session.inventory.speedBonus() / 100.0f;
-    session.body.resist = session.inventory.tempResist();
-    session.body.update(g_world, input);
+    if (!session.connected) return;
+    session.inventory.selected = imax(0, imin(HOTBAR_SLOTS - 1, (int)command.selected));
+    if (session.body.alive && session.restBed < 0) {
+        PlayerInput input;
+        input.left = (command.bits & PCMD_LEFT) != 0;
+        input.right = (command.bits & PCMD_RIGHT) != 0;
+        input.jump = (command.bits & PCMD_JUMP) != 0;
+        input.down = (command.bits & PCMD_DOWN) != 0;
+        session.body.fly = flightSpec(session.inventory);
+        session.body.speedMul = 1.0f + (float)session.inventory.speedBonus() / 100.0f;
+        session.body.resist = session.inventory.tempResist();
+        session.body.update(g_world, input);
+    }
+    if (predictUses) {
+        /* Predict the visible result immediately, but let the host's inventory
+           count remain authoritative. Replaying a placement against a cell the
+           client already filled cannot infer how many items to consume, so
+           speculative inventory is intentionally not retained here. */
+        const bool worldEdit = (command.bits & (PCMD_USE_LEFT | PCMD_USE_RIGHT)) != 0 ||
+                               (command.pressed & PCMD_INTERACT) != 0 || command.lineCommit;
+        if (worldEdit) {
+            int x0 = command.aimX, y0 = command.aimY;
+            if (command.lineCommit) { x0 = command.lineStartX; y0 = command.lineStartY; }
+            else if (command.line && session.lineActive) {
+                x0 = session.previousAimX; y0 = session.previousAimY;
+            }
+            netMarkPredictedWorldEdit(x0, y0, command.aimX, command.aimY,
+                                      imax(4, (int)command.brushRadius + 3),
+                                      command.sequence);
+        }
+        const Inventory authoritativeInventory = session.inventory;
+        applyPlayerUses(session, command);
+        session.inventory = authoritativeInventory;
+        session.inventory.selected = imax(0, imin(HOTBAR_SLOTS - 1, (int)command.selected));
+    }
+}
+
+/* Commands sent after the host's acknowledged watermark are the small slice of
+   time represented on this client but not in the authoritative snapshot. Keep
+   them so a snapshot becomes a stable base to replay from, not a visible rewind. */
+static const int PREDICTION_HISTORY = 256;
+static PlayerCommand g_predictionHistory[PREDICTION_HISTORY];
+static int g_predictionHead = 0, g_predictionCount = 0;
+static u32 g_predictionStateSerial = 0;
+static Player g_remoteVisual[MAX_PLAYERS];
+static PlayerId g_remoteVisualId[MAX_PLAYERS];
+static u16 g_remoteVisualGeneration[MAX_PLAYERS];
+static bool g_remoteVisualValid[MAX_PLAYERS];
+
+static void predictionClear() {
+    g_predictionHead = g_predictionCount = 0;
+    g_predictionStateSerial = netStateSerial();
+}
+
+static void predictionRemember(const PlayerCommand& command) {
+    if (g_predictionCount == PREDICTION_HISTORY) {
+        g_predictionHead = (g_predictionHead + 1) % PREDICTION_HISTORY;
+        --g_predictionCount;
+    }
+    const int tail = (g_predictionHead + g_predictionCount) % PREDICTION_HISTORY;
+    g_predictionHistory[tail] = command;
+    ++g_predictionCount;
+}
+
+static bool sequenceAtOrBefore(u32 sequence, u32 acknowledged) {
+    return (i32)(sequence - acknowledged) <= 0;
+}
+
+static void predictionReconcile() {
+    const u32 serial = netStateSerial();
+    if (serial == g_predictionStateSerial) return;
+    g_predictionStateSerial = serial;
+    const u32 acknowledged = netAcknowledgedCommand();
+    while (g_predictionCount > 0 &&
+           sequenceAtOrBefore(g_predictionHistory[g_predictionHead].sequence, acknowledged)) {
+        g_predictionHead = (g_predictionHead + 1) % PREDICTION_HISTORY;
+        --g_predictionCount;
+    }
+    const PlayerSession& local = g_playerSessions[0];
+    for (int n = 0; n < g_predictionCount; ++n) {
+        const PlayerCommand& command =
+            g_predictionHistory[(g_predictionHead + n) % PREDICTION_HISTORY];
+        if (command.player == local.networkId && command.generation == local.generation)
+            predictClientPlayer(command);
+    }
+}
+
+static void remoteVisualTick() {
+    for (int slot = 1; slot < MAX_PLAYERS; ++slot) {
+        const PlayerSession& session = g_playerSessions[slot];
+        if (netRole() != NET_CLIENT || !session.connected) {
+            g_remoteVisualValid[slot] = false;
+            continue;
+        }
+        const Player& target = session.body;
+        const bool sameLife = g_remoteVisualValid[slot] &&
+            g_remoteVisualId[slot] == session.networkId &&
+            g_remoteVisualGeneration[slot] == session.generation &&
+            g_remoteVisual[slot].alive == target.alive;
+        const float dx = sameLife ? target.x - g_remoteVisual[slot].x : 9999.0f;
+        const float dy = sameLife ? target.y - g_remoteVisual[slot].y : 9999.0f;
+        if (!sameLife || dx * dx + dy * dy > 64.0f * 64.0f) {
+            g_remoteVisual[slot] = target;
+        } else {
+            const float x = g_remoteVisual[slot].x + dx * 0.55f;
+            const float y = g_remoteVisual[slot].y + dy * 0.55f;
+            g_remoteVisual[slot] = target;
+            g_remoteVisual[slot].x = x; g_remoteVisual[slot].y = y;
+        }
+        g_remoteVisualId[slot] = session.networkId;
+        g_remoteVisualGeneration[slot] = session.generation;
+        g_remoteVisualValid[slot] = true;
+    }
 }
 
 static PlayerCommand g_remoteInput;
@@ -2300,6 +2441,8 @@ static void applyPlayerUses(PlayerSession& session, const PlayerCommand& command
     const bool left = (bits & PCMD_USE_LEFT) != 0;
     bool right = (bits & PCMD_USE_RIGHT) != 0;
     const Aim aim = commandAimFor(session, command);
+    if (left || right || (pressed & PCMD_INTERACT) || command.lineCommit)
+        netMarkWorldEdit(aim.x, aim.y, imax(4, (int)command.brushRadius + 3));
 
     /* Mouse down and up can both arrive between two 60 Hz samples. Carrying a
        discrete commit with its anchor means a quick line is still a line,
@@ -2695,6 +2838,18 @@ static void applyPlayerAction(const NetAction& action) {
             if (stack.empty() || (stack.item == session.cursor.item && !stack.inst && !session.cursor.inst))
                 slotClickFor(session.cursor, stack, false);
         }
+    } else if (action.type == NACT_CREATIVE_ITEM && action.a < ITEM_COUNT) {
+        const ItemId item = (ItemId)action.a;
+        if (action.flags & 1) {
+            session.inventory.take(item, 100000);
+        } else if (session.cursor.item == item && !session.cursor.inst) {
+            session.cursor.count = ITEMS[item].maxStack;
+        } else {
+            if (session.cursor.inst) toolInstFree(session.cursor.inst);
+            session.cursor.item = item;
+            session.cursor.count = ITEMS[item].maxStack;
+            session.cursor.inst = ITEMS[item].kind == ITEMK_TOOL ? toolInstNew() : 0;
+        }
     }
 }
 
@@ -2702,7 +2857,9 @@ static void processPlayerActions() {
     NetAction action;
     int budget = 128;
     while (budget > 0 && popLocalAction(&action)) { applyPlayerAction(action); --budget; }
-    while (budget > 0 && netPopRemoteAction(&action)) { applyPlayerAction(action); --budget; }
+    while (budget > 0 && netPopRemoteAction(&action)) {
+        applyPlayerAction(action); netMarkRemoteActionApplied(action.sequence); --budget;
+    }
 }
 
 static void refreshHostLogisticsPause() {
@@ -2749,6 +2906,7 @@ static void updateRemotePlayerFromCommand(bool allowMovement) {
     const int slot = playerSessionSlotForNetworkId(g_remoteInput.player);
     if (slot < 1 || slot >= MAX_PLAYERS) return;
     updatePlayerFromCommand(slot, g_playerSessions[slot], g_remoteInput, allowMovement);
+    netMarkRemoteCommandApplied(g_remoteInput.sequence);
 }
 
 /* Wiring is normally aiming for an existing terminal or wire, not the empty
@@ -4928,9 +5086,13 @@ static void clientInputTick() {
     netPoll(g_world);
     const bool authoritative = netRole() != NET_CLIENT;
     if (netRole() == NET_CLIENT && netClientReady()) {
+        predictionReconcile();
+        actionPredictionReconcile();
         const PlayerCommand command = localPlayerCommand();
-        netSendCommand(command);
-        predictClientPlayer(command);
+        if (netSendCommand(command)) {
+            predictionRemember(command);
+            predictClientPlayer(command, true);
+        }
         g_interactPulse = false;
         g_respawnPulse = false;
         g_lineCommitPulse = false;
@@ -4940,6 +5102,8 @@ static void clientInputTick() {
         g_respawnPulse = false;
         g_lineCommitPulse = false;
     } else if (netRole() == NET_CLIENT) {
+        predictionClear();
+        actionPredictionClear();
         /* Do not replay a click made on the loading screen after READY. Held
            movement/buttons are sampled fresh; only one-frame verbs need
            explicit disposal here. */
@@ -4992,7 +5156,39 @@ static void publishServerRegions() {
 }
 
 static void serverTick(const LARGE_INTEGER& perfFrequency) {
-    if (netRole() == NET_CLIENT) { g_simMs = 0.0; return; }
+    if (netRole() == NET_CLIENT) {
+        if (!netReady()) { g_simMs = 0.0; return; }
+        /* A joined game is still host-authoritative, but an inert replica can
+           only display falling sand, fluids, machines, enemies and shots when
+           their next packet arrives. Advance the replicated state locally for
+           immediate presentation; state/chunk packets remain corrections and
+           are the only data ever accepted by the host. The authoritative RNG
+           seed in each state keeps ordinary stretches close, while generic
+           chunk repair handles unavoidable divergence from unseen host input. */
+        for (int i = 1; i < MAX_TOOL_INST; ++i)
+            if (g_toolInst[i].used && g_toolInst[i].cooldown > 0) --g_toolInst[i].cooldown;
+        publishServerRegions();
+        LARGE_INTEGER begin, end; QueryPerformanceCounter(&begin);
+        g_world.step();
+        projUpdate(g_world);
+        roomsTick(g_world);
+        devTick(g_world);
+        treesTick(g_world);
+        dayAdvance();
+        if (g_playerOn) {
+            entTickPlayers(g_world);
+            for (int slot = 0; slot < MAX_PLAYERS; ++slot) {
+                PlayerSession& session = g_playerSessions[slot];
+                if (!session.connected || !session.body.alive) continue;
+                accessoryTickFor(slot, session.body, session.inventory);
+                droneTickFor(slot, g_world, session.body, session.inventory);
+            }
+        }
+        QueryPerformanceCounter(&end);
+        g_simMs = 1000.0 * (double)(end.QuadPart - begin.QuadPart) /
+                  (double)perfFrequency.QuadPart;
+        return;
+    }
     const bool onlineHost = netRole() == NET_HOST;
     const bool menuPausesWorld = g_menuOpen && !onlineHost;
     const bool uiPausesActors = !onlineHost &&
@@ -5077,6 +5273,7 @@ static void clientCameraTick() {
         if ((GetAsyncKeyState('S') & 0x8000) || (GetAsyncKeyState(VK_DOWN)  & 0x8000)) dy += pan;
         if (dx != 0.0f || dy != 0.0f) panCamera(dx, dy);
     }
+    remoteVisualTick();
     updateCamera(false);
 }
 
@@ -5107,7 +5304,9 @@ static void clientRender(HWND hwnd) {
     }
     for (int slot = 1; slot < MAX_PLAYERS; ++slot)
         if (g_playerSessions[slot].connected)
-            g_playerSessions[slot].body.draw(g_pixels, g_camX, g_camY, g_lightOn);
+            (netRole() == NET_CLIENT && g_remoteVisualValid[slot]
+                ? g_remoteVisual[slot] : g_playerSessions[slot].body)
+                .draw(g_pixels, g_camX, g_camY, g_lightOn);
     /* Before sparks and shots so that something being hit is drawn UNDER
        the projectile hitting it, and after the player so a creature in
        front of you cannot hide the character you are steering. */
@@ -5234,11 +5433,12 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR commandLine, int) {
 
     const char* joinSwitch = commandLine ? strstr(commandLine, "--join ") : 0;
     const bool emptyTestHost = commandLine && strstr(commandLine, "--host-empty");
+    const bool savedTestHost = commandLine && strstr(commandLine, "--host-save");
     /* A joining process is about to replace every world cell with the host's
        compressed snapshot. Generating a full throwaway world first made a CLI
        join look hung for more than a minute and doubled startup CPU/memory.
        Normal/menu launches still build their local world exactly as before. */
-    if (!joinSwitch && !emptyTestHost) {
+    if (!joinSwitch && !emptyTestHost && !savedTestHost) {
         /* Start near the top middle. The world is four screens wide and eight
            deep, so the old middle-of-world spawn was several screens underground. */
         makeWorld();
@@ -5247,6 +5447,19 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR commandLine, int) {
         g_player.reset(sx, sy);
     } else {
         g_player.reset(emptyTestHost ? 400.0f : 0.0f, emptyTestHost ? 400.0f : 0.0f);
+        if (emptyTestHost) {
+            for (int y = 430; y < 438; ++y)
+                for (int x = 280; x <= 520; ++x) g_world.setCell(x, y, MAT_STONE);
+            g_inv.clear();
+            g_inv.add((ItemId)MAT_STONE, 200);
+            g_inv.add((ItemId)MAT_SAND, 200);
+            g_inv.add((ItemId)MAT_WATER, 200);
+            g_inv.add(ITEM_TORCH_DEV, 40);
+        }
+        if (savedTestHost && !saveRead("build\\crucible.sav", g_world)) {
+            makeWorld();
+            float sx, sy; worldSpawnPoint(&sx, &sy); g_player.reset(sx, sy);
+        }
     }
     /* Useful both for repeatable two-process testing and for a host that wants
        a shortcut. The menu remains the normal player-facing route. */
@@ -5276,7 +5489,9 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR commandLine, int) {
     RECT r = { 0, 0, WIN_W, WIN_H };
     AdjustWindowRect(&r, style, FALSE);
 
-    HWND hwnd = CreateWindowA("CrucibleWnd", "Crucible", style,
+    const char* windowTitle = (savedTestHost || emptyTestHost) ? "Crucible - LOCAL HOST" :
+                              joinSwitch ? "Crucible - LOCAL CLIENT" : "Crucible";
+    HWND hwnd = CreateWindowA("CrucibleWnd", windowTitle, style,
                               CW_USEDEFAULT, CW_USEDEFAULT,
                               r.right - r.left, r.bottom - r.top,
                               NULL, NULL, hInst, NULL);

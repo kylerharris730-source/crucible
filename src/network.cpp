@@ -25,8 +25,8 @@
 #endif
 
 static const u32 NET_MAGIC = 0x54454E43u; /* CNET on little endian */
-static const u32 NET_PROTOCOL = 7;
-static const u32 NET_STATE_SCHEMA = 6;
+static const u32 NET_PROTOCOL = 11;
+static const u32 NET_STATE_SCHEMA = 9;
 static const u32 NET_MAX_PACKET = 256u * 1024u * 1024u;
 
 enum PacketType {
@@ -87,8 +87,22 @@ static std::vector<u8> g_recv, g_send;
 static size_t g_sendAt = 0;
 static PlayerCommand g_remoteCommand;
 static bool g_haveRemoteCommand = false;
+static u32 g_appliedRemoteCommand = 0;
+static u32 g_acknowledgedCommand = 0;
+static u32 g_appliedRemoteAction = 0;
+static u32 g_acknowledgedAction = 0;
+static u32 g_stateSerial = 0;
 static std::deque<NetAction> g_remoteActions;
 static u32 g_chunkHash[CHUNK_COUNT];
+/* Hash of the last AUTHORITATIVE contents received for each client chunk.
+   Client-side world prediction is allowed to change g_world between packets;
+   reporting that speculative hash would make the host continuously undo it. */
+static u32 g_clientAuthorityHash[CHUNK_COUNT];
+/* Highest unacknowledged local world-edit command touching each chunk. A
+   chunk packet captured before that command must not erase its prediction. */
+static u32 g_clientPredictedChunkCommand[CHUNK_COUNT];
+static bool g_urgentChunk[CHUNK_COUNT];
+static int g_urgentChunkCursor = 0;
 static int g_netFrame = 0;
 
 static void packBytes(Writer& out, const u8* src, size_t n);
@@ -120,6 +134,14 @@ static bool nonblocking(SOCKET s) {
     return ioctlsocket(s, FIONBIO, &one) != SOCKET_ERROR;
 }
 
+static void preferLowLatency(SOCKET s) {
+    /* Commands are one tiny packet per frame. Nagle plus delayed ACKs can turn
+       that pattern into visible bursts even on a zero-loss LAN, so do not wait
+       to coalesce them behind a previous small command. */
+    BOOL one = TRUE;
+    setsockopt(s, IPPROTO_TCP, TCP_NODELAY, (const char*)&one, sizeof(one));
+}
+
 static void closeSocket(SOCKET& s) {
     if (s != INVALID_SOCKET) { closesocket(s); s = INVALID_SOCKET; }
 }
@@ -132,6 +154,11 @@ static void disconnectPeer(const char* reason) {
     g_assigned = PLAYER_NONE; g_ready = g_handshake = g_connecting = false;
     g_recv.clear(); g_send.clear(); g_sendAt = 0;
     g_haveRemoteCommand = false; g_remoteActions.clear();
+    g_appliedRemoteCommand = g_acknowledgedCommand = 0;
+    g_appliedRemoteAction = g_acknowledgedAction = 0; g_stateSerial = 0;
+    memset(g_clientAuthorityHash, 0, sizeof(g_clientAuthorityHash));
+    memset(g_clientPredictedChunkCommand, 0, sizeof(g_clientPredictedChunkCommand));
+    memset(g_urgentChunk, 0, sizeof(g_urgentChunk));
     if (g_role == NET_HOST) statusf("Player left -- waiting for player");
     else statusf(reason ? reason : "Disconnected from host");
 }
@@ -143,6 +170,11 @@ void netStop() {
     g_connecting = g_handshake = g_ready = false;
     g_assigned = PLAYER_NONE; g_haveRemoteCommand = false;
     g_remoteActions.clear();
+    g_appliedRemoteCommand = g_acknowledgedCommand = 0;
+    g_appliedRemoteAction = g_acknowledgedAction = 0; g_stateSerial = 0;
+    memset(g_clientAuthorityHash, 0, sizeof(g_clientAuthorityHash));
+    memset(g_clientPredictedChunkCommand, 0, sizeof(g_clientPredictedChunkCommand));
+    memset(g_urgentChunk, 0, sizeof(g_urgentChunk));
     if (g_role == NET_HOST)
         for (int i = 1; i < MAX_PLAYERS; ++i) {
             playerSessionClose((PlayerId)i);
@@ -176,6 +208,7 @@ bool netJoin(const char* ipv4, u16 port) {
     if (!nonblocking(g_peer)) {
         closeSocket(g_peer); statusf("Could not configure client socket"); return false;
     }
+    preferLowLatency(g_peer);
     sockaddr_in a; memset(&a, 0, sizeof(a)); a.sin_family = AF_INET;
     a.sin_addr.s_addr = inet_addr(ipv4); a.sin_port = htons(port);
     if (a.sin_addr.s_addr == INADDR_NONE) { closeSocket(g_peer); statusf("Enter a numeric IPv4 address"); return false; }
@@ -243,6 +276,8 @@ static void sendSnapshot(World& world) {
 static void sendState() {
     Writer w;
     w.u32v(NET_STATE_SCHEMA);
+    w.u32v(g_appliedRemoteCommand);
+    w.u32v(g_appliedRemoteAction);
     w.u32v((u32)sizeof(Player)); w.u32v((u32)sizeof(Inventory));
     w.u32v((u32)sizeof(Entity)); w.u32v((u32)sizeof(Pickup));
     w.u32v((u32)sizeof(Projectile)); w.u32v((u32)sizeof(Device));
@@ -267,7 +302,7 @@ static void sendState() {
     w.bytes(g_rooms, sizeof(g_rooms)); w.bytes(g_trees, sizeof(g_trees));
     const int torchN = torchCount(); w.u32v((u32)torchN);
     if (torchN > 0) w.bytes(torchData(), sizeof(TorchFixture) * (size_t)torchN);
-    w.u32v(g_worldTime); w.u32v(g_bossesBeaten);
+    w.u32v(g_worldTime); w.u32v(g_bossesBeaten); w.u32v(g_rng);
     Writer packed;
     packBytes(packed, w.b.empty() ? 0 : &w.b[0], w.b.size());
     queuePacket(PK_STATE, packed.b);
@@ -299,7 +334,10 @@ static void packBytes(Writer& out, const u8* src, size_t n) {
             while (i < n && i - start < 128) {
                 size_t next = 1;
                 while (i + next < n && next < 3 && src[i + next] == src[i]) ++next;
-                if (next >= 3) break;
+                /* Do not let a two-byte run straddle the 128-byte literal
+                   limit. Encoding length 129 truncates to 0x80, whose high bit
+                   tells the decoder this is a repeat block instead. */
+                if (next >= 3 || i + next - start > 128) break;
                 i += next;
             }
             const size_t len = i - start;
@@ -342,7 +380,7 @@ static void packPlane(Writer& out, const u8* src, int n) {
             while (i < n && i - start < 128) {
                 int next = 1;
                 while (i + next < n && next < 3 && src[i + next] == src[i]) ++next;
-                if (next >= 3) break;
+                if (next >= 3 || i + next - start > 128) break;
                 i += next;
             }
             const int len = i - start;
@@ -374,13 +412,21 @@ static bool unpackPlane(Reader& in, u8* dst, int n) {
 static void sendChunk(const World& world, int cx, int cy) {
     static u8 plane[CHUNK * CHUNK];
     Writer w; w.u16v((u16)cx); w.u16v((u16)cy);
+    /* This is the newest remote input represented by the snapshot. The client
+       uses it to distinguish a correction from a packet that was already old
+       when its locally predicted placement happened. */
+    w.u32v(g_appliedRemoteCommand);
     const int x0 = cx << CHUNK_SHIFT, y0 = cy << CHUNK_SHIFT;
-    for (int field = 0; field < 5; ++field) {
+    for (int field = 0; field < 6; ++field) {
         int p = 0;
         for (int y = y0; y < y0 + CHUNK; ++y) for (int x = x0; x < x0 + CHUNK; ++x) {
             const int i = y * SIM_W + x; const Cell& c = world.cells[i];
             plane[p++] = field == 0 ? c.mat : field == 1 ? c.moisture : field == 2 ? c.tint
-                       : field == 3 ? world.temp[i] : world.bg[i];
+                       : field == 3 ? world.temp[i] : field == 4 ? world.bg[i]
+                       /* Bit zero is durable flow/fall state. Bits 1..7 are a
+                          host-local frame stamp and are neither useful nor
+                          compressible on another simulation. */
+                       : (u8)(c.flags & F_DIR);
         }
         packPlane(w, plane, CHUNK * CHUNK);
     }
@@ -404,6 +450,9 @@ static void sendChangedChunks(const World& world) {
        state keeps its low latency. */
     const int budget = imin(48, total);
     for (int n = 0; n < budget; ++n) {
+        /* A dirty/random chunk can be much larger than its settled equivalent.
+           Bound the batch itself, not merely the queue before entering here. */
+        if (g_send.size() - g_sendAt >= 1024u * 1024u) break;
         const int at = (scanCursor + n) % total;
         const int cx = cx0 + at % width, cy = cy0 + at / width;
         const int ci = cy * CHUNKS_X + cx; const u32 h = hashChunk(world, cx, cy);
@@ -435,14 +484,34 @@ static void sendClientChunkHashes(const World& world) {
     for (int n = 0; n < count; ++n) {
         const int at = (cursor + n) % total;
         const int cx = cx0 + at % width, cy = cy0 + at / width;
-        w.u16v((u16)cx); w.u16v((u16)cy); w.u32v(hashChunk(world, cx, cy));
+        const int ci = cy * CHUNKS_X + cx;
+        if (!g_clientAuthorityHash[ci])
+            g_clientAuthorityHash[ci] = hashChunk(world, cx, cy);
+        w.u16v((u16)cx); w.u16v((u16)cy); w.u32v(g_clientAuthorityHash[ci]);
     }
     cursor = (cursor + count) % total;
     queuePacket(PK_CHUNK_HASHES, w.b);
 }
 
+static void rememberClientInterestHashes(const World& world) {
+    if (!g_playerSessions[0].connected) return;
+    const Player& p = g_playerSessions[0].body;
+    const int cx0 = imax(0, ((int)p.centreX() - 512) >> CHUNK_SHIFT);
+    const int cx1 = imin(CHUNKS_X - 1, ((int)p.centreX() + 512) >> CHUNK_SHIFT);
+    const int cy0 = imax(0, ((int)p.centreY() - 448) >> CHUNK_SHIFT);
+    const int cy1 = imin(CHUNKS_Y - 1, ((int)p.centreY() + 448) >> CHUNK_SHIFT);
+    for (int cy = cy0; cy <= cy1; ++cy)
+        for (int cx = cx0; cx <= cx1; ++cx)
+            g_clientAuthorityHash[cy * CHUNKS_X + cx] = hashChunk(world, cx, cy);
+}
+
 static void applyState(Reader& r) {
+    const PlayerSession predictedLocal = g_playerSessions[0];
+    const bool hadPredictedLocal = g_role == NET_CLIENT && predictedLocal.connected &&
+                                   predictedLocal.networkId == g_assigned;
     const u32 schema = r.u32v();
+    const u32 acknowledgedCommand = r.u32v();
+    const u32 acknowledgedAction = r.u32v();
     const u32 playerSize = r.u32v(), invSize = r.u32v(), entitySize = r.u32v();
     const u32 pickupSize = r.u32v(), projSize = r.u32v(), deviceSize = r.u32v();
     const u32 droneSize = r.u32v();
@@ -463,6 +532,28 @@ static void applyState(Reader& r) {
         s.restBed = r.i32v(); s.openDevice = r.i32v();
         r.bytes(s.drones, sizeof(s.drones));
         s.connected = true; s.local = slot == 0; s.networkId = wire; s.generation = generation;
+        if (slot == 0 && hadPredictedLocal && predictedLocal.generation == generation) {
+            /* These fields are the client's in-progress interpretation of held
+               input, not durable results. Resetting them every state packet
+               broke drag strokes into disconnected bursts and restarted dig
+               cooldowns. Keep them across an ordinary correction. */
+            s.previousAimX = predictedLocal.previousAimX;
+            s.previousAimY = predictedLocal.previousAimY;
+            s.digCooldown = predictedLocal.digCooldown;
+            s.wireX = predictedLocal.wireX; s.wireY = predictedLocal.wireY;
+            s.circuitWireFrom = predictedLocal.circuitWireFrom;
+            s.circuitWirePort = predictedLocal.circuitWirePort;
+            s.suppressRightUse = predictedLocal.suppressRightUse;
+            s.lineActive = predictedLocal.lineActive;
+            s.lineBits = predictedLocal.lineBits; s.lineSelected = predictedLocal.lineSelected;
+            s.lineRadius = predictedLocal.lineRadius; s.lineBrush = predictedLocal.lineBrush;
+            s.lineBackground = predictedLocal.lineBackground;
+            s.lineOverwrite = predictedLocal.lineOverwrite;
+            s.lineFilterOn = predictedLocal.lineFilterOn;
+            memcpy(s.lineFilter, predictedLocal.lineFilter, sizeof(s.lineFilter));
+            s.previousCommandBits = predictedLocal.previousCommandBits;
+            s.garlicCooldown = predictedLocal.garlicCooldown;
+        }
     }
     r.bytes(g_toolInst, sizeof(g_toolInst));
     r.bytes(g_entities, sizeof(g_entities)); r.bytes(g_pickups, sizeof(g_pickups));
@@ -479,20 +570,43 @@ static void applyState(Reader& r) {
         if (torchN) r.bytes(&fixtures[0], sizeof(TorchFixture) * (size_t)torchN);
         if (r.ok) torchLoad(fixtures.empty() ? 0 : &fixtures[0], (int)fixtures.size());
     }
-    g_worldTime = r.u32v() % DAY_LENGTH; g_bossesBeaten = r.u32v();
+    g_worldTime = r.u32v() % DAY_LENGTH; g_bossesBeaten = r.u32v(); g_rng = r.u32v();
+    if (r.ok) {
+        g_acknowledgedCommand = acknowledgedCommand;
+        g_acknowledgedAction = acknowledgedAction;
+    }
 }
 
 static void applyChunk(World& world, Reader& r) {
     const int cx = r.u16v(), cy = r.u16v();
+    const u32 representedCommand = r.u32v();
     if (cx < 0 || cx >= CHUNKS_X || cy < 0 || cy >= CHUNKS_Y) { r.ok = false; return; }
-    static u8 plane[5][CHUNK * CHUNK];
-    for (int field = 0; field < 5; ++field) if (!unpackPlane(r, plane[field], CHUNK * CHUNK)) return;
+    static u8 plane[6][CHUNK * CHUNK];
+    for (int field = 0; field < 6; ++field) if (!unpackPlane(r, plane[field], CHUNK * CHUNK)) return;
+    const int ci = cy * CHUNKS_X + cx;
+    const u32 predictedCommand = g_clientPredictedChunkCommand[ci];
+    if (predictedCommand && (i32)(representedCommand - predictedCommand) < 0) {
+        /* A regular scan may already have queued this pre-edit image when the
+           client predicts a placement. Applying it produces the exact
+           spawn-freeze-jump sequence this guard prevents. */
+        return;
+    }
     const int x0 = cx << CHUNK_SHIFT, y0 = cy << CHUNK_SHIFT; int p = 0;
+    /* Make every replaced cell eligible on the client's next step. Copying a
+       host frame stamp could alias the client's current stamp and skip it. */
+    const u8 eligibleStamp = (u8)(((world.stamp() - 1u) & STAMP_MASK) << STAMP_SHIFT);
     for (int y = y0; y < y0 + CHUNK; ++y) for (int x = x0; x < x0 + CHUNK; ++x, ++p) {
         const int i = y * SIM_W + x; Cell& c = world.cells[i];
-        c.mat = plane[0][p]; c.moisture = plane[1][p]; c.tint = plane[2][p]; c.flags = 0;
+        c.mat = plane[0][p]; c.moisture = plane[1][p]; c.tint = plane[2][p];
+        c.flags = (u8)(eligibleStamp | (plane[5][p] & F_DIR));
         world.temp[i] = plane[3][p]; world.bg[i] = plane[4][p];
     }
+    g_clientPredictedChunkCommand[ci] = 0;
+    g_clientAuthorityHash[ci] = hashChunk(world, cx, cy);
+    /* Direct array replacement bypasses World::setCell, so it must explicitly
+       wake the corrected chunk. Otherwise falling powders/liquids are loaded
+       into a sleeping dirty rectangle and remain frozen until another packet. */
+    world.dirtyArea(x0, y0, x0 + CHUNK - 1, y0 + CHUNK - 1);
 }
 
 static void handlePacket(u8 type, const u8* data, size_t len, World& world) {
@@ -535,6 +649,8 @@ static void handlePacket(u8 type, const u8* data, size_t len, World& world) {
         if (!writeWholeFile(path, data, len) || !saveRead(path, world)) {
             remove(path); statusf("Could not load host world snapshot"); return;
         }
+        memset(g_clientAuthorityHash, 0, sizeof(g_clientAuthorityHash));
+        memset(g_clientPredictedChunkCommand, 0, sizeof(g_clientPredictedChunkCommand));
         remove(path); Writer ready; queuePacket(PK_READY, ready.b);
         lightInvalidate(); statusf("World received -- syncing players");
     } else if (type == PK_READY && g_role == NET_HOST) {
@@ -563,7 +679,10 @@ static void handlePacket(u8 type, const u8* data, size_t len, World& world) {
             applyState(state);
             if (!state.ok || state.at != state.n) r.ok = false;
         }
-        if (r.ok) { g_ready = true; statusf("Joined host"); }
+        if (r.ok) {
+            if (!g_ready) rememberClientInterestHashes(world);
+            ++g_stateSerial; g_ready = true; statusf("Joined host");
+        }
     } else if (type == PK_CHUNK && g_role == NET_CLIENT) {
         applyChunk(world, r); if (r.ok) lightInvalidate();
     } else if (type == PK_ACTION && g_role == NET_HOST) {
@@ -592,22 +711,29 @@ static void handlePacket(u8 type, const u8* data, size_t len, World& world) {
             const int ci = cy * CHUNKS_X + cx;
             const u32 authorityHash = hashChunk(world, cx, cy);
             g_chunkHash[ci] = authorityHash;
-            if (clientHash != authorityHash && g_send.size() - g_sendAt < 8u * 1024u * 1024u)
+            if (clientHash != authorityHash && g_send.size() - g_sendAt < 1024u * 1024u)
                 sendChunk(world, cx, cy);
         }
     }
-    if (!r.ok) statusf("Malformed network packet");
+    if (!r.ok) {
+        sprintf(g_status, "Malformed packet %u at %u/%u", (unsigned)type,
+                (unsigned)r.at, (unsigned)r.n);
+    }
 }
 
 static void pumpReceive(World& world) {
     u8 temp[64 * 1024];
-    const int n = recv(g_peer, (char*)temp, sizeof(temp), 0);
-    if (n > 0) g_recv.insert(g_recv.end(), temp, temp + n);
-    else if (n == 0) { disconnectPeer("Host disconnected"); return; }
-    else {
+    size_t received = 0;
+    /* A single recv per rendered frame imposed an artificial 3.75 MiB/s cap.
+       Snapshot traffic could therefore take seconds to drain on a perfectly
+       healthy LAN. Drain a bounded batch while the nonblocking socket has it. */
+    while (received < 512u * 1024u) {
+        const int n = recv(g_peer, (char*)temp, sizeof(temp), 0);
+        if (n > 0) { g_recv.insert(g_recv.end(), temp, temp + n); received += (size_t)n; continue; }
+        if (n == 0) { disconnectPeer("Host disconnected"); return; }
         const int e = WSAGetLastError();
         if (e != WSAEWOULDBLOCK) disconnectPeer("Network receive failed");
-        return;
+        break;
     }
     size_t used = 0;
     while (g_recv.size() - used >= 5) {
@@ -621,14 +747,16 @@ static void pumpReceive(World& world) {
 }
 
 static void pumpSend() {
-    if (g_peer != INVALID_SOCKET && g_sendAt < g_send.size()) {
+    size_t sent = 0;
+    while (g_peer != INVALID_SOCKET && g_sendAt < g_send.size() && sent < 512u * 1024u) {
         const size_t left = g_send.size() - g_sendAt;
         const int ask = (int)(left > 64 * 1024 ? 64 * 1024 : left);
         const int n = send(g_peer, (const char*)&g_send[g_sendAt], ask, 0);
-        if (n > 0) g_sendAt += n;
+        if (n > 0) { g_sendAt += n; sent += (size_t)n; }
         else {
             const int e = WSAGetLastError();
             if (e != WSAEWOULDBLOCK) disconnectPeer("Network send failed");
+            break;
         }
     }
     if (g_sendAt == g_send.size()) { g_send.clear(); g_sendAt = 0; }
@@ -641,6 +769,7 @@ void netPoll(World& world) {
             if (!nonblocking(s)) {
                 closesocket(s); statusf("Could not configure joined socket"); return;
             }
+            preferLowLatency(s);
             g_peer = s; g_recv.clear(); g_send.clear(); g_sendAt = 0;
             statusf("Player connected -- waiting for handshake");
         }
@@ -679,18 +808,56 @@ void netPoll(World& world) {
 void netHostFrame(World& world) {
     if (g_role != NET_HOST || !g_ready || g_peer == INVALID_SOCKET) return;
     ++g_netFrame;
-    if (g_netFrame % 2 == 0 && g_send.size() - g_sendAt < 4u * 1024u * 1024u) sendState();
-    if (g_netFrame % 4 == 0 && g_send.size() - g_sendAt < 8u * 1024u * 1024u) sendChangedChunks(world);
+    int urgentBudget = 8;
+    for (int n = 0; n < CHUNK_COUNT && urgentBudget > 0; ++n) {
+        const int ci = (g_urgentChunkCursor + n) % CHUNK_COUNT;
+        if (!g_urgentChunk[ci]) continue;
+        if (g_send.size() - g_sendAt >= 1024u * 1024u) break;
+        g_urgentChunk[ci] = false;
+        const int cx = ci % CHUNKS_X, cy = ci / CHUNKS_X;
+        g_chunkHash[ci] = hashChunk(world, cx, cy);
+        sendChunk(world, cx, cy); --urgentBudget;
+        g_urgentChunkCursor = (ci + 1) % CHUNK_COUNT;
+    }
+    /* Never manufacture seconds of stale authoritative state. One state may
+       exceed this threshold; subsequent ones wait until that packet drains. */
+    if (g_netFrame % 6 == 0 && g_send.size() - g_sendAt < 256u * 1024u) sendState();
+    if (g_netFrame % 12 == 0 && g_send.size() - g_sendAt < 1024u * 1024u) sendChangedChunks(world);
     /* TCP prevents packet loss, but a periodic forced refresh also repairs a
        client-side bad write or future decoder bug without rejoining. Spread by
        the scan budget, so this is not a one-frame bandwidth spike. */
     if (g_netFrame % 3600 == 0) memset(g_chunkHash, 0, sizeof(g_chunkHash));
 }
 
+void netMarkWorldEdit(int x, int y, int radius) {
+    if (g_role != NET_HOST || !g_ready) return;
+    const int x0 = imax(0, x - radius), x1 = imin(SIM_W - 1, x + radius);
+    const int y0 = imax(0, y - radius), y1 = imin(SIM_H - 1, y + radius);
+    for (int cy = y0 >> CHUNK_SHIFT; cy <= (y1 >> CHUNK_SHIFT); ++cy)
+        for (int cx = x0 >> CHUNK_SHIFT; cx <= (x1 >> CHUNK_SHIFT); ++cx)
+            g_urgentChunk[cy * CHUNKS_X + cx] = true;
+}
+
+void netMarkPredictedWorldEdit(int x0, int y0, int x1, int y1, int radius,
+                               u32 commandSequence) {
+    if (g_role != NET_CLIENT || !g_ready || !commandSequence) return;
+    if (x0 > x1) { const int t = x0; x0 = x1; x1 = t; }
+    if (y0 > y1) { const int t = y0; y0 = y1; y1 = t; }
+    x0 = imax(0, x0 - radius); x1 = imin(SIM_W - 1, x1 + radius);
+    y0 = imax(0, y0 - radius); y1 = imin(SIM_H - 1, y1 + radius);
+    for (int cy = y0 >> CHUNK_SHIFT; cy <= (y1 >> CHUNK_SHIFT); ++cy)
+        for (int cx = x0 >> CHUNK_SHIFT; cx <= (x1 >> CHUNK_SHIFT); ++cx) {
+            u32& protectedThrough = g_clientPredictedChunkCommand[cy * CHUNKS_X + cx];
+            if (!protectedThrough || (i32)(commandSequence - protectedThrough) > 0)
+                protectedThrough = commandSequence;
+        }
+}
+
 void netClientFrame(World& world) {
-    /* Sixteen tiny hashes per frame cover a normal view-plus-margin in roughly
-       one second and cost only a few kilobytes per second on the LAN. */
-    sendClientChunkHashes(world);
+    /* Prediction fills the interval between corrections. Hash reports are a
+       repair audit, not a request to replace live chunks every rendered frame. */
+    static int reportFrame = 0;
+    if (++reportFrame % 15 == 0) sendClientChunkHashes(world);
 }
 
 bool netSendCommand(const PlayerCommand& c) {
@@ -710,6 +877,19 @@ bool netPopRemoteCommand(PlayerCommand* command) {
     if (!g_haveRemoteCommand || !command) return false;
     *command = g_remoteCommand; g_haveRemoteCommand = false; return true;
 }
+
+void netMarkRemoteCommandApplied(u32 sequence) {
+    if (g_role == NET_HOST && sequence > g_appliedRemoteCommand)
+        g_appliedRemoteCommand = sequence;
+}
+
+u32 netAcknowledgedCommand() { return g_acknowledgedCommand; }
+void netMarkRemoteActionApplied(u32 sequence) {
+    if (g_role == NET_HOST && sequence > g_appliedRemoteAction)
+        g_appliedRemoteAction = sequence;
+}
+u32 netAcknowledgedAction() { return g_acknowledgedAction; }
+u32 netStateSerial() { return g_stateSerial; }
 
 bool netSendAction(const NetAction& a) {
     if (g_role != NET_CLIENT || !g_ready || g_peer == INVALID_SOCKET) return false;
