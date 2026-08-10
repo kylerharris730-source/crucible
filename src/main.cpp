@@ -698,6 +698,11 @@ static int cellPixels() { return SCALE * zoomFactor(); }
 
 /* stats */
 static double g_fps = 0.0, g_simMs = 0.0;
+/* Whole-frame work, excluding the 60 Hz pacing sleep. g_simMs covers only
+   world.step() and projUpdate, so it cannot show what input handling, player
+   authority, UI and rendering cost -- which at 60 fps is exactly where
+   headroom disappears without the frame rate moving at all. */
+static double g_frameMs = 0.0;
 static int    g_cellCount = 0;
 
 /* Where the tool acts versus where the mouse is; see currentAim() below for
@@ -5046,7 +5051,8 @@ static void drawPanel(HDC hdc) {
             drawText(hdc, 10, sy, RGB(110, 116, 126), "-");
         }
     }
-    sprintf(s, "%.0f fps", g_fps);                         drawText(hdc, 10, sy + 20, RGB(150, 200, 150), s);
+    sprintf(s, "%.0f fps   frame %.2f ms", g_fps, g_frameMs);
+    drawText(hdc, 10, sy + 20, RGB(150, 200, 150), s);
     /* Lighting sits beside the sim time because it is the other half of the
        frame, and for a long time it was the larger half without ever saying so.
        What it did matters as much as what it cost: the same millisecond figure
@@ -5589,6 +5595,9 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR commandLine, int) {
         }
         if (!g_running) break;
 
+        LARGE_INTEGER tWorkBegin;
+        QueryPerformanceCounter(&tWorkBegin);
+
         clientInputTick();
         serverTick(freq);
         syncClientDeviceUi();
@@ -5600,6 +5609,13 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR commandLine, int) {
         ++fpsFrames;
         LARGE_INTEGER tNow;
         QueryPerformanceCounter(&tNow);
+        {
+            const double work = 1000.0 * (double)(tNow.QuadPart - tWorkBegin.QuadPart) /
+                                (double)freq.QuadPart;
+            /* Smoothed, because a single frame that happened to include a light
+               recut or a chunk save says nothing about the steady state. */
+            g_frameMs = g_frameMs > 0.0 ? g_frameMs * 0.9 + work * 0.1 : work;
+        }
         double elapsed = (double)(tNow.QuadPart - tPrev.QuadPart) / (double)freq.QuadPart;
         if (elapsed < FRAME_SECONDS) {
             int ms = (int)((FRAME_SECONDS - elapsed) * 1000.0);
