@@ -6,6 +6,17 @@
 #include <math.h>
 #include <string.h>
 
+/* Cells per frame. Named because the interception solve below needs the same
+   number the bolt is actually given -- two copies of it drifting apart would
+   make the drone aim at a point its own shot never reaches. */
+static const float DRONE_SHOT_SPEED = 4.8f;
+/* How much of the computed lead to apply, and how far ahead it may look.
+   Under one on purpose: see the note at the solve. The cap stops a nearly
+   stationary relative velocity producing an enormous t and an aim pointing
+   off into nothing. */
+static const float LEAD_FRACTION   = 0.75f;
+static const float LEAD_MAX_FRAMES = 40.0f;
+
 static const int ATTACK_DRONE_DAMAGE = 3;
 static const int ATTACK_DRONE_COOLDOWN = 28;
 static const int OVERCLOCK_DRONE_COOLDOWN = 20;
@@ -347,9 +358,50 @@ static void droneTickBank(Drone* drones, const World& w, const Player& p, Invent
                 shotOpen(w, (int)d.x, (int)d.y) &&
                 clearAttackShot(w, d.x, d.y, *enemy)) {
                 float dx = enemy->centreX() - d.x, dy = enemy->centreY() - d.y;
+                /* Aim where the target is GOING, not where it is. A bolt takes
+                   distance/DRONE_SHOT_SPEED frames to arrive, and firing at the
+                   present position misses by exactly that time times the
+                   target's speed -- which is why drones whiffed on anything
+                   walking. Solving |R + Vt| = s*t for the earliest positive t
+                   gives the interception point.
+
+                   Deliberately only LEAD_FRACTION of the way there. A perfect
+                   solution makes a drone hit a sprinting bat across the screen
+                   every time, and the miss on something fast and perpendicular
+                   is the interesting part: that is the case leading cannot
+                   fully solve, and it should stay unsolved. */
+                {
+                    const float vx = enemy->vx, vy = enemy->vy;
+                    const float s = DRONE_SHOT_SPEED;
+                    const float a = vx * vx + vy * vy - s * s;
+                    const float b = 2.0f * (dx * vx + dy * vy);
+                    const float c = dx * dx + dy * dy;
+                    float t = -1.0f;
+                    if (fabsf(a) < 0.0001f) {
+                        if (fabsf(b) > 0.0001f) t = -c / b;
+                    } else {
+                        const float disc = b * b - 4.0f * a * c;
+                        if (disc >= 0.0f) {
+                            const float root = sqrtf(disc);
+                            const float t0 = (-b - root) / (2.0f * a);
+                            const float t1 = (-b + root) / (2.0f * a);
+                            /* Earliest arrival that is actually in the future.
+                               A target faster than the bolt makes both roots
+                               negative, and then there is no intercept to find
+                               -- the drone simply fires at it and misses. */
+                            if (t0 > 0.0f && (t1 <= 0.0f || t0 < t1)) t = t0;
+                            else if (t1 > 0.0f) t = t1;
+                        }
+                    }
+                    if (t > 0.0f) {
+                        if (t > LEAD_MAX_FRAMES) t = LEAD_MAX_FRAMES;
+                        dx += vx * t * LEAD_FRACTION;
+                        dy += vy * t * LEAD_FRACTION;
+                    }
+                }
                 const float len = sqrtf(dx * dx + dy * dy);
                 if (len > 0.01f) {
-                    dx *= 4.8f / len; dy *= 4.8f / len;
+                    dx *= DRONE_SHOT_SPEED / len; dy *= DRONE_SHOT_SPEED / len;
                     projSpawn(d.x, d.y, dx, dy, 0, 0, 70, 0xF2C16D, 0,
                               MAT_EMPTY, ATTACK_DRONE_DAMAGE, false, 0.0f);
                     if (twin) {

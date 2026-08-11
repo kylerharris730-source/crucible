@@ -1081,7 +1081,7 @@ static const int LIGHT_NONE = 0;
    all that is wanted -- enough that half the light does not read as a tenth of
    the brightness, and not so much that everything flattens toward white. */
 extern u8 g_lightShade[256];
-static const double LIGHT_GAMMA = 0.85;
+static const double LIGHT_GAMMA = 0.62;
 
 /* What unlit renders at. This, not the light field, is where "never quite
    pitch black" belongs: zero light means zero light, and how dark you choose

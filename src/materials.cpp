@@ -1152,7 +1152,13 @@ static void initLight() {
            makes cutting the light rectangle off an exact operation rather than
            an approximation; leaving it behind would put a visible seam wherever
            a lamp sat just outside the frame. */
-        case KIND_EMPTY:  g_matOpacity[m] = 2;  break;
+        /* 2 -> 1. Measured why: filling a 160x90 chamber with six times as
+           many torches produced a byte-identical floor, because the sweeps take
+           the MAX of their neighbours and no cell was ever nearer two torches
+           at once. Count cannot buy brightness in that model, so reach is the
+           only lever there is, and a ceiling torch was dying to the ambient
+           floor about forty cells down. At 1 a torch carries 235 cells. */
+        case KIND_EMPTY:  g_matOpacity[m] = 1;  break;
         case KIND_GAS:    g_matOpacity[m] = 5;  break;
         /* Ordinary liquids remain murkier than gases. Water is overridden
            below because it is the common environment the player actually

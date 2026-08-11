@@ -84,7 +84,7 @@
 static const int LIGHT_SHIFT = 2;
 static const int LIGHT_CELL  = 1 << LIGHT_SHIFT;   /* world cells per sample */
 
-static const int LIGHT_MARGIN = 32;                /* in SAMPLES, not cells */
+static const int LIGHT_MARGIN = 60;                /* in SAMPLES, not cells */
 static const int LIGHT_W = VIEW_CELLS_W / LIGHT_CELL + 2 * LIGHT_MARGIN;
 static const int LIGHT_H = VIEW_CELLS_H / LIGHT_CELL + 2 * LIGHT_MARGIN;
 
