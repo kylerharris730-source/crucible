@@ -2148,7 +2148,9 @@ void World::updateCell(int x, int y) {
             return;
         }
     }
-    if (m.coolTemp && t < (int)m.coolTemp) {
+    if (m.coolTemp && t < (int)m.coolTemp
+        && (g_matCondenseChance[c.mat] >= 65536u
+            || (rngNext() & 0xFFFFu) < g_matCondenseChance[c.mat])) {
         /* Expansion-only gas volumes carry pressure but no condensation mass
            token. They collapse to empty; exactly one owner parcel from the
            original liquid returns to liquid, so 1 Water -> 3 Steam -> 1 Water

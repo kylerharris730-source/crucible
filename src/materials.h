@@ -937,6 +937,27 @@ extern bool g_matCorrodes[MAT_COUNT];
    changes. See updateEvaporation. */
 extern u16 g_matVolatility[MAT_COUNT];
 
+/* --- how readily a gas below its condensation point actually condenses ------
+   Out of 65536 per frame. 65536 means "the frame it goes below coolTemp", which
+   is what every gas did before this existed and what all of them except acid
+   vapour still do.
+
+   Acid vapour needs the other behaviour and the reason is worth stating,
+   because it is not a fudge. Steam is BORN hot -- water boils at 100 and steam
+   condenses at 45 -- so the gap between those two numbers is what gives a steam
+   cloud its life, and no rate is needed. Acid evaporates at room temperature,
+   and evaporation converts the cell rather than reheating it, so the vapour is
+   born at room temperature already. Any condensation point high enough to fire
+   at room temperature therefore fires on the FIRST frame, and the cloud would
+   never exist at all; any point low enough to let it live means it never
+   condenses and the vapour climbs forever.
+
+   A rate breaks that: the vapour condenses at room temperature, just not
+   immediately. It hangs, drifts, and settles back to liquid, which is both what
+   a dense corrosive fume does and the only version of this that has a ceiling
+   on it. */
+extern u32 g_matCondenseChance[MAT_COUNT];
+
 /* --- what burns you to touch -----------------------------------------------
    Damage per frame to a character whose body overlaps a cell of this material,
    before armour. Zero for almost everything: this is not the heat model, which

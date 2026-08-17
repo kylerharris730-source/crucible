@@ -764,9 +764,13 @@ MatInfo MATS[MAT_COUNT] = {
      Everything else it does is dissolve what g_matDissolvedBy names -- see
      ACID_DISSOLVE_CHANCE in world.h. */
   { "Acid",    KIND_LIQUID,  95,   0,    0,   6,   0,   0,  0,   40,  0,   0,   0,    0,  MAT_EMPTY, degC(70), MAT_ACID_VAPOR,   0, MAT_EMPTY,      0,  0x9ADC3C, 0x6CA820, 0x9ADC3C, 0x6CA820, 0 },
-  /* Lighter than air and restless, so it climbs and finds gaps. No coolsTo:
-     see the note in materials.h for why it is spent rather than recovered. */
-  { "AcidGas", KIND_GAS,     10,   0,    0,   7, 170,   0,  0,    5,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0xB6F05A, 0x86C038, 0xB6F05A, 0x86C038, 0 },
+  /* Lighter than air and restless, so it climbs and finds gaps. It condenses
+     back to acid well above room temperature, which means at room temperature
+     it is ALWAYS condensing -- just not instantly. See g_matCondenseChance for
+     why that has to be a rate rather than a threshold, and why acid is the one
+     material in the table that needs it. Only a fire or a furnace holds the
+     fumes up indefinitely. */
+  { "AcidGas", KIND_GAS,     10,   0,    0,   7, 170,   0,  0,    5,  0,   0,   0, degC(45), MAT_ACID,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0xB6F05A, 0x86C038, 0xB6F05A, 0x86C038, 0 },
 
   /* --- gold -----------------------------------------------------------------
      Soft and low-melting on purpose -- it is not meant to compete with
@@ -889,6 +893,7 @@ u8  g_matStation[MAT_COUNT];
 u8  g_matDissolvedBy[MAT_COUNT];
 bool  g_matCorrodes[MAT_COUNT];
 u16   g_matVolatility[MAT_COUNT];
+u32   g_matCondenseChance[MAT_COUNT];
 float g_matContactDamage[MAT_COUNT];
 u8  g_matConducts[MAT_COUNT];
 u8  g_matWetInto[MAT_COUNT];
@@ -1594,7 +1599,15 @@ static void initAcid() {
        puddle lying about is a decision rather than a free hazard. At 400 the
        same pool evaporated in under seven seconds, which is not a liquid. */
     for (int m = 0; m < MAT_COUNT; ++m) g_matVolatility[m] = 2;
-    g_matVolatility[MAT_ACID] = 110;
+    g_matVolatility[MAT_ACID] = 780;
+
+    /* Certain, for everything that is born hot enough to have a life of its own
+       -- see g_matCondenseChance. Acid vapour is the exception and 550 out of
+       65536 is about two seconds of hanging about, which is long enough to
+       drift off the pool, reach a ceiling and eat it, and short enough that the
+       cloud has a definite edge instead of climbing out of the world. */
+    for (int m = 0; m < MAT_COUNT; ++m) g_matCondenseChance[m] = 65536u;
+    g_matCondenseChance[MAT_ACID_VAPOR] = 1650u;
 
     /* Dangerous to stand in whatever its temperature. Acid outdoes the thermal
        damage lava does on purpose: heat you can armour against and acid you
