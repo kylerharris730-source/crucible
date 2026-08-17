@@ -894,6 +894,7 @@ u8  g_matDissolvedBy[MAT_COUNT];
 bool  g_matCorrodes[MAT_COUNT];
 u16   g_matVolatility[MAT_COUNT];
 u32   g_matCondenseChance[MAT_COUNT];
+u8    g_matDissolveHeat[MAT_COUNT];
 float g_matContactDamage[MAT_COUNT];
 u8  g_matConducts[MAT_COUNT];
 u8  g_matWetInto[MAT_COUNT];
@@ -1579,6 +1580,25 @@ static void initAcid() {
     static const MatId DISSOLVES[] = {
         MAT_SAND, MAT_DIRT, MAT_GRASS, MAT_ICE, MAT_WOOD, MAT_BIRCH_WOOD,
         MAT_RUBBER, MAT_CLAY, MAT_COAL, MAT_STONE,
+        /* --- liquids ------------------------------------------------------
+           Acid ruins most of what it is poured into, which matters more than it
+           sounds: until now a pool of acid and a pool of water simply lay
+           against each other, so the obvious thing anyone tries -- pour water
+           on it -- did nothing at all.
+
+           The exclusions are the same ones the solid list already makes, for
+           the same reasons, so there is one rule to remember rather than two.
+           No molten metal, because acid is the chemical route past what the
+           thermal route cannot reach and not a second way to cut metal. No
+           molten glass or gold, which is the acid-proof container mechanic. No
+           molten slag, because slag in water is what MAKES acid (see
+           g_matWetInto) and acid eating its own source would cap the yield at
+           whatever happened to react first. And not the inert fluid, whose
+           entire purpose is to be a bath that nothing happens to.
+
+           Molten rubber follows solid rubber, which was already dissolvable. */
+        MAT_WATER, MAT_FUEL, MAT_WAX, MAT_GLOWFLUID, MAT_RUBBER_MELT,
+        MAT_NITROGEN,
     };
     for (unsigned i = 0; i < sizeof(DISSOLVES) / sizeof(DISSOLVES[0]); ++i)
         g_matDissolvedBy[DISSOLVES[i]] = MAT_ACID;
@@ -1589,6 +1609,15 @@ static void initAcid() {
     for (int m = 0; m < MAT_COUNT; ++m) g_matCorrodes[m] = false;
     g_matCorrodes[MAT_ACID]       = true;
     g_matCorrodes[MAT_ACID_VAPOR] = true;
+
+    /* Acid and water is the exothermic one -- see g_matDissolveHeat. 90 degrees
+       per cell eaten, which is enough that acid poured into standing water
+       reaches boiling and starts making steam, and not so much that a single
+       stray drop flashes a whole pool. Everything else acid eats, it eats
+       cold. */
+    for (int m = 0; m < MAT_COUNT; ++m) g_matDissolveHeat[m] = 0;
+    g_matDissolveHeat[MAT_WATER] = 90;
+    g_matDissolveHeat[MAT_ICE]   = 45;   /* the same reaction, half of it spent melting */
 
     /* Room-temperature fuming. 2 is what every liquid used to get, so water and
        the molten metals are unchanged; acid is two hundred times that, which on

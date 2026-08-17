@@ -958,6 +958,22 @@ extern u16 g_matVolatility[MAT_COUNT];
    on it. */
 extern u32 g_matCondenseChance[MAT_COUNT];
 
+/* --- heat released when acid dissolves this ---------------------------------
+   Degrees dumped into the reaction site, on the frame the cell is eaten. Zero
+   for nearly everything: corrosion is a slow chemical grind and most of what
+   acid eats it eats cold.
+
+   Water is the exception and it is the well-known one -- mixing acid and water
+   is strongly exothermic, which is the entire reason the rule about adding acid
+   TO water rather than the other way round exists. Here it means a pool of acid
+   is not made safe by flooding it: the flood boils, and if there is enough of
+   either you have replaced a corrosion problem with a steam-and-heat one.
+
+   Applied as a heat disc rather than to the single cell, because a point source
+   of a hundred degrees conducts away into the neighbours over the next few
+   frames anyway and looks like nothing while it does. */
+extern u8 g_matDissolveHeat[MAT_COUNT];
+
 /* --- what burns you to touch -----------------------------------------------
    Damage per frame to a character whose body overlaps a cell of this material,
    before armour. Zero for almost everything: this is not the heat model, which

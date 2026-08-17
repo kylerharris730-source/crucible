@@ -2302,8 +2302,15 @@ void World::updateCell(int x, int y) {
                above flow down into the void on the next tick by ordinary
                liquid movement -- no special case needed, because convert()
                dirties both cells and that is what wakes the pool. */
+            /* Some reactions give heat back -- water's is the big one. Taken
+               from the material being EATEN rather than from the acid, because
+               it is a property of the pair and the acid is the same acid
+               whatever it lands in. Read before the cell is destroyed, for the
+               obvious reason. */
+            const u8 give = g_matDissolveHeat[nm];
             convert(nx, ny, MAT_EMPTY);
             convert(x, y, MAT_EMPTY);
+            if (give) heat(nx, ny, 1, (int)give);
             return;
         }
         if (moreToDo) dirtyPoint(x, y);
