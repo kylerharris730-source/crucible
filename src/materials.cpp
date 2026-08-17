@@ -756,10 +756,17 @@ MatInfo MATS[MAT_COUNT] = {
   { "Steel",   KIND_STATIC, 235,   0,    0,   0,   0,   0,  0,  255,  0,   3,   0,    0,  MAT_EMPTY, degC(210), MAT_STEEL_MELT,  0, MAT_EMPTY, 0,  0x9CA0A6, 0x9CA0A6, 0x9CA0A6, 0x9CA0A6, 0 },
 
   /* --- acid ---------------------------------------------------------------
-     No phase changes at all -- it does not boil, melt or freeze in this
-     range, it just sits there and dissolves what g_matDissolvedBy says it
-     dissolves. See ACID_DISSOLVE_CHANCE in world.h. */
-  { "Acid",    KIND_LIQUID,  95,   0,    0,   6,   0,   0,  0,   40,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0x9ADC3C, 0x6CA820, 0x9ADC3C, 0x6CA820, 0 },
+     It does not melt or freeze in this range. It does FUME, hard: boilsTo is
+     set so the ordinary free-surface evaporation path applies to it, and
+     g_matVolatility makes that path fast enough to see. A boilTemp as well, so
+     heating a pool flashes it off rather than merely hurrying it along.
+
+     Everything else it does is dissolve what g_matDissolvedBy names -- see
+     ACID_DISSOLVE_CHANCE in world.h. */
+  { "Acid",    KIND_LIQUID,  95,   0,    0,   6,   0,   0,  0,   40,  0,   0,   0,    0,  MAT_EMPTY, degC(70), MAT_ACID_VAPOR,   0, MAT_EMPTY,      0,  0x9ADC3C, 0x6CA820, 0x9ADC3C, 0x6CA820, 0 },
+  /* Lighter than air and restless, so it climbs and finds gaps. No coolsTo:
+     see the note in materials.h for why it is spent rather than recovered. */
+  { "AcidGas", KIND_GAS,     10,   0,    0,   7, 170,   0,  0,    5,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0xB6F05A, 0x86C038, 0xB6F05A, 0x86C038, 0 },
 
   /* --- gold -----------------------------------------------------------------
      Soft and low-melting on purpose -- it is not meant to compete with
@@ -880,6 +887,9 @@ u8  g_matDropsAs[MAT_COUNT];
 u8  g_matSmeltYield[MAT_COUNT];
 u8  g_matStation[MAT_COUNT];
 u8  g_matDissolvedBy[MAT_COUNT];
+bool  g_matCorrodes[MAT_COUNT];
+u16   g_matVolatility[MAT_COUNT];
+float g_matContactDamage[MAT_COUNT];
 u8  g_matConducts[MAT_COUNT];
 u8  g_matWetInto[MAT_COUNT];
 u8  g_matWetBy[MAT_COUNT];
@@ -1567,6 +1577,33 @@ static void initAcid() {
     };
     for (unsigned i = 0; i < sizeof(DISSOLVES) / sizeof(DISSOLVES[0]); ++i)
         g_matDissolvedBy[DISSOLVES[i]] = MAT_ACID;
+
+    /* Both phases corrode, and they corrode the same list. Naming the pair here
+       rather than testing for MAT_ACID inside the rule is what lets the vapour
+       exist without a second copy of the corrosion code. */
+    for (int m = 0; m < MAT_COUNT; ++m) g_matCorrodes[m] = false;
+    g_matCorrodes[MAT_ACID]       = true;
+    g_matCorrodes[MAT_ACID_VAPOR] = true;
+
+    /* Room-temperature fuming. 2 is what every liquid used to get, so water and
+       the molten metals are unchanged; acid is two hundred times that, which on
+       an exposed surface cell is about a one-in-six-hundred chance a frame.
+       Measured on a pool 21 across and 4 deep, that is a steady haze coming off
+       it and rather over half a minute before it is gone -- long enough to be a
+       liquid you can carry, pour and build with, short enough that leaving a
+       puddle lying about is a decision rather than a free hazard. At 400 the
+       same pool evaporated in under seven seconds, which is not a liquid. */
+    for (int m = 0; m < MAT_COUNT; ++m) g_matVolatility[m] = 2;
+    g_matVolatility[MAT_ACID] = 110;
+
+    /* Dangerous to stand in whatever its temperature. Acid outdoes the thermal
+       damage lava does on purpose: heat you can armour against and acid you
+       cannot, so the answer to a flooded shaft is never "wear more". The vapour
+       is the same substance and only a little kinder, because the thing that
+       makes it frightening is that it reaches you at all. */
+    for (int m = 0; m < MAT_COUNT; ++m) g_matContactDamage[m] = 0.0f;
+    g_matContactDamage[MAT_ACID]       = 2.2f;
+    g_matContactDamage[MAT_ACID_VAPOR] = 1.4f;
 }
 
 /* See g_bgRetain in materials.h. Ceramic is the reason this table exists: a

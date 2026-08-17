@@ -255,6 +255,24 @@ enum MatId {
        nothing extra to express. */
     MAT_ACID,
 
+    /* --- what acid gives off ------------------------------------------------
+       Acid fumes hard, and the fumes bite. It is the same corrosion as the
+       liquid -- the same dissolvable list, the same one-for-one spend -- moved
+       into something that goes where a liquid cannot: upward, around a corner,
+       and into the space you are standing in.
+
+       That is what makes acid a hazard to plan around rather than a puddle to
+       walk past. A pool at the bottom of a shaft fills the shaft, and the
+       ceiling of a chamber is eaten from below by the vapour rather than by
+       anything that could have run down the wall.
+
+       It does not condense back. Evaporation converts the cell rather than
+       copying it, and expansion is left at one volume, so a pool that fumes is
+       a pool that SHRINKS -- the acid is spent the same way the liquid spends
+       itself when it eats a wall. That is what bounds the whole thing: a cloud
+       can never contain more acid than was poured. */
+    MAT_ACID_VAPOR,
+
     /* --- gold ---------------------------------------------------------------
        The best conductor in the game and immune to acid, which is the point:
        gold is not "better copper", it is the contact material for anything
@@ -898,6 +916,36 @@ extern u8 g_matStation[MAT_COUNT];
    omission, and nothing else, is the entire "acid-proof container"
    mechanic. */
 extern u8 g_matDissolvedBy[MAT_COUNT];
+
+/* --- what does the dissolving ----------------------------------------------
+   True for acid and for its vapour. g_matDissolvedBy above names the ONE
+   reagent a material yields to, and it names the liquid; this is the other half
+   of the pair, and it exists so the corrosion rule can be written once and run
+   for both phases rather than testing for MAT_ACID by name.
+
+   Both spend themselves on the cell they eat, so both are finite. */
+extern bool g_matCorrodes[MAT_COUNT];
+
+/* --- how hard a liquid fumes -----------------------------------------------
+   The base chance, out of 65536 per frame, that an exposed surface cell
+   evaporates. Heat is added on top of it by the square of how far above ambient
+   the cell is, so this is the number that says what a liquid does at ROOM
+   temperature -- which for water is very nearly nothing and for acid is the
+   whole character of the material.
+
+   2 is the old hard-coded constant and remains the default, so nothing but acid
+   changes. See updateEvaporation. */
+extern u16 g_matVolatility[MAT_COUNT];
+
+/* --- what burns you to touch -----------------------------------------------
+   Damage per frame to a character whose body overlaps a cell of this material,
+   before armour. Zero for almost everything: this is not the heat model, which
+   already handles anything merely HOT, but the short list of substances that
+   are dangerous at any temperature.
+
+   Sampled over the whole body rather than at a point, and the worst cell wins
+   -- see the corrosion block in Player::update. */
+extern float g_matContactDamage[MAT_COUNT];
 
 /* --- what carries a spark --------------------------------------------------
    True for a material electricity travels through. See the electricity note in

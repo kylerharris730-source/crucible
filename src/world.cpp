@@ -1865,7 +1865,11 @@ void World::updateEvaporation(int x, int y) {
 
     int over = (int)temp[i] - AMBIENT_TEMP;
     if (over < 0) over = 0;
-    const u32 chance = 2u + (u32)(over * over);
+    /* The base is per-material now -- see g_matVolatility. Heat still adds the
+       same square on top, so a hot pan of water behaves exactly as it did and
+       the only thing the table changes is what a liquid does when nothing is
+       heating it at all. */
+    const u32 chance = (u32)g_matVolatility[cells[i].mat] + (u32)(over * over);
     if ((rngNext() & 0xFFFF) >= chance) return;
 
     phaseChange(x, y, m.boilsTo);
@@ -2257,7 +2261,11 @@ void World::updateCell(int x, int y) {
         if (room) dirtyPoint(x, y);
     }
 
-    if (c.mat == MAT_ACID) {
+    /* Both phases of acid corrode, on identical terms -- see g_matCorrodes. The
+       vapour spending itself the same way the liquid does is what stops a cloud
+       from being an unbounded eraser: it can only ever eat as many cells as
+       there were cells of acid to begin with. */
+    if (g_matCorrodes[c.mat]) {
         bool moreToDo = false;
         for (int k = 0; k < 4; ++k) {
             const int nx = x + NB_DX[k], ny = y + NB_DY[k];
