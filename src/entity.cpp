@@ -890,7 +890,7 @@ static const int SPAWN_TRIES = 20;
    experiences one world. Reset on a successful spawn only -- frames where every
    probe was rejected cost nothing and should not bank credit toward a burst the
    moment you step into somewhere dark. */
-static const int SPAWN_COOL = 45;
+static const int SPAWN_COOL = 80;
 /* Brightness at or below which a site counts as dark. Torchlight is far above
    this, so a lit corridor is genuinely clear. */
 static const int SPAWN_DARK  = 40;
@@ -898,6 +898,30 @@ static const int SPAWN_DARK  = 40;
    even if the camera happens to be looking elsewhere. Comfortably more than
    half the view's height. */
 static const int SPAWN_MIN_DIST = 150;
+/* How far a walker may fall from its sample point to find a floor. Deep enough
+   to reach the floor of an ordinary cave from a point in its air, shallow
+   enough that it cannot drop through a ceiling into the chamber below and
+   appear somewhere the sample never described. */
+static const int SPAWN_DROP = 48;
+/* Local crowding. The global cap says how many creatures may exist, and says
+   nothing at all about WHERE, so the whole allowance could be -- and was --
+   spent filling one chamber while the rest of the cave stayed empty. A
+   candidate point that already has SPAWN_LOCAL_MAX neighbours within
+   SPAWN_LOCAL_R is refused, which pushes the next one somewhere else rather
+   than lowering the total. */
+static const int SPAWN_LOCAL_R   = 220;
+static const int SPAWN_LOCAL_MAX = 3;
+
+static int crowdingNear(float x, float y) {
+    int n = 0;
+    for (int i = 0; i < MAX_ENTITIES; ++i) {
+        const Entity& e = g_entities[i];
+        if (!e.alive() || ENT_DEFS[e.type].isBoss) continue;
+        const float dx = e.centreX() - x, dy = e.centreY() - y;
+        if (dx * dx + dy * dy <= (float)(SPAWN_LOCAL_R * SPAWN_LOCAL_R)) ++n;
+    }
+    return n;
+}
 
 /* Live creatures that the SPAWNER is responsible for. Bosses are excluded,
    because they are summoned rather than spawned and a boss in the room must not
@@ -938,6 +962,9 @@ void entSpawnTick(World& w, const Player& p, int camX, int camY, bool lightField
 
         const float pdx = (float)x - p.centreX(), pdy = (float)y - p.centreY();
         if (pdx * pdx + pdy * pdy < (float)(SPAWN_MIN_DIST * SPAWN_MIN_DIST)) continue;
+
+        /* Somewhere already busy is not where the next one should appear. */
+        if (crowdingNear((float)x, (float)y) >= SPAWN_LOCAL_MAX) continue;
 
         /* --- dark? --------------------------------------------------------
            The light buffer is only meaningful when lighting is actually being
@@ -981,12 +1008,29 @@ void entSpawnTick(World& w, const Player& p, int camX, int camY, bool lightField
         /* --- room to stand? -----------------------------------------------
            Fliers only need air. Walkers need air with a floor under it, or they
            spawn in a chimney and spend their life falling. */
-        const int bx = x - d.w / 2, by = y - d.h / 2;
+        int bx = x - d.w / 2, by = y - d.h / 2;
+        /* A walker used to need floor DIRECTLY under the randomly chosen point,
+           and a random point in a cave is almost never exactly on the floor.
+           Measured, the effect was not a bias, it was a near-monopoly: fliers
+           took 97.6% of all spawns, and every walker sat under 1% -- the husk
+           at 0.5%, which is why it read as "never spawns". Uniform picker,
+           wildly non-uniform outcome, entirely from this one test.
+
+           So look for the floor instead of demanding it: fall from the sample
+           point up to SPAWN_DROP cells, and stand on the first floor found.
+           That is the same intent -- do not spawn a walker in a chimney -- but
+           it asks a question the world can usually answer. */
+        if (!d.flies) {
+            int drop = 0;
+            while (drop <= SPAWN_DROP &&
+                   !solidBox(w, bx, by + d.h, d.w, 1, SOLID_FLOOR)) { ++by; ++drop; }
+            if (drop > SPAWN_DROP) continue;
+        }
         if (solidBox(w, bx, by, d.w, d.h)) continue;
         if (liquidBox(w, bx, by, d.w, d.h)) continue;
         if (!d.flies && !solidBox(w, bx, by + d.h, d.w, 1, SOLID_FLOOR)) continue;
 
-        if (entSpawn(w, type, (float)x, (float)y) >= 0) {
+        if (entSpawn(w, type, (float)(bx + d.w / 2), (float)(by + d.h / 2)) >= 0) {
             g_spawnCool = SPAWN_COOL;
             return;                                   /* one a frame, at most */
         }
