@@ -222,6 +222,11 @@ static void pickupTickMode(World& w, const Player& fallbackPlayer, Inventory& fa
         Pickup& p = g_pickups[i];
         if (!p.used) continue;
 
+        /* Nothing is collected without someone alive to collect it. That covers
+           the obvious case of a corpse hoovering up its own drops, and the less
+           obvious one of the character being switched off entirely -- see the
+           stand-in in the main loop, which stands where the camera is and would
+           otherwise pull every loose item on screen into the pack. */
         if (multiplayer) {
             for (int slot = 0; slot < MAX_PLAYERS && p.used; ++slot) {
                 PlayerSession& session = g_playerSessions[slot];
@@ -236,7 +241,7 @@ static void pickupTickMode(World& w, const Player& fallbackPlayer, Inventory& fa
         } else {
             const float dx = fallbackPlayer.centreX() - p.x;
             const float dy = fallbackPlayer.centreY() - p.y;
-            if (dx * dx + dy * dy <= PICKUP_RADIUS * PICKUP_RADIUS) {
+            if (fallbackPlayer.alive && dx * dx + dy * dy <= PICKUP_RADIUS * PICKUP_RADIUS) {
                 p.count = (i16)fallbackInv.add(p.item, p.count);
                 if (!p.count) { p.used = false; continue; }
             }

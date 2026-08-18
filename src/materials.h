@@ -255,6 +255,24 @@ enum MatId {
        nothing extra to express. */
     MAT_ACID,
 
+    /* --- what acid gives off ------------------------------------------------
+       Acid fumes hard, and the fumes bite. It is the same corrosion as the
+       liquid -- the same dissolvable list, the same one-for-one spend -- moved
+       into something that goes where a liquid cannot: upward, around a corner,
+       and into the space you are standing in.
+
+       That is what makes acid a hazard to plan around rather than a puddle to
+       walk past. A pool at the bottom of a shaft fills the shaft, and the
+       ceiling of a chamber is eaten from below by the vapour rather than by
+       anything that could have run down the wall.
+
+       It does not condense back. Evaporation converts the cell rather than
+       copying it, and expansion is left at one volume, so a pool that fumes is
+       a pool that SHRINKS -- the acid is spent the same way the liquid spends
+       itself when it eats a wall. That is what bounds the whole thing: a cloud
+       can never contain more acid than was poured. */
+    MAT_ACID_VAPOR,
+
     /* --- gold ---------------------------------------------------------------
        The best conductor in the game and immune to acid, which is the point:
        gold is not "better copper", it is the contact material for anything
@@ -898,6 +916,73 @@ extern u8 g_matStation[MAT_COUNT];
    omission, and nothing else, is the entire "acid-proof container"
    mechanic. */
 extern u8 g_matDissolvedBy[MAT_COUNT];
+
+/* --- what does the dissolving ----------------------------------------------
+   True for acid and for its vapour. g_matDissolvedBy above names the ONE
+   reagent a material yields to, and it names the liquid; this is the other half
+   of the pair, and it exists so the corrosion rule can be written once and run
+   for both phases rather than testing for MAT_ACID by name.
+
+   Both spend themselves on the cell they eat, so both are finite. */
+extern bool g_matCorrodes[MAT_COUNT];
+
+/* --- how hard a liquid fumes -----------------------------------------------
+   The base chance, out of 65536 per frame, that an exposed surface cell
+   evaporates. Heat is added on top of it by the square of how far above ambient
+   the cell is, so this is the number that says what a liquid does at ROOM
+   temperature -- which for water is very nearly nothing and for acid is the
+   whole character of the material.
+
+   2 is the old hard-coded constant and remains the default, so nothing but acid
+   changes. See updateEvaporation. */
+extern u16 g_matVolatility[MAT_COUNT];
+
+/* --- how readily a gas below its condensation point actually condenses ------
+   Out of 65536 per frame. 65536 means "the frame it goes below coolTemp", which
+   is what every gas did before this existed and what all of them except acid
+   vapour still do.
+
+   Acid vapour needs the other behaviour and the reason is worth stating,
+   because it is not a fudge. Steam is BORN hot -- water boils at 100 and steam
+   condenses at 45 -- so the gap between those two numbers is what gives a steam
+   cloud its life, and no rate is needed. Acid evaporates at room temperature,
+   and evaporation converts the cell rather than reheating it, so the vapour is
+   born at room temperature already. Any condensation point high enough to fire
+   at room temperature therefore fires on the FIRST frame, and the cloud would
+   never exist at all; any point low enough to let it live means it never
+   condenses and the vapour climbs forever.
+
+   A rate breaks that: the vapour condenses at room temperature, just not
+   immediately. It hangs, drifts, and settles back to liquid, which is both what
+   a dense corrosive fume does and the only version of this that has a ceiling
+   on it. */
+extern u32 g_matCondenseChance[MAT_COUNT];
+
+/* --- heat released when acid dissolves this ---------------------------------
+   Degrees dumped into the reaction site, on the frame the cell is eaten. Zero
+   for nearly everything: corrosion is a slow chemical grind and most of what
+   acid eats it eats cold.
+
+   Water is the exception and it is the well-known one -- mixing acid and water
+   is strongly exothermic, which is the entire reason the rule about adding acid
+   TO water rather than the other way round exists. Here it means a pool of acid
+   is not made safe by flooding it: the flood boils, and if there is enough of
+   either you have replaced a corrosion problem with a steam-and-heat one.
+
+   Applied as a heat disc rather than to the single cell, because a point source
+   of a hundred degrees conducts away into the neighbours over the next few
+   frames anyway and looks like nothing while it does. */
+extern u8 g_matDissolveHeat[MAT_COUNT];
+
+/* --- what burns you to touch -----------------------------------------------
+   Damage per frame to a character whose body overlaps a cell of this material,
+   before armour. Zero for almost everything: this is not the heat model, which
+   already handles anything merely HOT, but the short list of substances that
+   are dangerous at any temperature.
+
+   Sampled over the whole body rather than at a point, and the worst cell wins
+   -- see the corrosion block in Player::update. */
+extern float g_matContactDamage[MAT_COUNT];
 
 /* --- what carries a spark --------------------------------------------------
    True for a material electricity travels through. See the electricity note in

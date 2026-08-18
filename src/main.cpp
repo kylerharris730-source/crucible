@@ -995,8 +995,6 @@ struct KeyHint { const char* key; const char* what; };
 static const KeyHint KEY_HINTS[] = {
     { "WASD / arrows", "move, and jump" },
     { "hold R + drag", "draw a straight line" },
-    { "F",             "toggle one-cell wire mode" },
-    { "X",             "toggle circuit-wire linking" },
     { "tap R",         "respawn at the cursor" },
     { "left / right",  "build / dig" },
     { "right-click",   "open a machine, or a door" },
@@ -2029,8 +2027,12 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             break;
         case '0': g_inv.selected = 9; break;
         case 'M': g_brushMat = MAT_COPPER;   g_paletteDevice = -1; break;   /* M for metal */
-        case 'F': g_wireMode = !g_wireMode;   break;   /* F for wire feed */
-        case 'X': g_circuitWireMode = !g_circuitWireMode; g_circuitWireFrom = -1; g_circuitWireFromPort = 0; break;
+        /* Wire mode and circuit-wire linking have no key. Both are modes that
+           change what a click DOES rather than what it places, so hitting one
+           by accident leaves the mouse doing something other than what the
+           panel says -- and unlike a brush change, nothing about the cursor
+           makes that obvious until you have already drawn with it. They keep
+           their panel buttons, which is where a mode belongs. */
         case 'G': g_brushMat = MAT_GRAPHENE; g_paletteDevice = -1; break;
         case 'B': g_brushMat = MAT_WALL;     g_paletteDevice = -1; break;
         case 'E': g_brushMat = MAT_EMPTY;    g_paletteDevice = -1; break;
@@ -5003,12 +5005,12 @@ static void drawPanel(HDC hdc) {
     drawButton(hdc, g_actRect[ACT_OVERWRITE], lbl, NULL, !g_overwrite, inRect(g_actRect[ACT_OVERWRITE], g_mx, g_my));
     drawButton(hdc, g_actRect[ACT_LAYER], g_bgLayer ? "Layer: Background" : "Layer: Foreground",
                NULL, g_bgLayer, inRect(g_actRect[ACT_LAYER], g_mx, g_my));
-    drawButton(hdc, g_actRect[ACT_WIRE], g_wireMode ? "Wire: Copper (F)" : "Wire: Off (F)",
+    drawButton(hdc, g_actRect[ACT_WIRE], g_wireMode ? "Wire: Copper" : "Wire: Off",
                NULL, g_wireMode, inRect(g_actRect[ACT_WIRE], g_mx, g_my));
     {
         char circuitLabel[48];
         if (g_circuitWireMode && g_circuitWireFrom >= 0) sprintf(circuitLabel, "Circuit: choose device");
-        else sprintf(circuitLabel, g_circuitWireMode ? "Circuit Wire: On (X)" : "Circuit Wire: Off (X)");
+        else sprintf(circuitLabel, g_circuitWireMode ? "Circuit Wire: On" : "Circuit Wire: Off");
         drawButton(hdc, g_actRect[ACT_CIRCUIT], circuitLabel, NULL, g_circuitWireMode,
                    inRect(g_actRect[ACT_CIRCUIT], g_mx, g_my));
     }
@@ -5283,6 +5285,34 @@ static void serverTick(const LARGE_INTEGER& perfFrequency) {
                     break;
                 }
             }
+        } else {
+            /* --- creatures without a character ------------------------
+               They used to freeze solid the moment the character was
+               switched off, which makes the sandbox half of the program
+               useless for the one thing you would switch it off to do:
+               watch something behave. A spawn egg produced a statue.
+
+               Everything a creature does needs someone to do it RELATIVE
+               to -- chase, flee, keep or lose interest -- so rather than
+               teach every one of them a second mode with no target, the
+               camera stands in for the character. Creatures head for where
+               you are looking, which is both the useful behaviour for
+               watching them and the honest reading of "the observer is
+               over there".
+
+               The stand-in is NOT alive, and that one flag is what keeps it
+               from being a character in every other respect: nothing takes
+               contact damage, nothing collects the drops, and no hit ever
+               lands on an inventory that is not in the world.
+
+               Single-player only by construction: with the character off
+               there are no connected sessions to tick, and a joined game
+               always has one. */
+            Player observer = g_player;
+            observer.alive = false;
+            observer.x = (float)(g_camX + viewCellsW() / 2);
+            observer.y = (float)(g_camY + viewCellsH() / 2);
+            entTick(g_world, observer, g_inv);
         }
     }
     if (onlineHost) netHostFrame(g_world);

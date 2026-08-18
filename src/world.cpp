@@ -1896,7 +1896,11 @@ void World::updateEvaporation(int x, int y) {
 
     int over = (int)temp[i] - AMBIENT_TEMP;
     if (over < 0) over = 0;
-    const u32 chance = 2u + (u32)(over * over);
+    /* The base is per-material now -- see g_matVolatility. Heat still adds the
+       same square on top, so a hot pan of water behaves exactly as it did and
+       the only thing the table changes is what a liquid does when nothing is
+       heating it at all. */
+    const u32 chance = (u32)g_matVolatility[cells[i].mat] + (u32)(over * over);
     if ((rngNext() & 0xFFFF) >= chance) return;
 
     phaseChange(x, y, m.boilsTo);
@@ -2175,7 +2179,9 @@ void World::updateCell(int x, int y) {
             return;
         }
     }
-    if (m.coolTemp && t < (int)m.coolTemp) {
+    if (m.coolTemp && t < (int)m.coolTemp
+        && (g_matCondenseChance[c.mat] >= 65536u
+            || (rngNext() & 0xFFFFu) < g_matCondenseChance[c.mat])) {
         /* Expansion-only gas volumes carry pressure but no condensation mass
            token. They collapse to empty; exactly one owner parcel from the
            original liquid returns to liquid, so 1 Water -> 3 Steam -> 1 Water
@@ -2288,7 +2294,11 @@ void World::updateCell(int x, int y) {
         if (room) dirtyPoint(x, y);
     }
 
-    if (c.mat == MAT_ACID) {
+    /* Both phases of acid corrode, on identical terms -- see g_matCorrodes. The
+       vapour spending itself the same way the liquid does is what stops a cloud
+       from being an unbounded eraser: it can only ever eat as many cells as
+       there were cells of acid to begin with. */
+    if (g_matCorrodes[c.mat]) {
         bool moreToDo = false;
         for (int k = 0; k < 4; ++k) {
             const int nx = x + NB_DX[k], ny = y + NB_DY[k];
@@ -2323,8 +2333,15 @@ void World::updateCell(int x, int y) {
                above flow down into the void on the next tick by ordinary
                liquid movement -- no special case needed, because convert()
                dirties both cells and that is what wakes the pool. */
+            /* Some reactions give heat back -- water's is the big one. Taken
+               from the material being EATEN rather than from the acid, because
+               it is a property of the pair and the acid is the same acid
+               whatever it lands in. Read before the cell is destroyed, for the
+               obvious reason. */
+            const u8 give = g_matDissolveHeat[nm];
             convert(nx, ny, MAT_EMPTY);
             convert(x, y, MAT_EMPTY);
+            if (give) heat(nx, ny, 1, (int)give);
             return;
         }
         if (moreToDo) dirtyPoint(x, y);

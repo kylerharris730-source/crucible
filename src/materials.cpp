@@ -756,10 +756,21 @@ MatInfo MATS[MAT_COUNT] = {
   { "Steel",   KIND_STATIC, 235,   0,    0,   0,   0,   0,  0,  255,  0,   3,   0,    0,  MAT_EMPTY, degC(210), MAT_STEEL_MELT,  0, MAT_EMPTY, 0,  0x9CA0A6, 0x9CA0A6, 0x9CA0A6, 0x9CA0A6, 0 },
 
   /* --- acid ---------------------------------------------------------------
-     No phase changes at all -- it does not boil, melt or freeze in this
-     range, it just sits there and dissolves what g_matDissolvedBy says it
-     dissolves. See ACID_DISSOLVE_CHANCE in world.h. */
-  { "Acid",    KIND_LIQUID,  95,   0,    0,   6,   0,   0,  0,   40,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0x9ADC3C, 0x6CA820, 0x9ADC3C, 0x6CA820, 0 },
+     It does not melt or freeze in this range. It does FUME, hard: boilsTo is
+     set so the ordinary free-surface evaporation path applies to it, and
+     g_matVolatility makes that path fast enough to see. A boilTemp as well, so
+     heating a pool flashes it off rather than merely hurrying it along.
+
+     Everything else it does is dissolve what g_matDissolvedBy names -- see
+     ACID_DISSOLVE_CHANCE in world.h. */
+  { "Acid",    KIND_LIQUID,  95,   0,    0,   6,   0,   0,  0,   40,  0,   0,   0,    0,  MAT_EMPTY, degC(70), MAT_ACID_VAPOR,   0, MAT_EMPTY,      0,  0x9ADC3C, 0x6CA820, 0x9ADC3C, 0x6CA820, 0 },
+  /* Lighter than air and restless, so it climbs and finds gaps. It condenses
+     back to acid well above room temperature, which means at room temperature
+     it is ALWAYS condensing -- just not instantly. See g_matCondenseChance for
+     why that has to be a rate rather than a threshold, and why acid is the one
+     material in the table that needs it. Only a fire or a furnace holds the
+     fumes up indefinitely. */
+  { "AcidGas", KIND_GAS,     10,   0,    0,   7, 170,   0,  0,    5,  0,   0,   0, degC(45), MAT_ACID,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0xB6F05A, 0x86C038, 0xB6F05A, 0x86C038, 0 },
 
   /* --- gold -----------------------------------------------------------------
      Soft and low-melting on purpose -- it is not meant to compete with
@@ -880,6 +891,11 @@ u8  g_matDropsAs[MAT_COUNT];
 u8  g_matSmeltYield[MAT_COUNT];
 u8  g_matStation[MAT_COUNT];
 u8  g_matDissolvedBy[MAT_COUNT];
+bool  g_matCorrodes[MAT_COUNT];
+u16   g_matVolatility[MAT_COUNT];
+u32   g_matCondenseChance[MAT_COUNT];
+u8    g_matDissolveHeat[MAT_COUNT];
+float g_matContactDamage[MAT_COUNT];
 u8  g_matConducts[MAT_COUNT];
 u8  g_matWetInto[MAT_COUNT];
 u8  g_matWetBy[MAT_COUNT];
@@ -1570,9 +1586,72 @@ static void initAcid() {
     static const MatId DISSOLVES[] = {
         MAT_SAND, MAT_DIRT, MAT_GRASS, MAT_ICE, MAT_WOOD, MAT_BIRCH_WOOD,
         MAT_RUBBER, MAT_CLAY, MAT_COAL, MAT_STONE,
+        /* --- liquids ------------------------------------------------------
+           Acid ruins most of what it is poured into, which matters more than it
+           sounds: until now a pool of acid and a pool of water simply lay
+           against each other, so the obvious thing anyone tries -- pour water
+           on it -- did nothing at all.
+
+           The exclusions are the same ones the solid list already makes, for
+           the same reasons, so there is one rule to remember rather than two.
+           No molten metal, because acid is the chemical route past what the
+           thermal route cannot reach and not a second way to cut metal. No
+           molten glass or gold, which is the acid-proof container mechanic. No
+           molten slag, because slag in water is what MAKES acid (see
+           g_matWetInto) and acid eating its own source would cap the yield at
+           whatever happened to react first. And not the inert fluid, whose
+           entire purpose is to be a bath that nothing happens to.
+
+           Molten rubber follows solid rubber, which was already dissolvable. */
+        MAT_WATER, MAT_FUEL, MAT_WAX, MAT_GLOWFLUID, MAT_RUBBER_MELT,
+        MAT_NITROGEN,
     };
     for (unsigned i = 0; i < sizeof(DISSOLVES) / sizeof(DISSOLVES[0]); ++i)
         g_matDissolvedBy[DISSOLVES[i]] = MAT_ACID;
+
+    /* Both phases corrode, and they corrode the same list. Naming the pair here
+       rather than testing for MAT_ACID inside the rule is what lets the vapour
+       exist without a second copy of the corrosion code. */
+    for (int m = 0; m < MAT_COUNT; ++m) g_matCorrodes[m] = false;
+    g_matCorrodes[MAT_ACID]       = true;
+    g_matCorrodes[MAT_ACID_VAPOR] = true;
+
+    /* Acid and water is the exothermic one -- see g_matDissolveHeat. 90 degrees
+       per cell eaten, which is enough that acid poured into standing water
+       reaches boiling and starts making steam, and not so much that a single
+       stray drop flashes a whole pool. Everything else acid eats, it eats
+       cold. */
+    for (int m = 0; m < MAT_COUNT; ++m) g_matDissolveHeat[m] = 0;
+    g_matDissolveHeat[MAT_WATER] = 90;
+    g_matDissolveHeat[MAT_ICE]   = 45;   /* the same reaction, half of it spent melting */
+
+    /* Room-temperature fuming. 2 is what every liquid used to get, so water and
+       the molten metals are unchanged; acid is two hundred times that, which on
+       an exposed surface cell is about a one-in-six-hundred chance a frame.
+       Measured on a pool 21 across and 4 deep, that is a steady haze coming off
+       it and rather over half a minute before it is gone -- long enough to be a
+       liquid you can carry, pour and build with, short enough that leaving a
+       puddle lying about is a decision rather than a free hazard. At 400 the
+       same pool evaporated in under seven seconds, which is not a liquid. */
+    for (int m = 0; m < MAT_COUNT; ++m) g_matVolatility[m] = 2;
+    g_matVolatility[MAT_ACID] = 780;
+
+    /* Certain, for everything that is born hot enough to have a life of its own
+       -- see g_matCondenseChance. Acid vapour is the exception and 550 out of
+       65536 is about two seconds of hanging about, which is long enough to
+       drift off the pool, reach a ceiling and eat it, and short enough that the
+       cloud has a definite edge instead of climbing out of the world. */
+    for (int m = 0; m < MAT_COUNT; ++m) g_matCondenseChance[m] = 65536u;
+    g_matCondenseChance[MAT_ACID_VAPOR] = 1650u;
+
+    /* Dangerous to stand in whatever its temperature. Acid outdoes the thermal
+       damage lava does on purpose: heat you can armour against and acid you
+       cannot, so the answer to a flooded shaft is never "wear more". The vapour
+       is the same substance and only a little kinder, because the thing that
+       makes it frightening is that it reaches you at all. */
+    for (int m = 0; m < MAT_COUNT; ++m) g_matContactDamage[m] = 0.0f;
+    g_matContactDamage[MAT_ACID]       = 2.2f;
+    g_matContactDamage[MAT_ACID_VAPOR] = 1.4f;
 }
 
 /* See g_bgRetain in materials.h. Ceramic is the reason this table exists: a

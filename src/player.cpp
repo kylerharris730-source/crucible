@@ -455,6 +455,36 @@ void Player::update(const World& w, const PlayerInput& in) {
         if (!alive) return;
     }
 
+    /* --- things that are dangerous to touch at any temperature ---------
+       Separate from the heat model above, and deliberately so. Heat asks how
+       hot a cell is; this asks what it is MADE OF, which is the only question
+       that gets acid right -- a pool at room temperature is exactly as
+       dangerous as a warm one, and the thermal path would have said it was
+       harmless.
+
+       The worst cell wins rather than the sum. A body twenty-two cells tall
+       standing in a puddle would otherwise take damage proportional to how
+       much of it happened to be submerged, so wading in up to the ankles and
+       falling in flat would differ by a factor of twenty -- and both should
+       simply be "you are in the acid". Armour is not subtracted: see
+       g_matContactDamage for why corrosion is the hazard plate does not
+       answer. */
+    {
+        const int y0 = imax(0, top()),  y1 = imin(SIM_H - 1, bottom());
+        const int x0 = imax(0, left()), x1 = imin(SIM_W - 1, right());
+        float worst = 0.0f;
+        for (int y = y0; y <= y1; ++y)
+            for (int x = x0; x <= x1; ++x) {
+                const float d = g_matContactDamage[w.cells[y * SIM_W + x].mat];
+                if (d > worst) worst = d;
+            }
+        if (worst > 0.0f) {
+            damage(worst);
+            hurtFlash = 10;
+        }
+        if (!alive) return;
+    }
+
     /* --- water, and breathing -----------------------------------------
        Sampled before movement for the same reason temperature is: what happens
        to you this frame should be decided by the water you can see yourself
