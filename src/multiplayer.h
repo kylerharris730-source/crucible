@@ -14,13 +14,52 @@ static const PlayerId LOCAL_PLAYER_ID = 0;
 /* Per-player overlay state belongs to the stable slot as surely as the body
    and inventory do. Keeping drones and passive cooldowns here prevents a new
    gameplay system from quietly growing another parallel "player 0" global. */
-enum DroneType { DRONE_NONE = 0, DRONE_LIGHT, DRONE_ATTACK, DRONE_PICKUP, DRONE_SHIELD, DRONE_COUNT };
+/* --- weapons are drones ----------------------------------------------------
+   Vampire Survivors splits into weapons that fire on their own and passives
+   that modify everything, and this game already has the two sinks to put them
+   in: companions and trinkets. So a weapon here is not a thing you hold, it is
+   a CHASSIS you equip, and the difference between owning a whip and owning a
+   magic wand is which drone is flying beside you.
+
+   That is worth doing rather than adding held weapons for one reason: the
+   player already has a held weapon, and it is aimed. An autonomous weapon and an
+   aimed weapon are different games stapled together if both live in the hand,
+   and they compose beautifully if one of them is a follower -- the drone covers
+   what you are not looking at, which is exactly the job an aimed weapon cannot
+   do for itself.
+
+   Each of the three new chassis is ONE legible idea rather than a spread of
+   stats, on the same rule the creature roster is built to: the lance fires
+   where you FACE, the mortar fires over cover, and the orbit does not fire at
+   all. Told apart by watching them for two seconds, which a damage number and a
+   cooldown number never manage. */
+enum DroneType {
+    DRONE_NONE = 0, DRONE_LIGHT, DRONE_ATTACK, DRONE_PICKUP, DRONE_SHIELD,
+    /* Appended, like every other id in this codebase that crosses a wire. */
+    DRONE_LANCE,    /* bursts of flat piercing bolts along the player's facing */
+    DRONE_MORTAR,   /* one heavy lobbed shell that bursts on arrival */
+    DRONE_ORBIT,    /* no shots at all: a blade circling the player */
+    DRONE_COUNT
+};
 static const int MAX_DRONES = 3;
 struct Drone {
     u8 type;
     float x, y, vx, vy;
     int shotCool;
     int effectCool;
+    /* Where an orbiting drone is round its circle, in radians. A real field
+       rather than a number derived from a global frame counter, because two
+       orbit drones in the two general bays have to be on OPPOSITE sides of the
+       player -- a derived angle would put them both in the same place and the
+       second one would be invisible. Unused by every other chassis.
+
+       Also carries the burst position for the lance: an idle counter and a
+       shot counter are the same clock read at different scales, and giving the
+       lance its own int would be a third meaning for `shotCool`. */
+    float phase;
+    /* Shots left in the current burst. Zero on everything that fires singly,
+       which is every chassis but the lance. */
+    int burst;
 };
 
 struct PlayerSession {
@@ -28,6 +67,11 @@ struct PlayerSession {
     Inventory inventory;
     Drone drones[MAX_DRONES];
     i32 garlicCooldown;
+    /* Frames since the Husk Heart last returned a point. Beside the garlic
+       clock rather than on the Player, for the reason this whole struct exists:
+       a passive is a property of the SLOT, not of the body, and the body is
+       replicated across a network where this is nobody else's business. */
+    i32 regenTimer;
     ItemStack cursor;
     ItemStack trash;
     /* Host-only input/runtime state. It belongs to the player rather than the

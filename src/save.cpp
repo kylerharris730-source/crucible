@@ -536,10 +536,45 @@ bool saveRead(const char* path, World& w) {
             if (len == sizeof(Player)) fread(&g_player, sizeof(Player), 1, f);
             statAdd("character", len + 12);
         } else if (tag == fourcc("INVN")) {
-            /* Inventory grows by appending durable state (such as drone chip
-               bays). Older saves are a valid prefix, so retain their pack and
-               equipment rather than discarding all of it on a size change. */
-            if (len <= sizeof(Inventory)) { fread(&g_inv, 1, (size_t)len, f); remapInventoryItems(); }
+            /* Inventory grew by APPENDING durable state (such as drone chip
+               bays) for as long as every change was at the end, and a short
+               read was then a valid prefix. That stopped being true the moment
+               equip[] itself got longer: the new trinket slots sit in the
+               middle of the struct, so an older file read as a prefix lands
+               `selected` inside equip[9] and every byte after it is one slot
+               out. It would not error -- it would hand you a character wearing
+               a garbled stack, which is the worst kind of load failure.
+
+               So the previous shape is spelled out and converted. The old
+               struct is written here rather than derived from an offset
+               calculation because this is the same compiler with the same
+               padding rules, and copying field by field cannot be off by a
+               pad byte the way arithmetic over `len` can. */
+            struct InventoryV1 {
+                ItemStack slot[INV_SLOTS];
+                ItemStack equip[9];          /* before EQ_TRINKET_C/D */
+                int       selected;
+                ItemStack droneModule[3][Inventory::DRONE_MODULE_SLOTS_MAX];
+                u8        droneLevel[3];
+            };
+            if (len == sizeof(Inventory)) {
+                fread(&g_inv, 1, (size_t)len, f);
+                remapInventoryItems();
+            } else if (len <= sizeof(InventoryV1)) {
+                InventoryV1 old;
+                memset(&old, 0, sizeof(old));
+                fread(&old, 1, (size_t)len, f);
+                g_inv.clear();
+                for (int i = 0; i < INV_SLOTS; ++i) g_inv.slot[i] = old.slot[i];
+                for (int i = 0; i < 9; ++i)         g_inv.equip[i] = old.equip[i];
+                g_inv.selected = old.selected;
+                for (int d = 0; d < 3; ++d) {
+                    for (int i = 0; i < Inventory::DRONE_MODULE_SLOTS_MAX; ++i)
+                        g_inv.droneModule[d][i] = old.droneModule[d][i];
+                    g_inv.droneLevel[d] = old.droneLevel[d];
+                }
+                remapInventoryItems();
+            }
             statAdd("inventory", len + 12);
         } else if (tag == fourcc("MAPX")) {
             if (len == (u64)sizeof(g_map)) {

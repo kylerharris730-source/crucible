@@ -17,6 +17,50 @@ static const float DRONE_SHOT_SPEED = 4.8f;
 static const float LEAD_FRACTION   = 0.75f;
 static const float LEAD_MAX_FRAMES = 40.0f;
 
+/* --- the three weapon chassis ----------------------------------------------
+   Numbers first, because the whole design is in the relationship between them.
+
+   The Attack Drone is the baseline: 3 damage every 28 frames at a target it
+   picks itself, which is 6.4 damage a second delivered wherever the trouble is.
+   All three of these come out near that figure and buy their differences with
+   the SHAPE of the delivery rather than with the total.
+
+   LANCE  -- 4 x 3 in a burst of three, then a long rest: 7.5/s, but only in the
+             direction the character faces. It is the highest of the three and
+             it is the only one you have to aim, by aiming yourself. Pierce 3,
+             so a corridor of mites is one burst.
+   MORTAR -- 16 in one shell every 96 frames: 10/s on paper and far less in
+             practice, because it is lobbed and lobbed shots miss things that
+             move. What it buys is a blast radius and an ARC, so it is the only
+             companion that can hit something standing behind cover.
+   ORBIT  -- 3 every 18 frames to everything the blade passes through: 10/s
+             against a crowd and nothing at all against something that stays
+             away. It is the answer to being swarmed and the wrong answer to
+             everything else, which is what makes choosing it a decision. */
+static const int   LANCE_DAMAGE      = 4;
+static const int   LANCE_PIERCE      = 3;
+static const float LANCE_SPEED       = 7.2f;
+static const int   LANCE_BURST       = 3;
+static const int   LANCE_GAP         = 7;    /* frames between shots in a burst */
+static const int   LANCE_REST        = 62;   /* frames between bursts */
+
+static const int   MORTAR_DAMAGE     = 16;
+static const int   MORTAR_BLAST      = 7;
+static const float MORTAR_SPEED      = 4.4f;
+static const int   MORTAR_COOLDOWN   = 96;
+
+/* Radius of the circle and radians per frame. 26 cells puts the blade just
+   outside the player's own box and just inside the reach of anything that has
+   closed to touching distance, which is the only band this weapon is for. At
+   0.075 it goes round in about a second and a half -- fast enough to read as a
+   weapon, slow enough that you can see which side it is on and step the other
+   way. */
+static const float ORBIT_RADIUS      = 26.0f;
+static const float ORBIT_SPEED       = 0.075f;
+static const int   ORBIT_DAMAGE      = 3;
+static const int   ORBIT_HIT_RADIUS  = 7;
+static const int   ORBIT_COOLDOWN    = 18;
+
 static const int ATTACK_DRONE_DAMAGE = 3;
 static const int ATTACK_DRONE_COOLDOWN = 28;
 static const int OVERCLOCK_DRONE_COOLDOWN = 20;
@@ -46,10 +90,20 @@ void droneReset() {
 static u8 equippedDrone(const Inventory& inv, int i) {
     const int slot = i == 0 ? EQ_LIGHT_DRONE : (i == 1 ? EQ_DRONE_A : EQ_DRONE_B);
     if (inv.equip[slot].empty()) return DRONE_NONE;
-    return inv.equip[slot].item == ITEM_LIGHT_DRONE ? DRONE_LIGHT
+    return inv.equip[slot].item == ITEM_LIGHT_DRONE  ? DRONE_LIGHT
          : inv.equip[slot].item == ITEM_ATTACK_DRONE ? DRONE_ATTACK
          : inv.equip[slot].item == ITEM_PICKUP_DRONE ? DRONE_PICKUP
-         : inv.equip[slot].item == ITEM_SHIELD_DRONE ? DRONE_SHIELD : DRONE_NONE;
+         : inv.equip[slot].item == ITEM_SHIELD_DRONE ? DRONE_SHIELD
+         : inv.equip[slot].item == ITEM_LANCE_DRONE  ? DRONE_LANCE
+         : inv.equip[slot].item == ITEM_MORTAR_DRONE ? DRONE_MORTAR
+         : inv.equip[slot].item == ITEM_ORBIT_DRONE  ? DRONE_ORBIT : DRONE_NONE;
+}
+
+/* Every chassis that hunts. Grouped in one predicate rather than tested chassis
+   by chassis at four sites, so adding a fifth weapon is a line here and not a
+   condition somebody forgets in the acquisition path. */
+static bool droneHunts(u8 type) {
+    return type == DRONE_ATTACK || type == DRONE_LANCE || type == DRONE_MORTAR;
 }
 
 static Entity* nearestEnemy(float x, float y) {
@@ -285,6 +339,114 @@ static void addSeparation(Drone* drones, Drone& d, int self) {
     }
 }
 
+/* --- the lance -------------------------------------------------------------
+   Fires along the PLAYER's facing, not at a target of its own, and that is the
+   entire chassis. Every other companion in the game solves the aiming problem
+   for you; this one hands it back, and in exchange it hits harder than anything
+   else on the row and goes through three bodies.
+
+   It is the chassis for somebody moving forward through a corridor, and it is
+   deliberately useless against the thing that just landed behind you -- which is
+   the sentence that makes it worth choosing over the Attack Drone rather than
+   strictly better or strictly worse than it.
+
+   Player::facing LATCHES (see player.h), so it is a stable heading rather than
+   something that flickers while you shuffle -- which is what makes firing along
+   it feel aimed rather than random. */
+static void lanceFire(const World& w, const Player& p, Drone& d) {
+    if (d.shotCool > 0) { --d.shotCool; return; }
+    if (!shotOpen(w, (int)d.x, (int)d.y)) return;
+
+    const float dirX = (float)(p.facing >= 0 ? 1 : -1);
+    /* A whisper of upward lean, so a flat burst does not scrape the floor the
+       drone happens to be hovering near. Not enough to be an arc: this shot has
+       to read as a line. */
+    const float dirY = -0.05f;
+    const float len  = sqrtf(dirX * dirX + dirY * dirY);
+    projSpawn(d.x + dirX * 4.0f, d.y,
+              dirX / len * LANCE_SPEED, dirY / len * LANCE_SPEED,
+              0, LANCE_PIERCE, 80, 0xBFE9FF, 0, MAT_EMPTY,
+              LANCE_DAMAGE, false, 0.0f);
+
+    /* The burst, and the rest between bursts, are one counter read twice. A
+       burst is what makes this weapon a rhythm rather than a stream: three
+       shots that arrive together do something a single faster shot cannot,
+       which is kill a mite outright before it reaches you. */
+    if (++d.burst >= LANCE_BURST) { d.burst = 0; d.shotCool = LANCE_REST; }
+    else                          { d.shotCool = LANCE_GAP; }
+}
+
+/* --- the mortar ------------------------------------------------------------
+   The only companion that can hit something it cannot see in a straight line,
+   which is the whole reason it exists: every other weapon on the row, the
+   player's included, needs an unobstructed line, so a creature behind a lip of
+   rock is a creature you have to walk around.
+
+   The solve is the spitter's, and it should be: "what velocity, at this speed,
+   lands on that point" is one question with one answer, and having two
+   different ballistic solvers in one game is how a shell and a glob end up
+   feeling like they obey different physics. */
+static void mortarFire(const World& w, Drone& d, const Entity& target) {
+    if (d.shotCool > 0) { --d.shotCool; return; }
+    if (!shotOpen(w, (int)d.x, (int)d.y)) return;
+
+    const float dx = target.centreX() - d.x;
+    const float dy = target.centreY() - d.y;
+    const float g  = PROJ_GRAVITY, v = MORTAR_SPEED;
+    const float b  = g * dy + v * v;
+    const float disc = b * b - g * g * (dx * dx + dy * dy);
+    /* Out of range: hold the shell rather than lobbing it at nothing. A shell
+       is 96 frames of this drone's entire output, so spending one on a
+       trajectory that was never going to arrive is the most expensive mistake
+       any companion here can make. */
+    if (disc < 0.0f) return;
+    const float T = 2.0f * (b - sqrtf(disc)) / (g * g);
+    if (T <= 0.0001f) return;
+    const float t = sqrtf(T);
+    const float vx = dx / t;
+    const float vy = (dy - 0.5f * g * T) / t;
+
+    /* The muzzle follows the LAUNCH direction rather than the line to the
+       target, or a steeply-lobbed shell appears to start beside the drone and
+       jump -- the same detail the spitter needed. */
+    const float mlen = sqrtf(vx * vx + vy * vy);
+    const float mx = (mlen > 0.001f) ? vx / mlen : 1.0f;
+    const float my = (mlen > 0.001f) ? vy / mlen : 0.0f;
+    projSpawn(d.x + mx * 5.0f, d.y + my * 5.0f, vx, vy,
+              0, 1, 200, 0xFFC24A, MORTAR_BLAST, MAT_EMPTY,
+              MORTAR_DAMAGE, false, PROJ_GRAVITY);
+    d.shotCool = MORTAR_COOLDOWN;
+}
+
+/* --- the orbit -------------------------------------------------------------
+   Position is WRITTEN rather than steered. Every other drone is a flier with
+   arrival steering, and running this one through the same steering would give
+   a blade that lags behind a moving player and wanders out of its circle
+   exactly when the crowd it exists for is closing in. A blade on a stick is not
+   a follower; it is a fixed part of the character's silhouette, and it should
+   be one geometrically as well as conceptually.
+
+   The consequence to know: it passes through rock. That is correct for what it
+   is -- it never leaves the player's own body radius, so it can only be inside
+   a wall if the player is. */
+static void orbitTick(Drone& d, const Player& p, int bay) {
+    d.phase += ORBIT_SPEED;
+    if (d.phase > 6.28318530718f) d.phase -= 6.28318530718f;
+    /* Half a turn apart per bay, so two blades cover opposite sides instead of
+       tracing the same arc invisibly on top of each other. */
+    const float angle = d.phase + (float)bay * 3.14159265f;
+    const float nx = p.centreX() + cosf(angle) * ORBIT_RADIUS;
+    const float ny = p.centreY() + sinf(angle) * ORBIT_RADIUS;
+    /* Velocity kept honest for the drawing and for anything that reads it,
+       rather than left as whatever it was before this chassis was equipped. */
+    d.vx = nx - d.x; d.vy = ny - d.y;
+    d.x = nx; d.y = ny;
+
+    if (d.effectCool > 0) { --d.effectCool; return; }
+    if (entDamageDisc((int)d.x, (int)d.y, ORBIT_HIT_RADIUS, ORBIT_DAMAGE) > 0)
+        d.effectCool = ORBIT_COOLDOWN;
+}
+
 static void droneTickBank(Drone* drones, const World& w, const Player& p, Inventory& inv) {
     g_taskX = p.centreX(); g_taskY = p.centreY();
     g_homeX = p.centreX(); g_homeY = (float)p.top() - (float)DRONE_HOME_ABOVE;
@@ -302,10 +464,20 @@ static void droneTickBank(Drone* drones, const World& w, const Player& p, Invent
         }
         if (d.type == DRONE_NONE) continue;
 
-        Entity* enemy = d.type == DRONE_ATTACK ? nearestEnemy(g_taskX, g_taskY) : 0;
+        Entity* enemy = droneHunts(d.type) ? nearestEnemy(g_taskX, g_taskY) : 0;
         bool hasTask = false;
         bool escapingLight = false;
         float tx = g_homeX, ty = g_homeY;
+
+        /* The orbit chassis is not steered at all -- it writes its own position
+           round the player. Handled before the steering rules rather than
+           inside them, because "which of these rules applies" is a question it
+           has no answer to: it is never outside its envelope, never has a task,
+           and never goes home. See orbitTick. */
+        if (d.type == DRONE_ORBIT) {
+            orbitTick(d, p, i);
+            continue;
+        }
 
         if (d.type == DRONE_PICKUP) {
             Pickup* drop = nearestPickupInEnvelope(g_taskX, g_taskY, d.x, d.y);
@@ -315,7 +487,14 @@ static void droneTickBank(Drone* drones, const World& w, const Player& p, Invent
                recovery target is guaranteed to be on the player's side. */
             escapingLight = playerSideOpenPoint(w, p, d, &tx, &ty);
             hasTask = escapingLight;
-        } else if (enemy && !clearAttackShot(w, d.x, d.y, *enemy)) {
+        } else if (enemy && d.type != DRONE_MORTAR && d.type != DRONE_LANCE &&
+                   !clearAttackShot(w, d.x, d.y, *enemy)) {
+            /* Repositioning for a clear line is the ATTACK chassis's answer to
+               being blocked, and it is the wrong answer for the other two. The
+               mortar's entire value is that it does not need a straight line,
+               so sending it hunting for one would spend its range advantage on
+               getting somewhere it did not have to be. The lance fires along
+               the player's facing and has no target to line up on at all. */
             hasTask = firingPosition(w, p, d, *enemy, i, &tx, &ty);
         }
 
@@ -413,6 +592,14 @@ static void droneTickBank(Drone* drones, const World& w, const Player& p, Invent
                 }
             }
         }
+        if (d.type == DRONE_LANCE)  lanceFire(w, p, d);
+        if (d.type == DRONE_MORTAR) {
+            /* Counted down even with nothing to shoot at, so a shell is ready
+               when something arrives rather than a second and a half after it
+               does -- at 96 frames that difference is most of a fight. */
+            if (enemy) mortarFire(w, d, *enemy);
+            else if (d.shotCool > 0) --d.shotCool;
+        }
         if (d.type == DRONE_PICKUP) pickupCollect(d, inv);
         if (d.type == DRONE_SHIELD) {
             shieldIntercept(d);
@@ -451,7 +638,10 @@ void droneDraw(u32* px, int camX, int camY, bool lit) {
         const int x = (int)d.x - camX, y = (int)d.y - camY;
         const u32 c = d.type == DRONE_LIGHT  ? 0xA8EEFF
                     : d.type == DRONE_ATTACK ? 0xE6A060
-                    : d.type == DRONE_PICKUP ? 0x8CE8B0 : 0x86B8FF;
+                    : d.type == DRONE_PICKUP ? 0x8CE8B0
+                    : d.type == DRONE_LANCE  ? 0xBFE9FF
+                    : d.type == DRONE_MORTAR ? 0xFFC24A
+                    : d.type == DRONE_ORBIT  ? 0xE4E9F2 : 0x86B8FF;
         for (int oy = -2; oy <= 2; ++oy) for (int ox = -2; ox <= 2; ++ox) {
             if (ox * ox + oy * oy > 5) continue;
             const int vx = x + ox, vy = y + oy;

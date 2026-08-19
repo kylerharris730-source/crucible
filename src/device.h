@@ -136,8 +136,32 @@ enum DeviceType {
     /* A bed is furniture with one state owned by the player, not a machine:
        right-clicking it starts resting, which advances only the day clock. */
     DEV_BED,
+    /* --- the pedestal -----------------------------------------------------
+       One item, standing on a plinth, lit. It is the only object in the game
+       whose job is to be SEEN from a long way off, and that is the whole
+       design: a chamber you can see something in is a chamber you decide to
+       walk into, which is the thing exploration was missing. Ore in a wall
+       rewards you for having gone somewhere; a pedestal is a reason to go.
+
+       What it holds lives in the fields the machines already have -- `value`
+       carries the ItemId and `count` the number -- rather than in two new ones,
+       and that is not thrift, it is the save format. Device is written as a raw
+       sized block (see save.cpp), so widening the struct makes every existing
+       world's machines fail their length check and vanish: a feature that
+       deletes somebody's factory is not worth two fields. `value` is an i32 and
+       an ItemId is a u16, so it fits with room to spare, and a pedestal has no
+       setpoint for it to collide with.
+
+       Appended, like every device before it, because a Device's type is a raw
+       number in that same save. */
+    DEV_PEDESTAL,
     DEV_COUNT
 };
+
+/* How far a pedestal throws light. Bright, and deliberately brighter than a
+   torch is at range: the point of the object is to be visible before you have
+   decided to go and look. */
+static const int PEDESTAL_LIGHT = 245;
 
 /* Circuit signals use material ids directly, so an item sensor can say
    "Copper: 40" without a second translation table. The nine generic channels
@@ -421,6 +445,20 @@ struct Device {
 
     bool used;
 };
+
+/* What a pedestal is holding, and putting something on it. Accessors rather
+   than reaching into `value` and `count` at the call sites, so the one place
+   that knows about the field aliasing is here -- a caller that read `d.value`
+   directly would break silently if a pedestal ever grew a setpoint.
+
+   The item is a bare u16 rather than an ItemId, and that is the include
+   direction rather than sloppiness: item.h includes THIS file, so nothing here
+   can name a type item.h defines. ItemId is a u16 and has to stay one for the
+   wire format anyway (see Blob::itemf), so the two are the same declaration
+   written from the side of the fence that can see it. */
+u16  pedestalItem(const Device& d);
+int  pedestalCount(const Device& d);
+void pedestalSet(Device& d, u16 item, int count);
 
 extern Device g_devices[MAX_DEVICES];
 extern CircuitWire g_circuitWires[MAX_CIRCUIT_WIRES];

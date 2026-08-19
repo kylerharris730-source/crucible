@@ -243,6 +243,27 @@ const Recipe RECIPES[] = {
       ITEM_PICKUP_DRONE, 1, "Pickup Drone", STATION_ANVIL },
     { { { (ItemId)MAT_IRON, 5 }, { (ItemId)MAT_GLASS, 2 }, { ITEM_NONE, 0 } },
       ITEM_SHIELD_DRONE, 1, "Shield Drone", STATION_ANVIL },
+    /* The weapon chassis, and every one of them costs CHITIN on top of metal.
+       That is the recipe saying what the item is: chitin comes off the things
+       you fight, so an autonomous weapon is paid for out of the fighting it is
+       going to do more of, and the first one is a decision to commit to combat
+       rather than a slot you fill because it was free.
+
+       Priced against each other by how much of the fight they take over. The
+       lance is the cheapest and asks the most of the player; the mortar is the
+       dearest because "hits things behind cover" is a capability nothing else
+       in the game has at any price. */
+    { { { (ItemId)MAT_IRON, 4 }, { (ItemId)MAT_CHITIN, 6 }, { ITEM_NONE, 0 } },
+      ITEM_LANCE_DRONE, 1, "Lance Drone", STATION_ANVIL },
+    { { { (ItemId)MAT_IRON, 6 }, { (ItemId)MAT_CHITIN, 10 }, { (ItemId)MAT_COAL, 4 } },
+      ITEM_MORTAR_DRONE, 1, "Mortar Drone", STATION_ANVIL },
+    { { { (ItemId)MAT_IRON, 5 }, { (ItemId)MAT_CHITIN, 8 }, { ITEM_NONE, 0 } },
+      ITEM_ORBIT_DRONE, 1, "Orbit Drone", STATION_ANVIL },
+    /* Stone and glass: a plinth and a case. Cheap on purpose -- a pedestal is
+       how you SHOW something, and a display case you have to save up for is a
+       display case nobody builds. */
+    { { { (ItemId)MAT_STONE, 12 }, { (ItemId)MAT_GLASS, 2 }, { ITEM_NONE, 0 } },
+      ITEM_PEDESTAL, 1, "Pedestal", STATION_BENCH },
     { { { (ItemId)MAT_COPPER, 3 }, { (ItemId)MAT_RUBBER, 1 }, { ITEM_NONE, 0 } },
       ITEM_OVERCLOCK_CHIP, 1, "Overclock Chip", STATION_ANVIL },
     { { { (ItemId)MAT_COPPER, 4 }, { (ItemId)MAT_GLASS, 1 }, { ITEM_NONE, 0 } },

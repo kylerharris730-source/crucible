@@ -4,6 +4,7 @@
 #include "light.h"
 #include "projectile.h"
 #include "worldgen.h"
+#include "accessory.h"
 #include <string.h>
 #include <math.h>
 
@@ -38,7 +39,7 @@ static const float ENT_MAX_FALL = 6.0f;
 
 const EntityDef ENT_DEFS[ENT_COUNT] = {
     /* name       w   h  hp dmg  cd   speed accel  fly layers night | shotEvery dmg spd standOff boss | drop min max sprite egg */
-    { "none",      0,  0,  0,   0,   0, 0.00f, 0.00f, false, 0,  false,   0, 0, 0.0f, 0.0f, false, ITEM_NONE,        0, 0, SPR_NONE,  0x000000 },
+    { "none",      0,  0,  0,   0,   0, 0.00f, 0.00f, false, 0,  false,   0, 0, 0.0f, 0.0f, false, ITEM_NONE,        0, 0, ITEM_NONE,            0, SPR_NONE,  0x000000 },
 
     /* --- rock mite ---------------------------------------------------------
        The one that makes the first twenty minutes treacherous. Slow enough to
@@ -52,7 +53,7 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
        matriarch. That is the Terraria shape: the summon is assembled out of
        what the place is already made of, so deciding to fight the boss is a
        decision you make gradually while doing something else. */
-    { "Rock Mite",12,  9, 18,   6,  36, 0.34f, 0.05f, false, 1,  true,    0, 0, 0.0f, 0.0f, false, (ItemId)MAT_CHITIN, 1, 2, SPR_MITE,  0x8E7758 },
+    { "Rock Mite",12,  9, 18,   6,  36, 0.34f, 0.05f, false, 1,  true,    0, 0, 0.0f, 0.0f, false, (ItemId)MAT_CHITIN, 1, 2, ITEM_CARAPACE_CHARM, 50, SPR_MITE,  0x8E7758 },
 
     /* --- cinder moth -------------------------------------------------------
        Navigates to the hottest cell it can sense, which means it navigates to
@@ -76,7 +77,7 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
        rather than stockpiled. See the note in PROGRESSION about what this costs:
        glass is back to being gated on that one beach, and the honest fix is for
        sand to generate somewhere underground too. */
-    { "Cinder Moth",9,  7, 10,   4,  30, 0.52f, 0.09f, true,  1,  true,    0, 0, 0.0f, 0.0f, false, (ItemId)MAT_COAL,   1, 2, SPR_MOTH,  0xE0561C },
+    { "Cinder Moth",9,  7, 10,   4,  30, 0.52f, 0.09f, true,  1,  true,    0, 0, 0.0f, 0.0f, false, (ItemId)MAT_COAL,   1, 2, ITEM_MOTH_LANTERN,   50, SPR_MOTH,  0xE0561C },
 
     /* --- drip slime --------------------------------------------------------
        The corroder, and the slowest thing in the game: it is not a chase, it is
@@ -87,7 +88,7 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
        Introduces acid a whole layer above where acid pockets generate, so the
        material is familiar before the terrain is full of it. Drops it too,
        which is the only way to get any in layer 1. */
-    { "Drip Slime",11,  8, 24,   5,  40, 0.20f, 0.04f, false, 1,  false,   0, 0, 0.0f, 0.0f, false, (ItemId)MAT_ACID,   1, 3, SPR_SLIME, 0x6FA23C },
+    { "Drip Slime",11,  8, 24,   5,  40, 0.20f, 0.04f, false, 1,  false,   0, 0, 0.0f, 0.0f, false, (ItemId)MAT_ACID,   1, 3, ITEM_SLIME_MAGNET,   50, SPR_SLIME, 0x6FA23C },
 
     /* --- husk ---------------------------------------------------------------
        The zombie, and deliberately the dullest thing in the game: it walks at
@@ -100,7 +101,7 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
        that you cannot casually kill it, so it turns a corridor into somewhere
        you have to decide about. Everything interesting about the encounter
        comes from the terrain it is standing in. */
-    { "Husk",     11, 22, 46,  11,  34, 0.42f, 0.06f, false, 1,  true,    0, 0, 0.0f, 0.0f, false, (ItemId)MAT_CHITIN, 1, 3, SPR_HUSK,  0x6E7A52 },
+    { "Husk",     11, 22, 46,  11,  34, 0.42f, 0.06f, false, 1,  true,    0, 0, 0.0f, 0.0f, false, (ItemId)MAT_CHITIN, 1, 3, ITEM_HUSK_HEART,     50, SPR_HUSK,  0x6E7A52 },
 
     /* --- bat ----------------------------------------------------------------
        Fast, and BAD AT STEERING. The overshoot is the entire creature.
@@ -114,7 +115,7 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
 
        Fragile to match: two hits from the starting shot. A bat you had to chase
        AND could not kill would be a tax rather than an encounter. */
-    { "Bat",       9,  7, 12,   7,  26, 1.35f, 0.055f, true, 1,  true,    0, 0, 0.0f, 0.0f, false, (ItemId)MAT_CHITIN, 1, 1, SPR_BAT,   0x6A4C68 },
+    { "Bat",       9,  7, 12,   7,  26, 1.35f, 0.055f, true, 1,  true,    0, 0, 0.0f, 0.0f, false, (ItemId)MAT_CHITIN, 1, 1, ITEM_SWIFT_CHARM,    50, SPR_BAT,   0x6A4C68 },
 
     /* --- spitter ------------------------------------------------------------
        The one that makes standing still wrong. It holds its distance and shoots,
@@ -150,7 +151,7 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
        ARC rather than a flat line, which is easier to read the landing point
        of, not harder. Whether that trade is right is a play-testing question
        and it is on the list. */
-    { "Spitter",  10, 12, 22,   5,  30, 0.26f, 0.05f, false, 1,  false,  95, 9, 4.7f, 90.0f, false, (ItemId)MAT_CHITIN, 1, 2, SPR_SPITTER, 0x8A5A3A },
+    { "Spitter",  10, 12, 22,   5,  30, 0.26f, 0.05f, false, 1,  false,  95, 9, 4.7f, 90.0f, false, (ItemId)MAT_CHITIN, 1, 2, ITEM_SPITTER_BRACER, 50, SPR_SPITTER, 0x8A5A3A },
 
     /* --- the brood mother, layer 1's boss ------------------------------------
        A rock mite grown enormous, which is the right shape for a first boss:
@@ -164,7 +165,7 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
        hp 900 against a starting shot that does 6 is a real fight without being
        a war of attrition, and it is meant to be fought AFTER the Blast Module,
        which does 22. Drops the Forge Core -- see the note there. */
-    { "Brood Mother", 34, 24, 900, 16, 26, 0.55f, 0.05f, false, 0, false,  0, 0, 0.0f, 0.0f, true,  ITEM_FORGE_CORE, 1, 1, SPR_BROOD, 0xB04838 },
+    { "Brood Mother", 34, 24, 900, 16, 26, 0.55f, 0.05f, false, 0, false,  0, 0, 0.0f, 0.0f, true,  ITEM_FORGE_CORE, 1, 1, ITEM_NONE,            0, SPR_BROOD, 0xB04838 },
 };
 
 /* Not saved with the creatures -- see entity.h. Written by save.cpp as one u32
@@ -215,9 +216,41 @@ static bool pickupSpawn(ItemId item, int count, float x, float y) {
     return false;
 }
 
+/* --- being drawn in --------------------------------------------------------
+   A collection radius alone is not a magnet. Past about double the bare figure,
+   "items are collected from further away" stops being a bonus you can feel and
+   becomes an inventory that fills without you noticing -- the drop simply
+   vanishes from somewhere you were not looking. What makes the charm READ is
+   seeing the drops come to you, so the outer part of the radius pulls and only
+   the inner part collects.
+
+   The pull is an acceleration rather than a set velocity, so a drop that is
+   already falling arcs in instead of snapping sideways, and so several drops
+   converging look like several objects rather than one animation. It is applied
+   before the ordinary physics below, which then does the moving -- this adds a
+   force to a simulation that already exists rather than being a second mover
+   with its own idea of where things are. */
+static void pickupMagnet(Pickup& p, const Player& body, const Inventory& inv) {
+    const float reach = accessoryPickupRadius(inv);
+    if (reach <= PICKUP_BASE_RADIUS) return;
+    const float dx = body.centreX() - p.x, dy = body.centreY() - p.y;
+    const float d2 = dx * dx + dy * dy;
+    if (d2 > reach * reach || d2 < 0.01f) return;
+    const float d = sqrtf(d2);
+    /* Stronger the closer it gets, so the last few cells snap rather than
+       drifting. Capped so a drop never outruns the physics step it is about to
+       be handed to. */
+    const float pull = fminf(0.85f, 0.10f + (reach - d) / reach * 0.55f);
+    p.vx += dx / d * pull;
+    p.vy += dy / d * pull;
+    /* Enough drag that the pull cannot build into an orbit. Without it a drop
+       arriving fast sails through the collection radius and comes back, which
+       looks like the magnet is broken rather than like momentum. */
+    p.vx *= 0.86f; p.vy *= 0.86f;
+}
+
 static void pickupTickMode(World& w, const Player& fallbackPlayer, Inventory& fallbackInv,
                            bool multiplayer) {
-    static const float PICKUP_RADIUS = 20.0f;
     for (int i = 0; i < MAX_PICKUPS; ++i) {
         Pickup& p = g_pickups[i];
         if (!p.used) continue;
@@ -231,17 +264,19 @@ static void pickupTickMode(World& w, const Player& fallbackPlayer, Inventory& fa
             for (int slot = 0; slot < MAX_PLAYERS && p.used; ++slot) {
                 PlayerSession& session = g_playerSessions[slot];
                 if (!session.connected || !session.body.alive) continue;
+                pickupMagnet(p, session.body, session.inventory);
                 const float dx = session.body.centreX() - p.x;
                 const float dy = session.body.centreY() - p.y;
-                if (dx * dx + dy * dy > PICKUP_RADIUS * PICKUP_RADIUS) continue;
+                if (dx * dx + dy * dy > PICKUP_BASE_RADIUS * PICKUP_BASE_RADIUS) continue;
                 p.count = (i16)session.inventory.add(p.item, p.count);
                 if (!p.count) p.used = false;
             }
             if (!p.used) continue;
         } else {
+            if (fallbackPlayer.alive) pickupMagnet(p, fallbackPlayer, fallbackInv);
             const float dx = fallbackPlayer.centreX() - p.x;
             const float dy = fallbackPlayer.centreY() - p.y;
-            if (fallbackPlayer.alive && dx * dx + dy * dy <= PICKUP_RADIUS * PICKUP_RADIUS) {
+            if (fallbackPlayer.alive && dx * dx + dy * dy <= PICKUP_BASE_RADIUS * PICKUP_BASE_RADIUS) {
                 p.count = (i16)fallbackInv.add(p.item, p.count);
                 if (!p.count) { p.used = false; continue; }
             }
@@ -290,6 +325,13 @@ int entSpawn(const World& w, int type, float cx, float cy) {
         e.x = (float)bx; e.y = (float)by;
         e.hp = d.hp;
         e.facing = rngChance(128) ? 1 : -1;
+        e.prevX = e.x; e.prevY = e.y;
+        /* A boss arrives WALKING. Left at zero, the charge clock is already
+           negative on her first tick, so she opened the fight standing
+           motionless through a dash with no heading -- three quarters of a
+           second of nothing, in the one moment the encounter most needs to
+           announce itself. */
+        if (d.isBoss) e.actTimer = 90 + BOSS_WINDUP;
         return i;
     }
     return -1;   /* pool full */
@@ -316,6 +358,22 @@ static void entDie(World& w, Entity& e) {
         g_bossesBeaten |= BOSS_LAYER1;
         if (firstWin) unlockLayerTwo(w);
     }
+    /* --- the charm, before the ordinary drop ---------------------------
+       First because the ordinary path can RETURN -- chitin leaves through
+       pickupSpawn and never reaches the bottom of this function -- so a rare
+       drop written after it would simply never happen for the six creatures
+       that actually have one. Which is exactly the kind of bug that looks like
+       a tuning problem: the roll is right there in the code, the rate reads as
+       one in fifty, and nothing ever drops.
+
+       Spawned as a PICKUP rather than written into the grid. A charm placed as
+       a cell is a charm that can be buried by the sand the fight loosened, or
+       land in the acid a slime left, and losing a one-in-fifty drop to physics
+       is not a story anybody enjoys. */
+    if (d.rareDrop != ITEM_NONE && d.rareOneIn > 0 &&
+        (int)(rngNext() % (u32)d.rareOneIn) == 0)
+        pickupSpawn(d.rareDrop, 1, e.centreX(), e.centreY());
+
     if (d.dropItem != ITEM_NONE && d.dropMax > 0) {
         int n = d.dropMin + (int)(rngNext() % (u32)(d.dropMax - d.dropMin + 1));
         const int cx = (int)e.centreX(), cy = (int)e.centreY();
@@ -669,34 +727,150 @@ static void spitterTick(World& w, Entity& e, const Player& p) {
 
    Terraria first bosses are this simple and they work, because what makes them
    memorable is the SHAPE of the encounter -- a thing far larger than you that
-   keeps arriving -- rather than the branching of a decision tree. */
+   keeps arriving -- rather than the branching of a decision tree.
+
+   --- what was wrong with her ------------------------------------------------
+   Two complaints, and one change answers both.
+
+   She got STUCK. At 34x24 she is by far the largest box in the game, and the
+   step-up in moveAxis clears half her height -- twelve cells -- which sounds
+   generous and is not, because the thing she has to get over is usually the
+   arena the player just built. Wedged, she walked on the spot forever.
+
+   And a ROPE beat her outright. Her charge was a ground chase at a multiplier:
+   it moved faster along the floor and it never left the floor, so a player
+   hanging two body-lengths up was in a place the boss had no move to reach. The
+   fight became "climb, wait, shoot", which is not a fight.
+
+   The dash below is the answer to both, and it is deliberately ONE mechanism
+   rather than two fixes. It commits to a free 2D heading, so up is a direction
+   she can go; it suspends gravity, so the heading survives leaving the floor;
+   and it ploughs rock across its leading face, so a platform is a delay chosen
+   by what it is made of rather than a wall. Camping above her is now the thing
+   that gets you hit.
+
+   The wind-up is not decoration. A move that crosses the arena has to be
+   readable or it is just damage, so she stops, glows, and only picks the
+   heading at the end of it -- which also means the heading is aimed where you
+   ARE at the moment of commitment, and dodging is a matter of moving after the
+   telegraph rather than before it. */
+
+/* Everything the dash bites through, across the leading face of the body. Rock
+   and softer, the same ladder the mite's chewing respects: stone, dirt and a
+   wooden platform give way, and a metal wall or a layer barrier stops her. That
+   ladder is what makes building against her a decision rather than futile. */
+static void broodPlough(World& w, const Entity& e, float dirX, float dirY) {
+    /* One cell beyond the box on the leading side, along each axis she is
+       actually travelling. Both, when the heading is diagonal -- a creature
+       moving up and to the left is arriving at the corner, and clearing only
+       one face would leave her grinding along the other. */
+    if (dirX != 0.0f) {
+        const int ax = dirX > 0.0f ? e.right() + 1 : e.left() - 1;
+        if (ax > PLAY_X0 && ax < PLAY_X1)
+            for (int y = e.top(); y <= e.bottom(); ++y) {
+                if (y < PLAY_Y0 || y > PLAY_Y1) continue;
+                const u8 m = w.at(ax, y).mat;
+                if (m == MAT_EMPTY || g_matStrength[m] > STR_ROCK) continue;
+                w.setCell(ax, y, MAT_EMPTY);
+            }
+    }
+    if (dirY != 0.0f) {
+        const int ay = dirY > 0.0f ? e.bottom() + 1 : e.top() - 1;
+        if (ay > PLAY_Y0 && ay < PLAY_Y1)
+            for (int x = e.left(); x <= e.right(); ++x) {
+                if (x < PLAY_X0 || x > PLAY_X1) continue;
+                const u8 m = w.at(x, ay).mat;
+                if (m == MAT_EMPTY || g_matStrength[m] > STR_ROCK) continue;
+                w.setCell(x, ay, MAT_EMPTY);
+            }
+    }
+}
+
 static void broodTick(World& w, Entity& e, const Player& p) {
     const EntityDef& d = ENT_DEFS[e.type];
     const bool wounded = e.hp * 2 <= d.hp;
     e.phase = wounded ? 1 : 0;
 
+    /* --- has she actually been going anywhere? -------------------------
+       Sampled against her own previous position, and read only while she is
+       trying to walk: a boss holding still through a wind-up has not failed to
+       move, she has decided not to. */
+    const float moved = fabsf(e.x - e.prevX) + fabsf(e.y - e.prevY);
+    e.prevX = e.x; e.prevY = e.y;
+
     /* actTimer counts down to the next charge; while it is NEGATIVE the charge
        is in progress and the creature is committed. Committing is what makes a
        charge dodgeable -- a boss that could abort mid-lunge would only be a
        faster walker. */
-    if (--e.actTimer <= -CHARGE_FRAMES) e.actTimer = wounded ? 130 : 210;
+    --e.actTimer;
+    if (e.actTimer <= -CHARGE_FRAMES) {
+        /* The dash is over. Weight comes back, and the next one is scheduled
+           far enough out that the wind-up is not the whole fight. */
+        e.actTimer = (wounded ? 130 : 210) + BOSS_WINDUP;
+        e.weightless = false;
+        e.telegraph = 0;
+        e.stuck = 0;
+    }
 
     const bool charging = e.actTimer < 0;
-    const float speed = charging ? d.speed * 3.4f : d.speed;
-    groundChase(e, p, speed, charging ? d.accel * 3.0f : d.accel, 0.0f);
+    const bool winding  = !charging && e.actTimer <= BOSS_WINDUP;
+
+    if (charging) {
+        /* Committed. The heading was chosen on the frame the wind-up ended and
+           is not revisited, which is the entire reason it can be dodged. */
+        e.weightless = true;
+        e.vx = e.aimX * BOSS_DASH_SPEED;
+        e.vy = e.aimY * BOSS_DASH_SPEED;
+        if (e.vx > 0.05f) e.facing = 1; else if (e.vx < -0.05f) e.facing = -1;
+        broodPlough(w, e, e.aimX, e.aimY);
+        e.telegraph = 0;
+        return;
+    }
+
+    if (winding) {
+        /* Braced. She sheds her speed rather than stopping dead, so the pause
+           reads as a creature gathering itself and not as the game freezing. */
+        e.vx *= 0.72f;
+        e.telegraph = e.actTimer + 1;
+        /* Aimed on the LAST frame of the wind-up. Choosing at the start would
+           mean the telegraph tells you where she is going before you have had a
+           chance to be somewhere else, which is a worse fight: the skill is in
+           moving during the wind-up, and that only matters if it changes the
+           answer. */
+        if (e.actTimer == 0) {
+            float dx = p.centreX() - e.centreX();
+            float dy = p.centreY() - e.centreY();
+            const float len = sqrtf(dx * dx + dy * dy);
+            if (len > 0.01f) { dx /= len; dy /= len; }
+            else { dx = (float)e.facing; dy = 0.0f; }
+            e.aimX = dx; e.aimY = dy;
+        }
+        return;
+    }
+
+    e.telegraph = 0;
+    e.weightless = false;
+
+    /* --- wedged ---------------------------------------------------------
+       Not a movement hack: she simply starts her next wind-up now. The dash
+       already goes through rock and already ignores the floor, so the recovery
+       is a move the player can see coming, and the fight has one fewer special
+       case in it than a teleport or a nudge would have cost. */
+    if (moved < BOSS_STUCK_CELLS) {
+        if (++e.stuck >= BOSS_STUCK_FRAMES) {
+            e.stuck = 0;
+            e.actTimer = BOSS_WINDUP;
+        }
+    } else {
+        e.stuck = 0;
+    }
+
+    groundChase(e, p, d.speed, d.accel, 0.0f);
     if (e.onGround && e.vx == 0.0f && p.centreY() < e.centreY()) e.vy = -2.6f;
 
     /* Chews rock like its young, but across its whole face -- it is 34 cells
        wide and should read as going THROUGH a wall rather than nibbling it. */
-    const int ahead = e.facing > 0 ? e.right() + 1 : e.left() - 1;
-    if (ahead > PLAY_X0 && ahead < PLAY_X1) {
-        for (int y = e.top(); y <= e.bottom(); ++y) {
-            if (y < PLAY_Y0 || y > PLAY_Y1) continue;
-            const u8 m = w.at(ahead, y).mat;
-            if (m == MAT_EMPTY || g_matStrength[m] > STR_ROCK) continue;
-            w.setCell(ahead, y, MAT_EMPTY);
-        }
-    }
+    broodPlough(w, e, (float)e.facing, 0.0f);
 
     /* The brood, in the second half only. Spawned AT the mother rather than
        around the player, so they arrive as a wave you can see coming. */
@@ -774,7 +948,11 @@ static void entTickMode(World& w, Player& fallbackPlayer, Inventory& fallbackInv
         default: break;
         }
 
-        if (!d.flies) {
+        /* `weightless` is a per-frame decision a creature makes about itself,
+           not a property of its species like `flies` -- the boss is a walker
+           for all but the forty-six frames she is airborne, and giving her
+           d.flies would mean she never touched the ground at all. */
+        if (!d.flies && !e.weightless) {
             e.vy += ENT_GRAVITY;
             if (e.vy > ENT_MAX_FALL) e.vy = ENT_MAX_FALL;
             e.onGround = false;
@@ -1080,6 +1258,18 @@ void entDraw(u32* px, int camX, int camY, bool lit) {
                    a dark cave would flash dark grey and the one piece of
                    feedback that says "you hit it" would be invisible exactly
                    where combat happens. */
+                /* The wind-up glow, under the hit flash for the same reason
+                   the hit flash sits over the shading: being struck is the more
+                   urgent fact and must never be hidden by a telegraph. It
+                   PULSES rather than holding a colour, because a steady tint on
+                   a creature that is already red-brown reads as lighting, and a
+                   thing that is about to cross the room at you has to read as
+                   an event. */
+                if (e.telegraph > 0) {
+                    const int beat = (e.telegraph / 3) & 1;
+                    const u32 warn = beat ? 0xFF9A50u : 0xFFE0A0u;
+                    out = lerpColor(out, warn, 150);
+                }
                 if (e.hurtFlash > 0) out = 0xFFFFFF;
                 px[vy * VIEW_CELLS_W + vx] = out;
             }

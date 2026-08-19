@@ -924,6 +924,187 @@ static const char* ART_ACC_TWIN[SPR_H] = {
     "..............",
 };
 
+/* --- the creature charms ---------------------------------------------------
+   Eight icons that have to be told apart at fourteen pixels, in a row, while
+   four of them are worn at once. So each one is a SILHOUETTE quoting its
+   source, not a repainted amulet: the plate is a shell, the lantern is a lamp,
+   the magnet is a horseshoe, the heart is a heart. Colour is the second signal
+   and never the first, for the reason the mining ladder makes the opposite
+   trade -- there, one shape at four sizes was right because the four tools do
+   the same job; here the eight charms do eight different jobs, and the shape is
+   what has to say which. */
+
+/* Mite shell. Segmented, and the segments are what stop it reading as a
+   pebble. */
+static const char* ART_ACC_CARAPACE[SPR_H] = {
+    "..............",
+    "....qqqqq.....",
+    "...q11111q....",
+    "..q1111111q...",
+    "..q1kkkkk1q...",
+    "..q1111111q...",
+    "..q1kkkkk1q...",
+    "..q1111111q...",
+    "...q11111q....",
+    "....qqqqq.....",
+    "..............",
+    "..............",
+    "..............",
+    "..............",
+};
+
+/* Moth lamp. The halo is the whole point: this is the one charm whose effect is
+   literally light, so the icon emits some. */
+static const char* ART_ACC_LANTERN[SPR_H] = {
+    "..............",
+    "......G.......",
+    ".....GGG......",
+    "....GGGGG.....",
+    "...GfffffG....",
+    "...GfTTTfG....",
+    "...GfTTTfG....",
+    "...GfffffG....",
+    "....GGGGG.....",
+    ".....GGG......",
+    "....G...G.....",
+    "...G.....G....",
+    "..............",
+    "..............",
+};
+
+/* Horseshoe magnet, poles down. The most literal icon in the set and
+   deliberately so -- "things come to you" has one universally read shape. */
+static const char* ART_ACC_MAGNET[SPR_H] = {
+    "..............",
+    "....pppp......",
+    "...p....p.....",
+    "..p......p....",
+    "..p......p....",
+    "..p......p....",
+    "..p......p....",
+    "..p......p....",
+    "..p......p....",
+    "..S......S....",
+    "..S......S....",
+    "..............",
+    "..............",
+    "..............",
+};
+
+/* Husk heart. Off-centre highlight so it beats rather than sits. */
+static const char* ART_ACC_HEART[SPR_H] = {
+    "..............",
+    "...rr...rr....",
+    "..roor.roor...",
+    ".rooTorooooor.",
+    ".rooTooooooor.",
+    ".rooooooooor..",
+    "..rooooooor...",
+    "...rooooor....",
+    "....rooor.....",
+    ".....ror......",
+    "......r.......",
+    "..............",
+    "..............",
+    "..............",
+};
+
+/* Bat wing. Scalloped trailing edge, which is the one detail that separates a
+   wing from a leaf at this size. */
+static const char* ART_ACC_SWIFT[SPR_H] = {
+    "..............",
+    ".......y......",
+    "......yzy.....",
+    ".....yzzzy....",
+    "....yzzzzzy...",
+    "...yzzzzzzzy..",
+    "..yzzzzzzzzzy.",
+    "..yzzzzzzzzzy.",
+    "..y.zzz.zzz.y.",
+    "...y..y..y....",
+    "......G.......",
+    ".....GGG......",
+    "..............",
+    "..............",
+};
+
+/* Spitter barb, worn on the forearm. A straight spike bound by two straps:
+   speed, not damage, and a strap says "worn" where a bare spike would say
+   "ammunition". */
+static const char* ART_ACC_BRACER[SPR_H] = {
+    "..............",
+    "......T.......",
+    "......S.......",
+    "......S.......",
+    ".....SSS......",
+    "....GGGGG.....",
+    "...G.....G....",
+    "...G.SSS.G....",
+    "...G.....G....",
+    "....GGGGG.....",
+    ".....SSS......",
+    "..............",
+    "..............",
+    "..............",
+};
+
+/* Whetstone. A block with a bright worked edge -- the edge is the stat. */
+static const char* ART_ACC_WHETSTONE[SPR_H] = {
+    "..............",
+    "..............",
+    "...SSSSSSSS...",
+    "..STTTTTTTTS..",
+    "..SGGGGGGGGS..",
+    "..SGGGGGGGGS..",
+    "..SGGGGGGGGS..",
+    "..SSSSSSSSSS..",
+    "..............",
+    ".....S..S.....",
+    "....S....S....",
+    "..............",
+    "..............",
+    "..............",
+};
+
+/* Chronometer. A cased dial with one hand -- two hands are unreadable at this
+   size and a clock only needs to say "time" once. */
+static const char* ART_ACC_CHRONO[SPR_H] = {
+    "..............",
+    "......G.......",
+    ".....GGG......",
+    "....RRRRR.....",
+    "...RBBBBBR....",
+    "..RBBTBBBBR...",
+    "..RBBTBBBBR...",
+    "..RBBTTTBBR...",
+    "..RBBBBBBBR...",
+    "...RBBBBBR....",
+    "....RRRRR.....",
+    "..............",
+    "..............",
+    "..............",
+};
+
+/* The pedestal, as a carried item. A plinth with something bright standing on
+   it: the loot is the icon, because a bare plinth is furniture and the thing
+   this places is a display case. */
+static const char* ART_PEDESTAL[SPR_H] = {
+    "..............",
+    "......T.......",
+    ".....TfT......",
+    "......T.......",
+    "..............",
+    "....GGGGG.....",
+    ".....GGG......",
+    ".....GGG......",
+    ".....GGG......",
+    ".....GGG......",
+    "....GGGGG.....",
+    "...GGGGGGG....",
+    "..GGGGGGGGG...",
+    "..............",
+};
+
 /* The fallback for named objects that do not yet merit a bespoke silhouette.
    It is deliberately a parcel/tag rather than a colour square, so every
    non-material item has an object-shaped icon while dedicated art can arrive
@@ -1123,6 +1304,15 @@ void initSprites() {
     expand(SPR_ACC_GARLIC,   ART_ACC_GARLIC);
     expand(SPR_ACC_OVERLOAD, ART_ACC_OVERLOAD);
     expand(SPR_ACC_TWIN,     ART_ACC_TWIN);
+    expand(SPR_ACC_CARAPACE,  ART_ACC_CARAPACE);
+    expand(SPR_ACC_LANTERN,   ART_ACC_LANTERN);
+    expand(SPR_ACC_MAGNET,    ART_ACC_MAGNET);
+    expand(SPR_ACC_HEART,     ART_ACC_HEART);
+    expand(SPR_ACC_SWIFT,     ART_ACC_SWIFT);
+    expand(SPR_ACC_BRACER,    ART_ACC_BRACER);
+    expand(SPR_ACC_WHETSTONE, ART_ACC_WHETSTONE);
+    expand(SPR_ACC_CHRONO,    ART_ACC_CHRONO);
+    expand(SPR_PEDESTAL,      ART_PEDESTAL);
     expand(SPR_ITEM_GENERIC, ART_ITEM_GENERIC);
     expand(SPR_BOLTER,    ART_BOLTER);
     expand(SPR_BENCH,     ART_BENCH);

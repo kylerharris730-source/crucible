@@ -661,6 +661,43 @@ void initItems() {
     ITEMS[ITEM_SHIELD_DRONE].maxStack  = 1;
     ITEMS[ITEM_SHIELD_DRONE].colour    = 0x86B8FF;
 
+    /* The weapon chassis. All three go in a GENERAL drone bay -- equipSlot
+       names EQ_DRONE_A and equipFits reads that as "either" -- so the two bays
+       are a weapon loadout rather than one weapon and one utility. Two orbit
+       drones is a legal and quite reasonable answer; so is a mortar and a
+       pickup drone, and giving that up is what carrying two weapons costs. */
+    ITEMS[ITEM_LANCE_DRONE].name      = "Lance Drone";
+    ITEMS[ITEM_LANCE_DRONE].kind      = ITEMK_WORN;
+    ITEMS[ITEM_LANCE_DRONE].equipSlot = EQ_DRONE_A;
+    ITEMS[ITEM_LANCE_DRONE].maxStack  = 1;
+    ITEMS[ITEM_LANCE_DRONE].colour    = 0xBFE9FF;
+    ITEMS[ITEM_LANCE_DRONE].sprite    = SPR_ACC_BRACER;
+
+    ITEMS[ITEM_MORTAR_DRONE].name      = "Mortar Drone";
+    ITEMS[ITEM_MORTAR_DRONE].kind      = ITEMK_WORN;
+    ITEMS[ITEM_MORTAR_DRONE].equipSlot = EQ_DRONE_A;
+    ITEMS[ITEM_MORTAR_DRONE].maxStack  = 1;
+    ITEMS[ITEM_MORTAR_DRONE].colour    = 0xFFC24A;
+    ITEMS[ITEM_MORTAR_DRONE].sprite    = SPR_ACC_LANTERN;
+
+    ITEMS[ITEM_ORBIT_DRONE].name      = "Orbit Drone";
+    ITEMS[ITEM_ORBIT_DRONE].kind      = ITEMK_WORN;
+    ITEMS[ITEM_ORBIT_DRONE].equipSlot = EQ_DRONE_A;
+    ITEMS[ITEM_ORBIT_DRONE].maxStack  = 1;
+    ITEMS[ITEM_ORBIT_DRONE].colour    = 0xE4E9F2;
+    ITEMS[ITEM_ORBIT_DRONE].sprite    = SPR_ACC_MAGNET;
+
+    /* The pedestal. A DEVICE rather than a material, for the reason the
+       workbench is one: it covers a rectangle, it snaps to the device lattice,
+       and it creates something with state that outlives the click -- namely the
+       item standing on it. See DEV_PEDESTAL. */
+    ITEMS[ITEM_PEDESTAL].name       = "Pedestal";
+    ITEMS[ITEM_PEDESTAL].kind       = ITEMK_DEVICE;
+    ITEMS[ITEM_PEDESTAL].deviceType = DEV_PEDESTAL;
+    ITEMS[ITEM_PEDESTAL].maxStack   = 32;
+    ITEMS[ITEM_PEDESTAL].colour     = 0x9AA6B4;
+    ITEMS[ITEM_PEDESTAL].sprite     = SPR_PEDESTAL;
+
     ITEMS[ITEM_OVERCLOCK_CHIP].name      = "Overclock Chip";
     ITEMS[ITEM_OVERCLOCK_CHIP].kind      = ITEMK_DRONE_MODULE;
     ITEMS[ITEM_OVERCLOCK_CHIP].maxStack  = 1;
@@ -713,6 +750,117 @@ void initItems() {
     ITEMS[ITEM_TWIN_ACCESSORY].maxStack  = 1;
     ITEMS[ITEM_TWIN_ACCESSORY].colour    = 0xC89AF0;
     ITEMS[ITEM_TWIN_ACCESSORY].sprite    = SPR_ACC_TWIN;
+
+    /* --- the charms ------------------------------------------------------
+       Every one of these is four lines of table and one number that matters,
+       which is the shape a rare drop wants: the tooltip is the whole design
+       document, and a player who finds one knows what it does before they have
+       finished reading its name.
+
+       The numbers are sized against a fight rather than against each other. A
+       layer-1 creature hits for 6 to 16, so 2 points of armour is a fifth off a
+       husk and a third off a mite -- felt, and nowhere near immunity. 18% move
+       speed is about what Hermes boots give, deliberately, because a trinket
+       that beat a dedicated boot slot would make the boot slot pointless. */
+
+    /* Mite. Armour, and the one charm that SUMS with worn armour rather than
+       taking the largest -- see the note on ItemDef::regenPer for why that is
+       the rule holding rather than an exception to it. */
+    ITEMS[ITEM_CARAPACE_CHARM].name      = "Carapace Charm";
+    ITEMS[ITEM_CARAPACE_CHARM].kind      = ITEMK_ACCESSORY;
+    ITEMS[ITEM_CARAPACE_CHARM].equipSlot = EQ_TRINKET_A;
+    ITEMS[ITEM_CARAPACE_CHARM].maxStack  = 1;
+    ITEMS[ITEM_CARAPACE_CHARM].armour    = 2;
+    ITEMS[ITEM_CARAPACE_CHARM].colour    = 0xB07848;
+    ITEMS[ITEM_CARAPACE_CHARM].sprite    = SPR_ACC_CARAPACE;
+
+    /* Moth. The character had no light of their own at all -- every lumen in
+       the game came from a torch, a drone or a burning projectile -- so this is
+       a new capability rather than a bigger number, and it is the charm most
+       likely to change where somebody is willing to go. 150 against the light
+       drone's 210: enough to see your feet and the wall you are standing at,
+       not enough to replace the companion whose whole job this is. */
+    ITEMS[ITEM_MOTH_LANTERN].name      = "Moth Lantern";
+    ITEMS[ITEM_MOTH_LANTERN].kind      = ITEMK_ACCESSORY;
+    ITEMS[ITEM_MOTH_LANTERN].equipSlot = EQ_TRINKET_A;
+    ITEMS[ITEM_MOTH_LANTERN].maxStack  = 1;
+    ITEMS[ITEM_MOTH_LANTERN].lightGlow = 150;
+    ITEMS[ITEM_MOTH_LANTERN].colour    = 0xFFC24A;
+    ITEMS[ITEM_MOTH_LANTERN].sprite    = SPR_ACC_LANTERN;
+
+    /* Slime. 34 extra cells on a bare radius of 20 is nearly three times the
+       reach, which sounds enormous and is the correct size for this effect:
+       below roughly double, a magnet is indistinguishable from walking over
+       things, so a timid version of this charm would be a charm nobody could
+       tell they were wearing. */
+    ITEMS[ITEM_SLIME_MAGNET].name         = "Slime Magnet";
+    ITEMS[ITEM_SLIME_MAGNET].kind         = ITEMK_ACCESSORY;
+    ITEMS[ITEM_SLIME_MAGNET].equipSlot    = EQ_TRINKET_A;
+    ITEMS[ITEM_SLIME_MAGNET].maxStack     = 1;
+    ITEMS[ITEM_SLIME_MAGNET].pickupRadius = 34;
+    ITEMS[ITEM_SLIME_MAGNET].colour       = 0x8FC85A;
+    ITEMS[ITEM_SLIME_MAGNET].sprite       = SPR_ACC_MAGNET;
+
+    /* Husk. One point every 90 frames is a point and a half a second, so a full
+       heal from nearly dead takes two and a half minutes. That is meant to be
+       slow: it is the charm that changes what happens BETWEEN fights, and one
+       that healed at combat speed would quietly delete the food ladder. */
+    ITEMS[ITEM_HUSK_HEART].name      = "Husk Heart";
+    ITEMS[ITEM_HUSK_HEART].kind      = ITEMK_ACCESSORY;
+    ITEMS[ITEM_HUSK_HEART].equipSlot = EQ_TRINKET_A;
+    ITEMS[ITEM_HUSK_HEART].maxStack  = 1;
+    ITEMS[ITEM_HUSK_HEART].regenPer  = 90;
+    ITEMS[ITEM_HUSK_HEART].colour    = 0x6E7A52;
+    ITEMS[ITEM_HUSK_HEART].sprite    = SPR_ACC_HEART;
+
+    /* Bat. Its own overshoot is what makes a bat hard to escape, so the charm
+       it drops being the answer to that is the roster teaching itself. */
+    ITEMS[ITEM_SWIFT_CHARM].name      = "Swift Charm";
+    ITEMS[ITEM_SWIFT_CHARM].kind      = ITEMK_ACCESSORY;
+    ITEMS[ITEM_SWIFT_CHARM].equipSlot = EQ_TRINKET_A;
+    ITEMS[ITEM_SWIFT_CHARM].maxStack  = 1;
+    ITEMS[ITEM_SWIFT_CHARM].speedPct  = 18;
+    ITEMS[ITEM_SWIFT_CHARM].colour    = 0xE8D45A;
+    ITEMS[ITEM_SWIFT_CHARM].sprite    = SPR_ACC_SWIFT;
+
+    /* Spitter. Muzzle velocity rather than damage, and under one world gravity
+       that is not a small distinction: a faster shot DROPS LESS over the same
+       distance (see ItemDef::shotSpeed), so this charm makes long range aiming
+       easier rather than making hits hurt more. It is the charm you notice by
+       hitting things you used to miss. */
+    ITEMS[ITEM_SPITTER_BRACER].name         = "Spitter Bracer";
+    ITEMS[ITEM_SPITTER_BRACER].kind         = ITEMK_ACCESSORY;
+    ITEMS[ITEM_SPITTER_BRACER].equipSlot    = EQ_TRINKET_A;
+    ITEMS[ITEM_SPITTER_BRACER].maxStack     = 1;
+    ITEMS[ITEM_SPITTER_BRACER].shotSpeedPct = 35;
+    ITEMS[ITEM_SPITTER_BRACER].colour       = 0xC8E060;
+    ITEMS[ITEM_SPITTER_BRACER].sprite       = SPR_ACC_BRACER;
+
+    /* Pedestal loot. Both are flat combat multipliers, which is the reward that
+       should sit lit in a chamber you chose to walk into rather than falling
+       out of whatever wandered past -- a charm you can go and LOOK for wants to
+       be the one whose value needs no explaining. */
+    ITEMS[ITEM_WHETSTONE].name      = "Whetstone";
+    ITEMS[ITEM_WHETSTONE].kind      = ITEMK_ACCESSORY;
+    ITEMS[ITEM_WHETSTONE].equipSlot = EQ_TRINKET_A;
+    ITEMS[ITEM_WHETSTONE].maxStack  = 1;
+    ITEMS[ITEM_WHETSTONE].damagePct = 25;
+    ITEMS[ITEM_WHETSTONE].colour    = 0xAEB6C4;
+    ITEMS[ITEM_WHETSTONE].sprite    = SPR_ACC_WHETSTONE;
+
+    /* 20% off the delay rather than the Overload Accessory's flat quarter, so
+       the two are a genuine choice at four slots rather than one shadowing the
+       other. They do NOT stack: cooldownPct takes the largest and the Overload
+       is resolved separately, whichever is kinder wins, and a build wearing
+       both gets one of them -- which is what stops fire rate running away the
+       moment the trinket row got wider. */
+    ITEMS[ITEM_CHRONOMETER].name        = "Chronometer";
+    ITEMS[ITEM_CHRONOMETER].kind        = ITEMK_ACCESSORY;
+    ITEMS[ITEM_CHRONOMETER].equipSlot   = EQ_TRINKET_A;
+    ITEMS[ITEM_CHRONOMETER].maxStack    = 1;
+    ITEMS[ITEM_CHRONOMETER].cooldownPct = 20;
+    ITEMS[ITEM_CHRONOMETER].colour      = 0x8A93A6;
+    ITEMS[ITEM_CHRONOMETER].sprite      = SPR_ACC_CHRONO;
 
 
     /* The starter weapon. A TOOL with no module slots, which is what makes it
@@ -826,7 +974,24 @@ void initItems() {
         if (ITEMS[i].maxStack && ITEMS[i].sprite == SPR_NONE) ITEMS[i].sprite = SPR_ITEM_GENERIC;
 }
 
-const char* const EQ_NAMES[EQ_COUNT] = { "Feet", "Back", "Trinket", "Trinket", "Head", "Body", "Light Drone", "Drone", "Drone" };
+const char* const EQ_NAMES[EQ_COUNT] = { "Feet", "Back", "Trinket 1", "Trinket 2",
+                                        "Head", "Body", "Light Drone", "Drone A", "Drone B",
+                                        "Trinket 3", "Trinket 4" };
+/* What is actually PAINTED in an empty slot. The long names above are for the
+   tooltip, where there is room for them; drawn into the square itself they were
+   clipped to "rinke" and "ht Dr", which is worse than no label at all because
+   it looks like a rendering fault rather than an abbreviation. The trinkets are
+   bare numerals because the panel groups them under one TRINKETS heading, so
+   the word is already on screen once and repeating it four times says
+   nothing. */
+const char* const EQ_SHORT[EQ_COUNT] = { "Feet", "Back", "1", "2",
+                                         "Head", "Body", "Lamp", "A", "B",
+                                         "3", "4" };
+
+bool eqIsTrinket(int eqSlot) {
+    for (int i = 0; i < EQ_TRINKET_COUNT; ++i) if (EQ_TRINKETS[i] == eqSlot) return true;
+    return false;
+}
 
 /* Returning a tool's instance to the pool when the tool leaves the pack. Miss
    this and the pool leaks: pick up and drop a multitool 32 times and the next
@@ -952,6 +1117,39 @@ TempSpec Inventory::tempResist() const {
     return t;
 }
 
+/* Every accessory passive is the same question asked of a different column, so
+   it is one function taking the column rather than six copies of a loop. A
+   member pointer keeps the call sites reading as plainly as a field access
+   would while leaving exactly one place where "largest, never summed" lives. */
+static int bestWorn(const Inventory& inv, i16 ItemDef::*stat) {
+    int best = 0;
+    for (int i = 0; i < EQ_COUNT; ++i) {
+        if (inv.equip[i].empty()) continue;
+        const int v = (int)(ITEMS[inv.equip[i].item].*stat);
+        if (v > best) best = v;
+    }
+    return best;
+}
+
+/* Regeneration is the one passive where LARGEST is the wrong word, because a
+   smaller number is the better item: it counts FRAMES between points of health,
+   so 90 heals faster than 180. Resolved as the smallest non-zero rather than by
+   inverting the stat, so the table still reads in the unit the effect uses. */
+int Inventory::regenPer() const {
+    int best = 0;
+    for (int i = 0; i < EQ_COUNT; ++i) {
+        if (equip[i].empty()) continue;
+        const int v = ITEMS[equip[i].item].regenPer;
+        if (v > 0 && (best == 0 || v < best)) best = v;
+    }
+    return best;
+}
+int Inventory::lightGlow()    const { return bestWorn(*this, &ItemDef::lightGlow); }
+int Inventory::pickupRadius() const { return bestWorn(*this, &ItemDef::pickupRadius); }
+int Inventory::shotSpeedPct() const { return bestWorn(*this, &ItemDef::shotSpeedPct); }
+int Inventory::damagePct()    const { return bestWorn(*this, &ItemDef::damagePct); }
+int Inventory::cooldownPct()  const { return bestWorn(*this, &ItemDef::cooldownPct); }
+
 int Inventory::armour() const {
     int total = 0;
     for (int i = 0; i < EQ_COUNT; ++i)
@@ -971,8 +1169,12 @@ bool equipFits(ItemId item, int eqSlot) {
     const ItemDef& d = ITEMS[item];
     if ((d.kind != ITEMK_WORN && d.kind != ITEMK_ACCESSORY) || d.equipSlot >= EQ_COUNT) return false;
     if (d.equipSlot == (u8)eqSlot) return true;
-    return (d.equipSlot == EQ_TRINKET_A && eqSlot == EQ_TRINKET_B) ||
-           (d.equipSlot == EQ_DRONE_A && eqSlot == EQ_DRONE_B);
+    /* A trinket names EQ_TRINKET_A and means "any trinket slot" -- see the note
+       on ItemDef::equipSlot. Asking the table rather than listing the pairs is
+       what stopped the third and fourth slots being unreachable the moment they
+       were added, which is the exact bug the second one had. */
+    if (eqIsTrinket(d.equipSlot) && eqIsTrinket(eqSlot)) return true;
+    return (d.equipSlot == EQ_DRONE_A && eqSlot == EQ_DRONE_B);
 }
 
 int Inventory::packWorn(int eqSlot) const {

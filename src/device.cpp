@@ -1,7 +1,7 @@
 #include "device.h"
 #include "door.h"
 #include "sprite.h"
-#include "light.h"
+#include "item.h"      /* ITEMS[], for what a pedestal is holding */
 #include "light.h"
 #include "projectile.h"
 #include <string.h>
@@ -363,7 +363,31 @@ const DeviceInfo DEVS[DEV_COUNT] = {
     /* Platform cells make the bed furniture you can stand on or pass across,
        rather than a 14-cell wall. The art supplies its body and mattress. */
     { "Bed", "", "", 0, 0, 0, 0, SPR_BED, MAT_PLATFORM, false },
+    /* Platform cells, like the bed, so a pedestal in a corridor is scenery you
+       walk past rather than a 14-cell plug in the only way through. A reward
+       that blocks the route it is rewarding you for taking would be a strange
+       object. */
+    { "Pedestal", "", "", 0, 0, 0, 0, SPR_PEDESTAL, MAT_PLATFORM, false },
 };
+
+u16 pedestalItem(const Device& d) {
+    if (d.type != DEV_PEDESTAL || d.count <= 0) return ITEM_NONE;
+    /* Range-checked on the way OUT rather than trusted. `value` is a setpoint
+       field on every other device, so a save from before pedestals existed, or
+       a machine whose type was reused, can put any number in here -- and the
+       consequence of believing it would be an index off the end of ITEMS[]. */
+    if (d.value <= 0 || d.value >= ITEM_COUNT) return ITEM_NONE;
+    return (u16)d.value;
+}
+int pedestalCount(const Device& d) {
+    return d.type == DEV_PEDESTAL ? d.count : 0;
+}
+void pedestalSet(Device& d, u16 item, int count) {
+    if (d.type != DEV_PEDESTAL) return;
+    if (item == ITEM_NONE || count <= 0) { d.value = 0; d.count = 0; return; }
+    d.value = (i32)item;
+    d.count = count;
+}
 
 int sparkCount() {
     int n = 0;
@@ -974,6 +998,15 @@ void devRemove(World& w, Device* d) {
 void devRegisterLights() {
     for (int i = 0; i < (int)g_torches.size(); ++i)
         lightAddDynamic(g_torches[i].x + DEV_W / 2, g_torches[i].y + DEV_H / 2, 235);
+    /* A pedestal is a light source only while it is HOLDING something. An empty
+       plinth going on glowing would be the object lying to you about the one
+       fact it exists to communicate -- and it is the fact you read from across
+       a dark chamber, before you are close enough to see the plinth at all. */
+    for (int i = 0; i < MAX_DEVICES; ++i) {
+        const Device& d = g_devices[i];
+        if (!d.used || d.type != DEV_PEDESTAL || pedestalItem(d) == ITEM_NONE) continue;
+        lightAddDynamic(d.x + DEV_W / 2, d.y + DEV_H / 2, PEDESTAL_LIGHT);
+    }
 }
 
 /* Mean temperature over the device's own cells, in stored units. Averaged rather
@@ -1562,6 +1595,46 @@ void devDraw(const World& w, u32* px, int camX, int camY, bool lit) {
                 if (right) for (int yy = 6; yy <= 7; ++yy) if (bx + k >= 0 && bx + k < VIEW_CELLS_W && by + yy >= 0 && by + yy < VIEW_CELLS_H && k >= 8) px[(by + yy) * VIEW_CELLS_W + bx + k] = col;
             }
             continue;
+        }
+
+        /* --- what is standing on it ---------------------------------------
+           Drawn as the item's own icon, floating clear of the plinth, and it is
+           drawn INSTEAD of nothing rather than as a colour swatch because the
+           whole object exists to answer "what is that" from across a room. A
+           generic glow would make every pedestal in the world the same
+           discovery, which is the opposite of the point.
+
+           Unlit, deliberately. Everything else in this function shades by the
+           light field; the reward does not, so it reads at full strength in an
+           unlit cavern -- it is its own light source (see devRegisterLights),
+           and shading it by the illumination it is providing would dim it in
+           exactly the dark where it most needs to be seen. */
+        if (d.type == DEV_PEDESTAL) {
+            const ItemId held = pedestalItem(d);
+            if (held != ITEM_NONE) {
+                const u8 spr = ITEMS[held].sprite;
+                const int liftY = by - 10;
+                if (spr != SPR_NONE) {
+                    const u32* icon = g_sprite[spr];
+                    for (int yy = 0; yy < SPR_H; ++yy) for (int xx = 0; xx < SPR_W; ++xx) {
+                        const u32 c = icon[yy * SPR_W + xx];
+                        const int vx = bx + xx, vy = liftY + yy;
+                        if (c == 0 || vx < 0 || vx >= VIEW_CELLS_W || vy < 0 || vy >= VIEW_CELLS_H) continue;
+                        px[vy * VIEW_CELLS_W + vx] = c;
+                    }
+                } else {
+                    /* A material has no icon of its own -- see sprite.h -- so it
+                       gets its colour as a solid lozenge. Materials are what a
+                       pedestal holds least often and the fallback only has to be
+                       legible, not characterful. */
+                    const u32 c = ITEMS[held].colour;
+                    for (int yy = 4; yy < 10; ++yy) for (int xx = 4; xx < 10; ++xx) {
+                        const int vx = bx + xx, vy = liftY + yy;
+                        if (vx < 0 || vx >= VIEW_CELLS_W || vy < 0 || vy >= VIEW_CELLS_H) continue;
+                        px[vy * VIEW_CELLS_W + vx] = c;
+                    }
+                }
+            }
         }
 
         const u32* art = g_sprite[DEVS[d.type].sprite];

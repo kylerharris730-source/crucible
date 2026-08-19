@@ -189,6 +189,38 @@ enum {
     ITEM_GARLIC_ACCESSORY,
     ITEM_OVERLOAD_ACCESSORY,
     ITEM_TWIN_ACCESSORY,
+    /* --- the charms ------------------------------------------------------
+       One per layer-1 creature, and that pairing is the whole point rather than
+       flavour. Every creature in the layer dropped MAT_CHITIN, so killing a bat
+       and killing a husk were the same event with a different sprite in front
+       of it -- which is the thing that made combat feel undirected. A charm the
+       bat alone can give you means the world now answers "what should I go and
+       fight", and it answers differently depending on what you want.
+
+       Rare on purpose: see EntityDef::rareOneIn. A charm is a permanent change
+       to how the character plays, so it has to be a thing that HAPPENS rather
+       than a thing you farm -- at one in fifty you meet three or four over a
+       layer, which is a loadout arriving one decision at a time.
+
+       The last two have no creature and are pedestal loot only. Both are
+       straight combat multipliers, which is exactly the kind of reward that
+       should be sitting lit in a chamber you chose to walk into rather than
+       falling out of whatever wandered past. */
+    ITEM_CARAPACE_CHARM,    /* mite    -- armour */
+    ITEM_MOTH_LANTERN,      /* moth    -- the wearer glows */
+    ITEM_SLIME_MAGNET,      /* slime   -- drops come to you */
+    ITEM_HUSK_HEART,        /* husk    -- slow regeneration */
+    ITEM_SWIFT_CHARM,       /* bat     -- move speed */
+    ITEM_SPITTER_BRACER,    /* spitter -- muzzle velocity */
+    ITEM_WHETSTONE,         /* pedestal only -- damage */
+    ITEM_CHRONOMETER,       /* pedestal only -- fire rate */
+    /* The weapon chassis. See DroneType for why a weapon is a companion here
+       rather than something you hold. */
+    ITEM_LANCE_DRONE,
+    ITEM_MORTAR_DRONE,
+    ITEM_ORBIT_DRONE,
+    /* What you stand a reward on. See DEV_PEDESTAL. */
+    ITEM_PEDESTAL,
     ITEM_COUNT
 };
 
@@ -442,6 +474,53 @@ struct ItemDef {
        stack of stone wearable. */
     u8   deviceType;
 
+    /* --- ITEMK_ACCESSORY only -----------------------------------------
+       The passive scalars. Every one of them is a single number that moves one
+       number the game already had, which is exactly what makes a rare drop feel
+       good rather than swingy: you know what it does the moment you read it,
+       and it changes how you play without changing what you can do.
+
+       They resolve on the same "LARGEST, never summed" rule as reachBonus, and
+       that is a real design decision rather than an inherited convention, so it
+       is worth saying why against the obvious alternative. Vampire Survivors
+       stacks its passives, but its passives are not competing for slots -- you
+       eventually own all of them. Here there are four interchangeable trinket
+       slots and eight charms, so summing would make the answer to every build
+       "wear four of the best one", and the four-slot loadout would collapse
+       into a single decision made once. Taking the largest makes wearing four
+       DIFFERENT charms strictly better than hoarding duplicates, which is the
+       loadout actually being a loadout.
+
+       Armour is the exception and stays summed, for the reason already written
+       on ItemDef::armour -- and it now has a trinket in it, which is worth
+       flagging: the Carapace does stack with a helmet and a suit. That is
+       intentional and it is the same rule, not an exception to it. Armour is
+       the one stat the game already committed to being additive, and having one
+       trinket join that ladder is what stops the trinket row being a separate
+       game with its own arithmetic.
+
+       Zero on everything that is not the charm in question, so an item says
+       what it does by naming one field. */
+    /* Frames between one point of health returning. 0 is no regeneration,
+       which is every other item and the bare character. */
+    i16  regenPer;
+    /* Light the WEARER emits, on the same 0..255 scale lightAddDynamic takes.
+       The character had none of their own -- the Light Drone carried all of it
+       -- so this is a genuinely different thing to own rather than a bigger
+       number on something you already had. */
+    i16  lightGlow;
+    /* Extra cells of reach on loose drops, and it also turns the collection
+       radius into a MAGNET: past a certain reach, waiting for items to be
+       walked over stops reading as a bonus and starts reading as a chore. */
+    i16  pickupRadius;
+    /* Percentages, all three, and all three chosen because they are levers the
+       tool ladder already pulls: a shot's muzzle speed, its damage, and the
+       frames between shots. A trinket that moved a number no weapon had would
+       need its own explanation on every tooltip. */
+    i16  shotSpeedPct;
+    i16  damagePct;
+    i16  cooldownPct;   /* subtracted; 25 means "fire in three quarters the time" */
+
     /* SpriteId, or SPR_NONE to fall back to a flat colour swatch. Materials
        deliberately have none -- see sprite.h. */
     u8   sprite;
@@ -570,15 +649,40 @@ enum EquipSlot {
     EQ_LIGHT_DRONE,
     EQ_DRONE_A,
     EQ_DRONE_B,
+    /* --- two more trinket slots, appended -------------------------------
+       Appended rather than tucked in beside EQ_TRINKET_A/B, for exactly the
+       reason the drone bays above were: the slot's NUMBER is what a save
+       stores, so inserting here would silently reassign what index 4 means in
+       every existing character. The screen groups them together regardless --
+       where a slot sits in this enum and where it sits on the panel are
+       separate questions, and only one of them is a compatibility promise.
+
+       Four rather than two because the trinkets are now where the creature
+       drops land. With two slots and six charms in the world, five of them are
+       dead weight the moment you own the two you like; with four, a loadout is
+       a choice between good options rather than a shortlist. */
+    EQ_TRINKET_C,
+    EQ_TRINKET_D,
     EQ_COUNT
 };
 
+/* The interchangeable trinket slots, in the order the screen shows them. One
+   table rather than a chain of ORs in equipFits, so adding a fifth is a line
+   here instead of a condition that has to be found in three places. */
+static const int EQ_TRINKETS[] = { EQ_TRINKET_A, EQ_TRINKET_B, EQ_TRINKET_C, EQ_TRINKET_D };
+static const int EQ_TRINKET_COUNT = (int)(sizeof(EQ_TRINKETS) / sizeof(EQ_TRINKETS[0]));
+bool eqIsTrinket(int eqSlot);
+
 extern const char* const EQ_NAMES[EQ_COUNT];
+/* The same slot named in four characters or fewer, which is what actually fits
+   inside a 34-pixel square. Kept beside the long names rather than derived from
+   them: an abbreviation that is generated is an abbreviation that collides. */
+extern const char* const EQ_SHORT[EQ_COUNT];
 
 /* Whether an item may be worn in a given slot. Not simply `equipSlot ==
-   eqSlot`, because the two trinket slots are interchangeable: they exist so
+   eqSlot`, because the trinket slots are interchangeable: they exist so
    that "worn and passive" needs no slot invented per item, and a trinket that
-   could only go in the first of them would leave the second permanently
+   could only go in the first of them would leave the rest permanently
    empty. */
 bool equipFits(ItemId item, int eqSlot);
 
@@ -640,6 +744,19 @@ struct Inventory {
     /* Total flat damage reduction from everything worn. Summed, unlike every
        other bonus here -- see ItemDef::armour for why this one is different. */
     int  armour() const;
+
+    /* --- the accessory passives -----------------------------------------
+       One function each rather than a struct of them all, because every caller
+       wants exactly one: the light pass wants the glow, the firing site wants
+       the three shot numbers, and neither has any business being handed the
+       other's. Each is the LARGEST among everything worn -- see the note on
+       ItemDef::regenPer for why largest and not summed. */
+    int  regenPer() const;       /* frames per point; 0 with nothing worn */
+    int  lightGlow() const;
+    int  pickupRadius() const;   /* EXTRA cells, on top of the bare radius */
+    int  shotSpeedPct() const;
+    int  damagePct() const;
+    int  cooldownPct() const;
 
     /* True only when this exact item is in an equipment slot. Kept out of the
        pack scan deliberately: accessories are choices competing for two

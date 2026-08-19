@@ -112,6 +112,26 @@ struct EntityDef {
     bool  isBoss;
     ItemId dropItem;
     int   dropMin, dropMax;
+    /* --- the rare drop ---------------------------------------------------
+       One charm per creature, at one chance in `rareOneIn`. ITEM_NONE and 0 on
+       anything that has none, so a creature declares its rare drop the same way
+       it declares its ordinary one.
+
+       This is the answer to "every layer-1 creature drops chitin, so killing
+       things feels the same regardless of what you killed". The ordinary drop
+       stays exactly as it was -- chitin is the layer's material and the boss
+       summon needs it -- and the rare one is what makes the creatures DIFFERENT
+       to hunt. A bat and a husk now lead somewhere different.
+
+       One in fifty rather than one in ten, and the difference matters more than
+       it looks. These are permanent changes to how the character plays, so they
+       have to be events: at one in ten a charm is a chore you complete, at one
+       in fifty it is a thing that happens to you on the way somewhere else. It
+       also has to survive the spawn cap -- seven alive at a time and a despawn
+       rule means nobody is farming a hundred husks in one place -- so the rate
+       is set against a session of playing rather than against a grind. */
+    ItemId rareDrop;
+    int   rareOneIn;
     u8    sprite;
     /* The swatch its spawn egg gets in the creative list. Lives on the creature
        rather than beside the egg item so there is one table describing a
@@ -139,6 +159,30 @@ struct Entity {
     int   aimHold;
     int   phase;       /* bosses: which half of the fight this is */
     float animPhase;
+    /* --- the dash ---------------------------------------------------------
+       Three fields serving one behaviour, and they are on Entity rather than
+       tucked into the spare bits of an existing one because entities are not
+       saved (see the note at the top of this file) -- the only cost of a field
+       here is a line in codecEntity, and the alternative was overloading
+       `phase` with a second meaning that nothing in its name admits to.
+
+       `telegraph` counts down the wind-up. It is what makes a dash a MOVE
+       rather than damage that arrives: the creature stops, is visibly about to
+       do something, and only then commits. `weightless` suspends gravity for
+       the frames it is airborne, which is what lets the dash leave the floor
+       plane at all -- and leaving the floor plane is the whole point, because a
+       ground chase can never reach somebody standing on a rope. */
+    int   telegraph;
+    bool  weightless;
+    /* Where it was, and for how long it has been failing to leave. A creature
+       34 cells wide gets wedged on geometry that nothing else in the game
+       notices, so it needs to be able to tell that it is pushing against
+       something rather than walking. Compared against its own last position
+       rather than against its velocity: the mover zeroes vx on contact and the
+       chase puts it straight back, so velocity says "moving" the whole time it
+       is stuck. */
+    float prevX, prevY;
+    int   stuck;
 
     bool  alive() const { return type != ENT_NONE && hp > 0; }
     int   width()  const { return ENT_DEFS[type].w; }
@@ -247,3 +291,33 @@ static const int ENT_DESPAWN_DIST = 700;
    decide, and be somewhere else -- a lunge you cannot read is just damage that
    arrives. */
 static const int CHARGE_FRAMES = 46;
+
+/* --- reading the charge ----------------------------------------------------
+   Frames of wind-up before she commits. The charge already lasted long enough
+   to dodge; what it had no room for was DECIDING to dodge, because it began on
+   the same frame it became visible. She now stops dead for this long first,
+   glows, and only then picks a heading -- so the information arrives before the
+   creature does, which is the difference between a boss and a hazard.
+
+   Long enough to react to, short enough that it is not a free window: at 26
+   frames it is a little under half a second. */
+static const int BOSS_WINDUP = 26;
+
+/* Cells per frame while dashing, and the arc is a straight line at this speed
+   in whatever direction she committed to -- not a ground chase at a multiplier.
+   46 frames at 3.6 crosses about 165 cells, which is most of a screen, so the
+   answer to a dash is to be somewhere else rather than to out-walk it. */
+static const float BOSS_DASH_SPEED = 3.6f;
+
+/* Frames of failing to move before she stops trying to walk and dashes out of
+   it. She is 34x24, by far the largest box in the game, and geometry that every
+   other creature steps over will wedge her -- so the recovery has to be a move
+   she already has rather than a special case in the mover. A dash is
+   weightless and eats rock, so it frees her from anything short of a layer
+   barrier.
+
+   Measured in cells rather than in "did the mover refuse": the mover zeroes vx
+   on contact and the chase restores it immediately, so from the outside a
+   wedged creature looks like a walking one. */
+static const int   BOSS_STUCK_FRAMES = 40;
+static const float BOSS_STUCK_CELLS  = 0.35f;

@@ -1,4 +1,6 @@
 #include "worldgen.h"
+#include "device.h"   /* pedestals are placed as devices */
+#include "item.h"
 #include "tree.h"
 #include "player.h"
 #include <string.h>
@@ -652,8 +654,23 @@ static void carveChamber(World& w, u32 seed, int cx, int cy, int rx, int ry) {
     }
 }
 
+/* Where each chamber ended up, filled by generateChambers and read by
+   generatePedestals. Recorded rather than recomputed, and that is worth being
+   deliberate about: the placement is a chain of six hashes and three clamps,
+   and a second copy of it in another function would be a second copy that
+   drifts the first time anybody tunes a radius. A chamber that moved without
+   its pedestal moving would leave the reward embedded in rock, which is the
+   kind of bug that only shows up in one world in twenty.
+
+   -1 marks a chamber that was rejected for being too small after clamping. */
+static int g_chamberX[CHAMBER_COUNT];
+static int g_chamberY[CHAMBER_COUNT];
+static int g_chamberR[CHAMBER_COUNT];
+
 static void generateChambers(World& w) {
     for (int i = 0; i < CHAMBER_COUNT; ++i) {
+        g_chamberX[i] = g_chamberY[i] = -1;
+        g_chamberR[i] = 0;
         const u32 seed = 0xC4A3u + (u32)i * 7919u;
 
         /* Spread by index across the world and jittered, the same way the worms
@@ -746,6 +763,100 @@ static void generateChambers(World& w) {
         if (rx < 12 || ry < 12) continue;
 
         carveChamber(w, seed, cx, cy, rx, ry);
+        g_chamberX[i] = cx; g_chamberY[i] = cy; g_chamberR[i] = ry;
+    }
+}
+
+/* ==========================================================================
+   Pedestals
+   ==========================================================================
+
+   A lit plinth with something on it, standing on the floor of a chamber.
+
+   This is the pass that gives EXPLORING a payoff of its own. Everything the
+   underground rewarded you with until now was material -- ore in a wall, a
+   pocket of sand -- which rewards you for having gone somewhere but never gives
+   you a reason to go. A pedestal is visible from across a dark room before you
+   are anywhere near it (see PEDESTAL_LIGHT), so it turns a chamber you glanced
+   into from a corridor into a decision.
+
+   In chambers rather than scattered through the tunnels, and that is the whole
+   siting rule. A reward in a corridor is one you walk into; a reward in the
+   middle of a large open room is one you have to cross the room for, and
+   crossing a room is where the creatures are. The chamber is the encounter and
+   the pedestal is the reason to have it.
+
+   Every THIRD chamber, so roughly eleven exist in a world. Enough that finding
+   one is not a freak event and few enough that each is worth the walk -- and
+   comfortably inside MAX_DEVICES, which the player also has to build in. */
+static void generatePedestals(World& w) {
+    /* The table. Weighted by repetition rather than by a parallel array of
+       weights, because with this few entries a list you can read down and count
+       is more honest than an arithmetic distribution -- and the ratio IS the
+       design: the drone chassis are craftable, so finding one is a shortcut,
+       while the two charms are found here or nowhere at all.
+
+       The Whetstone and the Chronometer are deliberately the commonest things
+       on it. They have no recipe and no creature drops them, so a world where
+       the table rolled badly is a world where two of the eight charms simply do
+       not exist -- which is the one outcome a loot table must not produce for
+       an item that is otherwise unreachable. */
+    static const ItemId LOOT[] = {
+        ITEM_WHETSTONE, ITEM_WHETSTONE, ITEM_WHETSTONE,
+        ITEM_CHRONOMETER, ITEM_CHRONOMETER, ITEM_CHRONOMETER,
+        ITEM_LANCE_DRONE, ITEM_MORTAR_DRONE, ITEM_ORBIT_DRONE,
+        ITEM_MOTH_LANTERN, ITEM_SLIME_MAGNET, ITEM_SWIFT_CHARM,
+    };
+    static const int LOOT_COUNT = (int)(sizeof(LOOT) / sizeof(LOOT[0]));
+
+    /* --- finding somewhere it actually fits --------------------------------
+       The first cut dropped straight down the chamber's centre column and
+       placed there, and it produced two pedestals out of twelve attempts. The
+       reason is geometry rather than a bug in the placement: a chamber is an
+       ELLIPSE, so its centre column is the lowest point of a bowl, and a
+       14-wide box standing on the lowest point has its two ends buried in the
+       curve rising away on either side. devPlace correctly refused nearly every
+       one of them.
+
+       So the search is along the floor rather than at a point: several columns
+       spread across the chamber's width, each tested by finding its floor and
+       then asking whether the whole footprint clears. Off-centre is also the
+       better SITING -- a reward against the wall of a room reads as placed,
+       where one dead centre reads as generated. */
+    for (int i = 0; i < CHAMBER_COUNT; i += 3) {
+        if (g_chamberX[i] < 0) continue;
+
+        bool placed = false;
+        /* Alternating outward from the centre, so the nearest workable spot
+           wins and a pedestal never ends up at the far lip of a room when the
+           middle would have taken it. */
+        for (int step = 0; step < 24 && !placed; ++step) {
+            const int away = (step + 1) / 2;
+            const int sign = (step & 1) ? -1 : 1;
+            const int cx = g_chamberX[i] + sign * away * DEV_W;
+            if (cx - DEV_W < PLAY_X0 || cx + DEV_W > PLAY_X1) continue;
+
+            /* Drop to this column's floor. Bounded by the chamber's own
+               half-height plus a margin, so a column that happens to open into
+               a tunnel below cannot drag the pedestal out of the room it is
+               supposed to be rewarding. */
+            const int limit = g_chamberY[i] + g_chamberR[i] + 8;
+            int floorY = -1;
+            for (int y = g_chamberY[i]; y <= limit && y < PLAY_Y1; ++y)
+                if (w.at(cx, y).mat != MAT_EMPTY) { floorY = y; break; }
+            if (floorY < 0) continue;
+
+            /* Standing ON that floor: devPlace centres what it is given, so the
+               footprint's bottom row is the cell above it. */
+            const int py = floorY - DEV_H / 2;
+            if (py - DEV_H / 2 < PLAY_Y0) continue;
+            if (!devPlace(w, DEV_PEDESTAL, cx, py)) continue;
+
+            Device* d = devAt(cx, py);
+            if (!d) continue;
+            pedestalSet(*d, LOOT[hash1(i, 0x9E37u) % (u32)LOOT_COUNT], 1);
+            placed = true;
+        }
     }
 }
 
@@ -1384,6 +1495,13 @@ void generateWorld(World& w) {
     /* After every pass that carves or replaces underground material, so the
        seal cannot be cut by one of them. See generateStrata. */
     generateStrata(w);
+
+    /* After the strata seal and after every carving pass, because a pedestal is
+       an OBJECT and not a material: a later pass that replaced its cells would
+       leave a device record standing in rock with nothing to show for it, which
+       devIntact would then drop on the first frame. Everything that writes
+       cells has finished by here. */
+    generatePedestals(w);
 
     generateTrees(w);
     generateWildCrops(w);

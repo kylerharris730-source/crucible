@@ -55,6 +55,8 @@ void codecEntity(Blob& b, Entity& e) {
     b.intf(e.touchTimer); b.intf(e.hurtFlash); b.intf(e.actTimer); b.intf(e.shotTimer);
     b.f32f(e.aimX); b.f32f(e.aimY); b.intf(e.aimHold);
     b.intf(e.phase); b.f32f(e.animPhase);
+    b.intf(e.telegraph); b.boolf(e.weightless);
+    b.f32f(e.prevX); b.f32f(e.prevY); b.intf(e.stuck);
 }
 
 void codecPickup(Blob& b, Pickup& p) {
@@ -83,6 +85,7 @@ void codecDrone(Blob& b, Drone& d) {
     b.u8f(d.type);
     b.f32f(d.x); b.f32f(d.y); b.f32f(d.vx); b.f32f(d.vy);
     b.intf(d.shotCool); b.intf(d.effectCool);
+    b.f32f(d.phase); b.intf(d.burst);
 }
 
 void codecSpark(Blob& b, Spark& s) {

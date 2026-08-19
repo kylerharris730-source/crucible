@@ -102,6 +102,19 @@ enum SpriteId {
     SPR_ACC_GARLIC,
     SPR_ACC_OVERLOAD,
     SPR_ACC_TWIN,
+    /* The creature charms. Each one quotes the thing it came off -- a plate, a
+       lamp, a lens, a heart, a wing, a barb -- because "which creature drops
+       this" is the single most useful fact about a rare drop and a row of
+       generic amulets would hide it. */
+    SPR_ACC_CARAPACE,
+    SPR_ACC_LANTERN,
+    SPR_ACC_MAGNET,
+    SPR_ACC_HEART,
+    SPR_ACC_SWIFT,
+    SPR_ACC_BRACER,
+    SPR_ACC_WHETSTONE,
+    SPR_ACC_CHRONO,
+    SPR_PEDESTAL,
     SPR_COUNT
 };
 

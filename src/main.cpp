@@ -245,6 +245,12 @@ static HBITMAP g_iconBmp[SPR_COUNT];
 static HBITMAP g_matIconBmp[MAT_COUNT];
 static ItemId  g_hoverItem = ITEM_NONE;
 static RECT    g_hoverRect;
+/* What an EMPTY slot is for, shown on hover. The tooltip already existed for
+   items, and an empty slot is precisely the case where the player most needs
+   telling: a filled slot shows an icon they can recognise, an empty one is a
+   grey square with four characters in it. Kept as a separate variable rather
+   than a fake ItemId so the tooltip cannot be tricked into indexing ITEMS[]. */
+static const char* g_hoverLabel = 0;
 static int     g_mx = 0, g_my = 0;
 /* GetAsyncKeyState reports the keyboard, not this window. Without a focus gate
    an unfocused Crucible walks your character while you type somewhere else --
@@ -368,8 +374,12 @@ static void drawCircuitSignalIcon(HDC hdc, const RECT& r, int signal) {
 }
 
 static void drawItemTooltip(HDC hdc) {
-    if (g_hoverItem == ITEM_NONE || g_hoverItem >= ITEM_COUNT) return;
-    const char* name = ITEMS[g_hoverItem].name;
+    /* An item under the cursor wins over a slot label: if the slot has
+       something in it, what that something IS is the more useful fact, and the
+       slot's own name is already implied by the group heading above it. */
+    const char* name = 0;
+    if (g_hoverItem != ITEM_NONE && g_hoverItem < ITEM_COUNT) name = ITEMS[g_hoverItem].name;
+    else if (g_hoverLabel) name = g_hoverLabel;
     if (!name || !name[0]) return;
     RECT r = { g_hoverRect.left, g_hoverRect.top - 22, g_hoverRect.left + 150, g_hoverRect.top - 4 };
     if (r.top < 2) { r.top = g_hoverRect.bottom + 4; r.bottom = r.top + 18; }
@@ -456,6 +466,9 @@ static void layoutCraft();
 extern bool g_craftOpen;
 extern int  g_craftScroll;
 static void drawDevPanel(HDC hdc);
+/* Defined beside the other device-interaction helpers, declared here because
+   the creative input path reaches it several hundred lines earlier. */
+static void pedestalUse(Device& d, Inventory& inv);
 static int  g_pmx = -1, g_pmy = -1;  /* previous aim point, in cells */
 static int  g_brushMat = MAT_SAND;
 /* -1 means a material/tool brush is selected.  Device buttons only become a
@@ -655,6 +668,43 @@ static int  g_toolPackSlot  = -1;   /* which inventory slot the bench is showing
    have to be visible for click-to-move to say what a drag would. Always drawn,
    unlike the bench -- an empty equipment row tells you the slots exist and what
    goes in them, whereas an absent tool bench tells you nothing is missing. */
+/* --- how the equipment row is arranged on screen ---------------------------
+   Eleven squares in a line said nothing about which of them went together, and
+   with four trinkets it said it eleven times. So the row is drawn in three
+   GROUPS with a heading over each -- what you are wearing, what you have
+   chosen, what is flying beside you -- and the enum order is no longer the
+   screen order.
+
+   That separation is the point rather than an inconvenience. EquipSlot is
+   append-only because its numbers are in every save (see the note there), so
+   the two new trinkets are at the END of the enum and would otherwise have been
+   drawn on the far side of the drone bays, three slots away from the two they
+   are interchangeable with. A layout that has to match a compatibility
+   constraint is a layout that gets worse every time the constraint is
+   honoured. */
+static const int EQ_ORDER[EQ_COUNT] = {
+    EQ_FEET, EQ_BACK, EQ_HEAD, EQ_BODY,
+    EQ_TRINKET_A, EQ_TRINKET_B, EQ_TRINKET_C, EQ_TRINKET_D,
+    EQ_LIGHT_DRONE, EQ_DRONE_A, EQ_DRONE_B
+};
+/* First screen position of each group, and one past the end. */
+static const int EQ_GROUP_AT[4]      = { 0, 4, 8, EQ_COUNT };
+static const char* const EQ_GROUP_NAME[3] = { "WORN", "TRINKETS", "DRONES" };
+static const int EQ_SLOT_PITCH = 40;
+static const int EQ_GROUP_GAP  = 24;
+
+/* Screen x of the square at position `pos`, measured from the row's left edge.
+   One function so the layout and the drawing cannot disagree about where a box
+   is -- which they did, silently, the first time the drone bays were positioned
+   from their enum index while everything else used its screen position. */
+static int eqPosX(int pos) {
+    int group = 0;
+    while (group < 3 && pos >= EQ_GROUP_AT[group + 1]) ++group;
+    return pos * EQ_SLOT_PITCH + group * EQ_GROUP_GAP;
+}
+/* Total width of the row, for placing the bin after it. */
+static int eqRowWidth() { return eqPosX(EQ_COUNT - 1) + 34; }
+
 static RECT g_eqRect[EQ_COUNT];
 static RECT g_droneModuleRect[MAX_DRONES][Inventory::DRONE_MODULE_SLOTS_MAX];
 
@@ -1083,7 +1133,10 @@ static void layoutCreative() {
     if (g_creScroll < 0) g_creScroll = 0;
 
     const int benchH = g_toolSlotCount ? 62 : 0;
-    const int equipH = signalPicker ? 0 : 62;
+    /* Taller than it was, and every one of the extra pixels is text: two lines
+       of resolved stats above the row instead of one that ran off the end of
+       the panel, and a line of group headings between them and the squares. */
+    const int equipH = signalPicker ? 0 : 96;
     bool hasDrone = false;
     if (!signalPicker) for (int i = 0; i < MAX_DRONES; ++i) {
         const int eq = i == 0 ? EQ_LIGHT_DRONE : (i == 1 ? EQ_DRONE_A : EQ_DRONE_B);
@@ -1144,32 +1197,43 @@ static void layoutCreative() {
         SetRect(&g_packRect[i], bx, by, bx + ps, by + ps);
     }
 
-    const int eqY = packY + packH;
+    /* Two stat lines and a row of group headings sit above the squares, so the
+       squares themselves start well below the top of their band. */
+    const int eqY = packY + packH + 40;
     for (int d = 0; d < MAX_DRONES; ++d)
         for (int i = 0; i < Inventory::DRONE_MODULE_SLOTS_MAX; ++i) SetRectEmpty(&g_droneModuleRect[d][i]);
-    if (!signalPicker) for (int i = 0; i < EQ_COUNT; ++i)
-        SetRect(&g_eqRect[i], x0 + pad + i * 40, eqY, x0 + pad + i * 40 + 34, eqY + 34);
-    /* A gap of half a slot before it, so it reads as separate from the things
-       you are wearing rather than as a fifth equipment slot. */
+    if (!signalPicker) for (int pos = 0; pos < EQ_COUNT; ++pos) {
+        const int bx = x0 + pad + eqPosX(pos);
+        SetRect(&g_eqRect[EQ_ORDER[pos]], bx, eqY, bx + 34, eqY + 34);
+    }
+    /* Well clear of the last group, so it reads as separate from the things you
+       are wearing rather than as a twelfth equipment slot. */
     if (signalPicker) SetRectEmpty(&g_trashRect);
-    else SetRect(&g_trashRect, x0 + pad + EQ_COUNT * 40 + 20, eqY,
-                 x0 + pad + EQ_COUNT * 40 + 54, eqY + 34);
+    else {
+        const int binX = x0 + pad + eqRowWidth() + 26;
+        SetRect(&g_trashRect, binX, eqY, binX + 34, eqY + 34);
+    }
 
-    const int droneY = eqY + equipH;
+    const int droneY = eqY + equipH - 40;
     if (!signalPicker) for (int d = 0; d < MAX_DRONES; ++d) {
         const int eq = d == 0 ? EQ_LIGHT_DRONE : (d == 1 ? EQ_DRONE_A : EQ_DRONE_B);
         if (g_inv.equip[eq].empty()) continue;
-        /* Current chassis all expose one socket. The other two rects remain
+        /* Directly under the bay it belongs to, which means asking where that
+           bay was DRAWN rather than where it sits in the enum. Reading the rect
+           back is the version that cannot drift: there is one answer to "where
+           is this slot" and it was computed a few lines ago.
+
+           Current chassis all expose one socket. The other two rects remain
            empty until an upgraded chassis unlocks them, so the UI cannot
            accidentally accept a future slot early. */
-        const int bayX = x0 + pad + eq * 40;
+        const int bayX = g_eqRect[eq].left;
         SetRect(&g_droneModuleRect[d][0], bayX, droneY, bayX + 34, droneY + 34);
     }
 
     /* Module slots: square, and noticeably bigger than a grid row, because they
        are the one place on this screen where the arrangement carries meaning
        (slot order decides which module is the shot). */
-    const int by2 = eqY + equipH + droneModuleH;
+    const int by2 = eqY + (equipH - 40) + droneModuleH;
     for (int i = 0; !signalPicker && i < g_toolSlotCount; ++i) {
         const int bx = x0 + pad + i * 40;
         SetRect(&g_toolSlotRect[i], bx, by2, bx + 34, by2 + 34);
@@ -1909,6 +1973,7 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     }
                     break;
                 }
+                if (d->type == DEV_PEDESTAL) { pedestalUse(*d, g_inv); break; }
                 if (d->type == DEV_CHEST) { openChest((int)(d - g_devices)); break; }
                 if (d->type == DEV_PULSE_BUTTON) { d->poked = true; break; }
                 /* Toggle: clicking the same machine again closes it. */
@@ -2435,6 +2500,63 @@ static Aim commandAimFor(const PlayerSession& session, const PlayerCommand& comm
     return a;
 }
 
+/* --- one gesture, both directions ------------------------------------------
+   Interact with a full pedestal and you take what is on it; interact with an
+   empty one and you put down what you are holding.
+
+   No panel either way. A pedestal holds exactly one thing and there is nothing
+   to arrange, so a chest's two-grid screen would be a window you open in order
+   to close it -- and the whole appeal of the object is that its contents are
+   already visible from across the room.
+
+   Both directions, rather than only taking, because otherwise the craftable
+   pedestal is furniture that can never do anything: worldgen would be the only
+   thing in the game able to put an item on one, and a recipe whose product is
+   permanently empty is a recipe that reads as broken. It also turns out to be
+   the more interesting half -- a lit plinth is how you show somebody your first
+   Forge Core, and in a world with four players that is a use worth having. */
+static void pedestalUse(Device& d, Inventory& inv) {
+    const ItemId held = pedestalItem(d);
+
+    if (held == ITEM_NONE) {
+        /* Putting down. ONE unit off the held stack, never the whole thing: a
+           pedestal is a display, and a display that swallowed a stack of 100000
+           stone would be a hole in the pack rather than an ornament. */
+        ItemStack& hand = inv.held();
+        if (hand.empty()) return;
+        const ItemId what = hand.item;
+        /* A tool carries an instance handle (see ToolInst) and a pedestal has
+           nowhere to keep one, so standing a loaded multitool on a plinth would
+           either duplicate its loadout or lose it. Refused outright, with a
+           reason, rather than silently accepted and quietly stripped. */
+        if (hand.inst != 0) {
+            sprintf(g_saveMsg, "A %s will not sit on a pedestal", ITEMS[what].name);
+            g_saveMsgFrames = 150;
+            return;
+        }
+        if (inv.take(what, 1) != 1) return;
+        pedestalSet(d, what, 1);
+        sprintf(g_saveMsg, "Placed the %s", ITEMS[what].name);
+        g_saveMsgFrames = 150;
+        return;
+    }
+
+    /* Taking. Refuses when the pack is full rather than taking what fits and
+       dropping the rest, and leaves the pedestal lit. A reward you can see is a
+       reward you can come back for; a reward that fell on the floor beside a
+       full pack is one you walk away from without knowing it existed. */
+    const int count = pedestalCount(d);
+    const int left  = inv.add(held, count);
+    if (left == count) {
+        sprintf(g_saveMsg, "No room for the %s", ITEMS[held].name);
+        g_saveMsgFrames = 150;
+        return;
+    }
+    pedestalSet(d, left > 0 ? held : ITEM_NONE, left);
+    sprintf(g_saveMsg, "Took the %s", ITEMS[held].name);
+    g_saveMsgFrames = 150;
+}
+
 static void interactFor(PlayerSession& session, const Aim& aim) {
     Device* d = devAt(aim.x, aim.y);
     if (d) {
@@ -2447,6 +2569,8 @@ static void interactFor(PlayerSession& session, const Aim& aim) {
             else if (atBed) session.restBed = idx;
         } else if (d->type == DEV_PULSE_BUTTON) {
             d->poked = true;
+        } else if (d->type == DEV_PEDESTAL) {
+            pedestalUse(*d, session.inventory);
         } else if (d->type == DEV_CHEST) {
             session.openDevice = session.openDevice == idx ? -1 : idx;
         } else {
@@ -2994,6 +3118,13 @@ static void fireToolFor(Player& player, Inventory& inventory, const Aim& aim) {
     ToolInst& ti = g_toolInst[h.inst];
     if (ti.cooldown > 0) return;
     ti.cooldown = accessoryShotDelay(inventory, s.delay);
+    /* The two charms that change the shot itself. Resolved here, beside the
+       delay, rather than inside toolResolve: what a TOOL does is a property of
+       the tool and its modules, and folding the wearer's jewellery into that
+       answer would mean the bench panel had to state a number that changes when
+       you take a ring off. */
+    const int   shotDamage = accessoryShotDamage(inventory, s.damage);
+    const float shotSpeed  = accessoryShotSpeed(inventory, s.speed);
 
     const float pcx = player.centreX(), pcy = player.centreY();
     float dx = (float)aim.x - pcx, dy = (float)aim.y - pcy;
@@ -3011,7 +3142,7 @@ static void fireToolFor(Player& player, Inventory& inventory, const Aim& aim) {
        pointed, not where the shot lands, and learning that gap is the skill the
        arc adds. Auto-correcting it would mean adding gravity and then hiding
        every consequence of it. */
-    const float SPEED  = s.speed;
+    const float SPEED  = shotSpeed;
     /* The payload is consumed HERE, on firing, not on impact -- a shot that
        missed everything and fizzled out over open sky still cost its LN2,
        the same way a mining tool spends bites whether or not it hit
@@ -3026,7 +3157,7 @@ static void fireToolFor(Player& player, Inventory& inventory, const Aim& aim) {
     const float vx = dx * SPEED, vy = dy * SPEED;
     const bool fired = projSpawn(pcx + dx * MUZZLE, pcy + dy * MUZZLE, vx, vy,
                                  s.power, s.pierce, 90, s.colour, s.blast,
-                                 payload, s.damage, false, s.gravity);
+                                 payload, shotDamage, false, s.gravity);
     if (fired && accessoryTwinShot(inventory)) {
         /* Duplicate the command, as the drone controller does. One payload was
            spent above; the accessory rewards the slot with a second delivery,
@@ -3034,7 +3165,7 @@ static void fireToolFor(Player& player, Inventory& inventory, const Aim& aim) {
         const float fanX = -vy * 0.10f, fanY = vx * 0.10f;
         projSpawn(pcx + dx * MUZZLE, pcy + dy * MUZZLE,
                   vx + fanX, vy + fanY, s.power, s.pierce, 90, 0xD8A4FF,
-                  s.blast, payload, s.damage, false, s.gravity);
+                  s.blast, payload, shotDamage, false, s.gravity);
     }
 }
 
@@ -4397,30 +4528,73 @@ static void drawCreative(HDC hdc) {
     if (!signalPicker) {
         const FlightSpec fly = flightSpec(g_inv);
         const TempSpec temp = g_inv.tempResist();
-        RECT lr = g_crePanel;
-        lr.left = g_eqRect[0].left;
-        lr.top  = g_eqRect[0].top - 20;
         char s[200];
-        /* The RESOLVED numbers, not an item's own, for the same reason the tool
-           bench states its resolved delay: two pieces of flight gear do not add
-           up (see flightSpec), so the only figure worth reading is the one you
-           will actually fly at. tempResist() is resolved the same way -- a
-           helmet and a suit do not stack -- so this is the number that
-           actually moves heatLine()/coldLine(), not either item's own stat. */
-        char tempPart[64] = "";
-        if (temp.heat || temp.cold)
-            sprintf(tempPart, ", %d/%d heat/cold resist", temp.heat, temp.cold);
+
+        /* --- two lines, not one ------------------------------------------
+           This was a single sprintf that concatenated everything the character
+           had, and it grew past the width of the panel the moment there was
+           anything to say: with flight gear on it already read "EQUIPPED --
+           climb 8.4 cells/s, 3.0s of fuel, reach +12, speed +18%, 40/0
+           heat/cold resist", and the charms add six more numbers to that.
+           DrawTextA with DT_SINGLELINE does not wrap, it CLIPS, so the growth
+           was invisible until a stat silently disappeared off the right edge.
+
+           Split by what the numbers are ABOUT rather than by length, so which
+           line a stat is on stays stable as gear changes: the body -- how it
+           moves, what it survives -- and then the weapon. A line that reflows
+           its contents is a line you have to re-read every time.
+
+           The RESOLVED numbers throughout, not any item's own. Two pieces of
+           flight gear do not add up (see flightSpec), the passives take the
+           largest rather than summing (see ItemDef::regenPer), so the only
+           figures worth printing are the ones that will actually apply. */
+        RECT lr = g_crePanel;
+        lr.left = g_eqRect[EQ_FEET].left;
+        lr.top  = g_eqRect[EQ_FEET].top - 40;
+
+        int n = sprintf(s, "EQUIPPED  --  reach +%d, speed +%d%%, armour %d",
+                        g_inv.reachBonus(), g_inv.speedBonus(), g_inv.armour());
         if (fly.any())
-            sprintf(s, "EQUIPPED  --  climb %.1f cells/s, %.1fs of fuel, reach +%d, speed +%d%%%s",
-                    fly.riseCap * 60.0f, (float)fly.fuel / 60.0f,
-                    g_inv.reachBonus(), g_inv.speedBonus(), tempPart);
-        else
-            sprintf(s, "EQUIPPED  --  nothing to fly with, reach +%d, speed +%d%%%s",
-                    g_inv.reachBonus(), g_inv.speedBonus(), tempPart);
+            n += sprintf(s + n, ", climb %.1f/s for %.1fs",
+                         fly.riseCap * 60.0f, (float)fly.fuel / 60.0f);
+        if (temp.heat || temp.cold)
+            n += sprintf(s + n, ", resist %dC hot / %dC cold", temp.heat, temp.cold);
+        if (g_inv.regenPer() > 0)
+            n += sprintf(s + n, ", regen 1 per %.1fs", (float)g_inv.regenPer() / 60.0f);
         SetTextColor(hdc, fly.any() ? RGB(226, 190, 90) : RGB(150, 156, 168));
         DrawTextA(hdc, s, -1, &lr, DT_LEFT | DT_TOP | DT_SINGLELINE);
 
-        for (int i = 0; i < EQ_COUNT; ++i) {
+        /* The second line exists only when there is something on it. A row of
+           permanent zeroes teaches nothing and takes up the space the row of
+           group headings needs. */
+        n = 0;
+        if (g_inv.damagePct())    n += sprintf(s + n, "%sdamage +%d%%", n ? ", " : "", g_inv.damagePct());
+        if (g_inv.cooldownPct())  n += sprintf(s + n, "%sfire rate +%d%%", n ? ", " : "", g_inv.cooldownPct());
+        if (g_inv.shotSpeedPct()) n += sprintf(s + n, "%sshot speed +%d%%", n ? ", " : "", g_inv.shotSpeedPct());
+        if (g_inv.pickupRadius()) n += sprintf(s + n, "%spickup +%d cells", n ? ", " : "", g_inv.pickupRadius());
+        if (g_inv.lightGlow())    n += sprintf(s + n, "%sglow", n ? ", " : "");
+        if (n) {
+            RECT br = lr; br.top = lr.top + 15;
+            SetTextColor(hdc, RGB(160, 200, 230));
+            DrawTextA(hdc, s, -1, &br, DT_LEFT | DT_TOP | DT_SINGLELINE);
+        }
+
+        /* --- the group headings --------------------------------------------
+           Three words carrying what eleven identical squares could not. They
+           are also what lets the squares themselves be labelled in four
+           characters or fewer: "TRINKETS" is written once above the group, so
+           the boxes only have to say WHICH trinket, and "1" fits where
+           "Trinket" was being clipped to "rinke". */
+        for (int g = 0; g < 3; ++g) {
+            RECT hr = g_crePanel;
+            hr.left = g_eqRect[EQ_ORDER[EQ_GROUP_AT[g]]].left;
+            hr.top  = g_eqRect[EQ_FEET].top - 17;
+            SetTextColor(hdc, RGB(126, 134, 150));
+            DrawTextA(hdc, EQ_GROUP_NAME[g], -1, &hr, DT_LEFT | DT_TOP | DT_SINGLELINE);
+        }
+
+        for (int pos = 0; pos < EQ_COUNT; ++pos) {
+            const int i = EQ_ORDER[pos];
             RECT r = g_eqRect[i];
             const ItemStack& eq = g_inv.equip[i];
             const bool hot = inRect(r, g_mx, g_my);
@@ -4430,11 +4604,13 @@ static void drawCreative(HDC hdc) {
                 RECT ir = r; ir.left += 2; ir.top += 2; ir.right -= 2; ir.bottom -= 2;
                 drawItemIcon(hdc, ir, eq.item);
             } else {
-                /* The slot's own name when it is empty, so the row explains
-                   itself rather than being four identical grey squares. */
+                /* The SHORT name -- see EQ_SHORT. The long one is on the
+                   tooltip, which is where there is room for it, and hovering is
+                   the moment somebody is actually asking. */
                 SetTextColor(hdc, RGB(110, 116, 128));
                 RECT tr = r; tr.top += 10;
-                DrawTextA(hdc, EQ_NAMES[i], -1, &tr, DT_CENTER | DT_TOP | DT_SINGLELINE);
+                DrawTextA(hdc, EQ_SHORT[i], -1, &tr, DT_CENTER | DT_TOP | DT_SINGLELINE);
+                if (hot) { g_hoverLabel = EQ_NAMES[i]; g_hoverRect = r; }
             }
         }
 
@@ -4453,6 +4629,7 @@ static void drawCreative(HDC hdc) {
                 SetTextColor(hdc, RGB(110, 116, 128));
                 RECT tr = r; tr.top += 10;
                 DrawTextA(hdc, "Bin", -1, &tr, DT_CENTER | DT_TOP | DT_SINGLELINE);
+                if (hot) { g_hoverLabel = "Bin -- drop a stack here to discard it"; g_hoverRect = r; }
             }
         }
 
@@ -4463,7 +4640,16 @@ static void drawCreative(HDC hdc) {
         for (int d = 0; d < MAX_DRONES; ++d) if (!IsRectEmpty(&g_droneModuleRect[d][0])) anyDroneChipSlot = true;
         if (anyDroneChipSlot) {
             RECT dr = g_crePanel;
-            dr.left = g_eqRect[0].left; dr.top = g_droneModuleRect[0][0].top - 20;
+            dr.left = g_eqRect[EQ_FEET].left;
+            /* Anchored to whichever bay actually has a socket. Bay 0's rect is
+               empty whenever the light bay is, and an empty RECT is at the
+               origin -- so reading its top put this label in the top-left
+               corner of the window the moment somebody equipped a weapon
+               without a lamp. */
+            int chipTop = 0;
+            for (int d = 0; d < MAX_DRONES; ++d)
+                if (!IsRectEmpty(&g_droneModuleRect[d][0])) { chipTop = g_droneModuleRect[d][0].top; break; }
+            dr.top = chipTop - 20;
             SetTextColor(hdc, RGB(150, 156, 168));
             DrawTextA(hdc, "DRONE CHIPS  --  remove chips before moving a drone", -1, &dr,
                       DT_LEFT | DT_TOP | DT_SINGLELINE);
@@ -5338,6 +5524,7 @@ static void clientRender(HWND hwnd) {
        is why this sits here and not up beside the sim step. */
     lightClearDynamic();
     droneRegisterLights();
+    accessoryRegisterLights();
     devRegisterLights();
     projRegisterLights();
     if (g_lightOn) lightUpdate(g_world, g_camX, g_camY);
@@ -5406,6 +5593,7 @@ static void clientRender(HWND hwnd) {
     StretchDIBits(g_backDC, PANEL_W, 0, VIEW_W, VIEW_H, 0, 0, blitW, blitH,
                   blitPixels, &blitBmi, DIB_RGB_COLORS, SRCCOPY);
     g_hoverItem = ITEM_NONE;
+    g_hoverLabel = 0;
     drawPanel(g_backDC);
     if (g_survival && g_playerOn) drawHotbar(g_backDC);
     if (g_restBed >= 0) {
