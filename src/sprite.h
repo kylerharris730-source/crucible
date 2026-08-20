@@ -115,6 +115,24 @@ enum SpriteId {
     SPR_ACC_WHETSTONE,
     SPR_ACC_CHRONO,
     SPR_PEDESTAL,
+    /* --- the melee ladder -------------------------------------------------
+       Two silhouettes at seven colours, and NOT fourteen drawings. That is the
+       same trade the mining tiers already make and it is right for the same
+       reason: shape carries "which weapon is this", colour carries "which
+       tier", and fourteen bespoke shapes in fourteen pixels would produce
+       fourteen things you cannot tell apart at all. It also means the metal a
+       blade is made of looks like that metal everywhere it appears, because the
+       colour comes from the material table rather than from a guess.
+
+       Laid out sword-then-spear per tier so the ids run in acquisition order,
+       matching the ItemId block. */
+    SPR_SWORD_COPPER,   SPR_SPEAR_COPPER,
+    SPR_SWORD_BRONZE,   SPR_SPEAR_BRONZE,
+    SPR_SWORD_IRON,     SPR_SPEAR_IRON,
+    SPR_SWORD_GOLD,     SPR_SPEAR_GOLD,
+    SPR_SWORD_STEEL,    SPR_SPEAR_STEEL,
+    SPR_SWORD_TITANIUM, SPR_SPEAR_TITANIUM,
+    SPR_SWORD_TUNGSTEN, SPR_SPEAR_TUNGSTEN,
     SPR_COUNT
 };
 

@@ -385,6 +385,30 @@ static const char* ART_PACK3[SPR_H] = {
     "....e....e....",
 };
 
+/* expand(), with two palette letters overridden. 'M' becomes `metal` and 'm'
+   becomes `shade`, so one piece of art serves a whole tier ladder.
+
+   A separate function rather than a parameter on expand() with nulls at every
+   other call site: forty existing sprites have nothing to say about a metal,
+   and making all of them mention it to say "none" is how a table stops being
+   readable. Shares expand()'s row-length abort by doing the same check -- art
+   is edited by hand and a miscounted row is not hypothetical. */
+static void expandMetal(int id, const char* const* art, u32 metal, u32 shade) {
+    for (int y = 0; y < SPR_H; ++y) {
+        if ((int)strlen(art[y]) != SPR_W) {
+            fprintf(stderr, "sprite %d row %d is %d chars, expected %d\n",
+                    id, y, (int)strlen(art[y]), SPR_W);
+            abort();
+        }
+        for (int x = 0; x < SPR_W; ++x) {
+            const char c = art[y][x];
+            g_sprite[id][y * SPR_W + x] = c == 'M' ? metal
+                                        : c == 'm' ? shade
+                                        : paletteOf(c);
+        }
+    }
+}
+
 static void expand(int id, const char* const* art) {
     for (int y = 0; y < SPR_H; ++y) {
         /* A short row would silently read past the end of the string literal
@@ -1105,6 +1129,56 @@ static const char* ART_PEDESTAL[SPR_H] = {
     "..............",
 };
 
+/* --- the melee ladder -------------------------------------------------------
+   Two pieces of art for fourteen items. 'M' is the tier metal and 'm' its
+   shade; expandMetal() substitutes both, so the palette table below is not
+   asked to hold seven near-identical pairs of greys and yellows that mean
+   nothing on their own.
+
+   Both point up and to the right at 45 degrees, which is the angle that gets
+   the most length out of a square canvas -- a vertical blade in fourteen pixels
+   is fourteen pixels long, a diagonal one is nearly twenty. */
+
+/* Sword. A broad tapering blade with a crossguard, and the crossguard is the
+   whole silhouette: without it this is a spear, and with it nobody has to be
+   told which is which. */
+static const char* ART_SWORD[SPR_H] = {
+    "..........MM..",
+    ".........MMM..",
+    "........MMMm..",
+    ".......MMMm...",
+    "......MMMm....",
+    ".....MMMm.....",
+    "....MMMm......",
+    "...MMMm.......",
+    "..GGMm.GG.....",
+    "...GGGGG......",
+    "..GGGHm.......",
+    ".GGHH.........",
+    "..HH..........",
+    "..............",
+};
+
+/* Spear. A long shaft with a leaf head and no guard at all, so the two read
+   apart at a glance even in a dark cave: one is wide at the bottom, the other
+   is a line. */
+static const char* ART_SPEAR[SPR_H] = {
+    "...........M..",
+    "..........MMM.",
+    "..........MMM.",
+    ".........MMm..",
+    "........Mmm...",
+    ".......Gm.....",
+    "......GH......",
+    ".....HH.......",
+    "....HH........",
+    "...HH.........",
+    "..HH..........",
+    ".HH...........",
+    "HH............",
+    "..............",
+};
+
 /* The fallback for named objects that do not yet merit a bespoke silhouette.
    It is deliberately a parcel/tag rather than a colour square, so every
    non-material item has an object-shaped icon while dedicated art can arrive
@@ -1313,6 +1387,33 @@ void initSprites() {
     expand(SPR_ACC_WHETSTONE, ART_ACC_WHETSTONE);
     expand(SPR_ACC_CHRONO,    ART_ACC_CHRONO);
     expand(SPR_PEDESTAL,      ART_PEDESTAL);
+
+    /* --- the melee ladder ------------------------------------------------
+       Colours taken from the metals themselves rather than invented here. A
+       bronze sword that is not bronze-coloured is a small lie the player has to
+       learn, and there is no reason to tell it: these are the same values the
+       world draws those materials with.
+
+       The shade is a darkened copy rather than a second hand-picked colour, so
+       adding an eighth tier is one row here and not a fresh pair of greys. */
+    {
+        struct MetalSpr { int sword, spear; u32 col; };
+        static const MetalSpr METAL[] = {
+            { SPR_SWORD_COPPER,   SPR_SPEAR_COPPER,   0xC87A32 },
+            { SPR_SWORD_BRONZE,   SPR_SPEAR_BRONZE,   0xCE9B4E },
+            { SPR_SWORD_IRON,     SPR_SPEAR_IRON,     0xA8ADB6 },
+            { SPR_SWORD_GOLD,     SPR_SPEAR_GOLD,     0xE8C233 },
+            { SPR_SWORD_STEEL,    SPR_SPEAR_STEEL,    0x8E97A6 },
+            { SPR_SWORD_TITANIUM, SPR_SPEAR_TITANIUM, 0xD2DAE4 },
+            { SPR_SWORD_TUNGSTEN, SPR_SPEAR_TUNGSTEN, 0x6F7A86 },
+        };
+        for (int i = 0; i < (int)(sizeof(METAL) / sizeof(METAL[0])); ++i) {
+            const u32 c = METAL[i].col;
+            const u32 shade = ((c >> 1) & 0x7F7F7Fu);
+            expandMetal(METAL[i].sword, ART_SWORD, c, shade);
+            expandMetal(METAL[i].spear, ART_SPEAR, c, shade);
+        }
+    }
     expand(SPR_ITEM_GENERIC, ART_ITEM_GENERIC);
     expand(SPR_BOLTER,    ART_BOLTER);
     expand(SPR_BENCH,     ART_BENCH);

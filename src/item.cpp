@@ -698,6 +698,149 @@ void initItems() {
     ITEMS[ITEM_PEDESTAL].colour     = 0x9AA6B4;
     ITEMS[ITEM_PEDESTAL].sprite     = SPR_PEDESTAL;
 
+    /* ======================================================================
+       The melee ladder
+       ======================================================================
+
+       Seven metals, a sword and a spear each. Terraria's shape -- one weapon
+       family per ore, each tier a straight upgrade of the last -- with two
+       departures that this game's own material table forced, and both are worth
+       stating because they will look like mistakes otherwise.
+
+       --- no tin ---
+       Tin exists to be alloyed into bronze. In Terraria copper and tin are
+       alternate worlds' versions of the same rung; here bronze is what tin is
+       FOR, so a tin sword would be a rung whose only purpose is to be skipped.
+
+       --- gold is the FAST tier, not a strong one ---
+       MAT_GOLD is deliberately STR_SOFT and always has been (see its note in
+       materials.h): it is the corrosion-proof conductor, explicitly "not meant
+       to compete with steel". A gold sword that outhit steel would quietly
+       overturn that, and a game whose material table says one thing while its
+       weapon table says another is a game where neither can be trusted.
+
+       So gold buys SPEED. Its sword lands about as often as anything two tiers
+       above it and hits for less each time, which comes out near iron on paper
+       and feels completely different in the hand -- more strokes means more
+       knockback events, which is the thing that keeps you alive in contact
+       range. It is a sidegrade you find rather than a rung you climb.
+
+       --- the numbers ---
+       Damage per second is damage / cooldown, and cooldown is measured from the
+       START of a stroke, so the two numbers below are the whole story:
+
+                    sword           spear
+         Copper      7/30 = 14/s     6/22 = 16/s
+         Bronze     10/30 = 20/s     8/22 = 22/s
+         Iron       14/30 = 28/s    11/22 = 30/s
+         Gold       15/22 = 41/s    12/16 = 45/s
+         Steel      20/30 = 40/s    16/22 = 44/s
+         Titanium   26/30 = 52/s    21/22 = 57/s
+         Tungsten   34/32 = 64/s    27/24 = 68/s
+
+       Against the Bolt Caster's 11/s and the Attack Drone's 6.4/s that looks
+       enormous, and it should: those numbers are delivered from across a room
+       at something that cannot reach you, and these are delivered from inside
+       contact range of a creature that is hitting you back the whole time. A
+       husk does 11 a touch every 34 frames; standing in that to swing a copper
+       sword is very nearly a losing trade, which is exactly what makes the
+       first tier feel like the first tier.
+
+       The SPEAR always reads slightly higher per second and always hits one
+       thing. The sword sweeps an arc, so its real output against three mites in
+       a corridor is triple what the table says -- that is the trade, and it is
+       deliberately not visible in a single number.
+
+       --- reach ---
+       Grows slowly, and the spear is always far longer. A spear at the top of
+       the ladder reaches 26 cells, which is a little over a body length: enough
+       that a husk can be fought without being touched if you keep backing up,
+       and nowhere near enough to make it a ranged weapon. The player's build
+       reach is 56 for comparison, and is a completely separate number -- see
+       ItemDef::meleeReach. */
+    struct MeleeTier {
+        ItemId sword, spear;
+        const char* metal;          /* the name the two weapons are prefixed with */
+        u8 swordDmg, swordCool, swordReach;
+        u8 spearDmg, spearCool, spearReach;
+        u32 colour;
+        u8 swordSpr, spearSpr;
+        float knock;
+    };
+    static const MeleeTier MELEE[] = {
+        /*                                     ---- sword ----   ---- spear ---- */
+        { ITEM_SWORD_COPPER,   ITEM_SPEAR_COPPER,   "Copper",     7, 30, 11,   6, 22, 18, 0xC87A32, SPR_SWORD_COPPER,   SPR_SPEAR_COPPER,   0.9f },
+        { ITEM_SWORD_BRONZE,   ITEM_SPEAR_BRONZE,   "Bronze",    10, 30, 12,   8, 22, 19, 0xCE9B4E, SPR_SWORD_BRONZE,   SPR_SPEAR_BRONZE,   1.0f },
+        { ITEM_SWORD_IRON,     ITEM_SPEAR_IRON,     "Iron",      14, 30, 12,  11, 22, 21, 0xA8ADB6, SPR_SWORD_IRON,     SPR_SPEAR_IRON,     1.1f },
+        /* Gold: the fast tier. Its reach is the SHORTEST of anything past
+           copper, which is the other half of paying for the speed -- a quick
+           weapon that also kept you at range would have no downside at all. */
+        { ITEM_SWORD_GOLD,     ITEM_SPEAR_GOLD,     "Gold",      15, 22, 11,  12, 16, 18, 0xE8C233, SPR_SWORD_GOLD,     SPR_SPEAR_GOLD,     0.8f },
+        { ITEM_SWORD_STEEL,    ITEM_SPEAR_STEEL,    "Steel",     20, 30, 13,  16, 22, 22, 0x8E97A6, SPR_SWORD_STEEL,    SPR_SPEAR_STEEL,    1.3f },
+        { ITEM_SWORD_TITANIUM, ITEM_SPEAR_TITANIUM, "Titanium",  26, 30, 14,  21, 22, 24, 0xD2DAE4, SPR_SWORD_TITANIUM, SPR_SPEAR_TITANIUM, 1.4f },
+        /* Tungsten is the heaviest thing on the ladder and swings slowest of
+           the top three, which is what stops the last tier being strictly
+           better than everything at everything. It hits hardest and shoves
+           furthest; titanium remains the one you pick if you want to keep
+           moving. */
+        { ITEM_SWORD_TUNGSTEN, ITEM_SPEAR_TUNGSTEN, "Tungsten",  34, 32, 15,  27, 24, 26, 0x6F7A86, SPR_SWORD_TUNGSTEN, SPR_SPEAR_TUNGSTEN, 1.8f },
+    };
+
+    /* Shared across the whole ladder rather than being per-tier columns,
+       because they are what makes a sword a sword rather than what makes an
+       iron one better than a copper one. A tier that also changed the arc would
+       be changing what the weapon IS, and then the ladder stops being a ladder.
+
+       130 degrees is a little over a right angle either side of where you
+       pointed: wide enough to catch the second creature standing beside the
+       first, narrow enough that "behind me" is genuinely a place you are not
+       covering. 14 frames is a quarter of a second, which is about as slow as a
+       stroke can be before the delay between clicking and connecting reads as
+       lag rather than as weight. */
+    static const int MELEE_SWORD_ARC    = 130;
+    static const int MELEE_SWORD_FRAMES = 14;
+    /* A stab is quicker than a swing at every tier and covers no width at all.
+       10 frames out and back is a jab rather than a lunge. */
+    static const int MELEE_SPEAR_FRAMES = 10;
+
+    for (int i = 0; i < (int)(sizeof(MELEE) / sizeof(MELEE[0])); ++i) {
+        const MeleeTier& t = MELEE[i];
+        static char swordName[7][32], spearName[7][32];
+        sprintf(swordName[i], "%s Sword", t.metal);
+        sprintf(spearName[i], "%s Spear", t.metal);
+
+        ItemDef& sw = ITEMS[t.sword];
+        sw.name          = swordName[i];
+        sw.kind          = ITEMK_MELEE;
+        sw.maxStack      = 1;
+        sw.colour        = t.colour;
+        sw.sprite        = t.swordSpr;
+        sw.damage        = t.swordDmg;
+        sw.meleeStyle    = MELEE_SWING;
+        sw.meleeReach    = t.swordReach;
+        sw.meleeArc      = MELEE_SWORD_ARC;
+        sw.meleeFrames   = MELEE_SWORD_FRAMES;
+        sw.meleeCooldown = t.swordCool;
+        sw.meleeKnock    = t.knock;
+
+        ItemDef& sp = ITEMS[t.spear];
+        sp.name          = spearName[i];
+        sp.kind          = ITEMK_MELEE;
+        sp.maxStack      = 1;
+        sp.colour        = t.colour;
+        sp.sprite        = t.spearSpr;
+        sp.damage        = t.spearDmg;
+        sp.meleeStyle    = MELEE_STAB;
+        sp.meleeReach    = t.spearReach;
+        sp.meleeArc      = 0;
+        sp.meleeFrames   = MELEE_SPEAR_FRAMES;
+        sp.meleeCooldown = t.spearCool;
+        /* A spear shoves less than a sword of the same metal. It is a point
+           rather than an edge, and the whole reason to carry one is that it
+           keeps things away by LENGTH instead of by force. */
+        sp.meleeKnock    = t.knock * 0.6f;
+    }
+
     ITEMS[ITEM_OVERCLOCK_CHIP].name      = "Overclock Chip";
     ITEMS[ITEM_OVERCLOCK_CHIP].kind      = ITEMK_DRONE_MODULE;
     ITEMS[ITEM_OVERCLOCK_CHIP].maxStack  = 1;

@@ -307,6 +307,55 @@ const Recipe RECIPES[] = {
     { { { (ItemId)MAT_STEEL, 8 }, { (ItemId)MAT_RUBBER, 2 }, { ITEM_NONE, 0 } },
       ITEM_STEEL_SUIT, 1, "Steel Suit", STATION_FORGE },
 
+    /* --- the melee ladder -----------------------------------------------
+       Metal and wood, and nothing else. Every other recipe in this file mixes
+       two or three materials because the thing it makes is a MACHINE with parts;
+       a sword is a piece of metal on a stick, and pricing it like a jetpack
+       would be the recipe arguing with the object.
+
+       The costs climb with the tier and the spear is always cheaper than the
+       sword of the same metal -- it is mostly shaft. That ordering matters more
+       than the absolute numbers: it means the spear is what you make FIRST at
+       each new metal, which is also the weapon that keeps you at arm's length,
+       so the cheap option is the safe one rather than the trap.
+
+       Split across stations by the metal, matching where that metal is already
+       worked everywhere else in this table: copper and bronze at the anvil,
+       iron and gold at the anvil, and the three that need real heat at the
+       forge. Nothing here invents a new gate -- if you can smelt the metal you
+       can make the weapon. */
+    { { { (ItemId)MAT_COPPER, 6 }, { (ItemId)MAT_WOOD, 2 }, { ITEM_NONE, 0 } },
+      ITEM_SWORD_COPPER, 1, "Copper Sword", STATION_ANVIL },
+    { { { (ItemId)MAT_COPPER, 3 }, { (ItemId)MAT_WOOD, 4 }, { ITEM_NONE, 0 } },
+      ITEM_SPEAR_COPPER, 1, "Copper Spear", STATION_ANVIL },
+    { { { (ItemId)MAT_BRONZE, 6 }, { (ItemId)MAT_WOOD, 2 }, { ITEM_NONE, 0 } },
+      ITEM_SWORD_BRONZE, 1, "Bronze Sword", STATION_ANVIL },
+    { { { (ItemId)MAT_BRONZE, 3 }, { (ItemId)MAT_WOOD, 4 }, { ITEM_NONE, 0 } },
+      ITEM_SPEAR_BRONZE, 1, "Bronze Spear", STATION_ANVIL },
+    { { { (ItemId)MAT_IRON, 8 }, { (ItemId)MAT_WOOD, 2 }, { ITEM_NONE, 0 } },
+      ITEM_SWORD_IRON, 1, "Iron Sword", STATION_ANVIL },
+    { { { (ItemId)MAT_IRON, 4 }, { (ItemId)MAT_WOOD, 4 }, { ITEM_NONE, 0 } },
+      ITEM_SPEAR_IRON, 1, "Iron Spear", STATION_ANVIL },
+    /* Gold is scarce -- small pockets rather than veins, see MAT_GOLD -- so its
+       weapons cost less metal than iron's despite sitting above them. The
+       rarity is the price. */
+    { { { (ItemId)MAT_GOLD, 5 }, { (ItemId)MAT_WOOD, 2 }, { ITEM_NONE, 0 } },
+      ITEM_SWORD_GOLD, 1, "Gold Sword", STATION_ANVIL },
+    { { { (ItemId)MAT_GOLD, 3 }, { (ItemId)MAT_WOOD, 4 }, { ITEM_NONE, 0 } },
+      ITEM_SPEAR_GOLD, 1, "Gold Spear", STATION_ANVIL },
+    { { { (ItemId)MAT_STEEL, 8 }, { (ItemId)MAT_WOOD, 2 }, { ITEM_NONE, 0 } },
+      ITEM_SWORD_STEEL, 1, "Steel Sword", STATION_FORGE },
+    { { { (ItemId)MAT_STEEL, 4 }, { (ItemId)MAT_WOOD, 4 }, { ITEM_NONE, 0 } },
+      ITEM_SPEAR_STEEL, 1, "Steel Spear", STATION_FORGE },
+    { { { (ItemId)MAT_TITANIUM, 8 }, { (ItemId)MAT_WOOD, 2 }, { ITEM_NONE, 0 } },
+      ITEM_SWORD_TITANIUM, 1, "Titanium Sword", STATION_FORGE },
+    { { { (ItemId)MAT_TITANIUM, 4 }, { (ItemId)MAT_WOOD, 4 }, { ITEM_NONE, 0 } },
+      ITEM_SPEAR_TITANIUM, 1, "Titanium Spear", STATION_FORGE },
+    { { { (ItemId)MAT_TUNGSTEN, 10 }, { (ItemId)MAT_WOOD, 2 }, { ITEM_NONE, 0 } },
+      ITEM_SWORD_TUNGSTEN, 1, "Tungsten Sword", STATION_FORGE },
+    { { { (ItemId)MAT_TUNGSTEN, 5 }, { (ItemId)MAT_WOOD, 4 }, { ITEM_NONE, 0 } },
+      ITEM_SPEAR_TUNGSTEN, 1, "Tungsten Spear", STATION_FORGE },
+
     /* --- the chemistry bench -----------------------------------------------
        Glass work: optics, a bulb, and the two materials this whole plan
        exists to unlock a source for. Refractory earns its "fabricated, not

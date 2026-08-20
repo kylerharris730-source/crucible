@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <time.h>   /* the save screen stamps each slot */
 
 #include "world.h"
 #include "render.h"
@@ -218,6 +219,35 @@ static const int N_PALETTE = N_BRUSH + DEV_COUNT;
 static const int PALETTE_VISIBLE_ROWS = 14;
 static RECT g_paletteRect[N_PALETTE];
 static RECT g_paletteArea, g_paletteScrollTrack, g_paletteScrollThumb;
+
+/* --- the left panel, when there is a character ------------------------------
+   With the character off, this panel is a sandbox catalog: every material and
+   every machine, because there is no pack to draw from and the point is to be
+   able to paint with anything.
+
+   With the character ON, that list is the wrong list. What you can actually
+   place is what you are CARRYING, and the catalog offers you two hundred things
+   of which you own four. So the same strip becomes a view of the pack -- one
+   readable row per stack, scrollable, click to put it in your hand.
+
+   It is the same widget rather than a second panel deliberately. The strip is
+   already the most legible surface in the game: full item names at a readable
+   size, a scrollbar, and a fixed place to look. The inventory screen has to
+   cram forty slots into a grid of 34-pixel squares and can only show icons; a
+   list can show "Titanium Sword" and "Copper 1.2k" and be read at a glance.
+   Having both is not redundancy, it is the difference between browsing and
+   arranging.
+
+   ONE COLUMN here against the catalog's two, and that is what buys the
+   readability: a material's label is "Sand" and an item's is "Harvesting
+   Sickle" with a count after it, which does not fit half a 244-pixel panel. */
+static int  g_packList[INV_SLOTS];   /* pack slot indices, in pack order */
+static int  g_packListCount = 0;
+static RECT g_packListRect[INV_SLOTS];
+/* Whether the strip is currently showing the pack rather than the catalog.
+   Derived from the character being on, and stored so the click handler and the
+   draw cannot disagree about which list they are looking at. */
+static bool g_panelShowsPack = false;
 static RECT g_actRect[N_ACT];
 static RECT g_sizeDec, g_sizeInc, g_sizeBox, g_sizeTrack;
 static RECT g_speedRect[N_SPEED];
@@ -433,7 +463,14 @@ static bool g_useLatch = false;
    to read and short enough not to become furniture. */
 static char g_saveMsg[256] = "";
 static int  g_saveMsgFrames = 0;
-static const char* const SAVE_PATH = "crucible.sav";
+/* Overridable at compile time so a diagnostic build can be run ALONGSIDE a
+   real session without the two fighting over one file. An agent or a soak test
+   that shares the player's save will eventually overwrite a character somebody
+   cared about, and "be careful" is not a mechanism. */
+#ifndef CRUCIBLE_SAVE_PATH
+#define CRUCIBLE_SAVE_PATH "crucible.sav"
+#endif
+static const char* const SAVE_PATH = CRUCIBLE_SAVE_PATH;
 
 static bool g_lineKey  = false;   /* R is down */
 static bool g_lineOn   = false;   /* ...and a drag is in progress */
@@ -529,6 +566,49 @@ static bool g_bgLayer = false;
 static const int HOTBAR_SLOT = 42;   /* screen pixels per hotbar cell */
 static RECT g_hotRect[HOTBAR_SLOTS];
 static RECT g_menuResume, g_menuHost, g_menuJoin, g_menuIp, g_menuStop, g_menuQuit, g_menuPanel;
+static RECT g_menuSave, g_menuLoad;
+
+/* --- the save screen --------------------------------------------------------
+   Ten slots, each showing a picture of where you were when you wrote it.
+
+   One save file was fine while the game was a sandbox you reset constantly. It
+   stops being fine the moment there is a character with a pack and a boss flag:
+   the only way to keep a world you like is to not save over it, which makes
+   saving a thing you avoid rather than a thing you do. Ten slots and a picture
+   of each turns that around.
+
+   The picture is doing the real work rather than decorating. A column of ten
+   filenames and timestamps is a puzzle -- "was the good one at 14:20 or
+   14:48?" -- and a column of ten pictures of the places is not a puzzle at all.
+   See SAVE_THUMB_W for why it is small enough to be free. */
+static const int SAVE_SLOTS = 10;
+enum SaveScreenMode { SAVESCREEN_OFF = 0, SAVESCREEN_SAVE, SAVESCREEN_LOAD };
+static int  g_saveScreen = SAVESCREEN_OFF;
+static RECT g_savePanel, g_saveSlotRect[SAVE_SLOTS], g_saveBack;
+/* Refreshed when the screen opens, not every frame: ten savePeek calls is ten
+   file opens, which is nothing once but is not something to do at 60 Hz. */
+static SaveSlotInfo g_saveSlot[SAVE_SLOTS];
+
+/* "crucible.sav" -> "crucible3.sav". Derived from SAVE_PATH rather than being a
+   second constant, so a build with its own save path (a diagnostic one, say)
+   gets its own ten slots for free and cannot land in the player's. */
+static const char* saveSlotPath(int slot) {
+    static char buf[SAVE_SLOTS][64];
+    if (slot < 0 || slot >= SAVE_SLOTS) return SAVE_PATH;
+    char stem[48];
+    strncpy(stem, SAVE_PATH, sizeof(stem) - 1);
+    stem[sizeof(stem) - 1] = 0;
+    char* dot = strrchr(stem, '.');
+    if (dot) *dot = 0;
+    sprintf(buf[slot], "%s%d.sav", stem, slot + 1);
+    return buf[slot];
+}
+
+static void saveSlotsRefresh() {
+    for (int i = 0; i < SAVE_SLOTS; ++i)
+        if (!savePeek(saveSlotPath(i), &g_saveSlot[i]))
+            memset(&g_saveSlot[i], 0, sizeof(g_saveSlot[i]));
+}
 static char g_joinIp[64] = "127.0.0.1";
 static bool g_joinIpFocus = false;
 
@@ -958,13 +1038,28 @@ static void layoutPanel() {
     int y = top;
 
     /* The catalog is row-major: scrolling through it reads in the same order
-       as its definitions, first all materials then all devices. */
+       as its definitions, first all materials then all devices. With a
+       character on it is the PACK instead -- see the note on g_packList. */
     {
         const int colGap = 6;
         const int railW = 10;
         const int catalogW = w - railW - 4;
         const int colW   = (catalogW - colGap) / 2;
-        const int totalRows = (N_PALETTE + 1) / 2;
+
+        g_panelShowsPack = g_playerOn;
+
+        /* Rebuilt every layout rather than cached, and layoutPanel runs on any
+           panel interaction. The pack changes constantly -- every cell you dig
+           adds to it -- and a list that only refreshed when something asked it
+           to would be a list that is wrong most of the time. It is forty
+           comparisons. */
+        g_packListCount = 0;
+        if (g_panelShowsPack)
+            for (int i = 0; i < INV_SLOTS; ++i)
+                if (!g_inv.slot[i].empty()) g_packList[g_packListCount++] = i;
+
+        const int totalRows = g_panelShowsPack ? g_packListCount
+                                               : (N_PALETTE + 1) / 2;
         g_paletteMaxScroll = imax(0, totalRows - PALETTE_VISIBLE_ROWS);
         g_paletteScroll = imax(0, imin(g_paletteScroll, g_paletteMaxScroll));
         SetRect(&g_paletteArea, pad, top, pad + catalogW, top + PALETTE_VISIBLE_ROWS * pitch - gap);
@@ -980,15 +1075,30 @@ static void layoutPanel() {
         } else {
             SetRectEmpty(&g_paletteScrollThumb);
         }
-        for (int i = 0; i < N_PALETTE; ++i) {
-            const int col = i & 1;
-            const int row = i / 2 - g_paletteScroll;
-            if (row < 0 || row >= PALETTE_VISIBLE_ROWS) {
-                SetRectEmpty(&g_paletteRect[i]);
-                continue;
+
+        /* BOTH sets of rects are cleared and only the live one filled, rather
+           than leaving the other holding last frame's boxes. An empty RECT
+           fails inRect() for free, so a stale rect from the other mode cannot
+           take a click -- which is the failure this shape avoids rather than
+           the failure it would otherwise have. */
+        for (int i = 0; i < N_PALETTE; ++i) SetRectEmpty(&g_paletteRect[i]);
+        for (int i = 0; i < INV_SLOTS; ++i) SetRectEmpty(&g_packListRect[i]);
+
+        if (g_panelShowsPack) {
+            for (int i = 0; i < g_packListCount; ++i) {
+                const int row = i - g_paletteScroll;
+                if (row < 0 || row >= PALETTE_VISIBLE_ROWS) continue;
+                SetRect(&g_packListRect[i], pad, top + row * pitch,
+                        pad + catalogW, top + row * pitch + h);
             }
-            const int x0  = pad + col * (colW + colGap);
-            SetRect(&g_paletteRect[i], x0, top + row * pitch, x0 + colW, top + row * pitch + h);
+        } else {
+            for (int i = 0; i < N_PALETTE; ++i) {
+                const int col = i & 1;
+                const int row = i / 2 - g_paletteScroll;
+                if (row < 0 || row >= PALETTE_VISIBLE_ROWS) continue;
+                const int x0  = pad + col * (colW + colGap);
+                SetRect(&g_paletteRect[i], x0, top + row * pitch, x0 + colW, top + row * pitch + h);
+            }
         }
         y = top + PALETTE_VISIBLE_ROWS * pitch;
     }
@@ -1059,19 +1169,266 @@ static const KeyHint KEY_HINTS[] = {
 };
 static const int N_KEY_HINTS = (int)(sizeof(KEY_HINTS) / sizeof(KEY_HINTS[0]));
 
+/* The most recent clean picture of the world, kept for whenever a save is
+   written. See the capture site in the render loop for why it cannot simply be
+   taken at the moment of saving. */
+static u8 g_thumbLatest[SAVE_THUMB_BYTES];
+
+/* Defined further down; the save screen sits up here beside the menu it is
+   reached from, and reaches back for the camera, the regenerate path and the
+   shared button painter. */
+static void updateCamera(bool snap);
+static void makeWorld();
+static void drawButton(HDC hdc, const RECT& r, const char* label,
+                       HBRUSH swatch, bool selected, bool hot);
+
+/* --- the picture on a slot --------------------------------------------------
+   Box-filtered down from the live frame buffer rather than point-sampled. At
+   4x1 reduction a nearest-neighbour shrink of a world made of one-cell speckle
+   is almost pure noise -- it picks one arbitrary cell out of every sixteen, so
+   a dirt wall and a stone wall come out as the same grey static. Averaging the
+   block is what makes the thumbnail look like the place.
+
+   Taken from g_pixels, which is the WORLD view only: no panel, no hotbar, no
+   HUD. That is the right frame to keep. The panel is the same in every save and
+   would waste two thirds of a small picture saying so. */
+static void captureThumbnail(u8* rgb) {
+    const int bx = VIEW_CELLS_W / SAVE_THUMB_W;   /* 512/128 = 4 */
+    const int by = VIEW_CELLS_H / SAVE_THUMB_H;   /* 384/96  = 4 */
+    for (int ty = 0; ty < SAVE_THUMB_H; ++ty) {
+        for (int tx = 0; tx < SAVE_THUMB_W; ++tx) {
+            u32 r = 0, g = 0, b = 0;
+            for (int oy = 0; oy < by; ++oy) {
+                const int sy = ty * by + oy;
+                if (sy >= VIEW_CELLS_H) continue;
+                for (int ox = 0; ox < bx; ++ox) {
+                    const int sx = tx * bx + ox;
+                    if (sx >= VIEW_CELLS_W) continue;
+                    const u32 c = g_pixels[sy * VIEW_CELLS_W + sx];
+                    r += (c >> 16) & 0xFF; g += (c >> 8) & 0xFF; b += c & 0xFF;
+                }
+            }
+            const u32 n = (u32)(bx * by);
+            u8* out = rgb + (ty * SAVE_THUMB_W + tx) * 3;
+            out[0] = (u8)(r / n); out[1] = (u8)(g / n); out[2] = (u8)(b / n);
+        }
+    }
+}
+
+/* One place that writes a slot, so the message, the refresh and the client
+   refusal cannot be got right in one caller and wrong in another. */
+static void saveToSlot(int slot) {
+    if (netRole() == NET_CLIENT) {
+        sprintf(g_saveMsg, "The host owns this world's save");
+        g_saveMsgFrames = 180; return;
+    }
+    const char* path = saveSlotPath(slot);
+    if (saveWrite(path, g_world, g_thumbLatest)) {
+        const double mb = (double)saveTotalBytes() / (1024.0 * 1024.0);
+        sprintf(g_saveMsg, "Saved slot %d -- %.2f MB", slot + 1, mb);
+    } else {
+        sprintf(g_saveMsg, "SAVE FAILED: %s", saveError());
+    }
+    g_saveMsgFrames = 240;
+    saveSlotsRefresh();
+}
+
+static void loadFromSlot(int slot) {
+    if (netRole() == NET_CLIENT) {
+        sprintf(g_saveMsg, "Only the host can load this world");
+        g_saveMsgFrames = 180; return;
+    }
+    if (netConnected()) netStop();   /* loaded topology needs a fresh join snapshot */
+    const char* path = saveSlotPath(slot);
+    if (saveRead(path, g_world)) {
+        const double mb = (double)saveTotalBytes() / (1024.0 * 1024.0);
+        sprintf(g_saveMsg, "Loaded slot %d -- %.2f MB%s%s", slot + 1, mb,
+                saveError()[0] ? " -- " : "", saveError());
+        updateCamera(true);
+        droneReset();
+        accessoryReset();
+    } else {
+        /* A failed load leaves the world half-written, so it is not somewhere
+           to carry on from -- the same recovery F9 has always made. */
+        sprintf(g_saveMsg, "LOAD FAILED: %s", saveError());
+        g_world.reset(); makeWorld();
+    }
+    g_saveMsgFrames = 240;
+}
+
+/* Five across and two down, which is the shape that fits ten 4:3 pictures into
+   the view without either running off the side or shrinking them past the point
+   of being recognisable. */
+static void layoutSaveScreen() {
+    const int cols = 5, rows = 2;
+    const int cellW = 176, cellH = 158, gap = 10, pad = 18;
+    const int w = pad * 2 + cols * cellW + (cols - 1) * gap;
+    const int h = pad + 40 + rows * cellH + (rows - 1) * gap + 52;
+    const int cx = PANEL_W + VIEW_W / 2, cy = VIEW_H / 2;
+    SetRect(&g_savePanel, cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2);
+    for (int i = 0; i < SAVE_SLOTS; ++i) {
+        const int c = i % cols, r = i / cols;
+        const int x = g_savePanel.left + pad + c * (cellW + gap);
+        const int y = g_savePanel.top + pad + 40 + r * (cellH + gap);
+        SetRect(&g_saveSlotRect[i], x, y, x + cellW, y + cellH);
+    }
+    SetRect(&g_saveBack, g_savePanel.left + pad, g_savePanel.bottom - 44,
+            g_savePanel.left + pad + 120, g_savePanel.bottom - 14);
+}
+
+static void drawSaveScreen(HDC hdc) {
+    layoutSaveScreen();
+    const bool saving = (g_saveScreen == SAVESCREEN_SAVE);
+
+    FillRect(hdc, &g_savePanel, g_panelBg);
+    FrameRect(hdc, &g_savePanel, g_accentBrush);
+
+    RECT title = g_savePanel;
+    title.left += 18; title.top += 12;
+    SetTextColor(hdc, RGB(245, 224, 150));
+    DrawTextA(hdc, saving ? "SAVE  --  click a slot to write it"
+                          : "LOAD  --  click a slot to open it",
+              -1, &title, DT_LEFT | DT_TOP | DT_SINGLELINE);
+
+    for (int i = 0; i < SAVE_SLOTS; ++i) {
+        RECT r = g_saveSlotRect[i];
+        const SaveSlotInfo& info = g_saveSlot[i];
+        const bool hot = inRect(r, g_mx, g_my);
+        /* An empty slot is not clickable in LOAD mode, so it must not light up
+           under the cursor either -- a hover state on a dead control is the
+           interface promising something it will not do. */
+        const bool live = saving || (info.used && info.readable);
+
+        FillRect(hdc, &r, (hot && live) ? g_btnBgHot : g_btnBg);
+        FrameRect(hdc, &r, (hot && live) ? g_accentBrush : g_borderBrush);
+
+        RECT pic = r;
+        pic.left += 6; pic.right -= 6; pic.top += 22; pic.bottom = pic.top + 96;
+
+        if (info.hasThumb) {
+            /* Bottom-up DIB with a negative height, which is how a Windows
+               bitmap is told its rows run top-down. The rows are BGR on the
+               wire, so the channel swap happens here rather than at capture --
+               the file stays plain RGB and only the one place that hands it to
+               GDI has to know about Windows' order. */
+            static u8 bgr[SAVE_THUMB_BYTES];
+            for (int k = 0; k < SAVE_THUMB_W * SAVE_THUMB_H; ++k) {
+                bgr[k * 3 + 0] = info.rgb[k * 3 + 2];
+                bgr[k * 3 + 1] = info.rgb[k * 3 + 1];
+                bgr[k * 3 + 2] = info.rgb[k * 3 + 0];
+            }
+            BITMAPINFOHEADER bi;
+            memset(&bi, 0, sizeof(bi));
+            bi.biSize = sizeof(bi);
+            bi.biWidth = SAVE_THUMB_W;
+            bi.biHeight = -SAVE_THUMB_H;
+            bi.biPlanes = 1;
+            bi.biBitCount = 24;
+            bi.biCompression = BI_RGB;
+            SetStretchBltMode(hdc, COLORONCOLOR);
+            StretchDIBits(hdc, pic.left, pic.top,
+                          pic.right - pic.left, pic.bottom - pic.top,
+                          0, 0, SAVE_THUMB_W, SAVE_THUMB_H,
+                          bgr, (BITMAPINFO*)&bi, DIB_RGB_COLORS, SRCCOPY);
+            FrameRect(hdc, &pic, g_borderBrush);
+        } else {
+            FillRect(hdc, &pic, g_btnBgSel);
+            FrameRect(hdc, &pic, g_borderBrush);
+            SetTextColor(hdc, RGB(112, 120, 134));
+            RECT t = pic; t.top += 38;
+            DrawTextA(hdc, info.used ? "(no preview)" : "empty", -1, &t,
+                      DT_CENTER | DT_TOP | DT_SINGLELINE);
+        }
+
+        char head[48];
+        sprintf(head, "Slot %d", i + 1);
+        RECT hr = r; hr.left += 8; hr.top += 4;
+        SetTextColor(hdc, live ? RGB(226, 230, 238) : RGB(120, 128, 142));
+        DrawTextA(hdc, head, -1, &hr, DT_LEFT | DT_TOP | DT_SINGLELINE);
+
+        /* The stamp under the picture. Date and time rather than "3 hours ago":
+           a relative time is friendlier to read once and useless for telling two
+           slots apart a day later, which is the entire job here. */
+        char foot[80] = "";
+        if (!info.used) {
+            strcpy(foot, "-");
+        } else if (!info.readable) {
+            sprintf(foot, "%s", info.note);
+        } else if (info.when) {
+            const time_t t = (time_t)info.when;
+            const struct tm* lt = localtime(&t);
+            if (lt) strftime(foot, sizeof(foot), "%d %b  %H:%M", lt);
+            sprintf(foot + strlen(foot), "   %.0f MB",
+                    (double)info.bytes / (1024.0 * 1024.0));
+        } else {
+            sprintf(foot, "%.0f MB", (double)info.bytes / (1024.0 * 1024.0));
+        }
+        RECT fr = r; fr.left += 8; fr.right -= 8; fr.top = pic.bottom + 6;
+        SetTextColor(hdc, info.readable || !info.used ? RGB(160, 168, 182)
+                                                     : RGB(214, 130, 110));
+        DrawTextA(hdc, foot, -1, &fr, DT_LEFT | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS);
+    }
+
+    drawButton(hdc, g_saveBack, "Back", NULL, false, inRect(g_saveBack, g_mx, g_my));
+
+    RECT hint = g_savePanel;
+    hint.left += 150; hint.top = g_savePanel.bottom - 38;
+    SetTextColor(hdc, RGB(140, 148, 162));
+    DrawTextA(hdc, saving ? "Writing a slot replaces whatever is in it. Esc to go back."
+                          : "Esc to go back.",
+              -1, &hint, DT_LEFT | DT_TOP | DT_SINGLELINE);
+}
+
+static bool handleSaveScreenClick(int mx, int my) {
+    if (inRect(g_saveBack, mx, my)) { g_saveScreen = SAVESCREEN_OFF; return true; }
+    for (int i = 0; i < SAVE_SLOTS; ++i) {
+        if (!inRect(g_saveSlotRect[i], mx, my)) continue;
+        if (g_saveScreen == SAVESCREEN_SAVE) {
+            saveToSlot(i);
+        } else {
+            /* Refused rather than silently ignored. Clicking an empty slot in
+               load mode is a reasonable thing to try, and saying nothing at all
+               reads as the button being broken. */
+            if (!g_saveSlot[i].used) {
+                sprintf(g_saveMsg, "Slot %d is empty", i + 1);
+                g_saveMsgFrames = 150;
+                return true;
+            }
+            if (!g_saveSlot[i].readable) {
+                sprintf(g_saveMsg, "Slot %d: %s", i + 1, g_saveSlot[i].note);
+                g_saveMsgFrames = 240;
+                return true;
+            }
+            loadFromSlot(i);
+            g_saveScreen = SAVESCREEN_OFF;
+            g_menuOpen = false;
+        }
+        return true;
+    }
+    /* Anywhere inside the panel but not on a control is swallowed, so a stray
+       click cannot fall through and dig a hole in the world behind it. */
+    return inRect(g_savePanel, mx, my);
+}
+
 static void layoutMenu() {
-    const int w = 380, h = 300 + N_KEY_HINTS * 15 + 22
+    /* Two rows taller than it was, for Save and Load. They go directly under
+       Resume rather than down beside Quit, because they are the things you open
+       this menu FOR -- the networking block below them is a thing you set up
+       once a session. */
+    const int w = 380, h = 300 + 80 + N_KEY_HINTS * 15 + 22
                     + (saveTotalBytes() > 0 ? 26 + 8 * 15 : 0);
     const int cx = PANEL_W + VIEW_W / 2, cy = VIEW_H / 2;
     SetRect(&g_menuPanel, cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2);
     const int bw = w - 120, bx = cx - bw / 2;
     const int top = g_menuPanel.top;
     SetRect(&g_menuResume, bx, top + 42, bx + bw, top + 74);
-    SetRect(&g_menuHost,   bx, top + 82, bx + bw, top + 114);
-    SetRect(&g_menuIp,     bx, top + 122, bx + bw - 88, top + 154);
-    SetRect(&g_menuJoin,   bx + bw - 80, top + 122, bx + bw, top + 154);
-    SetRect(&g_menuStop,   bx, top + 162, bx + bw, top + 194);
-    SetRect(&g_menuQuit,   bx, top + 202, bx + bw, top + 234);
+    SetRect(&g_menuSave,   bx, top + 82, bx + bw, top + 114);
+    SetRect(&g_menuLoad,   bx, top + 122, bx + bw, top + 154);
+    SetRect(&g_menuHost,   bx, top + 162, bx + bw, top + 194);
+    SetRect(&g_menuIp,     bx, top + 202, bx + bw - 88, top + 234);
+    SetRect(&g_menuJoin,   bx + bw - 80, top + 202, bx + bw, top + 234);
+    SetRect(&g_menuStop,   bx, top + 242, bx + bw, top + 274);
+    SetRect(&g_menuQuit,   bx, top + 282, bx + bw, top + 314);
 }
 
 /* Laid out fresh on open, like the pause menu, and for the same reason: it is
@@ -1755,11 +2112,20 @@ static void makeWorld() {
 static bool handlePanelClick(int mx, int my) {
     /* While the menu is up it takes every click, including ones over the
        viewport -- otherwise you paint into the world through the overlay. */
+    /* The save screen is drawn over the menu, so it takes the click first --
+       otherwise a slot in the top row would land on the menu button behind it. */
+    if (g_saveScreen != SAVESCREEN_OFF) return handleSaveScreenClick(mx, my);
     if (g_menuOpen) {
         if (inRect(g_menuResume, mx, my)) { g_menuOpen = false; return true; }
         if (inRect(g_menuHost, mx, my)) {
             g_survival = true; g_playerOn = true;
             netHost(); g_joinIpFocus = false; return true;
+        }
+        if (inRect(g_menuSave, mx, my)) {
+            g_saveScreen = SAVESCREEN_SAVE; saveSlotsRefresh(); return true;
+        }
+        if (inRect(g_menuLoad, mx, my)) {
+            g_saveScreen = SAVESCREEN_LOAD; saveSlotsRefresh(); return true;
         }
         if (inRect(g_menuIp, mx, my)) { g_joinIpFocus = true; return true; }
         if (inRect(g_menuJoin, mx, my)) {
@@ -1773,6 +2139,32 @@ static bool handlePanelClick(int mx, int my) {
     if (g_survival && g_playerOn) {
         for (int i = 0; i < HOTBAR_SLOTS; ++i)
             if (inRect(g_hotRect[i], mx, my)) { g_inv.selected = i; return true; }
+    }
+    /* --- picking something out of the pack list --------------------------
+       A row in the hotbar already just selects it. A row further back has to
+       come FORWARD, because "held" and "in the hotbar" are the same thing in
+       this game -- so it is swapped into whichever hotbar slot is currently
+       selected.
+
+       A SWAP rather than a move into the first free slot, and that is the whole
+       ergonomic point: whatever was in your hand goes where the new thing came
+       from, so the pack neither grows nor shrinks and nothing is displaced onto
+       the floor. It also means clicking the same two rows alternately toggles
+       between two tools, which is the gesture this list is for. */
+    for (int i = 0; i < g_packListCount; ++i) {
+        if (!inRect(g_packListRect[i], mx, my)) continue;
+        const int slot = g_packList[i];
+        if (slot < HOTBAR_SLOTS) {
+            g_inv.selected = slot;
+        } else {
+            const int want = imax(0, imin(HOTBAR_SLOTS - 1, g_inv.selected));
+            ItemStack tmp = g_inv.slot[want];
+            g_inv.slot[want] = g_inv.slot[slot];
+            g_inv.slot[slot] = tmp;
+            g_inv.selected = want;
+        }
+        layoutPanel();
+        return true;
     }
     for (int i = 0; i < N_PALETTE; ++i) {
         if (!inRect(g_paletteRect[i], mx, my)) continue;
@@ -2126,14 +2518,12 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 sprintf(g_saveMsg, "The host owns this world's save");
                 g_saveMsgFrames = 180; break;
             }
-            const bool ok = saveWrite(SAVE_PATH, g_world);
-            if (ok) {
-                double mb = (double)saveTotalBytes() / (1024.0 * 1024.0);
-                sprintf(g_saveMsg, "Saved %s -- %.2f MB", SAVE_PATH, mb);
-            } else {
-                sprintf(g_saveMsg, "SAVE FAILED: %s", saveError());
-            }
-            g_saveMsgFrames = 240;
+            /* The quick keys are slot 1 now rather than a file of their own.
+               Two save systems side by side would be two places your world
+               might be, which is exactly the confusion the slot screen exists
+               to remove -- and F5 landing somewhere the Load screen cannot see
+               would be the worst version of it. */
+            saveToSlot(0);
             break;
         }
         case VK_F9: {
@@ -2141,23 +2531,7 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 sprintf(g_saveMsg, "Only the host can load this world");
                 g_saveMsgFrames = 180; break;
             }
-            if (netConnected()) netStop(); /* loaded topology requires a fresh join snapshot */
-            const bool ok = saveRead(SAVE_PATH, g_world);
-            if (ok) {
-                double mb = (double)saveTotalBytes() / (1024.0 * 1024.0);
-                sprintf(g_saveMsg, "Loaded %s -- %.2f MB%s%s", SAVE_PATH, mb,
-                        saveError()[0] ? " -- " : "", saveError());
-                updateCamera(true);
-                droneReset();
-                accessoryReset();
-            } else {
-                /* A failed load leaves the world half-written, so it is not
-                   somewhere to carry on from. Regenerating is the honest
-                   recovery and it is better than a plausible-looking ruin. */
-                sprintf(g_saveMsg, "LOAD FAILED: %s", saveError());
-                g_world.reset(); makeWorld();
-            }
-            g_saveMsgFrames = 240;
+            loadFromSlot(0);
             break;
         }
         /* R HELD is the line tool; R TAPPED still respawns at the cursor. The
@@ -2206,7 +2580,8 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
            menu -- one key that always means "close the thing in front of me" is
            worth more than a second binding to remember. */
         case VK_ESCAPE:
-            if (g_mapOpen)           g_mapOpen = false;
+            if (g_saveScreen != SAVESCREEN_OFF) g_saveScreen = SAVESCREEN_OFF;
+            else if (g_mapOpen)      g_mapOpen = false;
             else if (g_chestOpen >= 0) closeChest();
             else if (g_devPanel >= 0) {
                 if (netRole() == NET_CLIENT) {
@@ -2581,6 +2956,140 @@ static void interactFor(PlayerSession& session, const Aim& aim) {
     if (doorToggle(g_world, aim.x, aim.y)) roomsNotifyEdit(g_world, aim.x, aim.y);
 }
 
+/* ===========================================================================
+   Melee
+   ===========================================================================
+
+   A stroke is a shape that moves over a span of frames, so it is split in two:
+   `meleeStart` commits to one when the button allows it, and `meleeTickFor`
+   advances it and works out what it cut through. They are separate because
+   they run at different times -- starting is an input decision and lives in
+   applyPlayerUses with the other verbs, while advancing happens every frame
+   whether or not a command arrived, beside the drone and accessory ticks.
+
+   Folding both into the input path was the obvious first shape and it is wrong
+   in a way that would have taken a while to see: applyPlayerUses returns early
+   in four places and calls itself once (see the line-tool commit), so a stroke
+   ticked there would sometimes advance twice in a frame and sometimes not at
+   all -- a sword that hit harder while you were drawing a line. */
+
+/* Where the blade is right now, as a segment from hilt to tip. `phase` runs
+   0..1 across the stroke.
+
+   Both styles are expressed as the same two points because everything
+   downstream -- the hit test, the drawing -- only wants to know where the metal
+   is. What differs is how the two ends MOVE. */
+static void meleeBlade(const Player& body, const ItemDef& def,
+                       float dirX, float dirY, float phase,
+                       float* hx, float* hy, float* tx, float* ty) {
+    const float cx = body.centreX(), cy = body.centreY();
+
+    if (def.meleeStyle == MELEE_SWING) {
+        /* An arc. The blade starts `arc/2` degrees off the aim on one side and
+           finishes the same distance off it on the other, so what you pointed
+           at is the MIDDLE of the stroke rather than its start -- which is what
+           makes aiming at a creature connect, instead of aiming a half-arc
+           ahead of it the way it does if the sweep begins where you clicked.
+
+           Which way round it sweeps follows the aim: pointing right swings from
+           high to low, pointing left mirrors it. Always sweeping the same
+           direction in world space would make a left-handed swing look like the
+           character was winding up backwards. */
+        const float half = (float)def.meleeArc * 0.5f * 3.14159265f / 180.0f;
+        const float base = atan2f(dirY, dirX);
+        const float sweep = (dirX < 0.0f) ? -1.0f : 1.0f;
+        const float angle = base - sweep * half + sweep * (2.0f * half) * phase;
+        const float ca = cosf(angle), sa = sinf(angle);
+        /* The hilt sits a little out from the body, so the sword reads as held
+           rather than growing out of the character's middle -- the same two
+           cells drawHeldTool offsets by, and for the same reason. */
+        *hx = cx + ca * 2.0f; *hy = cy + sa * 2.0f;
+        *tx = cx + ca * (float)def.meleeReach;
+        *ty = cy + sa * (float)def.meleeReach;
+        return;
+    }
+
+    /* A stab. Out and back over the stroke, so the tip is furthest at the
+       halfway point. sinf gives that for free and eases both ends of it, which
+       is what stops the thrust looking like the spear teleporting to full
+       extension and back. */
+    const float out = sinf(phase * 3.14159265f);
+    const float lead = 2.0f + ((float)def.meleeReach - 2.0f) * out;
+    *hx = cx + dirX * (lead - (float)def.meleeReach * 0.55f);
+    *hy = cy + dirY * (lead - (float)def.meleeReach * 0.55f);
+    *tx = cx + dirX * lead;
+    *ty = cy + dirY * lead;
+}
+
+/* Begin a stroke, if the weapon is ready. Returns false when it is still on
+   cooldown, which is every frame but one in six for a copper sword -- so this
+   is called freely while the button is held and the rhythm comes from the
+   weapon rather than from how fast somebody can click.
+
+   Auto-repeat rather than one swing per press, deliberately. Every other verb
+   in this game repeats while held -- digging, building, sowing, firing -- and a
+   melee weapon that alone demanded a click per swing would read as a bug in the
+   input handling long before it read as a design. */
+static bool meleeStart(PlayerSession& session, const ItemDef& def, const Aim& aim) {
+    if (session.swingCool > 0 || session.swingFrame > 0) return false;
+
+    const float cx = session.body.centreX(), cy = session.body.centreY();
+    float dx = (float)aim.x - cx, dy = (float)aim.y - cy;
+    const float d = sqrtf(dx * dx + dy * dy);
+    if (d > 0.001f) { dx /= d; dy /= d; }
+    else {
+        /* Aimed at your own feet. Fall back to the way the character is facing
+           rather than refusing the swing: a weapon that silently does nothing
+           when the cursor drifts onto the body is a weapon that feels broken at
+           exactly the range it is meant to be used at. */
+        dx = (float)(session.body.facing >= 0 ? 1 : -1); dy = 0.0f;
+    }
+    session.swingDirX = dx; session.swingDirY = dy;
+    session.swingFrame = imax(1, (int)def.meleeFrames);
+    session.swingCool  = imax((int)def.meleeCooldown, (int)def.meleeFrames);
+    memset(session.swingHit, 0, sizeof(session.swingHit));
+    return true;
+}
+
+/* One frame of whatever stroke is in progress. Called for every connected
+   player once a frame, beside the accessory and drone ticks. */
+static void meleeTickFor(PlayerSession& session) {
+    if (session.swingCool > 0) --session.swingCool;
+    if (session.swingFrame <= 0) return;
+
+    const ItemStack& held = session.inventory.held();
+    /* Swapping the weapon out mid-stroke abandons it rather than finishing with
+       whatever is now in hand. The alternative is a copper sword's stroke
+       landing tungsten damage because the hotbar changed on frame nine. */
+    if (held.empty() || ITEMS[held.item].kind != ITEMK_MELEE) {
+        session.swingFrame = 0;
+        return;
+    }
+    const ItemDef& def = ITEMS[held.item];
+
+    const int total = imax(1, (int)def.meleeFrames);
+    /* swingFrame counts down, so progress is what is left subtracted from the
+       whole. Sampled at the END of this frame's motion rather than the start,
+       so the first thing that happens after a click is the blade being
+       somewhere other than at rest. */
+    const float phase = (float)(total - session.swingFrame) / (float)total;
+
+    float hx, hy, tx, ty;
+    meleeBlade(session.body, def, session.swingDirX, session.swingDirY,
+               phase, &hx, &hy, &tx, &ty);
+
+    /* Damage is the AUTHORITY's to resolve. A client runs the animation so its
+       own swing does not lag a round trip behind the button, but a client that
+       also took health off its local replica would show creatures dying and
+       then coming back when the next snapshot disagreed. */
+    if (netRole() != NET_CLIENT)
+        entHitSegment(hx, hy, tx, ty, session.body.centreX(), session.body.centreY(),
+                      accessoryShotDamage(session.inventory, ITEMS[held.item].damage),
+                      def.meleeKnock, session.swingHit);
+
+    --session.swingFrame;
+}
+
 static void applyPlayerUses(PlayerSession& session, const PlayerCommand& command) {
     const u8 bits = command.bits;
     const u8 pressed = (u8)(command.pressed | (bits & ~session.previousCommandBits));
@@ -2679,6 +3188,13 @@ static void applyPlayerUses(PlayerSession& session, const PlayerCommand& command
         }
     } else if (left && !right && !held.empty() && ITEMS[held.item].kind == ITEMK_TOOL) {
         fireToolFor(player, inv, aim);
+    } else if (left && !right && !held.empty() && ITEMS[held.item].kind == ITEMK_MELEE) {
+        /* Only STARTS the stroke -- see the note above meleeStart for why the
+           advancing half is somewhere else. Deliberately before the background
+           check that every branch below carries: a sword swings the same
+           whether or not you happen to have the wall layer selected, because it
+           is not editing cells either way. */
+        meleeStart(session, ITEMS[held.item], aim);
     } else if (left && !right && !command.background && !held.empty() &&
                ITEMS[held.item].kind == ITEMK_DEVICE) {
         placeDeviceStrokeFor(inv, session.previousAimX, session.previousAimY,
@@ -3981,7 +4497,102 @@ static void drawHotbar(HDC hdc) {
 
    It shares the icons' palette so the held tool and its inventory picture read
    as the same object: gold handle, steel shaft, white tip. */
+/* --- the blade, in the world -----------------------------------------------
+   Rasterised as a thick line from hilt to tip, the same way drawHeldTool draws
+   a multitool, rather than as a rotated sprite. Two reasons, and the second is
+   the one that decided it.
+
+   A 14x14 icon rotated to an arbitrary angle at two screen pixels a cell is a
+   smear -- there is not enough resolution in the source for the rotation to
+   preserve the silhouette, so all seven tiers would arrive at the same grey
+   blob. And the shape that matters here is not the icon, it is WHERE THE METAL
+   IS: the thing the player has to read mid-fight is exactly the segment the hit
+   test uses, so drawing that segment means what you see is what is dangerous,
+   by construction rather than by keeping two descriptions in step.
+
+   Drawn only for the local player. Remote swings are not replicated -- see the
+   note on PlayerSession::swingFrame. */
+static void drawMeleeSwing(u32* px, bool lit) {
+    PlayerSession& session = g_playerSessions[0];
+    if (session.swingFrame <= 0) return;
+    const ItemStack& h = g_inv.held();
+    if (h.empty() || ITEMS[h.item].kind != ITEMK_MELEE) return;
+    const ItemDef& def = ITEMS[h.item];
+
+    const int total = imax(1, (int)def.meleeFrames);
+    const float phase = (float)(total - session.swingFrame) / (float)total;
+    float hx, hy, tx, ty;
+    meleeBlade(g_player, def, session.swingDirX, session.swingDirY,
+               phase, &hx, &hy, &tx, &ty);
+
+    const float dx = tx - hx, dy = ty - hy;
+    const float len = sqrtf(dx * dx + dy * dy);
+    if (len < 0.5f) return;
+    const float ux = dx / len, uy = dy / len;
+    const float nx = -uy, ny = ux;          /* perpendicular, for thickness */
+
+    const u32 metal = ITEMS[h.item].colour;
+    const int steps = (int)len;
+    for (int i = 0; i <= steps; ++i) {
+        const float t = (float)i / (float)steps;
+        const float fx = hx + dx * t - (float)g_camX;
+        const float fy = hy + dy * t - (float)g_camY;
+
+        /* Grip, then guard, then metal, then a bright tip -- the same reading
+           order the icon has, so the thing in your hand and the thing in the
+           hotbar are recognisably one object. The guard only exists on a sword;
+           a spear has none, which is what tells the two apart in motion. */
+        u32 c;
+        if      (t < 0.16f) c = 0xC8B070;                        /* grip */
+        else if (def.meleeStyle == MELEE_SWING && t < 0.26f) c = 0x6E7684;  /* crossguard */
+        else if (i >= steps - 1) c = 0xF2F5FF;                   /* the point */
+        else                     c = metal;
+
+        /* Two cells wide along the blade and one at the grip, so a sword has
+           some heft to it and a spear stays a line. */
+        const int thick = (t < 0.16f || def.meleeStyle == MELEE_STAB) ? 1 : 2;
+        for (int w = 0; w < thick; ++w) {
+            const int x = (int)(fx + nx * (float)w);
+            const int y = (int)(fy + ny * (float)w);
+            if (x < 0 || x >= VIEW_CELLS_W || y < 0 || y >= VIEW_CELLS_H) continue;
+            px[y * VIEW_CELLS_W + x] = lit ? shadeColor(c, viewShade(x, y)) : c;
+        }
+    }
+}
+
 static void drawHeldTool(u32* px, const Aim& aim, bool lit) {
+    /* A melee weapon at rest is drawn the same way a multitool is -- pointing
+       where you are aiming -- so the character is visibly holding something
+       between strokes rather than producing a sword out of nothing each time
+       the button goes down. The swing itself takes over the moment one starts. */
+    {
+        const ItemStack& m = g_inv.held();
+        if (!m.empty() && ITEMS[m.item].kind == ITEMK_MELEE) {
+            if (g_playerSessions[0].swingFrame > 0) { drawMeleeSwing(px, lit); return; }
+            const ItemDef& def = ITEMS[m.item];
+            const float pcx = g_player.centreX(), pcy = g_player.centreY();
+            float ax = (float)aim.x - pcx, ay = (float)aim.y - pcy;
+            const float ad = sqrtf(ax * ax + ay * ay);
+            if (ad > 0.001f) { ax /= ad; ay /= ad; }
+            else { ax = (float)(g_player.facing >= 0 ? 1 : -1); ay = 0.0f; }
+            /* Held at rest is SHORTER than the weapon's reach: a spear carried
+               at full extension would read as a permanent attack, and the
+               difference between resting and striking is most of what makes a
+               stroke legible. */
+            const float rest = (float)def.meleeReach * 0.55f;
+            const u32 metal = ITEMS[m.item].colour;
+            for (int t = 0; t < (int)rest; ++t) {
+                const float f = (float)t / rest;
+                const u32 c = f < 0.25f ? 0xC8B070 : (t >= (int)rest - 1 ? 0xF2F5FF : metal);
+                const int x = (int)(pcx + ax * (2.0f + (float)t) - (float)g_camX);
+                const int y = (int)(pcy - 1.0f + ay * (2.0f + (float)t) - (float)g_camY);
+                if (x < 0 || x >= VIEW_CELLS_W || y < 0 || y >= VIEW_CELLS_H) continue;
+                px[y * VIEW_CELLS_W + x] = lit ? shadeColor(c, viewShade(x, y)) : c;
+            }
+            return;
+        }
+    }
+
     const ItemStack& h = g_inv.held();
     if (h.empty() || ITEMS[h.item].kind != ITEMK_TOOL) return;
 
@@ -5031,6 +5642,8 @@ static void drawMenu(HDC hdc) {
         SetTextColor(hdc, RGB(214, 216, 224));
         ip.left += 8; DrawTextA(hdc, text, -1, &ip, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     }
+    drawButton(hdc, g_menuSave, "Save game", NULL, false, inRect(g_menuSave, g_mx, g_my));
+    drawButton(hdc, g_menuLoad, "Load game", NULL, false, inRect(g_menuLoad, g_mx, g_my));
     drawButton(hdc, g_menuJoin, "Join", NULL, netRole() == NET_CLIENT,
                inRect(g_menuJoin, g_mx, g_my));
     drawButton(hdc, g_menuStop, netRole() == NET_OFF ? "Offline" : "Disconnect / stop hosting",
@@ -5106,7 +5719,60 @@ static void drawPanel(HDC hdc) {
     HGDIOBJ oldFont = SelectObject(hdc, g_font);
     SetBkMode(hdc, TRANSPARENT);
     drawText(hdc, 10, 9, RGB(240, 240, 246), "CRUCIBLE");
-    drawText(hdc, 94, 9, RGB(144, 154, 172), "catalog (wheel)");
+    drawText(hdc, 94, 9, RGB(144, 154, 172),
+             g_panelShowsPack ? "pack (click to hold)" : "catalog (wheel)");
+
+    /* --- the pack, as a list ---------------------------------------------
+       One row per stack: icon, name, count. The selected row is ringed in the
+       accent colour, the same way the held hotbar slot is, so "what am I
+       holding" has one answer shown in two places rather than two answers. */
+    if (g_panelShowsPack) {
+        for (int i = 0; i < g_packListCount; ++i) {
+            RECT r = g_packListRect[i];
+            if (r.right <= r.left) continue;
+            const int slot = g_packList[i];
+            const ItemStack& st = g_inv.slot[slot];
+            if (st.empty()) continue;
+
+            const bool hot = inRect(r, g_mx, g_my);
+            const bool sel = (slot == g_inv.selected);
+            FillRect(hdc, &r, hot ? g_btnBgHot : (sel ? g_btnBgSel : g_btnBg));
+            FrameRect(hdc, &r, sel ? g_accentBrush : g_borderBrush);
+
+            RECT ic = r;
+            ic.left += 3; ic.top += 2; ic.bottom -= 2;
+            ic.right = ic.left + (ic.bottom - ic.top);
+            drawItemIcon(hdc, ic, st.item);
+
+            /* The count on the right, the name filling what is left. Drawn in
+               that order because the count is fixed-width and the name is not:
+               reserving the right-hand strip first means a long name is clipped
+               at its tail rather than overprinting the number, and a clipped
+               name is still readable where an overprinted one is not. */
+            char n[24];
+            const unsigned c = st.count;
+            if      (c >= 10000) sprintf(n, "%uk", c / 1000);
+            else if (c >= 1000)  sprintf(n, "%u.%uk", c / 1000, (c % 1000) / 100);
+            else                 sprintf(n, "%u", c);
+
+            RECT cr = r; cr.right -= 6; cr.left = cr.right - 42;
+            if (st.count > 1) {
+                SetTextColor(hdc, RGB(180, 190, 206));
+                DrawTextA(hdc, n, -1, &cr, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+            }
+            RECT tr = r; tr.left = ic.right + 5; tr.right = cr.left - 4;
+            SetTextColor(hdc, sel ? RGB(245, 224, 150) : RGB(214, 220, 230));
+            DrawTextA(hdc, ITEMS[st.item].name, -1, &tr,
+                      DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        }
+        /* Something has to be said when it is empty, or an empty pack reads as
+           a broken panel. */
+        if (g_packListCount == 0) {
+            RECT er = g_paletteArea; er.top += 6;
+            SetTextColor(hdc, RGB(120, 128, 142));
+            DrawTextA(hdc, "(pack is empty)", -1, &er, DT_CENTER | DT_TOP | DT_SINGLELINE);
+        }
+    }
 
     for (int i = 0; i < N_PALETTE; ++i) {
         if (g_paletteRect[i].right <= g_paletteRect[i].left) continue;
@@ -5394,6 +6060,7 @@ static void serverTick(const LARGE_INTEGER& perfFrequency) {
                 PlayerSession& session = g_playerSessions[slot];
                 if (!session.connected || !session.body.alive) continue;
                 accessoryTickFor(slot, session.body, session.inventory);
+                meleeTickFor(session);
                 droneTickFor(slot, g_world, session.body, session.inventory);
             }
         }
@@ -5456,6 +6123,7 @@ static void serverTick(const LARGE_INTEGER& perfFrequency) {
                 PlayerSession& session = g_playerSessions[slot];
                 if (!session.connected || !session.body.alive) continue;
                 accessoryTickFor(slot, session.body, session.inventory);
+                meleeTickFor(session);
                 droneTickFor(slot, g_world, session.body, session.inventory);
             }
             if (g_survival) {
@@ -5567,6 +6235,27 @@ static void clientRender(HWND hwnd) {
        correct map into memory and shows none of it. The symptom is that the
        map key appears to do nothing except stop the character, because the
        input gate works and the drawing does not. */
+    /* --- the save thumbnail, taken HERE ---------------------------------
+       The last moment g_pixels holds the world and nothing else. Everything
+       above this line is the place you are standing in; everything below is
+       HUD -- the map, the minimap, the modal dimming -- and a save preview with
+       the minimap baked into its corner is a preview of the interface rather
+       than of the world. The first cut captured at save time, which is after
+       all of it, and the little grey minimap box in every thumbnail is what
+       gave it away.
+
+       Every THUMB_EVERY frames rather than on demand, because "on demand" is
+       exactly what cannot work: the save happens on a click, and by then the
+       frame has already been finished and overlaid. Half a second of staleness
+       in a picture of a landscape is invisible; the cost is one 196k-sample
+       average twice a second, which is far less than a single frame of
+       lighting. */
+    {
+        static int thumbTick = 0;
+        static const int THUMB_EVERY = 30;
+        if (--thumbTick <= 0) { thumbTick = THUMB_EVERY; captureThumbnail(g_thumbLatest); }
+    }
+
     drawFullMap(g_pixels);
     drawMinimap(g_pixels);
 
@@ -5594,6 +6283,13 @@ static void clientRender(HWND hwnd) {
                   blitPixels, &blitBmi, DIB_RGB_COLORS, SRCCOPY);
     g_hoverItem = ITEM_NONE;
     g_hoverLabel = 0;
+    /* Re-laid every frame, not only when the panel is clicked. With a
+       character on, the strip is a view of the PACK, and the pack changes on
+       every dug cell -- a list rebuilt only on interaction would be showing
+       what you were carrying the last time you touched the panel. It is a few
+       dozen SetRects and one pass over forty slots, which is nothing against a
+       frame that also lights and renders the world. */
+    layoutPanel();
     drawPanel(g_backDC);
     if (g_survival && g_playerOn) drawHotbar(g_backDC);
     if (g_restBed >= 0) {
@@ -5612,6 +6308,7 @@ static void clientRender(HWND hwnd) {
     if (g_craftOpen)    drawCraft(g_backDC);
     if (g_chestOpen >= 0) drawChest(g_backDC);
     if (g_menuOpen)     drawMenu(g_backDC);
+    if (g_saveScreen != SAVESCREEN_OFF) drawSaveScreen(g_backDC);
     drawItemTooltip(g_backDC);
 
     HDC hdc = GetDC(hwnd);

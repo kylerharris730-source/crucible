@@ -8,6 +8,11 @@ typedef uint64_t u64;
 typedef int8_t   i8;
 typedef int16_t  i16;
 typedef int32_t  i32;
+/* Added for the save timestamp. A unix time in 32 bits stops working in 2038,
+   and a save format is exactly the kind of thing that outlives the assumption
+   -- so the one field that stores wall-clock time is 64 bits from the start
+   rather than after somebody notices. */
+typedef int64_t  i64;
 
 static inline int imin(int a, int b) { return a < b ? a : b; }
 static inline int imax(int a, int b) { return a > b ? a : b; }

@@ -236,6 +236,26 @@ int  entDamageDisc(int cx, int cy, int radius, int damage);
    hit is intentionally small, but creating space is tangible protection. */
 int  entDamageKnockbackDisc(int cx, int cy, int radius, int damage, float knockback);
 
+/* --- a blade passing through the world -------------------------------------
+   Damage every creature whose box the segment (x0,y0)-(x1,y1) crosses, pushing
+   each away from (fromX, fromY), and remember in `hitMask` which ones have
+   already been struck so that a stroke lasting a dozen frames costs one hit
+   each rather than a dozen.
+
+   A SEGMENT rather than a disc, because that is the shape a blade actually is:
+   a sword sweeping a 130-degree arc has to miss the creature standing behind
+   the swinger, and a disc centred on the player cannot express that. It is also
+   what makes a spear a different weapon rather than a shorter-ranged sword --
+   its whole reach is in one direction.
+
+   `hitMask` is MAX_ENTITIES bits and is the caller's, not this function's,
+   because "one hit per stroke" is a fact about the STROKE and this is called
+   once a frame. Returns how many were newly struck, so the caller can tell a
+   connecting swing from a whiff. */
+int  entHitSegment(float x0, float y0, float x1, float y1,
+                   float fromX, float fromY,
+                   int damage, float knockback, u8* hitMask);
+
 /* How many are alive right now, for the spawner's cap and for the HUD. */
 int  entAliveCount();
 

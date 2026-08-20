@@ -1000,6 +1000,69 @@ void entTickPlayers(World& w) {
     entTickMode(w, g_player, g_inv, true);
 }
 
+/* PlayerSession::swingHit is sized in bits and cannot say MAX_ENTITIES, because
+   multiplayer.h is included by things entity.h has no business dragging in. So
+   the two are checked against each other HERE, in the one file that can see
+   both -- the same trick the egg table's startup abort used, and for the same
+   reason: a hardcoded size that quietly disagrees with the pool it indexes
+   writes past the end of a struct, and does it only once the pool grows.
+
+   If this fires, widen swingHit in multiplayer.h to match. */
+static_assert(sizeof(((PlayerSession*)0)->swingHit) * 8 >= MAX_ENTITIES,
+              "PlayerSession::swingHit has fewer bits than there are entities");
+
+int entHitSegment(float x0, float y0, float x1, float y1,
+                  float fromX, float fromY,
+                  int damage, float knockback, u8* hitMask) {
+    int struck = 0;
+    for (int i = 0; i < MAX_ENTITIES; ++i) {
+        Entity& e = g_entities[i];
+        if (!e.alive()) continue;
+        if (hitMask && (hitMask[i >> 3] & (1u << (i & 7)))) continue;
+
+        /* Nearest point on the segment to the creature's centre, then a box
+           test around it. Sampling points ALONG the blade instead would miss a
+           creature the stroke passes clean through between two samples -- and
+           at a blade tip travelling most of an arc in fourteen frames, that is
+           the common case rather than the corner one. */
+        const float cx = e.centreX(), cy = e.centreY();
+        const float dx = x1 - x0, dy = y1 - y0;
+        const float len2 = dx * dx + dy * dy;
+        float t = 0.0f;
+        if (len2 > 0.0001f) {
+            t = ((cx - x0) * dx + (cy - y0) * dy) / len2;
+            if (t < 0.0f) t = 0.0f;
+            if (t > 1.0f) t = 1.0f;
+        }
+        const float nx = x0 + dx * t, ny = y0 + dy * t;
+
+        /* Against the BOX rather than a radius. Creatures here are wider than
+           they are tall or the other way round -- the Brood Mother is 34 by 24
+           -- so a circular approximation would either miss her flanks or hit
+           empty air above her. */
+        const float hw = e.width() * 0.5f, hh = e.height() * 0.5f;
+        if (nx < cx - hw || nx > cx + hw || ny < cy - hh || ny > cy + hh) continue;
+
+        e.hp -= damage;
+        e.hurtFlash = 6;
+        if (knockback > 0.0f) {
+            float kx = cx - fromX, ky = cy - fromY;
+            const float kd = sqrtf(kx * kx + ky * ky);
+            if (kd > 0.001f) { kx /= kd; ky /= kd; }
+            else { kx = 1.0f; ky = 0.0f; }
+            e.vx += kx * knockback;
+            /* Biased upward. A shove that is purely horizontal slides a walker
+               along the floor and it walks straight back; lifting it off the
+               ground buys the swinger the frames to step away, which is the
+               entire defensive value of knockback. */
+            e.vy += ky * knockback - knockback * 0.45f;
+        }
+        if (hitMask) hitMask[i >> 3] |= (u8)(1u << (i & 7));
+        ++struck;
+    }
+    return struck;
+}
+
 int entDamageKnockbackDisc(int cx, int cy, int radius, int damage, float knockback) {
     int hit = 0;
     const float r2 = (float)(radius * radius);

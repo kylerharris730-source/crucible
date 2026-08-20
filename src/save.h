@@ -60,10 +60,52 @@ int  saveStatCount();
 const SaveStat* saveStats();
 u64  saveTotalBytes();
 
+/* --- the thumbnail ---------------------------------------------------------
+   A save slot with a picture of where you were is a different object from a
+   save slot with a filename. Ten identical rows reading "crucible3.sav" ask you
+   to remember which is which; ten pictures answer it before you have finished
+   looking at them.
+
+   Small on purpose. 128x96 in RGB is 36 KB against a world that is tens of
+   megabytes, so it costs nothing to store and -- much more importantly -- it is
+   small enough that reading ten of them to draw the save screen is instant.
+   That is the constraint that actually shaped this: the screen has to open
+   without loading ten worlds, which is what savePeek is for. */
+static const int SAVE_THUMB_W = 128;
+static const int SAVE_THUMB_H = 96;
+static const int SAVE_THUMB_BYTES = SAVE_THUMB_W * SAVE_THUMB_H * 3;
+
+/* What a slot looks like from outside, without loading it. `when` is a unix
+   time; `rgb` is SAVE_THUMB_BYTES of top-down RGB, all zero when the save
+   predates thumbnails. */
+struct SaveSlotInfo {
+    bool used;          /* a readable crucible save is at this path */
+    bool readable;      /* ...and this build can actually load it */
+    i64  when;          /* unix seconds, 0 if unknown */
+    u64  bytes;         /* file size */
+    bool hasThumb;
+    u8   rgb[SAVE_THUMB_W * SAVE_THUMB_H * 3];
+    char note[96];      /* why it is not readable, when it is not */
+};
+
+/* Read a slot's header, timestamp and thumbnail WITHOUT decoding the world.
+   Seeks past every other section using the length framing, so the cost is a few
+   reads regardless of how large the file is -- see the note on SAVE_THUMB_W.
+
+   Returns false only when there is no file; a file that exists but cannot be
+   loaded comes back with `used` true and `readable` false, because "there is a
+   save here and this build cannot read it" is something the screen has to be
+   able to show rather than something to hide. */
+bool savePeek(const char* path, SaveSlotInfo* out);
+
 /* Both return false and leave a message in saveError() on failure. A failed
    LOAD leaves the world in whatever state it got to -- the caller should
-   regenerate rather than carry on, and main.cpp does. */
-bool saveWrite(const char* path, const World& w);
+   regenerate rather than carry on, and main.cpp does.
+
+   `thumbRgb` is SAVE_THUMB_BYTES of top-down RGB, or null to write no
+   thumbnail. Defaulted so every existing caller -- the tests, the network's
+   join snapshot -- keeps writing exactly what it wrote before. */
+bool saveWrite(const char* path, const World& w, const u8* thumbRgb = 0);
 bool saveRead(const char* path, World& w);
 
 const char* saveError();

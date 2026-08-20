@@ -10,6 +10,7 @@
 #include "worldgen.h"
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 static char g_err[256] = "";
 const char* saveError() { return g_err; }
@@ -219,7 +220,7 @@ static void remapToolItems() {
 
 static u8 g_plane[SIM_W * SIM_H];
 
-bool saveWrite(const char* path, const World& w) {
+bool saveWrite(const char* path, const World& w, const u8* thumbRgb) {
     g_nStats = 0; g_total = 0; g_err[0] = 0;
 
     FILE* f = fopen(path, "wb");
@@ -232,6 +233,30 @@ bool saveWrite(const char* path, const World& w) {
     fwrite(&ver,   sizeof(ver),   1, f);
     fwrite(dims,   sizeof(dims),  1, f);
     statAdd("header", sizeof(magic) + sizeof(ver) + sizeof(dims));
+
+    /* --- the two sections the save screen reads ------------------------
+       Written FIRST, immediately after the header, and that placement is the
+       whole reason the save screen is usable. savePeek walks sections by their
+       length framing, so anything before the world planes costs two seeks to
+       reach and anything after them costs a walk past fifty megabytes -- times
+       ten slots, every time the screen opens.
+
+       They are still ordinary framed sections, so an older build that does not
+       know these tags skips them exactly as the format intends. */
+    {
+        SectionWriter s; s.begin(f, "META", "timestamp");
+        const i64 when = (i64)time(0);
+        fwrite(&when, sizeof(when), 1, f);
+        s.end();
+    }
+    if (thumbRgb) {
+        SectionWriter s; s.begin(f, "SHOT", "thumbnail");
+        const i32 tw = SAVE_THUMB_W, th = SAVE_THUMB_H;
+        fwrite(&tw, sizeof(tw), 1, f);
+        fwrite(&th, sizeof(th), 1, f);
+        fwrite(thumbRgb, 1, SAVE_THUMB_BYTES, f);
+        s.end();
+    }
 
     writeMatTable(f);
 
@@ -428,6 +453,68 @@ u8 tintAt(u32 i) {
 
 static void remapPlane(u8* p, u64 n) {
     for (u64 i = 0; i < n; ++i) p[i] = g_remap[p[i]];
+}
+
+bool savePeek(const char* path, SaveSlotInfo* out) {
+    memset(out, 0, sizeof(*out));
+
+    FILE* f = fopen(path, "rb");
+    if (!f) return false;
+    out->used = true;
+
+    fseek(f, 0, SEEK_END);
+    out->bytes = (u64)ftell(f);
+    fseek(f, 0, SEEK_SET);
+
+    u32 magic = 0, ver = 0; i32 dims[2] = { 0, 0 };
+    if (fread(&magic, sizeof(magic), 1, f) != 1 ||
+        fread(&ver,   sizeof(ver),   1, f) != 1 ||
+        fread(dims,   sizeof(dims),  1, f) != 1) {
+        sprintf(out->note, "too short to be a save");
+        fclose(f); return true;
+    }
+    if (magic != fourcc("CRUC")) {
+        sprintf(out->note, "not a crucible save");
+        fclose(f); return true;
+    }
+    if (ver != SAVE_VERSION) {
+        sprintf(out->note, "format %u, this build reads %u", ver, SAVE_VERSION);
+        fclose(f); return true;
+    }
+    if (dims[0] != SIM_W || dims[1] != SIM_H) {
+        sprintf(out->note, "%dx%d, this build is %dx%d", dims[0], dims[1], SIM_W, SIM_H);
+        fclose(f); return true;
+    }
+    out->readable = true;
+
+    /* Walk the framing, read the two small sections, seek past everything else.
+       Stops as soon as both are in hand rather than reading to the end: they
+       are written first, so the common case touches a few hundred bytes of a
+       fifty-megabyte file. */
+    for (;;) {
+        u32 tag = 0; u64 len = 0;
+        if (fread(&tag, sizeof(tag), 1, f) != 1) break;
+        if (tag == 0) break;
+        if (fread(&len, sizeof(len), 1, f) != 1) break;
+        const long payload = ftell(f);
+
+        if (tag == fourcc("META") && len >= sizeof(i64)) {
+            i64 when = 0;
+            if (fread(&when, sizeof(when), 1, f) == 1) out->when = when;
+        } else if (tag == fourcc("SHOT")) {
+            i32 tw = 0, th = 0;
+            if (fread(&tw, sizeof(tw), 1, f) == 1 && fread(&th, sizeof(th), 1, f) == 1 &&
+                tw == SAVE_THUMB_W && th == SAVE_THUMB_H &&
+                len >= (u64)(8 + SAVE_THUMB_BYTES)) {
+                if (fread(out->rgb, 1, SAVE_THUMB_BYTES, f) == (size_t)SAVE_THUMB_BYTES)
+                    out->hasThumb = true;
+            }
+        }
+        if (out->when && out->hasThumb) break;
+        if (fseek(f, payload + (long)len, SEEK_SET) != 0) break;
+    }
+    fclose(f);
+    return true;
 }
 
 bool saveRead(const char* path, World& w) {

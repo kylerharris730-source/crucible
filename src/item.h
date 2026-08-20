@@ -221,6 +221,22 @@ enum {
     ITEM_ORBIT_DRONE,
     /* What you stand a reward on. See DEV_PEDESTAL. */
     ITEM_PEDESTAL,
+    /* --- the melee ladder --------------------------------------------------
+       Seven metals, two weapons each, and the ORDER is this game's own material
+       ladder rather than Terraria's -- see the note in initItems() for why gold
+       sits where it does. Tin is deliberately absent: it exists to be alloyed
+       into bronze, and a tin sword would be a rung whose only purpose is to be
+       skipped.
+
+       Listed sword-then-spear per tier rather than all swords then all spears,
+       so the enum reads in the order somebody actually acquires them. */
+    ITEM_SWORD_COPPER,   ITEM_SPEAR_COPPER,
+    ITEM_SWORD_BRONZE,   ITEM_SPEAR_BRONZE,
+    ITEM_SWORD_IRON,     ITEM_SPEAR_IRON,
+    ITEM_SWORD_GOLD,     ITEM_SPEAR_GOLD,
+    ITEM_SWORD_STEEL,    ITEM_SPEAR_STEEL,
+    ITEM_SWORD_TITANIUM, ITEM_SPEAR_TITANIUM,
+    ITEM_SWORD_TUNGSTEN, ITEM_SPEAR_TUNGSTEN,
     ITEM_COUNT
 };
 
@@ -294,7 +310,48 @@ enum ItemKind {
     /* --- ITEMK_FOOD ------------------------------------------------------
        Eaten, and gone. Its own kind because nothing else here is consumed for
        an effect on the CHARACTER -- every other item acts on the world. */
-    ITEMK_FOOD
+    ITEMK_FOOD,
+    /* --- ITEMK_MELEE -----------------------------------------------------
+       Held, and swung. Its own kind rather than an ITEMK_TOOL with a strange
+       module, because nothing about it is shared: it fires no projectile, it
+       has no module slots, it spends no payload, and its damage happens along
+       a MOVING SHAPE over a span of frames rather than at a point on one.
+
+       --- why melee at all, when drones are the autonomous weapons ---
+       The Lance Drone already borrows the one thing a held weapon has that a
+       companion does not, which is that it points where you point. So a melee
+       weapon has to earn its slot with something else, and it does: it is the
+       only weapon in the game with no travel time and no ammunition, and the
+       only one whose cost is that you must be STANDING IN CONTACT RANGE. Every
+       creature here deals contact damage, so swinging a sword is a decision to
+       trade health for damage, and that is a genuinely different question from
+       any the ranged ladder asks.
+
+       --- it does not dig ---
+       Deliberately, and it is the same `power` versus `damage` split the module
+       table already draws (see ItemDef::damage). A sword that chewed terrain
+       would be a mining tool with a worse shape, and it would make the whole
+       mining ladder optional. Melee has no `power` field at all rather than a
+       zero one, so the question cannot be asked. */
+    ITEMK_MELEE
+};
+
+/* How a melee weapon moves, which is the whole difference between the two
+   families. Not a stat -- a stat would be a number you could set to 47 and get
+   something that is neither. */
+enum MeleeStyle {
+    /* Sword. Sweeps an arc through `meleeArc` degrees centred on where you
+       aimed, so it covers a WIDTH and can catch several creatures in one
+       stroke. Short, and the shortest thing in your hand at any tier. */
+    MELEE_SWING = 0,
+    /* Spear. Extends straight out along the aim and retracts, covering a LINE
+       rather than an area. Longer reach and a faster rhythm, at the cost of
+       hitting exactly what you pointed at and nothing beside it.
+
+       The pair is the point rather than variety for its own sake: a corridor of
+       mites and a single husk are different problems, and having one weapon for
+       each makes the hotbar slot a choice. */
+    MELEE_STAB
 };
 
 struct ItemDef {
@@ -520,6 +577,37 @@ struct ItemDef {
     i16  shotSpeedPct;
     i16  damagePct;
     i16  cooldownPct;   /* subtracted; 25 means "fire in three quarters the time" */
+
+    /* --- ITEMK_MELEE only ---------------------------------------------
+       Zero on everything else. `meleeDamage` is the one that is not: it shares
+       the `damage` column above, because "health taken off a creature it hits"
+       is the same question whether a bolt or a blade is asking, and two
+       separate damage numbers would be two places to look when a weapon feels
+       wrong.
+
+       `meleeStyle` is a MeleeStyle. `meleeReach` is how far the tip gets from
+       the body, in cells -- NOT related to Inventory::reachBonus, which is how
+       far you can BUILD; a lens that lets you place blocks across a room has no
+       business lengthening a sword, and conflating the two would make the
+       reach trinkets secretly the best melee accessory in the game.
+
+       `meleeArc` is degrees swept, and is meaningless for a stab.
+       `meleeFrames` is how long the stroke takes -- the animation and the
+       window in which it can hit are the same span, so what you see is exactly
+       what is dangerous. `meleeCooldown` is measured from the START of a
+       stroke, so it is the full rhythm of the weapon rather than a pause after
+       it; that makes damage-per-second divide out of two numbers instead of
+       three.
+
+       `meleeKnock` is cells per frame of push away from the swinger. It is not
+       decoration: melee means standing inside contact-damage range, and shoving
+       what you hit is the only defensive thing the weapon does. */
+    u8   meleeStyle;
+    u8   meleeReach;
+    u8   meleeArc;
+    u8   meleeFrames;
+    u8   meleeCooldown;
+    float meleeKnock;
 
     /* SpriteId, or SPR_NONE to fall back to a flat colour swatch. Materials
        deliberately have none -- see sprite.h. */

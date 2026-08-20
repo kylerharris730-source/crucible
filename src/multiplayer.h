@@ -80,6 +80,38 @@ struct PlayerSession {
        at every generation boundary. */
     i32 previousAimX, previousAimY;
     i32 digCooldown;
+    /* --- the swing ------------------------------------------------------
+       A melee stroke is a thing that happens OVER TIME, so it needs somewhere
+       to remember that it is happening. Here rather than on Player for the
+       reason garlicCooldown is here: Player is written to the save as a raw
+       sized block, so a field on it would discard every existing character, and
+       a swing is not worth that. It is also nobody else's business -- the host
+       resolves the damage, and a client has no decision to make about it.
+
+       The consequence to know: another player's swing is NOT replicated, so in
+       a four-player game you see their creatures take damage without seeing the
+       blade that did it. The same is already true of every held tool (see
+       drawHeldTool, which draws session zero's), so this is the existing
+       limitation rather than a new one.
+
+       `swingFrame` counts DOWN through the stroke, so zero means idle and the
+       animation reads its progress from how far it has left to go. `swingCool`
+       is the separate rhythm gate -- see ItemDef::meleeCooldown for why the two
+       are not one number.
+
+       `swingDirX/Y` is committed when the stroke STARTS and never revisited.
+       That is the whole feel of a melee weapon: a swing you could steer
+       mid-stroke would track the cursor round like a turret, and the moment of
+       deciding where to point would stop existing. */
+    i32 swingFrame;
+    i32 swingCool;
+    float swingDirX, swingDirY;
+    /* Which creatures this stroke has already struck. One bit each, so a blade
+       that sweeps across a body over nine frames takes health off once rather
+       than nine times -- which is not a rounding error, it is the difference
+       between a copper sword and an instant kill. Cleared when a stroke
+       begins. */
+    u8 swingHit[(96 + 7) / 8];
     i32 restBed;
     i32 openDevice;
     i32 wireX, wireY;
