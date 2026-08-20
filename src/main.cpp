@@ -191,7 +191,12 @@ static const BrushDef BRUSHES[] = {
 };
 static const int N_BRUSH = (int)(sizeof(BRUSHES) / sizeof(BRUSHES[0]));
 
-enum ActionId { ACT_OVERWRITE, ACT_LAYER, ACT_WIRE, ACT_CIRCUIT, ACT_VIEW, ACT_LIGHT, ACT_PLAYER, ACT_PAUSE, ACT_FILTER, ACT_CLEAR, N_ACT };
+/* ACT_DAY and ACT_NIGHT are adjacent because they SHARE A ROW -- see
+   layoutPanel, which pairs them into two half-width buttons. They are the only
+   pair on this panel that does, and it is worth the special case: they are one
+   control with two values, and stacking them as two full-width rows would read
+   as two unrelated commands. */
+enum ActionId { ACT_OVERWRITE, ACT_LAYER, ACT_WIRE, ACT_CIRCUIT, ACT_VIEW, ACT_LIGHT, ACT_PLAYER, ACT_PAUSE, ACT_FILTER, ACT_DAY, ACT_NIGHT, ACT_CLEAR, N_ACT };
 
 /* --- simulation speed ----------------------------------------------------
    A multiplier on how many sim steps run per displayed frame, NOT a change to
@@ -1135,6 +1140,16 @@ static void layoutPanel() {
     y += pitch + 6;
 
     for (int i = 0; i < N_ACT; ++i) {
+        /* The one pair that shares a row. ACT_NIGHT is placed WITH its partner
+           rather than on its own pass, so the two halves cannot drift apart --
+           and the row is only advanced once, by the second of them. */
+        if (i == ACT_DAY) {
+            const int half = (w - 4) / 2;
+            SetRect(&g_actRect[ACT_DAY],   pad,            y, pad + half,     y + h);
+            SetRect(&g_actRect[ACT_NIGHT], pad + half + 4, y, pad + w,        y + h);
+            continue;
+        }
+        if (i == ACT_NIGHT) { y += pitch; continue; }
         SetRect(&g_actRect[i], pad, y, pad + w, y + h);
         y += pitch;
     }
@@ -2249,6 +2264,35 @@ static bool handlePanelClick(int mx, int my) {
             g_creScroll = 0;
             g_creSearchFocus = true;
             layoutCreative();
+        }
+        return true;
+    }
+    /* --- setting the time -----------------------------------------------
+       Straight to the middle of each half rather than to its start, so the
+       result is unambiguous: "day" lands at full daylight with a long way to go
+       before dusk, and "night" lands in the flat dark rather than in a dawn
+       that is already brightening. Jumping to t=0.50 would technically be night
+       and would begin lightening within seconds, which is not what anybody
+       clicking a button called Night wants to see.
+
+       See dayLight() for the shape these two numbers are read off: full
+       daylight below 0.42, dusk to 0.50, night to 0.92, then dawn. */
+    if (inRect(g_actRect[ACT_DAY], mx, my)) {
+        /* The host owns the clock, the same way it owns the save and the pause.
+           A client setting its own time would desynchronise the one piece of
+           world state that drives spawning. */
+        if (netRole() != NET_CLIENT) {
+            g_worldTime = (u32)((float)DAY_LENGTH * 0.20f);
+            sprintf(g_saveMsg, "Set to midday");
+            g_saveMsgFrames = 120;
+        }
+        return true;
+    }
+    if (inRect(g_actRect[ACT_NIGHT], mx, my)) {
+        if (netRole() != NET_CLIENT) {
+            g_worldTime = (u32)((float)DAY_LENGTH * 0.70f);
+            sprintf(g_saveMsg, "Set to midnight");
+            g_saveMsgFrames = 120;
         }
         return true;
     }
@@ -5888,6 +5932,13 @@ static void drawPanel(HDC hdc) {
         drawButton(hdc, g_actRect[ACT_FILTER], fl, NULL, g_digFilterOn,
                    inRect(g_actRect[ACT_FILTER], g_mx, g_my));
     }
+    /* Lit when the clock is actually in that half, so the pair doubles as a
+       readout of what time it is -- which the panel could not otherwise tell
+       you at all, short of looking at the sky. */
+    drawButton(hdc, g_actRect[ACT_DAY],   "Day",   NULL, !isNight(),
+               inRect(g_actRect[ACT_DAY],   g_mx, g_my));
+    drawButton(hdc, g_actRect[ACT_NIGHT], "Night", NULL, isNight(),
+               inRect(g_actRect[ACT_NIGHT], g_mx, g_my));
     drawButton(hdc, g_actRect[ACT_CLEAR], "Clear", NULL, false, inRect(g_actRect[ACT_CLEAR], g_mx, g_my));
 
     /* stats, bottom of the panel */

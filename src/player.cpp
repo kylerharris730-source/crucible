@@ -697,6 +697,37 @@ void Player::update(const World& w, const PlayerInput& in) {
         const float target = x + vx;
         const int   end    = (int)target;
         const int   dir    = (vx > 0.0f) ? 1 : -1;
+
+        /* --- climbing a sloped run of platforms ---------------------------
+           Reported from play as "walking up a sloped platform walks through
+           it", and every rule involved was individually correct.
+
+           A platform is SOLID_FLOOR and nothing else, so it never blocks the
+           sideways move below and the stone step-up is never reached. The body
+           walks into the middle of the staircase; the vertical step then sees
+           the box already overlapping a platform, sets `insidePlatform`, and
+           declines to stand on it -- which is the rule that lets you come back
+           down through a platform you jumped up through, and which is right.
+           The combination drops you through the stairs.
+
+           So the fix is not a collision change. Making platforms block sideways
+           movement would break walking under one, walking through one at chest
+           height, and the whole reason they are not walls. It is a step-up
+           ASSIST: while walking, if the next column would put the body inside a
+           platform, lift onto it instead.
+
+           Held to the same two conditions the rest of the ground game uses.
+           Not while `down` is held, because that is the universal "let me
+           through this" and a platform is exactly what it is for. And not while
+           genuinely airborne, or the character climbs a stack of platforms in
+           mid-air like a ladder -- but "airborne" is generous here on purpose:
+           a slow descent still qualifies, so stepping off one stair and meeting
+           the next on the way down reads as walking rather than as a fall
+           interrupted. Rising (vy < 0) never qualifies, which is what keeps
+           jumping UP through a platform working. */
+        const bool platformAssist = !in.down &&
+            (onGround || (vy >= 0.0f && vy < 1.0f));
+
         int  cur     = (int)x;
         bool blocked = false;
         while (cur != end) {
@@ -715,6 +746,26 @@ void Player::update(const World& w, const PlayerInput& in) {
                     }
                 }
                 if (!stepped) { blocked = true; break; }
+            } else if (platformAssist && boxBlocked(w, next, top(), SOLID_FLOOR, H)) {
+                /* Nothing SOLID is in the way, but a platform is -- so this
+                   step would end with the body inside the staircase. Find the
+                   smallest lift that clears it.
+
+                   The loop gives up the moment something SOLID appears
+                   overhead: a platform tucked under a low ceiling is one you
+                   walk through, not one you climb into the rock above.
+
+                   Not lifting is a perfectly good outcome. A platform too high
+                   to step onto keeps the behaviour it always had -- you pass
+                   through it -- which is what walking under a platform bridge
+                   depends on. */
+                for (int up = 1; up <= PLAYER_PLATFORM_STEP_UP; ++up) {
+                    if (boxBlocked(w, next, top() - up, SOLID_ANY, H)) break;
+                    if (!boxBlocked(w, next, top() - up, SOLID_FLOOR, H)) {
+                        y -= (float)up;
+                        break;
+                    }
+                }
             }
             cur = next;
         }

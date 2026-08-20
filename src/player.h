@@ -57,6 +57,28 @@ static const int PLAYER_H = 30;  /* 44 screen pixels. Grown from 6x16 to leave
    5 -> 7 when the rig made it 30 cells tall. */
 static const int PLAYER_STEP_UP = 7;
 
+/* --- stepping onto a PLATFORM -----------------------------------------------
+   How high a platform the character climbs without jumping, and it is
+   deliberately much more generous than the figure above.
+
+   The two are separate numbers because they answer different questions. A stone
+   stair BLOCKS you: the step-up above is a courtesy that stops you catching on
+   terrain, and if it fails you simply stand still, which is honest. A platform
+   does not block you at all -- it is thin air to a sideways move by design (see
+   SolidMode) -- so the failure mode is not "you stop", it is "you walk into the
+   middle of the stairs and fall through them". Being stingy here does not make
+   the character feel heavy, it makes the staircase you built not work.
+
+   12 rather than 7, and the ceiling on it is geometric rather than a matter of
+   taste. Climbing onto a platform requires lifting the body clear of it, so a
+   platform k cells above the feet needs a lift of k+1; the body is PLAYER_H
+   tall, so anything at or above the halfway mark needs a lift of about H/2 = 15.
+   Staying under that is what preserves the other thing platforms are for --
+   walking ALONG underneath one, and through one at chest height, without being
+   yanked up on top of it. 12 is as aggressive as this can be while leaving that
+   margin intact. */
+static const int PLAYER_PLATFORM_STEP_UP = 12;
+
 /* --- the pointed head -------------------------------------------------
    The collision shape is not a rectangle. The top PLAYER_TAPER rows are inset
    by one cell per side per row, giving 45-degree shoulders:
