@@ -72,6 +72,32 @@ static const int GAS_PRESSURE_POCKET_RADIUS  = 32;
 static const int GAS_PRESSURE_POCKET_NODES   = 2048;
 static const int GAS_PRESSURE_POCKET_BUDGET  = 128;
 static const int GAS_PRESSURE_EXPANSION_BURST = 5;
+/* --- how far a buoyant gas climbs in one frame ------------------------------
+   Cells, when the run is clear. One, before this, and that is what made steam
+   feel sluggish: a parcel spends about eight frames in nine doing a diffusion
+   step (see the jitter note in materials.cpp), so a one-cell rise on the
+   remaining frame gave a plume that climbed 40 cells in 2.73 seconds -- roughly
+   a sixth of walking pace, for something that is supposed to be racing upward
+   out of a boiler.
+
+   Four is a considered number rather than a big one. It was chosen against the
+   thing that must NOT change: a body of gas that has piled up against a ceiling
+   still presses back down, which is the behaviour the diffusion table exists to
+   produce. Measured at equilibrium with 4000 cells in a sealed room, the depth
+   of the half-full body is 20 rows at run lengths of 1, 3, 4 and 5 alike -- the
+   run only shortens the TRANSIT, it does not flatten the settled cloud. Rise
+   time over the same range: 2.73 s, 1.22 s, 1.00 s, 0.88 s.
+
+   So this is deliberately the one lever that speeds ascent without touching the
+   diffusion mix at all. Raising the upward weight in that table would have got
+   a similar rise time and cost some of the sideways and downward wandering,
+   which is the part that makes a plume look like a plume.
+
+   It applies only through genuinely EMPTY cells. A gas still climbs through
+   another gas or a liquid one cell at a time, by the ordinary tryMove below --
+   a bubble that teleported four cells up a water column would outrun the
+   displacement rules that make bubbles behave. */
+static const int GAS_RISE_RUN = 4;
 static const int FLUID_CONVECTION_REACH       = 3;
 static const int WAX_CONVECTION_REACH         = 1;
 static const int FLUID_CONVECTION_DELTA       = 2;
@@ -1387,6 +1413,22 @@ void World::updateGas(int x, int y) {
         const int span = (aboveKind == KIND_LIQUID) ? 13 : 19;
         const int k = (int)(rngNext() % (u32)span);
         if (tryMove(x, y, x + DIFFUSE_DX[k], y + DIFFUSE_DY[k])) return;
+    }
+
+    /* The buoyant climb. Scans up through clear air first and takes the whole
+       run in one move; see GAS_RISE_RUN. Empty cells only, so this can never
+       shortcut a swap with a liquid or a denser gas -- those still go one cell
+       at a time through the tryMove below, which is what keeps the displacement
+       rules that make a bubble behave in charge of a bubble. */
+    {
+        int top = y;
+        for (int s = 1; s <= GAS_RISE_RUN; ++s) {
+            const int ny = y - s;
+            if (ny < PLAY_Y0) break;
+            if (cells[ny * SIM_W + x].mat != MAT_EMPTY || blocksCell(x, ny)) break;
+            top = ny;
+        }
+        if (top != y && tryMove(x, y, x, top)) { dirtyPoint(x, top); return; }
     }
 
     /* A mirror of updateLiquid with the vertical sense flipped. */
