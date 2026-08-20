@@ -1360,16 +1360,40 @@ int main() {
     }
 
     /* Sieve transit preserves whether a gas cell is an expansion-only volume;
-       otherwise passing through a mesh would manufacture condensation mass. */
+       otherwise passing through a mesh would manufacture condensation mass.
+
+       --- the pocket is SEALED, and the wait is bounded ------------------
+       Both of those changed when gas diffusion became near-isotropic (see
+       updateGas), and both are changes to the SCAFFOLDING rather than to the
+       property under test.
+
+       The pocket used to be open at the diagonals and underneath, which was
+       harmless while a gas rose deterministically every frame: the steam had
+       exactly one move available and took it immediately. A gas that now spends
+       most frames doing a random walk wandered out of the side of the apparatus
+       instead, and the test reported a provenance failure for what was really
+       an escape. Sealing it leaves the mesh as the only way out, which is what
+       the comment above always claimed the geometry was.
+
+       Entry is waited for rather than demanded on frame one, because with
+       diffusion the exact frame is a coin toss. Bounded, so a mesh that never
+       admits the parcel still fails rather than hanging. */
     w.reset();
     w.setLiveWindow(pressureX - 4, pressureY - 6, pressureX + 4, pressureY + 4);
     w.setCell(pressureX, pressureY - 1, MAT_GAS_SIEVE);
     w.setCell(pressureX - 1, pressureY, MAT_STONE);
     w.setCell(pressureX + 1, pressureY, MAT_STONE);
+    w.setCell(pressureX - 1, pressureY - 1, MAT_STONE);
+    w.setCell(pressureX + 1, pressureY - 1, MAT_STONE);
+    w.setCell(pressureX - 1, pressureY + 1, MAT_STONE);
+    w.setCell(pressureX,     pressureY + 1, MAT_STONE);
+    w.setCell(pressureX + 1, pressureY + 1, MAT_STONE);
     w.setCell(pressureX, pressureY, MAT_STEAM);
     w.cells[pressureY * SIM_W + pressureX].moisture = GAS_VOLUME_ONLY;
     w.temp[pressureY * SIM_W + pressureX] = degC(215);
-    w.step();
+    int sieveEntryFrames = 0;
+    while (!(w.at(pressureX, pressureY - 1).moisture & GAS_VOLUME_ONLY) &&
+           sieveEntryFrames < 200) { w.step(); ++sieveEntryFrames; }
     if (!(w.at(pressureX, pressureY - 1).moisture & GAS_VOLUME_ONLY)) {
         fprintf(stderr, "gas sieve did not pack expansion provenance on entry (%u/%u)\n",
                 w.at(pressureX, pressureY - 1).mat,
@@ -1474,6 +1498,13 @@ int main() {
     w.setCell(pushX - 1, pushY, MAT_STONE);
     w.setCell(pushX - 1, pushY - 1, MAT_STONE);
     w.setCell(pushX, pushY + 1, MAT_STONE);
+    /* The down-left diagonal, which used to be the one open cell in this
+       pocket. It did not matter while gas diffusion was sideways-only -- the
+       steam had no move that could reach it. Now that a gas can wander
+       downward, an unsealed diagonal is a hole in the apparatus: the parcel
+       left through it and the test reported "low pressure moved Sand" for a
+       frame in which the sand never moved and the steam was simply gone. */
+    w.setCell(pushX - 1, pushY + 1, MAT_STONE);
     for (int x = pushX; x <= pushX + 3; ++x)
         w.setCell(x, pushY - 1, MAT_STONE);
     for (int x = pushX + 1; x <= pushX + 2; ++x) {

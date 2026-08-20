@@ -1338,14 +1338,55 @@ void World::updateGas(int x, int y) {
         if (tryMove(x, y, x, y - 1)) return;
     }
 
-    /* Flit: before trying to rise, a gas has a per-material chance of just
-       wandering sideways. This is what stops smoke and steam from rising as a
-       rigid vertical column -- they billow and drift the way a real plume
-       does. A pure sideways hop, so it costs nothing but one tryMove. */
+    /* --- diffusion --------------------------------------------------------
+       Before trying to rise, a gas has a per-material chance of taking one step
+       in a RANDOM direction instead. This is what makes a gas fill a space
+       rather than draw a line through it.
+
+       It used to be a pure sideways hop, and the measurement that replaced it
+       is worth keeping. A plume released on the floor of a sealed 160x80 room
+       was, by frame 240, a SINGLE ROW against the ceiling at about a fifth
+       density, with the other 79 rows completely empty -- it reads as the gas
+       evaporating rather than expanding.
+
+       Every individual rule was right. Buoyancy in this simulation is
+       UNCONDITIONAL -- a gas whose cell above is empty always rises -- because
+       empty is VACUUM rather than air: there is no medium to diffuse through
+       and nothing to hold a parcel up. So every parcel climbs to the roof, the
+       lateral run spreads it along the roof, and nothing ever brings any of it
+       back down. That is not a gas, it is a rising line that turns into a
+       shelf.
+
+       What was missing is that a real gas has no preferred direction, only a
+       BIAS. The table below is therefore NEARLY ISOTROPIC rather than strongly
+       upward: seven of nineteen draws go up, six go sideways, six go down. Net
+       drift is still upward -- steam still leaves a boiler and smoke still
+       leaves a fire -- but the parcel spends most of its time doing a random
+       walk, so the plume expands as a body. Same scene, same frame, after: a
+       cloud fourteen rows deep.
+
+       This only works together with a HIGH jitter chance on the material (see
+       the note beside Steam in materials.cpp). The table decides where a
+       diffusing parcel goes; the jitter chance decides how often strict
+       buoyancy gets a turn at all. A wider table with the old 150/255 chance
+       measured as doing nothing, because a parcel that wandered down simply
+       rose again on the next frame it did not jitter.
+
+       Downward draws are excluded while SUBMERGED. A bubble under water that
+       wandered downward would be a bubble sinking, which is both wrong and
+       exactly the thing the branch above this exists to get right. */
     if (m.jitter && rngChance(m.jitter)) {
-        int jd = (rngNext() & 1) ? 1 : -1;
-        if (tryMove(x, y, x + jd, y)) return;
-        if (tryMove(x, y, x - jd, y)) return;
+        static const i8 DIFFUSE_DX[19] = {  0,  0,  0, -1, -1,  1,  1,
+                                           -1, -1, -1,  1,  1,  1,
+                                           -1, -1,  0,  0,  1,  1 };
+        static const i8 DIFFUSE_DY[19] = { -1, -1, -1, -1, -1, -1, -1,
+                                            0,  0,  0,  0,  0,  0,
+                                            1,  1,  1,  1,  1,  1 };
+        /* The first 13 are level or upward, so restricting a submerged bubble
+           to that prefix is the whole guard -- no second table. */
+        const int span = (aboveKind == KIND_LIQUID) ? 13 : 19;
+        const int k = (int)(rngNext() % (u32)span);
+        if (tryMove(x, y, x + DIFFUSE_DX[k], y + DIFFUSE_DY[k])) return;
     }
 
     /* A mirror of updateLiquid with the vertical sense flipped. */

@@ -111,7 +111,33 @@ MatInfo MATS[MAT_COUNT] = {
      -16 C; without that it would spawn at ambient and melt on the very next
      frame, which looks like the brush is broken. */
   { "Ice",   KIND_STATIC,  92,   0,    0,   0,   0,   0,  0,  120,  0,   0, degC(-16), 0, MAT_EMPTY, degC(6), MAT_WATER, 0, MAT_EMPTY,  0,  0xC8E8F7, 0x92C4E2, 0xC8E8F7, 0x92C4E2, 0 },
-  { "Steam", KIND_GAS,      8,   0,    0,   7, 150,   0,  0,    5,  0,   0, degC(115), degC(45), MAT_WATER, 0, MAT_EMPTY, 0, MAT_EMPTY,  0,  0xD2DAE6, 0x9AA6B6, 0xD2DAE6, 0x9AA6B6, 0 },
+  /* --- why the cloud gases jitter so hard now -----------------------------
+     Steam, Acid Gas and Mercury Vapour had their jitter raised (150/170/120 to
+     230/230/200) at the same time as updateGas's diffusion table was made
+     near-isotropic. The two changes only work together, and the reason is
+     worth stating because either one alone measures as doing nothing.
+
+     Buoyancy in this simulation is UNCONDITIONAL: a gas whose cell above is
+     empty always rises. Empty is vacuum rather than air, so there is no medium
+     to diffuse through and nothing to hold a parcel up -- every cell climbs to
+     the roof and the only move left is sideways. Measured before: a plume
+     released on the floor of a sealed 160x80 room was, by frame 240, a SINGLE
+     ROW against the ceiling at about a fifth density, with the other 79 rows
+     completely empty. It reads as the gas evaporating rather than expanding.
+
+     A wider direction table alone does not fix that, because a parcel that
+     wanders down simply rises again on the next frame it does not jitter. The
+     jitter chance is what decides how often strict buoyancy gets a turn at all
+     -- at 230 of 255 it is about one frame in nine, and the parcel spends the
+     rest doing a nearly isotropic random walk. That is what turns the plume
+     into a body that expands in every direction while still drifting upward.
+     Measured after, same scene, same frame: a cloud fourteen rows deep.
+
+     Fire, Cold Fire and Plasma are deliberately NOT in this list. They are
+     combustion effects with their own tuned reach, and a fire that wandered
+     downward a third of the time would be a change to how readily things
+     catch, which is a gameplay decision rather than a fix to gas flow. */
+  { "Steam", KIND_GAS,      8,   0,    0,   7, 230,   0,  0,    5,  0,   0, degC(115), degC(45), MAT_WATER, 0, MAT_EMPTY, 0, MAT_EMPTY,  0,  0xD2DAE6, 0x9AA6B6, 0xD2DAE6, 0x9AA6B6, 0 },
   /* Fire's boilTemp was spare (fire has nowhere hotter to go), so it now points
      at Plasma: fire driven all the way to the top of the scale becomes plasma.
      That is only reachable by feeding it external heat -- a heater, or lava
@@ -309,7 +335,7 @@ MatInfo MATS[MAT_COUNT] = {
      spawnTemp has to sit above the condensation point or a hand-placed cell
      would turn straight back into a droplet on its first frame and the brush
      would look broken. Same reasoning as ice's cold spawn. */
-  { "HgVapour",KIND_GAS,   20,   0,    0,   5, 120,   0,  0,   20,  0,   0, degC(150), degC(130), MAT_MERCURY, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, 0xCED3DA, 0xA7ADB6, 0xCED3DA, 0xA7ADB6, 0 },
+  { "HgVapour",KIND_GAS,   20,   0,    0,   5, 200,   0,  0,   20,  0,   0, degC(150), degC(130), MAT_MERCURY, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, 0xCED3DA, 0xA7ADB6, 0xCED3DA, 0xA7ADB6, 0 },
 
   /* Frozen mercury melts at -24 C, six degrees above the -30 C it freezes at
      -- hysteresis again, without which a cell sitting exactly at the boundary
@@ -770,7 +796,7 @@ MatInfo MATS[MAT_COUNT] = {
      why that has to be a rate rather than a threshold, and why acid is the one
      material in the table that needs it. Only a fire or a furnace holds the
      fumes up indefinitely. */
-  { "AcidGas", KIND_GAS,     10,   0,    0,   7, 170,   0,  0,    5,  0,   0,   0, degC(45), MAT_ACID,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0xB6F05A, 0x86C038, 0xB6F05A, 0x86C038, 0 },
+  { "AcidGas", KIND_GAS,     10,   0,    0,   7, 230,   0,  0,    5,  0,   0,   0, degC(45), MAT_ACID,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0xB6F05A, 0x86C038, 0xB6F05A, 0x86C038, 0 },
 
   /* --- gold -----------------------------------------------------------------
      Soft and low-melting on purpose -- it is not meant to compete with
@@ -857,8 +883,30 @@ MatInfo MATS[MAT_COUNT] = {
   { "Glowfluid", KIND_LIQUID, 140, 0, 0, 8, 0, 0, 0, 150, 0, 0, 0, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, 0x8CE8B8, 0x3CA878, 0x8CE8B8, 0x3CA878, 0 },
   /* Filters remain solid material cells; world.cpp lets the permitted flow
      kinds hop across them while powders stay caught on the mesh. */
-  { "Sieve", KIND_STATIC, 255, 0, 0, 0, 0, 0, 0, 60, 0, 0, 0, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, 0x9CA8A8, 0x687878, 0x9CA8A8, 0x687878, 0 },
-  { "GasSieve", KIND_STATIC, 255, 0, 0, 0, 0, 0, 0, 60, 0, 0, 0, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, 0xB49CE0, 0x7860A0, 0xB49CE0, 0x7860A0, 0 },
+  /* --- why a sieve barely conducts ---------------------------------------
+     heatCond 4, down from the 60 an ordinary solid gets, and it is the whole
+     reason steam can now cross one.
+
+     A sieve holds its fluid parcel IN ITS OWN CELL and shares that cell's
+     temperature with it (see World::moveFilterFluid). So while a parcel is in
+     the mesh, every heat exchange it makes is rated by the MESH's conductivity
+     rather than its own -- and at 60 against steam's 5, a mesh was bleeding
+     heat out of a passing parcel twelve times faster than open air would, and
+     spreading it into every adjacent mesh cell besides. Measured through a
+     two-cell gas-sieve wall: of the steam that crossed, 2194 cells arrived as
+     WATER against 895 that were still steam, with a mean temperature of 79 C
+     against the 45 C condensation point. The mesh was not blocking steam, it
+     was refrigerating it.
+
+     4 rather than 0 because heatPair takes the MINIMUM of the two materials, so
+     this number is a ceiling on every exchange the mesh takes part in: below
+     steam's 5 and air's 6, it means a parcel crossing a sieve loses heat no
+     faster than it would crossing the same distance of open air. Zero would
+     make a sieve a perfect insulator, which is a different and larger claim --
+     it would also stop a hot sieve wall warming the room, and a mesh you can
+     see through has no business being better insulation than a stone wall. */
+  { "Sieve", KIND_STATIC, 255, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, 0x9CA8A8, 0x687878, 0x9CA8A8, 0x687878, 0 },
+  { "GasSieve", KIND_STATIC, 255, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, 0xB49CE0, 0x7860A0, 0xB49CE0, 0x7860A0, 0 },
   /* Slightly heavier than water at room temperature, but deliberately very
      expansive: around 41 C it crosses water's density and starts rising.
      Viscous enough to travel as slow amber bodies instead of spraying like
