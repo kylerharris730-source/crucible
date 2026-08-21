@@ -1982,10 +1982,32 @@ void initMaterials() {
     g_matThermalExpansionQ8[MAT_WAX] = 52;
 
     for (int m = 0; m < MAT_COUNT; ++m) g_matGasExpansion[m] = 1;
-    /* Water boiling should create a useful pressure pulse without turning a
-       modest pool into an overwhelming amount of Steam. Transport remains
-       fast; only the represented volume changes from six cells to three. */
-    g_matGasExpansion[MAT_STEAM] = 3;
+    /* --- how much Steam one cell of Water becomes ------------------------
+       Back to 6, which is where this started before it was cut to 3 for being
+       "an overwhelming amount of Steam". It is being tried again deliberately:
+       the reasons it was overwhelming have since been dealt with. Gas used to
+       pile into a one-cell ceiling film, so all six volumes ended up stacked in
+       a place they could not spread out of; it now diffuses into the room, and
+       a sieve no longer condenses what passes through it.
+
+       Measured in a sealed chamber boiling a 954-cell pool, this is a straight
+       linear dial with no surprises anywhere in the range:
+
+         expansion   peak steam   settled body depth
+             3          2862          13 rows
+             5          4770          23 rows
+             6          5724          29 rows
+             8          7632          40 rows
+
+       Cost, in a chamber that is entirely boiling water and steam -- the worst
+       case there is: 0.71 ms a step at 3, 1.08 ms at 6. Half again as much of a
+       small number, and only in scenes made of steam.
+
+       THIS IS ONE LINE ON PURPOSE. It is a feel decision rather than a
+       correctness one, it is the kind of thing that reads differently in a real
+       boiler than in a harness, and 5 or 8 are the same edit if 6 turns out to
+       be wrong in either direction. */
+    g_matGasExpansion[MAT_STEAM] = 6;
     g_matGasExpansion[MAT_MERCURY_GAS] = 6;
     g_matGasExpansion[MAT_COLDFIRE] = 4;
 

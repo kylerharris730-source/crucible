@@ -1245,10 +1245,20 @@ int main() {
         return 120;
     }
 
-    /* Boiling stores expansion locally, then releases two connected gas
-       volumes in one open-space burst. Two daughters are volume-only; the one
-       owner token is what lets all three Steam cells condense back to exactly one
-       Water cell. */
+    /* Boiling stores expansion locally, then releases the connected gas volumes
+       in an open-space burst. Every daughter is volume-only; the single owner
+       token is what lets all of them condense back to exactly one Water cell.
+
+       --- read off the table, not written down -------------------------------
+       The counts below come from g_matGasExpansion[MAT_STEAM] rather than being
+       the literals 2 and 3. That value is a FEEL dial -- it has already gone
+       6 -> 3 -> 6 -- and a test that hardcodes it fails every time somebody
+       tunes it, reporting a conservation error for what is only a different
+       number of volumes. What is actually under test here is the invariant:
+       one owner plus (expansion - 1) daughters, and all of them condensing back
+       to exactly one Water. That holds at any expansion. */
+    const int steamExpansion = (int)g_matGasExpansion[MAT_STEAM];
+    const int steamDaughters = steamExpansion - 1;
     w.reset();
     const int pressureX = 760, pressureY = 640;
     w.setLiveWindow(pressureX - 40, pressureY - 40,
@@ -1258,12 +1268,19 @@ int main() {
     w.dirtyPoint(pressureX, pressureY);
     w.step();
     if (w.at(pressureX, pressureY).mat != MAT_STEAM ||
-        (w.at(pressureX, pressureY).moisture & GAS_EXCESS_MASK) != 2 ||
+        (w.at(pressureX, pressureY).moisture & GAS_EXCESS_MASK) != steamDaughters ||
         (w.at(pressureX, pressureY).moisture & GAS_VOLUME_ONLY)) {
-        fprintf(stderr, "boiling water did not store two expansion volumes\n"); return 94;
+        fprintf(stderr, "boiling water did not store %d expansion volumes\n",
+                steamDaughters); return 94;
     }
-    /* Open Steam releases the full two-volume expansion charge in one turn. */
-    w.step();
+    /* Open Steam releases the charge in bursts of GAS_PRESSURE_EXPANSION_BURST.
+       Stepped until it is spent rather than exactly once, so an expansion larger
+       than one burst can carry is still measured for CONSERVATION rather than
+       failing merely for arriving a frame later. */
+    for (int spend = 0; spend < 8; ++spend) {
+        w.step();
+        if (!(w.at(pressureX, pressureY).moisture & GAS_EXCESS_MASK)) break;
+    }
     int pressureSteamCount = 0, ownerCount = 0, excessSum = 0;
     for (int y = pressureY - 40; y <= pressureY + 10; ++y)
         for (int x = pressureX - 40; x <= pressureX + 40; ++x) {
@@ -1273,9 +1290,9 @@ int main() {
             excessSum += pc.moisture & GAS_EXCESS_MASK;
             if (!(pc.moisture & GAS_VOLUME_ONLY)) ++ownerCount;
         }
-    if (pressureSteamCount != 3 || ownerCount != 1 || excessSum != 0) {
-        fprintf(stderr, "steam did not expand to three conserved volumes (%d steam, %d owner, %d excess)\n",
-                pressureSteamCount, ownerCount, excessSum); return 95;
+    if (pressureSteamCount != steamExpansion || ownerCount != 1 || excessSum != 0) {
+        fprintf(stderr, "steam did not expand to %d conserved volumes (%d steam, %d owner, %d excess)\n",
+                steamExpansion, pressureSteamCount, ownerCount, excessSum); return 95;
     }
     for (int y = pressureY - 40; y <= pressureY + 10; ++y)
         for (int x = pressureX - 40; x <= pressureX + 40; ++x)
@@ -1311,7 +1328,7 @@ int main() {
         w.step();
     }
     if (w.at(pressureX, pressureY).mat != MAT_STEAM ||
-        (w.at(pressureX, pressureY).moisture & GAS_EXCESS_MASK) != 2) {
+        (w.at(pressureX, pressureY).moisture & GAS_EXCESS_MASK) != steamDaughters) {
         fprintf(stderr, "sealed steam did not retain its pressure (mat %u moisture %u temp %u)\n",
                 w.at(pressureX, pressureY).mat, w.at(pressureX, pressureY).moisture,
                 w.temp[pressureY * SIM_W + pressureX]); return 97;
@@ -1333,7 +1350,7 @@ int main() {
                 ++pressureSteamCount;
                 excessSum += w.at(x, y).moisture & GAS_EXCESS_MASK;
             }
-    if (pressureSteamCount != 3 || excessSum != 0) {
+    if (pressureSteamCount != steamExpansion || excessSum != 0) {
         fprintf(stderr, "opened chamber did not release stored steam (%d/%d)\n",
                 pressureSteamCount, excessSum); return 98;
     }
