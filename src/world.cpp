@@ -1,4 +1,5 @@
 #include "world.h"
+#include "air.h"
 #include <string.h>
 
 World g_world;
@@ -162,6 +163,7 @@ void World::addLiveWindow(int x0, int y0, int x1, int y1) {
 }
 
 void World::reset() {
+    airClear();
     clearBlockBoxes();
     /* setLiveWindow() compares the chunk-rounded core to decide whether old
        fingers remain valid, so establish a known sentinel before its first
@@ -1415,6 +1417,53 @@ void World::updateGas(int x, int y) {
         if (tryMove(x, y, x + DIFFUSE_DX[k], y + DIFFUSE_DY[k])) return;
     }
 
+    /* --- carried by the air ------------------------------------------------
+       Before every per-cell rule, because this is the one that is not a
+       PREFERENCE -- the parcel is being moved by something else, and what it
+       would have chosen for itself only matters where the air is still.
+
+       This is the whole point of the velocity field. A parcel can travel
+       several cells along the flow in one frame, so rising fast and spreading
+       wide stop competing for the single move that the per-cell rules share
+       out: an updraft lifts this parcel five cells while the return flow
+       carries its neighbour sideways, and neither came out of the other's
+       budget.
+
+       Stepped one cell at a time through tryMove rather than teleported, so
+       every displacement rule -- density, walls, sieve entry, the bubble rules
+       -- still gets its say on each cell crossed. The travel stops at the first
+       refusal, which is what makes a wall a wall even in a gale. */
+    if (g_airOn) {
+        int avx, avy;
+        airVelocity(x, y, &avx, &avy);
+        int steps = (imax(avx < 0 ? -avx : avx, avy < 0 ? -avy : avy)) / AIR_V_ONE;
+        if (steps > AIR_ADVECT_MAX) steps = AIR_ADVECT_MAX;
+        /* Only a GENUINE flow takes the turn. Advection returns on success, so
+           any flow at all would otherwise preempt the diffusion the plume's
+           shape depends on -- and a field that injects buoyancy into every gas
+           cell means there is always some flow. Two cells is the threshold
+           between "the air is moving this" and "the parcel should decide for
+           itself". */
+        if (steps >= 2) {
+            /* Bresenham along the velocity, so a diagonal flow moves the parcel
+               diagonally rather than in two axis-aligned bursts. */
+            const int ax = avx < 0 ? -avx : avx, ay = avy < 0 ? -avy : avy;
+            const int sx = avx < 0 ? -1 : 1,     sy = avy < 0 ? -1 : 1;
+            int err = (ax > ay ? ax : -ay) / 2;
+            int cx = x, cy = y, moved = 0;
+            for (int n = 0; n < steps; ++n) {
+                int nx = cx, ny = cy;
+                const int e2 = err;
+                if (e2 > -ax) { err -= ay; nx += sx; }
+                if (e2 <  ay) { err += ax; ny += sy; }
+                if (nx == cx && ny == cy) break;
+                if (!tryMove(cx, cy, nx, ny)) break;
+                cx = nx; cy = ny; ++moved;
+            }
+            if (moved) return;
+        }
+    }
+
     /* The buoyant climb. Scans up through clear air first and takes the whole
        run in one move; see GAS_RISE_RUN. Empty cells only, so this can never
        shortcut a swap with a liquid or a denser gas -- those still go one cell
@@ -2555,6 +2604,11 @@ void World::updateCell(int x, int y) {
 }
 
 void World::step() {
+    /* The air solver first, so every gas cell this frame is carried by a field
+       built from the world as it is NOW. It is derived state -- see air.h --
+       and costs one pass over the live window. */
+    airStep(*this);
+
     /* Pocket sharing is the only pressure operation that searches farther than
        its immediate material path. Bound it across the whole world, not per
        chunk, so a pathological mass-boil drains over several frames instead of
