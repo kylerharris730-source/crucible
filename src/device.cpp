@@ -1044,6 +1044,42 @@ static bool devIntact(const World& w, const Device& d) {
 }
 
 
+int devBoxDepth(const Device& d) {
+    /* Zero is not a legal depth, it is "never set" -- see the note in device.h.
+       Clamped on the way OUT so a save carrying anything odd still behaves. */
+    const int depth = d.mat2 ? (int)d.mat2 : 1;
+    return depth < 1 ? 1 : (depth > DEV_W ? DEV_W : depth);
+}
+void devSetBoxDepth(Device& d, int depth) {
+    if (depth < 1) depth = 1;
+    if (depth > DEV_W) depth = DEV_W;
+    d.mat2 = (u8)depth;
+}
+int devFilterMat(const Device& d) {
+    return (d.pipeFrom > 0 && d.pipeFrom < MAT_COUNT) ? (int)d.pipeFrom : MAT_EMPTY;
+}
+void devSetFilterMat(Device& d, int mat) {
+    d.pipeFrom = (mat > 0 && mat < MAT_COUNT) ? (i16)mat : (i16)-1;
+}
+int devRunMode(const Device& d) {
+    return (d.count2 >= 0 && d.count2 < DEVRUN_COUNT) ? (int)d.count2 : DEVRUN_WHILE_ON;
+}
+void devSetRunMode(Device& d, int mode) {
+    d.count2 = (i32)((mode % DEVRUN_COUNT + DEVRUN_COUNT) % DEVRUN_COUNT);
+}
+const char* devRunModeName(int mode) {
+    return mode == DEVRUN_ON_EDGE ? "per pulse" : "while on";
+}
+
+void devBoxCell(const Device& d, int i, int layer, int* ox, int* oy) {
+    switch (d.face) {
+    case 1:  *ox = d.x + i;                  *oy = d.y - 1 - layer;         break; /* up */
+    case 2:  *ox = d.x - 1 - layer;          *oy = d.y + i;                 break; /* left */
+    case 3:  *ox = d.x + DEV_W + layer;      *oy = d.y + i;                 break; /* right */
+    default: *ox = d.x + i;                  *oy = d.y + DEV_H + layer;     break; /* down */
+    }
+}
+
 void devFaceCell(const Device& d, int i, int* ox, int* oy) {
     switch (d.face) {
     case 1:  *ox = d.x + i;        *oy = d.y - 1;        break;   /* up */
@@ -1327,16 +1363,23 @@ static void devIntake(World& w, Device& d) {
    right, skipping anything already occupied. Skipping rather than stopping matters:
    a placer over a partly-filled furnace should top it up, not jam because its
    leftmost outlet happens to be blocked. */
-static void devPlaceRow(World& w, Device& d) {
+/* The placer, filling the same box. Nearest layer first for the mirror of the
+   miner's reason: material laid against the face first builds OUTWARD from the
+   machine, so a placer walling something off produces a wall that starts where
+   it is bolted rather than a floating sheet with a gap behind it. */
+static void devPlaceBox(World& w, Device& d) {
+    const int depth = devBoxDepth(d);
     int done = 0;
-    for (int i = 0; i < DEV_W && done < d.value && d.count > 0; ++i) {
-        int x, y;
-        devFaceCell(d, i, &x, &y);
-        if (x < PLAY_X0 || x > PLAY_X1 || y < PLAY_Y0 || y > PLAY_Y1) continue;
-        if (w.at(x, y).mat != MAT_EMPTY) continue;
-        w.setCell(x, y, d.mat);
-        --d.count;
-        ++done;
+    for (int layer = 0; layer < depth && done < d.value && d.count > 0; ++layer) {
+        for (int i = 0; i < DEV_W && done < d.value && d.count > 0; ++i) {
+            int x, y;
+            devBoxCell(d, i, layer, &x, &y);
+            if (x < PLAY_X0 || x > PLAY_X1 || y < PLAY_Y0 || y > PLAY_Y1) continue;
+            if (w.at(x, y).mat != MAT_EMPTY) continue;
+            w.setCell(x, y, d.mat);
+            --d.count;
+            ++done;
+        }
     }
 }
 
@@ -1344,20 +1387,81 @@ static void devPlaceRow(World& w, Device& d) {
    it cannot hold, and -- importantly -- refuses to eat another MACHINE: a miner
    bolted under a device should not quietly dismantle it. Wall is exempt too, since
    it is the indestructible border. */
-static void devMineRow(World& w, Device& d) {
+/* --- the miner ---------------------------------------------------------------
+   Clears its working box, nearest layer first, up to `value` cells per action.
+
+   Nearest-first is the whole reason a depth is useful. A miner bolted to the
+   side of a furnace is there to take the SOLIDS out of it, and eating the row
+   against its own face before the row behind that means the hole opens toward
+   the machine and whatever is left keeps falling into reach. Sweeping the far
+   layer first would undercut the pile and leave the near row standing.
+
+   The filter is a single material, and skipping a cell costs no budget -- the
+   same rule digInto uses for its whitelist, and for the same reason: a filter
+   that spent its bite on the first thing it refused would be a filter that
+   does nothing in a mixed pile. */
+/* --- what makes a miner or a placer act --------------------------------------
+   Two ways in, and they are deliberately different things.
+
+   A SPARK still works. Electricity was the original trigger and a contraption
+   built around a thermocouple and a clock should keep running untouched.
+
+   A CIRCUIT SIGNAL is the new one, and it is what makes these usable the way
+   Factorio's inserters are: wire a constant 1 to a miner and it runs, wire a
+   clock to it and it runs on the clock, wire a decider to it and it runs only
+   when the condition holds. The signal read is the device's own configured one
+   (CIR_SIG_1 by default -- "the 1 signal"), so the choice of which wire drives
+   it is already a control the panel has.
+
+   The two modes are the difference between a level and an edge, which is
+   exactly the distinction the thermocouple's latch already draws elsewhere in
+   this file:
+
+     WHILE_ON  acts every tick the signal is non-zero. Hold a 1 on the wire and
+               it works continuously, which is what you want for clearing out a
+               furnace that keeps filling up.
+     ON_EDGE   acts once each time the signal goes from zero to non-zero. A
+               clock ticking 1/0/1/0 then gives exactly one action per tick
+               rather than one per frame the wire happens to be high, which is
+               how you meter a placer into laying one row at a time.
+
+   `latched` carries the edge state. It is free on these two types -- only the
+   thermocouple and the block watcher were using it -- so this needs no new
+   field and no save change. */
+static bool devTriggered(int index, Device& d) {
+    const int signal = circuitInput(index, g_circuitConfig[index].signal);
+    const bool high = signal != 0;
+    const int mode = devRunMode(d);
+
+    bool act = d.poked;                     /* a spark always fires it */
+    if (mode == DEVRUN_ON_EDGE) {
+        if (high && !d.latched) act = true;
+    } else if (high) {
+        act = true;
+    }
+    d.latched = high;
+    return act;
+}
+
+static void devMineBox(World& w, Device& d) {
+    const int depth = devBoxDepth(d);
+    const int want  = devFilterMat(d);
     int done = 0;
-    for (int i = 0; i < DEV_W && done < d.value; ++i) {
-        int x, y;
-        devFaceCell(d, i, &x, &y);
-        if (x < PLAY_X0 || x > PLAY_X1 || y < PLAY_Y0 || y > PLAY_Y1) continue;
-        const u8 m = w.at(x, y).mat;
-        if (m == MAT_EMPTY || m == MAT_WALL || m == MAT_DEVICE) continue;
-        /* Never eat another machine, whatever it is made of -- including a torch,
-           whose cells are MAT_TORCH rather than MAT_DEVICE. */
-        if (devAt(x, y)) continue;
-        if (!devTakeInto(d, m)) break;      /* full, or holding something else */
-        w.setCell(x, y, MAT_EMPTY);
-        ++done;
+    for (int layer = 0; layer < depth && done < d.value; ++layer) {
+        for (int i = 0; i < DEV_W && done < d.value; ++i) {
+            int x, y;
+            devBoxCell(d, i, layer, &x, &y);
+            if (x < PLAY_X0 || x > PLAY_X1 || y < PLAY_Y0 || y > PLAY_Y1) continue;
+            const u8 m = w.at(x, y).mat;
+            if (m == MAT_EMPTY || m == MAT_WALL || m == MAT_DEVICE) continue;
+            if (want != MAT_EMPTY && m != (u8)want) continue;
+            /* Never eat another machine, whatever it is made of -- including a
+               torch, whose cells are MAT_TORCH rather than MAT_DEVICE. */
+            if (devAt(x, y)) continue;
+            if (!devTakeInto(d, m)) return;   /* full, or holding something else */
+            w.setCell(x, y, MAT_EMPTY);
+            ++done;
+        }
     }
 }
 
@@ -1428,12 +1532,12 @@ void devTick(World& w) {
                bolted to would dismantle its own housing. */
             devIntake(w, d);
             d.reading = d.count;
-            if (d.poked && d.count > 0) devPlaceRow(w, d);
+            if (devTriggered(i, d) && d.count > 0) devPlaceBox(w, d);
             break;
         }
         case DEV_MINER: {
             d.reading = d.count;
-            if (d.poked) devMineRow(w, d);
+            if (devTriggered(i, d)) devMineBox(w, d);
             break;
         }
         case DEV_THERMOCOUPLE: {

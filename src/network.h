@@ -60,7 +60,12 @@ enum NetDeviceOperation {
     NDEV_SET_SIGNAL,
     NDEV_SET_A,
     NDEV_SET_B,
-    NDEV_SET_OUT
+    NDEV_SET_OUT,
+    /* The miner/placer working box and how it is triggered. Appended, like
+       every other id that crosses a wire in this codebase. */
+    NDEV_DEPTH_DEC,
+    NDEV_DEPTH_INC,
+    NDEV_MODE
 };
 
 enum NetSlotContainer {

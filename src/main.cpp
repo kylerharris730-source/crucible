@@ -508,6 +508,10 @@ static void layoutCraft();
 extern bool g_craftOpen;
 extern int  g_craftScroll;
 static void drawDevPanel(HDC hdc);
+/* The two machines that work on a BOX rather than a row -- see devBoxCell.
+   Up here because both the network action handler and the panel need it, and
+   they sit a long way apart. */
+static bool devHasBox(u8 type) { return type == DEV_MINER || type == DEV_PLACER; }
 /* Defined beside the other device-interaction helpers, declared here because
    the creative input path reaches it several hundred lines earlier. */
 static void pedestalUse(Device& d, Inventory& inv);
@@ -3449,7 +3453,19 @@ static void applyDeviceAction(PlayerSession& session, const NetAction& action) {
         }
         break;
     }
-    case NDEV_SET_FILTER: if (action.b < MAT_COUNT) d.value = action.b; break;
+    case NDEV_SET_FILTER:
+        /* A drain keeps its filter in `value`, which it can afford because it
+           has no rate to store. A miner's `value` IS its rate, so its filter
+           lives in the field devFilterMat owns. One action, because from the
+           player's side it is the same gesture. */
+        if (action.b < MAT_COUNT) {
+            if (devHasBox(d.type)) devSetFilterMat(d, action.b);
+            else                   d.value = action.b;
+        }
+        break;
+    case NDEV_DEPTH_DEC: devSetBoxDepth(d, devBoxDepth(d) - 1); break;
+    case NDEV_DEPTH_INC: devSetBoxDepth(d, devBoxDepth(d) + 1); break;
+    case NDEV_MODE:      devSetRunMode(d, devRunMode(d) + 1);   break;
     case NDEV_SET_SIGNAL: cc.signal = action.b; break;
     case NDEV_SET_A: cc.signalA = action.b; break;
     case NDEV_SET_B: cc.signalB = action.b; break;
@@ -4043,11 +4059,20 @@ static void drawCircuitSignalButton(HDC hdc, const RECT& r, const char* prefix,
 /* Circuit controls name their selected signal and show an icon, so they need
    enough width for a material name rather than the old tiny cycle buttons. */
 static const int DEVP_W = 420, DEVP_H = 96, DEVP_CIRCUIT_H = 218;
+/* One row taller, for the box controls. */
+static const int DEVP_BOX_H = 128;
 static RECT g_devpBox, g_devpDec, g_devpInc, g_devpTake, g_devpTurn, g_devpClose;
+/* A second control row, for the miner and the placer only. They are the one
+   pair with more to say than "read it, nudge it" -- a direction, a depth, a
+   filter and a trigger mode -- and cramming that onto the single row every
+   other machine uses would make the row unreadable for all of them. */
+static RECT g_devpDepthDec, g_devpDepthBox, g_devpDepthInc, g_devpFilter, g_devpMode;
 
 static void layoutDevPanel(const Device& d) {
     /* Sit it just above and right of the machine, in screen pixels. */
-    const int h = circuitIsCombinator(d.type) ? DEVP_CIRCUIT_H : DEVP_H;
+    const int h = circuitIsCombinator(d.type) ? DEVP_CIRCUIT_H
+                : devHasBox(d.type)            ? DEVP_BOX_H
+                                               : DEVP_H;
     int px = PANEL_W + (d.x + DEV_W - g_camX) * cellPixels() + 8;
     int py = (d.y - g_camY) * cellPixels() - h - 6;
     if (px + DEVP_W > WIN_W - 6) px = PANEL_W + (d.x - g_camX) * cellPixels() - DEVP_W - 8;
@@ -4056,12 +4081,35 @@ static void layoutDevPanel(const Device& d) {
     if (py + h > WIN_H - 6) py = WIN_H - 6 - h;
 
     SetRect(&g_devpBox, px, py, px + DEVP_W, py + h);
+    /* --- widths, rebalanced -------------------------------------------
+       The turn button used to be 28 pixels, which fits "x" and not "aim down"
+       -- it rendered as a clipped "aim", i.e. a control that looks broken
+       rather than abbreviated. The steppers are the ones that can afford to
+       shrink, since their labels are a single character. */
     const int by = py + h - 30;
-    SetRect(&g_devpDec,   px + 10,  by, px + 118, by + 22);
-    SetRect(&g_devpInc,   px + 122, by, px + 230, by + 22);
-    SetRect(&g_devpTake,  px + 234, by, px + 342, by + 22);
-    SetRect(&g_devpTurn,  px + 346, by, px + 374, by + 22);
+    SetRect(&g_devpDec,   px + 10,  by, px + 70,  by + 22);
+    SetRect(&g_devpInc,   px + 74,  by, px + 134, by + 22);
+    SetRect(&g_devpTake,  px + 138, by, px + 228, by + 22);
+    SetRect(&g_devpTurn,  px + 232, by, px + 340, by + 22);
     SetRect(&g_devpClose, px + DEVP_W - 40, by, px + DEVP_W - 10, by + 22);
+
+    if (devHasBox(d.type)) {
+        /* [-] [deep N] [+], with the middle a READOUT rather than a button.
+           It was a two-button row with the value painted on the second one,
+           which reads as "press this to make it deeper" -- so the number and
+           the control it belonged to were the same object, and pressing what
+           looked like a label changed it. */
+        const int by2 = by - 26;
+        SetRect(&g_devpDepthDec, px + 10,  by2, px + 44,  by2 + 22);
+        SetRect(&g_devpDepthBox, px + 48,  by2, px + 122, by2 + 22);
+        SetRect(&g_devpDepthInc, px + 126, by2, px + 160, by2 + 22);
+        SetRect(&g_devpFilter,   px + 164, by2, px + 274, by2 + 22);
+        SetRect(&g_devpMode,     px + 278, by2, px + 410, by2 + 22);
+    } else {
+        SetRectEmpty(&g_devpDepthDec); SetRectEmpty(&g_devpDepthBox);
+        SetRectEmpty(&g_devpDepthInc);
+        SetRectEmpty(&g_devpFilter);   SetRectEmpty(&g_devpMode);
+    }
 }
 
 /* True if the click was consumed. Returning that matters: a click on the panel
@@ -4101,6 +4149,24 @@ static bool handleDevPanelClick(int mx, int my) {
         return true;
     }
     if (d.type == DEV_PIPE || d.type == DEV_CROSSOVER) return true;
+    if (devHasBox(d.type)) {
+        if (PtInRect(&g_devpDepthDec, pt)) {
+            sendClientAction(NACT_DEVICE, 0, NDEV_DEPTH_DEC); return true;
+        }
+        if (PtInRect(&g_devpDepthInc, pt)) {
+            sendClientAction(NACT_DEVICE, 0, NDEV_DEPTH_INC); return true;
+        }
+        if (PtInRect(&g_devpMode, pt)) {
+            sendClientAction(NACT_DEVICE, 0, NDEV_MODE); return true;
+        }
+        if (PtInRect(&g_devpFilter, pt)) {
+            /* The same material picker the drain uses -- one gesture for
+               "choose a material", wherever it is being chosen. */
+            g_filterDevice = g_devPanel; g_creativeOpen = true; g_creSearch[0] = 0;
+            g_creScroll = 0; g_creSearchFocus = true; layoutCreative();
+            return true;
+        }
+    }
     if (d.type == DEV_DRAIN && PtInRect(&g_devpTake, pt)) {
         g_filterDevice = g_devPanel; g_creativeOpen = true; g_creSearch[0] = 0;
         g_creScroll = 0; g_creSearchFocus = true; layoutCreative();
@@ -4299,6 +4365,35 @@ static void drawDevPanel(HDC hdc) {
     }
     if (d.type == DEV_PLACER || d.type == DEV_MINER || d.type == DEV_CHEST || d.type == DEV_SPOUT || d.type == DEV_DRAIN)
         drawButton(hdc, g_devpTake, (d.type == DEV_CHEST || d.type == DEV_SPOUT) ? "store/take" : "take", 0, false, PtInRect(&g_devpTake, pt) != 0);
+    if (devHasBox(d.type)) {
+        drawButton(hdc, g_devpDepthDec, "-", 0, false, PtInRect(&g_devpDepthDec, pt) != 0);
+        drawButton(hdc, g_devpDepthInc, "+", 0, false, PtInRect(&g_devpDepthInc, pt) != 0);
+        {
+            /* The readout, framed but never lit by hover -- it is not a
+               control and should not offer to be pressed. */
+            char depthLabel[32];
+            sprintf(depthLabel, "deep %d", devBoxDepth(d));
+            RECT rr = g_devpDepthBox;
+            FillRect(hdc, &rr, g_btnBg);
+            FrameRect(hdc, &rr, g_borderBrush);
+            SetTextColor(hdc, RGB(214, 216, 224));
+            DrawTextA(hdc, depthLabel, -1, &rr, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        }
+
+        /* The filter names the material or says it takes anything, because an
+           unset filter and a filter set to something are the two states you
+           most need to tell apart at a glance. */
+        const int filterMat = devFilterMat(d);
+        char filterLabel[48];
+        if (filterMat == MAT_EMPTY) strcpy(filterLabel, "any material");
+        else sprintf(filterLabel, "only %s", MATS[filterMat].name);
+        drawButton(hdc, g_devpFilter, filterLabel, 0, filterMat != MAT_EMPTY,
+                   PtInRect(&g_devpFilter, pt) != 0);
+
+        char modeLabel[48];
+        sprintf(modeLabel, "runs %s", devRunModeName(devRunMode(d)));
+        drawButton(hdc, g_devpMode, modeLabel, 0, false, PtInRect(&g_devpMode, pt) != 0);
+    }
     drawButton(hdc, g_devpClose, "x", 0, false, PtInRect(&g_devpClose, pt) != 0);
     SelectObject(hdc, oldFont);
 }

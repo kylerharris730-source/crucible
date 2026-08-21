@@ -507,6 +507,51 @@ void devRemove(World& w, Device* d);
    direction the device faces. DEV_W == DEV_H so one index covers every side. */
 void devFaceCell(const Device& d, int i, int* ox, int* oy);
 
+/* --- the working box, for miners and placers -------------------------------
+   `i` runs along the face as above; `layer` runs AWAY from it, zero being the
+   row devFaceCell returns. So a miner facing down with depth 4 covers the
+   14x4 block directly beneath itself.
+
+   Depth rather than a free rectangle because the device is 14 wide and always
+   works off one edge: a box that could also be narrower than the face would
+   need an offset as well as a size, which is two more numbers on a panel whose
+   whole design is "read it, nudge it" (see DeviceInfo::valueLabel). Fourteen
+   by depth is the shape that clears a furnace, which is what these are for. */
+void devBoxCell(const Device& d, int i, int layer, int* ox, int* oy);
+
+/* --- where a miner/placer keeps the rest of its settings -------------------
+   All three live in fields those two types do not otherwise use, because
+   `Device` is written to the save as one raw sized block: widening the struct
+   makes every existing world's machines fail their length check and vanish.
+   The same trick the pedestal uses for its item.
+
+     mat2      box depth, 1..DEV_W. ZERO means one row, which is what every
+               device placed before this existed has -- so an old save keeps
+               exactly the single-row behaviour it had.
+     pipeFrom  the material filter, or -1 for "take anything". devPlace already
+               initialises it to -1, so the default is right for free.
+     count2    the trigger mode; see DevRunMode.
+
+   Accessors rather than raw field access at the call sites, so the one place
+   that knows about the aliasing is here. */
+enum DevRunMode {
+    /* Acts on every tick the signal is non-zero. The Factorio default: hold a
+       constant 1 on the wire and it runs continuously. */
+    DEVRUN_WHILE_ON = 0,
+    /* Acts once per RISING EDGE. A clock ticking 1/0/1/0 then gives exactly one
+       action per tick rather than one per frame the wire happens to be high. */
+    DEVRUN_ON_EDGE,
+    DEVRUN_COUNT
+};
+
+int  devBoxDepth(const Device& d);
+void devSetBoxDepth(Device& d, int depth);
+int  devFilterMat(const Device& d);          /* MAT_EMPTY for "anything" */
+void devSetFilterMat(Device& d, int mat);
+int  devRunMode(const Device& d);
+void devSetRunMode(Device& d, int mode);
+const char* devRunModeName(int mode);
+
 /* One frame for every device: sense, decide, and drop any whose cells have been
    dug out from under it. */
 void devTick(World& w);
