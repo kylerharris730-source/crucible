@@ -342,8 +342,12 @@ const DeviceInfo DEVS[DEV_COUNT] = {
     { "Item Pipe", "", "", 0, 0, 0, 0, SPR_PIPE, MAT_DEVICE, false },
     { "Pipe Crossover", "", "", 0, 0, 0, 0, SPR_CROSSOVER, MAT_DEVICE, false },
     { "Chest", "", "", 0, 0, 0, 0, SPR_CHEST, MAT_DEVICE, false },
-    { "Spout", "rate", "cells", 1, 14, 1, 4, SPR_SPOUT, MAT_DEVICE, true },
-    { "Drain", "filter", "id", 0, MAT_COUNT - 1, 1, 0, SPR_DRAIN, MAT_DEVICE, true },
+    /* Rate defaults to the full width now: a spout should use the face it
+       occupies unless it is deliberately turned down. See devSpout. */
+    { "Spout", "rate", "cells", 1, 14, 1, 14, SPR_SPOUT, MAT_DEVICE, true },
+    /* NOT aimable. A drain takes from all four edges, so a facing control on it
+       was a button that changed nothing anybody could see. */
+    { "Drain", "filter", "id", 0, MAT_COUNT - 1, 1, 0, SPR_DRAIN, MAT_DEVICE, false },
     { "Block Watcher", "filter", "id", 0, MAT_COUNT - 1, 1, 0, SPR_THERMO, MAT_DEVICE, true },
     { "Pulse Button", "", "", 0, 0, 0, 0, SPR_BUTTON, MAT_DEVICE, false },
     { "Constant Combinator", "value", "", -9999, 9999, 1, 1, SPR_CIRCUIT_CONSTANT, MAT_DEVICE, false },
@@ -1190,27 +1194,48 @@ static void devDrainSide(World& w, Device& d, int face, int* taken) {
 }
 
 static void devDrain(World& w, Device& d) {
+    /* --- all four edges, always -----------------------------------------
+       A drain has no facing any more. It used to prefer its aimed edge and
+       only fall back to the others when that one came up dry, which produced a
+       device whose behaviour depended on a control most people never set and
+       whose sprite pointed somewhere it did not really care about.
+
+       The fallback was already doing most of the work in practice -- a drain
+       dropped beside a pool drains it whichever way it happens to be turned --
+       so this makes the common case the ONLY case. Sweeping every side every tick
+       also means a drain sunk into a floor takes from the sides and the bottom
+       at once, which is what anybody building a sump expects it to do.
+
+       Still capped at four cells a tick in total, so widening the intake does
+       not quietly quadruple the rate. */
     int taken = 0;
-    /* Aim is the normal, predictable intake edge. A drain set beside a pool
-       should not become inert merely because its saved/default face points at
-       the floor, though, so a dry face falls back to the other three edges.
-       The filter still applies, and a working aimed edge never borrows from a
-       neighbour, preserving deliberate one-sided setups. */
-    devDrainSide(w, d, d.face, &taken);
-    if (taken > 0) return;
-    for (int face = 0; face < 4 && taken < 4; ++face) {
-        if (face == d.face) continue;
+    for (int face = 0; face < 4 && taken < 4; ++face)
         devDrainSide(w, d, face, &taken);
-    }
 }
 
 static void devSpout(World& w, Device& d) {
+    /* --- the whole face, not the first few cells -------------------------
+       The rate says how many cells a pulse delivers; it never said WHERE along
+       the face they go, and walking i from zero meant every pulse below full
+       rate poured out of the left-hand corner. A fourteen-wide spout behaving
+       like a four-wide one bolted to one end is not what the footprint
+       promises.
+
+       Spread instead: the k-th of `rate` deliveries goes to cell k*DEV_W/rate,
+       so four cells land at 0, 3, 7 and 10 rather than 0, 1, 2, 3, and the
+       default rate of DEV_W covers every cell. A blocked cell is skipped
+       rather than compensated for -- the rate is a budget, not a quota, and
+       hunting for a free cell would make a spout against a wall silently
+       dump everything through whatever gap it found. */
+    const int rate = imax(1, imin((int)d.value, DEV_W));
     int done = 0;
-    for (int i = 0; i < DEV_W && done < d.value && d.count > 0; ++i) {
+    for (int k = 0; k < rate && d.count > 0; ++k) {
+        const int i = k * DEV_W / rate;
         int x, y; devFaceCell(d, i, &x, &y);
         if (x < PLAY_X0 || x > PLAY_X1 || y < PLAY_Y0 || y > PLAY_Y1 || w.at(x, y).mat != MAT_EMPTY) continue;
         w.setCell(x, y, d.mat); --d.count; ++done;
     }
+    (void)done;
     if (d.count == 0) d.mat = MAT_EMPTY;
 }
 
@@ -1645,7 +1670,9 @@ void devDraw(const World& w, u32* px, int camX, int camY, bool lit) {
                 int rx = xx, ry = yy;
                 /* The source art faces down. Rotate only the two directional
                    logistics machines; other device sprites remain upright. */
-                if (d.type == DEV_SPOUT || d.type == DEV_DRAIN) {
+                /* The spout alone. A drain is symmetric under a quarter turn
+                   and has no facing to rotate to -- see ART_DRAIN. */
+                if (d.type == DEV_SPOUT) {
                     switch (d.face) {
                     case 1: rx = DEV_W - 1 - xx; ry = DEV_H - 1 - yy; break;
                     case 2: rx = DEV_W - 1 - yy; ry = xx; break;

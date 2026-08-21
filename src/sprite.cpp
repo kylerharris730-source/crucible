@@ -634,10 +634,17 @@ static const char* ART_SPOUT[SPR_H] = {
     ".llDEFFFFEDll.", "...DEFFFFED...", "...DEFFFFED...", "...DEFFFFED...", "...DEFFFFED...",
     "...DDEEEEDD...", "....DDEEDD....", ".....llll.....", ".....llll.....",
 };
+/* --- the drain, four ways ---------------------------------------------------
+   Symmetric under a quarter turn: the same stub on every side, and nothing
+   anywhere that says which way is forward. That is not decoration, it is the
+   object telling the truth -- a drain takes from all four edges (see devDrain),
+   so a sprite with an intake at the top and a taper at the bottom was
+   advertising a facing it does not have and never really used. It also means
+   devDraw no longer rotates this one; there is nothing to rotate. */
 static const char* ART_DRAIN[SPR_H] = {
-    ".....llll.....", ".....llll.....", "....DDEEDD....", "...DDEEEEDD...", "...DEFFFFED...",
-    "...DEFFFFED...", "...DEFFFFED...", ".llDEFFFFEDll.", ".llDEFFFFEDll.", "...DEFFFFED...",
-    "...DEFFFFED...", "...DEEEEEED...", "....DDDDDD....", "..............",
+    ".....llll.....", ".....llll.....", "...DDDDDDDD...", "..DDEEEEEEDD..", "..DEFFFFFFED..",
+    "llDEFFFFFFEDll", "llDEFFFFFFEDll", "llDEFFFFFFEDll", "llDEFFFFFFEDll", "..DEFFFFFFED..",
+    "..DDEEEEEEDD..", "...DDDDDDDD...", ".....llll.....", ".....llll.....",
 };
 static const char* ART_BUTTON[SPR_H] = {
     "..............", "....EEEEEE....", "...EiiiiiiE...", "..EiiiiiiiiE..",
