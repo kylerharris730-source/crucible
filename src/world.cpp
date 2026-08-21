@@ -1,4 +1,5 @@
 #include "world.h"
+#include "air.h"
 #include <string.h>
 
 World g_world;
@@ -162,6 +163,7 @@ void World::addLiveWindow(int x0, int y0, int x1, int y1) {
 }
 
 void World::reset() {
+    airClear();
     clearBlockBoxes();
     /* setLiveWindow() compares the chunk-rounded core to decide whether old
        fingers remain valid, so establish a known sentinel before its first
@@ -1421,8 +1423,27 @@ void World::updateGas(int x, int y) {
        at a time through the tryMove below, which is what keeps the displacement
        rules that make a bubble behave in charge of a bubble. */
     {
+        /* --- pressure lengthens the climb ------------------------------
+           The field's contribution is a longer RUN, not a move of its own.
+
+           A separate downhill step was the first shape and it measured worse
+           than having no field at all -- 1.28 s to climb 40 cells against
+           1.00 s -- because it competed with buoyancy for the parcel's single
+           move and spent it going one cell where the run would have gone four.
+           It also collapsed the volume filling from 60% of a room to 21%, by
+           taking the turns diffusion needs.
+
+           Reinforcing instead: a parcel in a pocket that is more crowded than
+           the one above it climbs further in one move. Still air has no
+           gradient, gets no bonus, and behaves exactly as it did. */
+        int run = GAS_RISE_RUN;
+        {
+            const int here  = airAt(x, y);
+            const int above = airAt(x, y - (1 << AIR_SHIFT));
+            if (here > above) run += imin(GAS_RISE_RUN, (here - above) / 48);
+        }
         int top = y;
-        for (int s = 1; s <= GAS_RISE_RUN; ++s) {
+        for (int s = 1; s <= run; ++s) {
             const int ny = y - s;
             if (ny < PLAY_Y0) break;
             if (cells[ny * SIM_W + x].mat != MAT_EMPTY || blocksCell(x, ny)) break;
@@ -2555,6 +2576,12 @@ void World::updateCell(int x, int y) {
 }
 
 void World::step() {
+    /* Air first, so every gas cell this frame reads a pressure field built from
+       the world as it is NOW rather than as it was last frame. It is derived
+       state -- see air.h -- so rebuilding it costs one pass over the live
+       window and owes nothing to what happened before. */
+    airStep(*this);
+
     /* Pocket sharing is the only pressure operation that searches farther than
        its immediate material path. Bound it across the whole world, not per
        chunk, so a pathological mass-boil drains over several frames instead of
