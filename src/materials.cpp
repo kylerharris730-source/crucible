@@ -1983,14 +1983,22 @@ void initMaterials() {
 
     for (int m = 0; m < MAT_COUNT; ++m) g_matGasExpansion[m] = 1;
     /* --- how much Steam one cell of Water becomes ------------------------
-       Back to 6, which is where this started before it was cut to 3 for being
-       "an overwhelming amount of Steam". It is being tried again deliberately:
-       the reasons it was overwhelming have since been dealt with. Gas used to
-       pile into a one-cell ceiling film, so all six volumes ended up stacked in
-       a place they could not spread out of; it now diffuses into the room, and
-       a sieve no longer condenses what passes through it.
+       Three. It has now been 6, then 3, then 6 again, then back to 3 -- so the
+       useful thing to record is not the number but what was learned each time,
+       or the next person to think "surely it should expand more" will simply
+       repeat the experiment.
 
-       Measured in a sealed chamber boiling a 954-cell pool, this is a straight
+       6 was the original. It was cut to 3 for being "an overwhelming amount of
+       Steam". It was tried again at 6 after gas diffusion and the sieve fix
+       landed, on the theory that those were WHY it had been overwhelming: gas
+       used to pile into a one-cell ceiling film, so all six volumes ended up
+       stacked somewhere they could not spread out of, and a sieve condensed
+       most of what passed through it. Both of those are genuinely fixed, and 6
+       was still too much in play. So the volume was not the symptom of those
+       bugs; it is just more steam than this game wants.
+
+       The measurements are kept because they are what makes the next attempt
+       cheap. In a sealed chamber boiling a 954-cell pool it is a straight
        linear dial with no surprises anywhere in the range:
 
          expansion   peak steam   settled body depth
@@ -2000,14 +2008,13 @@ void initMaterials() {
              8          7632          40 rows
 
        Cost, in a chamber that is entirely boiling water and steam -- the worst
-       case there is: 0.71 ms a step at 3, 1.08 ms at 6. Half again as much of a
-       small number, and only in scenes made of steam.
+       case there is: 0.71 ms a step at 3, 1.08 ms at 6.
 
-       THIS IS ONE LINE ON PURPOSE. It is a feel decision rather than a
-       correctness one, it is the kind of thing that reads differently in a real
-       boiler than in a harness, and 5 or 8 are the same edit if 6 turns out to
-       be wrong in either direction. */
-    g_matGasExpansion[MAT_STEAM] = 6;
+       If it is worth another go, 4 is the rung that was never tried: it is the
+       only value between "too little to feel" and the 6 that has now been
+       rejected twice. live_grace reads this value rather than hardcoding it, so
+       changing it here is genuinely the whole edit. */
+    g_matGasExpansion[MAT_STEAM] = 3;
     g_matGasExpansion[MAT_MERCURY_GAS] = 6;
     g_matGasExpansion[MAT_COLDFIRE] = 4;
 
