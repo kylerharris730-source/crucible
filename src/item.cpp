@@ -330,6 +330,7 @@ void initItems() {
     ITEMS[ITEM_LENS].equipSlot  = EQ_TRINKET_A;
     ITEMS[ITEM_LENS].maxStack   = 1;
     ITEMS[ITEM_LENS].colour     = 0x8FD8E8;
+    ITEMS[ITEM_LENS].sprite     = SPR_LENS;
     ITEMS[ITEM_LENS].reachBonus = 28;
 
     ITEMS[ITEM_RELAY].name       = "Field Relay";
@@ -337,6 +338,7 @@ void initItems() {
     ITEMS[ITEM_RELAY].equipSlot  = EQ_TRINKET_A;
     ITEMS[ITEM_RELAY].maxStack   = 1;
     ITEMS[ITEM_RELAY].colour     = 0xB088E0;
+    ITEMS[ITEM_RELAY].sprite     = SPR_RELAY;
     ITEMS[ITEM_RELAY].reachBonus = 56;
 
     /* --- flight ------------------------------------------------------------
@@ -599,6 +601,7 @@ void initItems() {
     ITEMS[ITEM_STEEL_HELMET].heatResist = 15;
     ITEMS[ITEM_STEEL_HELMET].coldResist = 15;
     ITEMS[ITEM_STEEL_HELMET].armour     = 2;
+    ITEMS[ITEM_STEEL_HELMET].sprite     = SPR_ARMOUR_HELM_STEEL;
 
     ITEMS[ITEM_STEEL_SUIT].name       = "Steel Suit";
     ITEMS[ITEM_STEEL_SUIT].kind       = ITEMK_WORN;
@@ -608,6 +611,7 @@ void initItems() {
     ITEMS[ITEM_STEEL_SUIT].heatResist = 30;
     ITEMS[ITEM_STEEL_SUIT].coldResist = 30;
     ITEMS[ITEM_STEEL_SUIT].armour     = 4;
+    ITEMS[ITEM_STEEL_SUIT].sprite     = SPR_ARMOUR_SUIT_STEEL;
 
     /* Titanium: corrosion-proof and the metal DESIGN.md calls "the hull of
        the thing you leave on" -- a real jump over steel, not an increment. */
@@ -633,6 +637,7 @@ void initItems() {
     ITEMS[ITEM_FORGE_CORE].kind     = ITEMK_MATERIAL;   /* carried, never placed */
     ITEMS[ITEM_FORGE_CORE].maxStack = 16;
     ITEMS[ITEM_FORGE_CORE].colour   = 0xE07A32;
+    ITEMS[ITEM_FORGE_CORE].sprite   = SPR_FORGE_CORE;
 
     /* Drones are worn companions. The light occupies its own utility bay so
        illumination never competes with combat, while attack drones share two
@@ -642,24 +647,28 @@ void initItems() {
     ITEMS[ITEM_LIGHT_DRONE].equipSlot = EQ_LIGHT_DRONE;
     ITEMS[ITEM_LIGHT_DRONE].maxStack  = 1;
     ITEMS[ITEM_LIGHT_DRONE].colour    = 0x9DEBFF;
+    ITEMS[ITEM_LIGHT_DRONE].sprite    = SPR_DRONE_LIGHT;
 
     ITEMS[ITEM_ATTACK_DRONE].name      = "Attack Drone";
     ITEMS[ITEM_ATTACK_DRONE].kind      = ITEMK_WORN;
     ITEMS[ITEM_ATTACK_DRONE].equipSlot = EQ_DRONE_A;
     ITEMS[ITEM_ATTACK_DRONE].maxStack  = 1;
     ITEMS[ITEM_ATTACK_DRONE].colour    = 0xE8A76C;
+    ITEMS[ITEM_ATTACK_DRONE].sprite    = SPR_DRONE_ATTACK;
 
     ITEMS[ITEM_PICKUP_DRONE].name      = "Pickup Drone";
     ITEMS[ITEM_PICKUP_DRONE].kind      = ITEMK_WORN;
     ITEMS[ITEM_PICKUP_DRONE].equipSlot = EQ_DRONE_A;
     ITEMS[ITEM_PICKUP_DRONE].maxStack  = 1;
     ITEMS[ITEM_PICKUP_DRONE].colour    = 0x8CE8B0;
+    ITEMS[ITEM_PICKUP_DRONE].sprite    = SPR_DRONE_PICKUP;
 
     ITEMS[ITEM_SHIELD_DRONE].name      = "Shield Drone";
     ITEMS[ITEM_SHIELD_DRONE].kind      = ITEMK_WORN;
     ITEMS[ITEM_SHIELD_DRONE].equipSlot = EQ_DRONE_A;
     ITEMS[ITEM_SHIELD_DRONE].maxStack  = 1;
     ITEMS[ITEM_SHIELD_DRONE].colour    = 0x86B8FF;
+    ITEMS[ITEM_SHIELD_DRONE].sprite    = SPR_DRONE_SHIELD;
 
     /* The weapon chassis. All three go in a GENERAL drone bay -- equipSlot
        names EQ_DRONE_A and equipFits reads that as "either" -- so the two bays
@@ -1044,6 +1053,7 @@ void initItems() {
     ITEMS[ITEM_BREAD].heal     = 30;
     ITEMS[ITEM_BREAD].maxStack = 32;
     ITEMS[ITEM_BREAD].colour   = 0xC89A5A;
+    ITEMS[ITEM_BREAD].sprite   = SPR_BREAD;
 
     /* The striker. Reusable rather than consumed: it is a pair of stones, the
        cost of replacing it would be trivial, and an igniter you can run out of
@@ -1069,6 +1079,10 @@ void initItems() {
         ITEMS[id].summons  = (u8)t;
         ITEMS[id].maxStack = 1;
         ITEMS[id].colour   = ENT_DEFS[t].eggColour;
+        /* One shell tinted per creature, baked in initSprites from this same
+           eggColour -- so the icon cannot disagree with the swatch, and an
+           eighth creature needs no edit here either. */
+        ITEMS[id].sprite   = (u8)(SPR_EGG_FIRST + (t - 1));
     }
 
     /* The boss summon. An egg by KIND -- it spawns a creature and is consumed,
@@ -1079,6 +1093,7 @@ void initItems() {
     ITEMS[ITEM_BROOD_CALL].summons  = ENT_BROOD;
     ITEMS[ITEM_BROOD_CALL].maxStack = 4;
     ITEMS[ITEM_BROOD_CALL].colour   = 0xC85A44;
+    ITEMS[ITEM_BROOD_CALL].sprite   = SPR_BROOD_CALL;
 
     ITEMS[ITEM_TITANIUM_HELMET].name       = "Titanium Helmet";
     ITEMS[ITEM_TITANIUM_HELMET].kind       = ITEMK_WORN;
@@ -1088,6 +1103,7 @@ void initItems() {
     ITEMS[ITEM_TITANIUM_HELMET].heatResist = 45;
     ITEMS[ITEM_TITANIUM_HELMET].coldResist = 45;
     ITEMS[ITEM_TITANIUM_HELMET].armour     = 5;
+    ITEMS[ITEM_TITANIUM_HELMET].sprite     = SPR_ARMOUR_HELM_TITANIUM;
 
     ITEMS[ITEM_TITANIUM_SUIT].name       = "Titanium Suit";
     ITEMS[ITEM_TITANIUM_SUIT].kind       = ITEMK_WORN;
@@ -1097,6 +1113,7 @@ void initItems() {
     ITEMS[ITEM_TITANIUM_SUIT].heatResist = 70;
     ITEMS[ITEM_TITANIUM_SUIT].coldResist = 70;
     ITEMS[ITEM_TITANIUM_SUIT].armour     = 9;
+    ITEMS[ITEM_TITANIUM_SUIT].sprite     = SPR_ARMOUR_SUIT_TITANIUM;
 
     ITEMS[ITEM_FORGE_CORE].name     = "Forge Core";
     ITEMS[ITEM_FORGE_CORE].kind     = ITEMK_MATERIAL;   /* carried, never placed */

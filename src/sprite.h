@@ -133,6 +133,57 @@ enum SpriteId {
     SPR_SWORD_STEEL,    SPR_SPEAR_STEEL,
     SPR_SWORD_TITANIUM, SPR_SPEAR_TITANIUM,
     SPR_SWORD_TUNGSTEN, SPR_SPEAR_TUNGSTEN,
+
+    /* --- the drones -------------------------------------------------------
+       Four silhouettes, not one recoloured four times, and that is the CHARM
+       trade rather than the sword trade. The seven swords do the same job at
+       seven strengths, so shape carries the weapon and colour carries the
+       tier. These four do four different jobs -- light, damage, collection,
+       protection -- so shape has to carry the job or the row is unreadable.
+
+       They still share a chassis, because they are all drones and a player who
+       cannot tell at a glance that these four belong together has lost a real
+       piece of information. The chassis says "drone"; what hangs underneath
+       says which. */
+    SPR_DRONE_LIGHT,
+    SPR_DRONE_ATTACK,
+    SPR_DRONE_PICKUP,
+    SPR_DRONE_SHIELD,
+
+    /* --- the armour ladder ------------------------------------------------
+       Two silhouettes at two tiers, the same trade the swords make and for the
+       same reason: a helmet and a suit are different things you wear at once,
+       and steel and titanium are the same thing twice. Tinted from the item
+       colours rather than from fresh greys, so the metal looks like that metal
+       everywhere it appears. */
+    SPR_ARMOUR_HELM_STEEL,    SPR_ARMOUR_SUIT_STEEL,
+    SPR_ARMOUR_HELM_TITANIUM, SPR_ARMOUR_SUIT_TITANIUM,
+
+    /* --- the eggs ---------------------------------------------------------
+       One shell at every creature's colour, which is the SWORD trade again and
+       right for the same reason inverted: the eggs all do exactly one job, and
+       the only thing that varies is what comes out. So shape carries the job
+       and colour carries the answer.
+
+       A RESERVED BLOCK rather than one id per creature, because the egg ITEMS
+       are already generated straight off ENT_DEFS -- "a creature added tomorrow
+       gets an egg with no edit here at all" -- and a hand-written list of seven
+       sprite ids would quietly break that the first time an eighth creature
+       turned up. The colour is read from ENT_DEFS too, for the reason stated
+       there: one table describes a creature, never two that can disagree.
+
+       Sixteen is slack, not a plan. initSprites() checks it against ENT_COUNT
+       rather than trusting it. */
+    SPR_EGG_FIRST,
+    SPR_EGG_LAST = SPR_EGG_FIRST + 15,
+
+    /* The one-offs: two boss items, two components, and lunch. */
+    SPR_FORGE_CORE,
+    SPR_BROOD_CALL,
+    SPR_LENS,
+    SPR_RELAY,
+    SPR_BREAD,
+
     SPR_COUNT
 };
 

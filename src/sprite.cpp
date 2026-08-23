@@ -1,5 +1,8 @@
 #include "sprite.h"
 #include "rig.h"
+/* For ENT_DEFS: the egg shells are tinted from the creature table so the two
+   cannot disagree. See the egg loop in initSprites(). */
+#include "entity.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -140,6 +143,33 @@ static u32 paletteOf(char c) {
     case '0': return 0xB04838;     /* brood: carapace */
     case '+': return 0x7A2A20;     /* brood: shade */
     case '=': return 0xE87A4A;     /* brood: lit ridge */
+
+    /* --- the drones ------------------------------------------------------
+       Every letter was already spoken for by the time these were drawn, which
+       is why this last group reaches for punctuation. The names below are the
+       contract, exactly as above: '$' is a shield field wherever it appears and
+       nothing else, and the day it means two things is the day the set stops
+       looking like a set.
+
+       The four drones share the casing colours D/d/E with the instruments,
+       deliberately -- they are the same kind of made object, and what tells
+       them apart is what hangs underneath. */
+    case '!': return 0xFFE9A8;     /* drone lamp, the glow it throws */
+    case '$': return 0x7ACFFF;     /* shield field */
+    case '%': return 0x3E7EA8;     /* shield field, its edge */
+    /* Forge core: the only item in the game that is a piece of a boss, and it
+       is lit from inside. Hotter than the flame colours the furnace uses,
+       because it is the thing that makes a furnace possible. */
+    case '&': return 0xC85A2A;     /* forge core, hot shell */
+    case '*': return 0xFFD46A;     /* forge core, the light inside it */
+    /* Brood call: bleached chitin, so it reads as a piece of the creature it
+       summons rather than as a manufactured horn. */
+    case '(': return 0xD8C89A;     /* chitin horn */
+    case ')': return 0x8A7450;     /* chitin horn, its bore and shade */
+    case '-': return 0xB8E8FF;     /* lens glass */
+    case '[': return 0xC89A5A;     /* bread crust */
+    case ']': return 0xE8D2A2;     /* bread crumb */
+    case '{': return 0x2A2620;     /* egg speckle, dark on every shell */
 
     default:  return 0xFF00FF;     /* unmapped: loud on purpose */
     }
@@ -1362,6 +1392,273 @@ static const char* ART_FORGESTN[SPR_H] = {
     "..............",
 };
 
+/* --- the drones ------------------------------------------------------------
+
+   A shared chassis and four payloads. The chassis is rows 1-7 in every one of
+   them, identical to the character: two rotors on stalks over a boxed hull.
+   That repetition is the point -- it is what makes four different icons read
+   as one family before any of the detail resolves -- and it is also why the
+   payload gets the whole bottom half rather than a corner.
+
+   Casing colours are D/d/E, the same three the thermometer and the circuit
+   parts use. These are manufactured objects and they should look it, next to
+   charms that are pieces of animal. */
+
+/* Light: a lamp under the hull, throwing a halo. The one drone whose effect is
+   literally light, so the icon emits some -- the same decision the moth
+   lantern charm makes, and they should agree. */
+static const char* ART_DRONE_LIGHT[SPR_H] = {
+    "..............",
+    "..EE......EE..",
+    "...E......E...",
+    "..DDDDDDDDDD..",
+    "..DdEEEEEEdD..",
+    "..DdEEEEEEdD..",
+    "..dddddddddd..",
+    "...DDDDDDDD...",
+    "....ffffff....",
+    ".....ffff.....",
+    "....!....!....",
+    "...!......!...",
+    "..............",
+    "..............",
+};
+
+/* Attack: twin barrels with the heat still in them. Two rather than one,
+   because a single centred barrel at this size is a dot and reads as another
+   lamp. */
+static const char* ART_DRONE_ATTACK[SPR_H] = {
+    "..............",
+    "..EE......EE..",
+    "...E......E...",
+    "..DDDDDDDDDD..",
+    "..DdEEEEEEdD..",
+    "..DdEEEEEEdD..",
+    "..dddddddddd..",
+    "...DDDDDDDD...",
+    "...SS..SS.....",
+    "...SS..SS.....",
+    "...ee..ee.....",
+    "....f..f......",
+    "..............",
+    "..............",
+};
+
+/* Pickup: an open claw. Open rather than closed, so it reads as reaching for
+   something instead of holding one -- the drone's whole job is the reaching. */
+static const char* ART_DRONE_PICKUP[SPR_H] = {
+    "..............",
+    "..EE......EE..",
+    "...E......E...",
+    "..DDDDDDDDDD..",
+    "..DdEEEEEEdD..",
+    "..DdEEEEEEdD..",
+    "..dddddddddd..",
+    "...DDDDDDDD...",
+    "...SS....SS...",
+    "..SS......SS..",
+    "..SS......SS..",
+    "...SS....SS...",
+    "....SSSSSS....",
+    "..............",
+};
+
+/* Shield: a field domed BELOW the hull rather than ringed around it. A ring
+   would collide with the chassis and turn the whole icon into a blue blob;
+   hung underneath, the chassis stays legible and the dome still says the drone
+   is projecting something. */
+static const char* ART_DRONE_SHIELD[SPR_H] = {
+    "..............",
+    "..EE......EE..",
+    "...E......E...",
+    "..DDDDDDDDDD..",
+    "..DdEEEEEEdD..",
+    "..DdEEEEEEdD..",
+    "..dddddddddd..",
+    "...DDDDDDDD...",
+    "..%%%%%%%%%%..",
+    ".%$$$$$$$$$$%.",
+    ".%..........%.",
+    "..%........%..",
+    "...%%....%%...",
+    "..............",
+};
+
+/* --- the armour ladder -----------------------------------------------------
+   M and m are substituted per tier by expandMetal; everything else is fixed.
+   The visor uses the same V/v the character's own helmet does, so a suit in
+   the pack and a suit on the body are recognisably the same object. */
+
+static const char* ART_ARMOUR_HELM[SPR_H] = {
+    "..............",
+    "....MMMMMM....",
+    "...MMMMMMMM...",
+    "..MMMMMMMMMM..",
+    "..MMVVVVVVMM..",
+    "..MmVvVVVVmM..",
+    "..MmVVVVVVmM..",
+    "..MmmmmmmmmM..",
+    "...MmmmmmmM...",
+    "....MMMMMM....",
+    "..............",
+    "..............",
+    "..............",
+    "..............",
+};
+
+/* The orange band is the life-support trim the character's own suit carries.
+   It is the only warm thing on either piece, which is what stops two grey
+   rectangles at two greys from being indistinguishable. */
+static const char* ART_ARMOUR_SUIT[SPR_H] = {
+    "..............",
+    "...MM....MM...",
+    "..MMMM..MMMM..",
+    "..MMMMMMMMMM..",
+    "..MmMMMMMMmM..",
+    "..MmMOOOOMmM..",
+    "..MmMMMMMMmM..",
+    "...MMMMMMMM...",
+    "...MmMMMMmM...",
+    "....MMMMMM....",
+    "..............",
+    "..............",
+    "..............",
+    "..............",
+};
+
+/* --- the egg ---------------------------------------------------------------
+   Narrow at the top, heavy at the bottom, with dark mottling that is the same
+   on every shell. The speckle is what stops a tinted oval reading as a gem:
+   eggs are the one item here that hatch into something, and the icon should
+   look organic rather than cut. */
+static const char* ART_EGG[SPR_H] = {
+    "..............",
+    ".....MMMM.....",
+    "....MMMMMM....",
+    "...MMMMMMMM...",
+    "..MMMM{MMMMM..",
+    "..MMMMMMMMMM..",
+    "..MM{MMMM{MM..",
+    "..MMMMMMMMMM..",
+    "..MmMMMMMMmM..",
+    "...mMMMMMMm...",
+    "....mmmmmm....",
+    "..............",
+    "..............",
+    "..............",
+};
+
+/* --- the one-offs ----------------------------------------------------------*/
+
+/* Forge core. A faceted stone lit from inside, and the brightest thing in the
+   item set on purpose: it drops off the layer's boss and it is what a forge is
+   built around. */
+static const char* ART_FORGE_CORE[SPR_H] = {
+    "..............",
+    "......&&......",
+    "....&&&&&&....",
+    "...&&****&&...",
+    "..&&******&&..",
+    "..&***TT***&..",
+    "..&***TT***&..",
+    "..&&******&&..",
+    "...&&****&&...",
+    "....&&&&&&....",
+    "......&&......",
+    "..............",
+    "..............",
+    "..............",
+};
+
+/* Brood call. Two prongs on a chitin band, cut from her own mandibles.
+
+   This one took three attempts and the failures are worth recording, because
+   they were all the same mistake. A tapered horn came out as a wooden spoon; a
+   bell with straight sides came out as a cone; a bell with concave sides and a
+   crown came out as a fir tree. At fourteen pixels a solid mass shaded light
+   on one side and dark on the other reads as a LIT CONE whatever outline you
+   give it -- the silhouette loses to the shading every time.
+
+   Two prongs with a gap between them cannot do that: the negative space is the
+   shape, and negative space survives being small. It is also the only icon in
+   the set with a hole in the middle of it, which is worth something in a row
+   of amulets. */
+static const char* ART_BROOD_CALL[SPR_H] = {
+    "..............",
+    "..((((((((((..",
+    "..))))))))))..",
+    "..((......((..",
+    "..((......((..",
+    "..((......((..",
+    "..((......((..",
+    "..))......))..",
+    "..))......))..",
+    "...)......)...",
+    "...)......)...",
+    "....)....)....",
+    "..............",
+    "..............",
+};
+
+/* Focusing lens. A rimmed disc with a bright centre, which is the one shape
+   that says "optics" at fourteen pixels without any glint trickery. */
+static const char* ART_LENS[SPR_H] = {
+    "..............",
+    ".....GGGG.....",
+    "...GG----GG...",
+    "..G--------G..",
+    ".G---TTTT---G.",
+    "G---TTTTTT---G",
+    "G---TTTTTT---G",
+    ".G---TTTT---G.",
+    "..G--------G..",
+    "...GG----GG...",
+    ".....GGGG.....",
+    "..............",
+    "..............",
+    "..............",
+};
+
+/* Field relay. A cased box with an aerial and a pair of terminals, using the
+   same 'l' the circuit parts use for "where a spark goes in or out" -- which
+   is exactly what a relay is for. */
+static const char* ART_RELAY[SPR_H] = {
+    "......S.......",
+    "....S.S.S.....",
+    ".....S.S......",
+    "......S.......",
+    "..DDDDDDDDDD..",
+    "..DEEEEEEEEd..",
+    "..DE.llll.Ed..",
+    "..DE.llll.Ed..",
+    "..DEEEEEEEEd..",
+    "..dddddddddd..",
+    "...D......D...",
+    "..............",
+    "..............",
+    "..............",
+};
+
+/* Bread. Crust outside, crumb inside, and slashed across the top -- the one
+   food item in the game, and it should be obvious it is food rather than
+   another brown component. */
+static const char* ART_BREAD[SPR_H] = {
+    "..............",
+    "....[[[[[[....",
+    "..[[]][]]][[..",
+    ".[]]][]]]][]].",
+    ".[]][]]]][]][.",
+    ".[]]]][]]]][].",
+    ".[[]]]]]]]][[.",
+    "..[[[[[[[[[[..",
+    "..............",
+    "..............",
+    "..............",
+    "..............",
+    "..............",
+    "..............",
+};
+
 void initSprites() {
     memset(g_sprite, 0, sizeof(g_sprite));
     expand(SPR_MITE,      ART_MITE);
@@ -1421,6 +1718,56 @@ void initSprites() {
             expandMetal(METAL[i].spear, ART_SPEAR, c, shade);
         }
     }
+    expand(SPR_DRONE_LIGHT,  ART_DRONE_LIGHT);
+    expand(SPR_DRONE_ATTACK, ART_DRONE_ATTACK);
+    expand(SPR_DRONE_PICKUP, ART_DRONE_PICKUP);
+    expand(SPR_DRONE_SHIELD, ART_DRONE_SHIELD);
+    expand(SPR_FORGE_CORE,   ART_FORGE_CORE);
+    expand(SPR_BROOD_CALL,   ART_BROOD_CALL);
+    expand(SPR_LENS,         ART_LENS);
+    expand(SPR_RELAY,        ART_RELAY);
+    expand(SPR_BREAD,        ART_BREAD);
+
+    /* --- the armour ladder ------------------------------------------------
+       The same two-shapes-many-tints arrangement as the swords above, and the
+       colours are the ones item.cpp already gives these pieces rather than a
+       second opinion about what steel looks like. */
+    {
+        struct ArmourSpr { int helm, suit; u32 col; };
+        static const ArmourSpr ARMOUR[] = {
+            { SPR_ARMOUR_HELM_STEEL,    SPR_ARMOUR_SUIT_STEEL,    0x9CA0A6 },
+            { SPR_ARMOUR_HELM_TITANIUM, SPR_ARMOUR_SUIT_TITANIUM, 0xC8CCD2 },
+        };
+        for (int i = 0; i < (int)(sizeof(ARMOUR) / sizeof(ARMOUR[0])); ++i) {
+            const u32 c = ARMOUR[i].col;
+            const u32 shade = ((c >> 1) & 0x7F7F7Fu);
+            expandMetal(ARMOUR[i].helm, ART_ARMOUR_HELM, c, shade);
+            expandMetal(ARMOUR[i].suit, ART_ARMOUR_SUIT, c, shade);
+        }
+    }
+
+    /* --- the eggs ---------------------------------------------------------
+       One shell, tinted per creature, and the tint is read from ENT_DEFS
+       rather than listed here. entity.h is explicit about why the colour lives
+       on the creature -- "one table describing a creature and not two that can
+       disagree about what colour it is" -- and an egg that is not the colour
+       of the thing inside it is exactly that disagreement.
+
+       So this loop mirrors the one in item.cpp that builds the egg items, and
+       a creature added tomorrow gets a shell in its own colour with no edit
+       here either. */
+    if (ENT_COUNT - 1 > SPR_EGG_LAST - SPR_EGG_FIRST + 1) {
+        fprintf(stderr, "%d creatures but only %d egg sprite slots -- widen "
+                        "SPR_EGG_LAST\n", ENT_COUNT - 1,
+                SPR_EGG_LAST - SPR_EGG_FIRST + 1);
+        abort();
+    }
+    for (int t = 1; t < ENT_COUNT; ++t) {
+        const u32 c = ENT_DEFS[t].eggColour;
+        const u32 shade = ((c >> 1) & 0x7F7F7Fu);
+        expandMetal(SPR_EGG_FIRST + (t - 1), ART_EGG, c, shade);
+    }
+
     expand(SPR_ITEM_GENERIC, ART_ITEM_GENERIC);
     expand(SPR_BOLTER,    ART_BOLTER);
     expand(SPR_BENCH,     ART_BENCH);
