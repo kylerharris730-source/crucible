@@ -5,6 +5,7 @@
 #include "projectile.h"
 #include "worldgen.h"
 #include "accessory.h"
+#include "navigate.h"
 #include <string.h>
 #include <math.h>
 
@@ -179,6 +180,7 @@ u32 g_bossesBeaten = 0;
 static int g_spawnCool = 0;
 
 void entReset() {
+    navReset();
     memset(g_entities, 0, sizeof(g_entities));
     memset(g_pickups, 0, sizeof(g_pickups));
     /* Or a new world inherits the last one's cooldown -- which would be a
@@ -465,8 +467,17 @@ static void moveAxis(const World& w, Entity& e, float dx, float dy) {
    shape of the world, which is what makes them cheap and also what makes them
    behave like animals rather than like guided missiles. */
 
+/* Defined below, beside groundChase, because that is where the reasoning
+   lives; declared here because the mite and the slime come first in the file. */
+static float routedDir(Entity& e, const Player& p, bool* climb);
+
 static void miteTick(World& w, Entity& e, const Player& p) {
     const EntityDef& d = ENT_DEFS[e.type];
+    /* NOT routed, alone among the walkers, and that is the creature rather
+       than an oversight: a mite's answer to a wall is to EAT it. Send it round
+       the long way and the chew below never triggers, because chewing only
+       happens when it is pressed against something. The one thing that makes
+       this creature different from a slow husk would quietly stop happening. */
     const float toward = p.centreX() - e.centreX();
     if (toward > 1.0f)      e.facing = 1;
     else if (toward < -1.0f) e.facing = -1;
@@ -611,9 +622,10 @@ static void mothTick(World& w, Entity& e, const Player& p) {
 
 static void slimeTick(World& w, Entity& e, const Player& p) {
     const EntityDef& d = ENT_DEFS[e.type];
-    const float toward = p.centreX() - e.centreX();
-    if (toward > 1.0f)      e.facing = 1;
-    else if (toward < -1.0f) e.facing = -1;
+    bool climb = false;
+    const float toward = routedDir(e, p, &climb);
+    if (toward > 0.5f)       e.facing = 1;
+    else if (toward < -0.5f) e.facing = -1;
     e.vx += (float)e.facing * d.accel;
     if (e.vx >  d.speed) e.vx =  d.speed;
     if (e.vx < -d.speed) e.vx = -d.speed;
@@ -647,14 +659,48 @@ static void slimeTick(World& w, Entity& e, const Player& p) {
     }
 }
 
+/* --- which way is the player, ROUTED ---------------------------------------
+
+   The straight line is the fallback here, not the rule. navHeading reads the
+   flow field (see navigate.h) and answers with the way out of this room rather
+   than the way the player happens to lie, which is the difference between a
+   creature that comes round the corner and one that stands in a corner pushing
+   at rock.
+
+   Two things make this safe to put under every ground creature at once.
+
+   It only ever ADDS reachability: when the field cannot answer -- off the
+   window, buried, or in a pocket with no route at all -- this returns the
+   straight line, which is exactly the behaviour the creature has today.
+
+   And it is a HEADING, not a path. Nothing is stored on the creature, nothing
+   has to be invalidated when a wall is dug through or a pile collapses, and a
+   creature knocked across the room is not following a plan that is now wrong.
+
+   `climb` comes back true when the route goes up, which is a much better hop
+   cue than "am I stuck": it fires at the bottom of a step rather than after
+   the creature has already failed to walk through one. */
+static float routedDir(Entity& e, const Player& p, bool* climb) {
+    *climb = false;
+    const EntityDef& d = ENT_DEFS[e.type];
+    int dir = 0;
+    if (navHeading((int)e.centreX(), e.bottom(), d.h, &dir, climb))
+        return (float)dir;
+
+    const float dx = p.centreX() - e.centreX();
+    return dx > 0 ? 1.0f : -1.0f;
+}
+
 /* Walk toward the player, or away to hold a standoff. Shared by everything that
    moves along the ground, because "which way is the player" is the same
    question however the creature answers it. */
 static void groundChase(Entity& e, const Player& p, float speed, float accel,
-                        float standOff) {
+                        float standOff, bool* climb = 0) {
+    bool wantClimb = false;
     const float dx = p.centreX() - e.centreX();
     const float adx = dx < 0 ? -dx : dx;
-    float want = dx > 0 ? 1.0f : -1.0f;
+    float want = routedDir(e, p, &wantClimb);
+    if (climb) *climb = wantClimb;
     if (standOff > 0.0f) {
         /* Too close: back off. Roughly right: hold station. This is what makes
            a shooter a shooter rather than a slow melee creature. */
@@ -670,11 +716,16 @@ static void groundChase(Entity& e, const Player& p, float speed, float accel,
 
 static void huskTick(Entity& e, const Player& p) {
     const EntityDef& d = ENT_DEFS[e.type];
-    groundChase(e, p, d.speed, d.accel, 0.0f);
-    /* Hops when it is up against something and the player is above. The whole
-       creature is "it does not stop", and a zombie permanently stuck on a
-       one-cell lip is a zombie that stops. */
-    if (e.onGround && e.vx == 0.0f && p.centreY() < e.centreY()) e.vy = -2.2f;
+    bool climb = false;
+    groundChase(e, p, d.speed, d.accel, 0.0f, &climb);
+    /* Hops when the route goes up, and still hops when it is simply stuck with
+       the player overhead. The second clause is the old rule and it stays,
+       because it is the one that covers everything the field cannot see: a
+       creature outside the window, or one wedged on a lip too small to be a
+       node. The whole creature is "it does not stop", and a zombie permanently
+       stuck on a one-cell lip is a zombie that stops. */
+    if (e.onGround && (climb || (e.vx == 0.0f && p.centreY() < e.centreY())))
+        e.vy = -2.2f;
 }
 
 /* --- the bat: why it misses -------------------------------------------------
@@ -953,6 +1004,33 @@ static void broodTick(World& w, Entity& e, const Player& p) {
 
 static void entTickMode(World& w, Player& fallbackPlayer, Inventory& fallbackInv,
                         bool multiplayer) {
+    /* One search for the whole roster, before anybody moves. Seeded from every
+       live player, so in multiplayer a creature routes to whichever of them the
+       terrain actually lets it reach rather than to the nearest one as the crow
+       flies -- which is frequently the one behind a wall.
+
+       navUpdate keeps its own clock and returns immediately on most frames; it
+       is called unconditionally so there is exactly one place that decides how
+       stale a route may be. */
+    {
+        float sx[MAX_PLAYERS + 1], sy[MAX_PLAYERS + 1];
+        int n = 0;
+        if (fallbackPlayer.alive) {
+            sx[n] = fallbackPlayer.centreX();
+            sy[n] = (float)fallbackPlayer.bottom();
+            ++n;
+        }
+        if (multiplayer)
+            for (int slot = 0; slot < MAX_PLAYERS && n < MAX_PLAYERS + 1; ++slot) {
+                const PlayerSession& session = g_playerSessions[slot];
+                if (!session.connected || !session.body.alive) continue;
+                sx[n] = session.body.centreX();
+                sy[n] = (float)session.body.bottom();
+                ++n;
+            }
+        navUpdate(w, sx, sy, n);
+    }
+
     for (int i = 0; i < MAX_ENTITIES; ++i) {
         Entity& e = g_entities[i];
         if (e.type == ENT_NONE) continue;
