@@ -63,10 +63,31 @@ if errorlevel 1 (
     echo The new build is at build\crucible.new.exe
     exit /b 1
 )
-REM Direct diagnostic builds use either the `crucible.<purpose>.exe` or
-REM `<name>_test.exe` convention. Failed replacement builds can also leave a
-REM `<name>.new.exe`. None are saves or the main executable, so a successful
-REM normal build is the safe moment to clear that scoped clutter.
-for %%f in (build\crucible.*.exe) do del /q "%%f" 2>nul
-for %%f in (build\*_test.exe build\*_smoke.exe build\*_soak*.exe build\*_mismatch*.exe build\*.new.exe) do del /q "%%f" 2>nul
+REM --- tidy the build folder -------------------------------------------------
+REM A WHITELIST, and that inversion is the whole fix. This used to name the
+REM shapes it knew about -- crucible.*.exe, *_test.exe, *_smoke.exe, *_soak*.exe,
+REM *_mismatch*.exe, *.new.exe -- so every harness built under a name nobody had
+REM thought of survived it. Measured, that is how the folder collected six
+REM *chk.exe files, a live_grace.exe and a stray empty build\build directory:
+REM not one of them matched a pattern, and no pattern list ever will, because
+REM the names are invented one at a time by whoever is debugging.
+REM
+REM Inverted, there is nothing to keep up to date. build\crucible.exe is the
+REM only executable that belongs here and everything else with that extension
+REM goes. Diagnostic and harness builds are meant to be disposable, so losing
+REM one to a normal build is the correct outcome rather than an unfortunate
+REM one -- each is a single command to rebuild. An executable that is currently
+REM RUNNING simply refuses to be deleted, which is harmless and self-correcting.
+REM
+REM ONLY .exe is touched, and that restriction is load-bearing. Saves live in
+REM this folder too -- crucible.sav plus the numbered slots -- so a cleanup
+REM written against *.* would delete somebody's world. Never widen this.
+for %%f in (build\*.exe) do (
+    if /i not "%%~nxf"=="crucible.exe" del /q "%%f" 2>nul
+)
+REM An empty build\build, left behind when a build ran with the working
+REM directory already inside build\. rmdir WITHOUT /s, so it removes the
+REM directory only when it is genuinely empty and fails harmlessly otherwise --
+REM this is a tidy-up and has no business recursively deleting anything.
+if exist build\build rmdir build\build 2>nul
 echo Built build\crucible.exe
