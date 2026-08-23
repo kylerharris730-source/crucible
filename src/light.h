@@ -84,7 +84,15 @@
 static const int LIGHT_SHIFT = 2;
 static const int LIGHT_CELL  = 1 << LIGHT_SHIFT;   /* world cells per sample */
 
-static const int LIGHT_MARGIN = 60;                /* in SAMPLES, not cells */
+/* 60 -> 128, because open media now attenuate half as much (see sampleBlock)
+   and the margin is defined as exactly one source's reach. Leaving it at 60
+   would put a seam wherever a lamp sat between 240 and 500 cells off screen --
+   which is a distance that now matters, and did not before.
+
+   It costs area, and area is the whole cost of lighting: the field goes from
+   248x216 to 384x352, or 2.5 times the samples. That is the price of the reach
+   and it is the number to look at first if lighting ever needs to be cheaper. */
+static const int LIGHT_MARGIN = 128;               /* in SAMPLES, not cells */
 static const int LIGHT_W = VIEW_CELLS_W / LIGHT_CELL + 2 * LIGHT_MARGIN;
 static const int LIGHT_H = VIEW_CELLS_H / LIGHT_CELL + 2 * LIGHT_MARGIN;
 

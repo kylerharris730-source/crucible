@@ -490,8 +490,76 @@ static void miteTick(World& w, Entity& e, const Player& p) {
     }
 }
 
+bool stalkTick(Entity& e, const Player& p, const StalkSpec& spec) {
+    /* One counter, three phases, read by where it sits:
+
+         actTimer >  poise            drifting
+         actTimer in 1..poise         poised, telegraphing
+         actTimer <= 0                dashing, for `dash` frames
+
+       Counting DOWN through zero rather than holding a separate phase id is
+       the same shape broodTick uses, and it is what lets a creature adopt this
+       without a new field. */
+    if (--e.actTimer <= -spec.dash) {
+        e.actTimer = spec.drift + spec.poise;
+        e.telegraph = 0;
+        return false;
+    }
+
+    if (e.actTimer < 0) {
+        /* Committed. The heading was chosen on the last frame of the poise and
+           is not revisited -- which is the entire reason this is dodgeable
+           rather than a homing missile with a pause in it. */
+        e.vx = e.aimX * spec.speed;
+        e.vy = e.aimY * spec.speed;
+        if (e.vx > 0.05f) e.facing = 1; else if (e.vx < -0.05f) e.facing = -1;
+        e.telegraph = 0;
+        return true;
+    }
+
+    if (e.actTimer <= spec.poise) {
+        /* Poised. Sheds speed rather than stopping dead, so the pause reads as
+           a creature gathering itself rather than as the game hitching. */
+        e.vx *= 0.55f;
+        e.vy *= 0.55f;
+        e.telegraph = e.actTimer;
+        /* Aimed on the LAST frame of the poise. Choosing at the start would
+           tell you where it is going before you have had a chance to be
+           somewhere else, and then the telegraph would be decoration rather
+           than information you can act on. */
+        if (e.actTimer == 1) {
+            float dx = p.centreX() - e.centreX();
+            float dy = p.centreY() - e.centreY();
+            const float len = sqrtf(dx * dx + dy * dy);
+            if (len > 0.01f) { dx /= len; dy /= len; }
+            else { dx = (float)e.facing; dy = 0.0f; }
+            e.aimX = dx; e.aimY = dy;
+        }
+        return true;
+    }
+
+    e.telegraph = 0;
+    return false;      /* drifting: the caller's frame */
+}
+
+/* --- the moth: STALK -------------------------------------------------------
+   It was a pure heat-gradient follower, which made it the clearest example of
+   the roster's one-note problem: it and the husk and the slime all walked at
+   you continuously and differed only in speed and in what they left behind.
+
+   Now it drifts up the gradient, stops, and lunges. That reads completely
+   differently from the bat -- which is the other flier, and which is fast and
+   CONTINUOUS -- so the two are told apart by watching them rather than by
+   noticing one has more health. It also gives a moth a moment where it is not
+   moving, which is when you shoot it. */
+static const StalkSpec MOTH_STALK = { 64, 20, 16, 1.75f };
+
 static void mothTick(World& w, Entity& e, const Player& p) {
     const EntityDef& d = ENT_DEFS[e.type];
+
+    /* The stalk owns the poise and the dash; everything below is the drift,
+       which for a moth means steering up the heat gradient. */
+    if (stalkTick(e, p, MOTH_STALK)) return;
 
     /* Sample the temperature field on a ring and steer up the gradient. Eight
        directions at three distances is 24 reads, which against a cap of ten

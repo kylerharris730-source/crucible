@@ -307,6 +307,57 @@ static const int ENT_MAX_ALIVE = 7;
    seconds genuinely frees the budget. */
 static const int ENT_DESPAWN_DIST = 700;
 
+/* ===========================================================================
+   The movement repertoire
+   ===========================================================================
+
+   Creatures here are gradient followers rather than planners, and the roster's
+   rule has always been "simple AI, distinct MOVEMENT" -- a zombie you walk away
+   from, a bat you cannot, a shooter that makes standing still wrong. What was
+   missing is that every one of them followed its gradient CONTINUOUSLY, so
+   however different their speeds and headings, they all read as the same
+   behaviour at different rates.
+
+   A named set of movement patterns fixes that, and the point of naming them is
+   reuse: a new creature picks one and gets a shape somebody already tuned,
+   rather than another bespoke tick function that turns out to be a chase with
+   different numbers.
+
+     CHASE   -- follow the gradient every frame. The husk and the bat, and it is
+                still right for both: relentlessness is the husk's whole
+                character, and the bat's overshoot needs continuous motion to
+                overshoot WITH.
+     STALK   -- drift, stop dead and telegraph, then commit to a heading and
+                travel it fast. Predator movement: the pause is the tell, and
+                what makes it beatable is that the heading is chosen BEFORE the
+                dash and never revisited.
+     STANDOFF-- hold a range and shoot. The spitter.
+
+   STALK is the one this block adds. The Brood Mother has had a version of it
+   since the rope fix (see broodTick) and predates this helper; hers carries
+   extra concerns -- weightlessness, ploughing through rock, a stuck recovery --
+   so she has deliberately NOT been rewritten onto it. Two implementations of a
+   timing pattern is worth less than a working boss, and the day she needs a
+   fourth concern is the day to revisit that. */
+
+/* One creature's stalk clock. All three phases run off `actTimer` counting
+   down, the same arrangement broodTick uses, so a creature needs no new field
+   to adopt this. */
+struct StalkSpec {
+    int drift;        /* frames of ordinary approach between dashes */
+    int poise;        /* frames held still, telegraphing */
+    int dash;         /* frames committed to the heading */
+    float speed;      /* cells per frame while dashing */
+};
+
+/* Advances the clock and moves `e` if the stalk owns this frame.
+
+   Returns true when it has taken the frame -- the caller's ordinary movement
+   must then be skipped. Returns false during the drift phase, which is the
+   caller's to fill however its archetype likes; a moth steers up the heat
+   gradient, and something else might do anything at all. */
+bool stalkTick(Entity& e, const Player& p, const StalkSpec& spec);
+
 /* How long a boss stays committed to a charge. Long enough to see it start,
    decide, and be somewhere else -- a lunge you cannot read is just damage that
    arrives. */

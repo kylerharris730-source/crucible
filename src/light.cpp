@@ -171,6 +171,24 @@ static inline void sampleBlock(const World& w, int wx, int wy,
     *emit  = (u8)e;
     /* Mean per cell, times the cells one sample step crosses. */
     int perStep = (a * LIGHT_CELL) / n;
+    /* --- open media attenuate HALF as much -------------------------------
+       This is the one lever on how far light carries, and it is applied here
+       rather than in g_matOpacity because air is already at 1 and there is no
+       smaller integer. Halving at the point the per-step figure is computed is
+       the same change expressed where there is still resolution to express it
+       in.
+
+       Only where the block is NOT solid, and that restriction is the whole
+       design. Halving everything would double how deep light seeps into rock
+       as well -- measured, a stone wall goes from stopping light in about 7
+       cells to about 13, which reads as walls glowing rather than as a brighter
+       cave. Open air, gas and water carry twice as far; anything you built to
+       keep the light out keeps working exactly as it did.
+
+       LIGHT_MARGIN moves with this and MUST -- see the note on it in light.h.
+       The margin is exactly one source's reach, which is what makes cutting the
+       light rectangle off exact rather than approximate. */
+    if (!(s * 2 >= n)) perStep = (perStep + 1) / 2;
     /* A block that emits does not get to smother itself. Per cell, materials.cpp
        already forces every light source transparent for exactly this reason; at
        block resolution the averaging quietly undid it, because a lamp set into

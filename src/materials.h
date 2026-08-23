@@ -1166,7 +1166,12 @@ static const int LIGHT_NONE = 0;
    all that is wanted -- enough that half the light does not read as a tenth of
    the brightness, and not so much that everything flattens toward white. */
 extern u8 g_lightShade[256];
-static const double LIGHT_GAMMA = 0.62;
+/* 0.62 -> 0.50. Gamma is the curve from light to SHADE, and it is what decides
+   how dark the merely-dim parts of the world look -- doubling the reach makes
+   the lit region bigger, and this makes the dim end of it readable. At 0.50 a
+   light of 64 renders at shade 136 rather than 117, and 128 at 185 rather than
+   172; the bright end is unchanged because both curves are pinned at 255. */
+static const double LIGHT_GAMMA = 0.50;
 
 /* What unlit renders at. This, not the light field, is where "never quite
    pitch black" belongs: zero light means zero light, and how dark you choose
@@ -1196,7 +1201,12 @@ static const double LIGHT_GAMMA = 0.62;
    Note this is not "make it darker". The mid-tones are untouched; only the
    bottom of the range moved. Lit space is as bright as it ever was, and the
    whole change is in how far apart lit and unlit sit. */
-static const int LIGHT_MIN_SHADE = 16;
+/* 16 -> 24. The floor is what a wholly unlit cell renders at, and it is a
+   READABILITY decision rather than a physical one -- see the note above. At 16
+   the unlit world is 6% grey, which is the "so damn dark" complaint at its
+   source: not the reach, the black point. 24 is 9%, enough to make out the
+   shape of a cave you have no light in without making a torch pointless. */
+static const int LIGHT_MIN_SHADE = 24;
 
 /* --- background colours ----------------------------------------------------
    What a material looks like when it is BEHIND you rather than in front: the
