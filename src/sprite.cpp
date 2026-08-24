@@ -25,6 +25,9 @@ static u32 paletteOf(char c) {
     case 'B': return 0x2B3040;     /* module body */
     case 'K': return 0x9CE0FF;     /* shot symbol: the colour its shot is */
     case 'L': return 0xFFB040;     /* blast symbol */
+    case '?': return 0x72E09A;     /* bounce-module ricochet path */
+    case '@': return 0xD59CFF;     /* homing-module orbit/target symbol */
+    case '^': return 0xFF72D8;     /* teleport-module spatial split */
 
     /* The suit. Its own letters rather than reusing the tools' -- a shared
        palette is only worth having while the colours mean the same thing, and
@@ -250,6 +253,27 @@ static const char* ART_MOD_BLAST[SPR_H] = {
     ".RRRRRRRRRRRR.",
     "..............",
     "..............",
+};
+
+static const char* ART_MOD_BOUNCE[SPR_H] = {
+    "..............", ".RRRRRRRRRRRR.", ".RBBBBBBBBBBR.", ".RBB?BBBBBBBR.",
+    ".RBBB??BBBBBR.", ".RBBBB?BBBBBR.", ".RBBBBB??BBBR.", ".RBBBBBB?BBBR.",
+    ".RBBBBB?BBBBR.", ".RBBBB??BBBBR.", ".RBBBBBBBBBBR.", ".RRRRRRRRRRRR.",
+    "..............", "..............",
+};
+
+static const char* ART_MOD_HOMING[SPR_H] = {
+    "..............", ".RRRRRRRRRRRR.", ".RBBBBBBBBBBR.", ".RBBB@@@@BBBR.",
+    ".RBB@BBBB@BBR.", ".RB@BB@@BB@BR.", ".RB@BB@@BB@BR.", ".RBB@BBBB@BBR.",
+    ".RBBB@@@@BBBR.", ".RBBBB@BBBBBR.", ".RBBBBBBBBBBR.", ".RRRRRRRRRRRR.",
+    "..............", "..............",
+};
+
+static const char* ART_MOD_TELEPORT[SPR_H] = {
+    "..............", ".RRRRRRRRRRRR.", ".RBBBBBBBBBBR.", ".RB^^BBBB^^BR.",
+    ".RB^^^BB^^^BR.", ".RBB^^BB^^BBR.", ".RBBB^BB^BBBR.", ".RBBB^BB^BBBR.",
+    ".RBB^^BB^^BBR.", ".RB^^^BB^^^BR.", ".RBBBBBBBBBBR.", ".RRRRRRRRRRRR.",
+    "..............", "..............",
 };
 
 
@@ -1526,6 +1550,45 @@ static const char* ART_ARMOUR_SUIT[SPR_H] = {
     "..............",
 };
 
+/* Drone-set legs keep the split silhouette readable at inventory scale. The
+   cyan control strips repeat the visor colour and distinguish them from two
+   ordinary metal boots. */
+static const char* ART_ARMOUR_GREAVES[SPR_H] = {
+    "..............",
+    "...MMM.MMM....",
+    "...MVM.MVM....",
+    "...MVM.MVM....",
+    "...MmM.MmM....",
+    "...MmM.MmM....",
+    "...MmM.MmM....",
+    "..MMMM.MMMM...",
+    "..Mmmm.Mmmm...",
+    ".MMMMM..MMMMM.",
+    ".Mmmmm..Mmmmm.",
+    "..............",
+    "..............",
+    "..............",
+};
+
+/* A small transmitting puck: antenna and cyan signal arcs above a dark metal
+   housing. Negative space between the arcs keeps it distinct from a lamp. */
+static const char* ART_DRONE_BEACON[SPR_H] = {
+    "......l.......",
+    "...l..l..l....",
+    "....l.l.l.....",
+    ".....lll......",
+    "......l.......",
+    "...DDDDDDDD...",
+    "..DEEEEEEEEd..",
+    "..DE..ll..Ed..",
+    "..DE..ll..Ed..",
+    "..DEEEEEEEEd..",
+    "...dddddddd...",
+    "....D....D....",
+    "..............",
+    "..............",
+};
+
 /* --- the egg ---------------------------------------------------------------
    Narrow at the top, heavy at the bottom, with dark mottling that is the same
    on every shell. The speckle is what stops a tinted oval reading as a gem:
@@ -1672,6 +1735,13 @@ void initSprites() {
     expand(SPR_TOOL2,     ART_TOOL2);
     expand(SPR_MOD_SHOT,  ART_MOD_SHOT);
     expand(SPR_MOD_BLAST, ART_MOD_BLAST);
+    expand(SPR_MOD_BOUNCE, ART_MOD_BOUNCE);
+    expand(SPR_MOD_HOMING, ART_MOD_HOMING);
+    expand(SPR_MOD_TELEPORT, ART_MOD_TELEPORT);
+    expandMetal(SPR_ARMOUR_DRONE_VISOR,   ART_ARMOUR_HELM,    0x6FAFBE, 0x3D6C78);
+    expandMetal(SPR_ARMOUR_DRONE_HARNESS, ART_ARMOUR_SUIT,    0x6FAFBE, 0x3D6C78);
+    expandMetal(SPR_ARMOUR_DRONE_GREAVES, ART_ARMOUR_GREAVES, 0x6FAFBE, 0x3D6C78);
+    expand(SPR_ACC_DRONE_BEACON, ART_DRONE_BEACON);
     expand(SPR_MINE1,     ART_MINE1);
     expand(SPR_MINE2,     ART_MINE2);
     expand(SPR_MINE3,     ART_MINE3);

@@ -158,6 +158,8 @@ const Recipe RECIPES[] = {
       ITEM_MULTITOOL, 1, "Multitool Mk I", STATION_BENCH },
     { { { (ItemId)MAT_COPPER, 2 }, { (ItemId)MAT_WOOD, 1 }, { ITEM_NONE, 0 } },
       ITEM_MOD_SHOT, 1, "Shot Module", STATION_BENCH },
+    { { { (ItemId)MAT_COPPER, 2 }, { (ItemId)MAT_RUBBER, 1 }, { ITEM_NONE, 0 } },
+      ITEM_MOD_BOUNCE, 1, "Bounce Module", STATION_BENCH },
     { { { (ItemId)MAT_COPPER, 3 }, { (ItemId)MAT_WOOD, 2 }, { ITEM_NONE, 0 } },
       ITEM_DRILL, 1, "Hand Drill", STATION_BENCH },
     /* The sickle deliberately does NOT want iron -- see ItemDef::minePlantsOnly
@@ -243,6 +245,16 @@ const Recipe RECIPES[] = {
       ITEM_PICKUP_DRONE, 1, "Pickup Drone", STATION_ANVIL },
     { { { (ItemId)MAT_IRON, 5 }, { (ItemId)MAT_GLASS, 2 }, { ITEM_NONE, 0 } },
       ITEM_SHIELD_DRONE, 1, "Shield Drone", STATION_ANVIL },
+    /* Placeholder early recipes. These can later become layer-2 drops without
+       changing the set mechanics or invalidating crafted pieces in saves. */
+    { { { (ItemId)MAT_IRON, 4 }, { (ItemId)MAT_COPPER, 2 }, { ITEM_NONE, 0 } },
+      ITEM_DRONE_VISOR, 1, "Drone Visor", STATION_ANVIL },
+    { { { (ItemId)MAT_IRON, 6 }, { (ItemId)MAT_COPPER, 3 }, { ITEM_NONE, 0 } },
+      ITEM_DRONE_HARNESS, 1, "Drone Harness", STATION_ANVIL },
+    { { { (ItemId)MAT_IRON, 4 }, { (ItemId)MAT_RUBBER, 2 }, { ITEM_NONE, 0 } },
+      ITEM_DRONE_GREAVES, 1, "Drone Greaves", STATION_ANVIL },
+    { { { (ItemId)MAT_COPPER, 4 }, { (ItemId)MAT_GLASS, 2 }, { ITEM_NONE, 0 } },
+      ITEM_DRONE_BEACON, 1, "Drone Beacon", STATION_ANVIL },
     /* The weapon chassis, and every one of them costs CHITIN on top of metal.
        That is the recipe saying what the item is: chitin comes off the things
        you fight, so an autonomous weapon is paid for out of the fighting it is
@@ -355,6 +367,8 @@ const Recipe RECIPES[] = {
       ITEM_SWORD_TUNGSTEN, 1, "Tungsten Sword", STATION_FORGE },
     { { { (ItemId)MAT_TUNGSTEN, 5 }, { (ItemId)MAT_WOOD, 4 }, { ITEM_NONE, 0 } },
       ITEM_SPEAR_TUNGSTEN, 1, "Tungsten Spear", STATION_FORGE },
+    { { { (ItemId)MAT_VOID, 3 }, { (ItemId)MAT_TUNGSTEN, 2 }, { (ItemId)MAT_GOLD, 2 } },
+      ITEM_MOD_TELEPORT, 1, "Teleport Module", STATION_FORGE },
 
     /* --- the chemistry bench -----------------------------------------------
        Glass work: optics, a bulb, and the two materials this whole plan
@@ -376,6 +390,8 @@ const Recipe RECIPES[] = {
        Mk III and the disruptor the true top of their ladders. */
     { { { (ItemId)MAT_STEEL, 4 }, { (ItemId)MAT_GOLD, 2 }, { ITEM_NONE, 0 } },
       ITEM_MULTITOOL2, 1, "Multitool Mk II", STATION_ASSEMBLY },
+    { { { (ItemId)MAT_GOLD, 2 }, { (ItemId)MAT_CHITIN, 4 }, { (ItemId)MAT_GLASS, 1 } },
+      ITEM_MOD_HOMING, 1, "Homing Module", STATION_ASSEMBLY },
     { { { (ItemId)MAT_TITANIUM, 3 }, { (ItemId)MAT_GOLD, 2 }, { ITEM_NONE, 0 } },
       ITEM_DISRUPTOR, 1, "Disruptor", STATION_ASSEMBLY },
     { { { (ItemId)MAT_GLASS, 2 }, { (ItemId)MAT_GOLD, 2 }, { ITEM_NONE, 0 } },

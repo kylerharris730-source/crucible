@@ -6,6 +6,8 @@
 #include <string.h>
 #include <math.h>
 #include <time.h>   /* the save screen stamps each slot */
+#include <vector>
+#include <unordered_set>
 
 #include "world.h"
 #include "render.h"
@@ -62,12 +64,74 @@ static BITMAPINFO  g_bmi;
 static HFONT       g_font;
 static bool        g_running = true;
 
+/* Interface content scale is intentionally independent from window size. The
+   game still renders one fixed logical canvas so aim and world visibility do
+   not change; this setting sizes text and item artwork within the existing,
+   generous hit targets. One hundred percent is the new compact default. */
+static const int UI_SCALE_VALUES[] = { 80, 90, 100, 110, 120 };
+static const int UI_SCALE_COUNT = (int)(sizeof(UI_SCALE_VALUES) / sizeof(UI_SCALE_VALUES[0]));
+static int g_uiScaleIndex = 2;
+static int uiScalePct() { return UI_SCALE_VALUES[g_uiScaleIndex]; }
+static int uiScaled(int px) { return imax(1, (px * uiScalePct() + 50) / 100); }
+#ifndef CRUCIBLE_CONFIG_PATH
+#define CRUCIBLE_CONFIG_PATH "crucible.cfg"
+#endif
+
+static void uiSettingsLoad() {
+    FILE* f = fopen(CRUCIBLE_CONFIG_PATH, "rb");
+    if (!f) return;
+    char line[96];
+    while (fgets(line, sizeof(line), f)) {
+        int pct = 0;
+        if (sscanf(line, "ui_scale=%d", &pct) != 1) continue;
+        int best = 0;
+        for (int i = 1; i < UI_SCALE_COUNT; ++i)
+            if (abs(UI_SCALE_VALUES[i] - pct) < abs(UI_SCALE_VALUES[best] - pct)) best = i;
+        g_uiScaleIndex = best;
+    }
+    fclose(f);
+}
+
+static void uiSettingsSave() {
+    FILE* f = fopen(CRUCIBLE_CONFIG_PATH, "wb");
+    if (!f) return;
+    fprintf(f, "ui_scale=%d\n", uiScalePct());
+    fclose(f);
+}
+
+static void rebuildUiFont() {
+    HFONT next = CreateFontA(uiScaled(14), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                             CLEARTYPE_QUALITY, FF_DONTCARE, "Consolas");
+    if (!next) return;
+    if (g_font) DeleteObject(g_font);
+    g_font = next;
+}
+
+static void changeUiScale(int direction) {
+    const int next = imax(0, imin(UI_SCALE_COUNT - 1, g_uiScaleIndex + direction));
+    if (next == g_uiScaleIndex) return;
+    g_uiScaleIndex = next;
+    rebuildUiFont();
+    uiSettingsSave();
+}
+
 /* Off-screen back buffer. The sim blit, the panel and the HUD are all composed
    into this and sent to the window as one BitBlt. Drawing them straight to the
    window DC in stages is what used to flicker. */
 static HDC     g_backDC;
 static HBITMAP g_backBmp;
 static HGDIOBJ g_backOldBmp;
+
+/* The game continues to compose at one fixed logical resolution. A resizable
+   window (and fullscreen) presents that canvas inside the client area with
+   aspect-preserving nearest-neighbour scaling. Keeping layout in logical
+   pixels means resizing cannot subtly change aim, UI hit boxes, or how much of
+   the simulated world is visible. */
+static RECT    g_presentRect = { 0, 0, WIN_W, WIN_H };
+static bool    g_fullscreen = false;
+static DWORD   g_windowedStyle = 0;
+static WINDOWPLACEMENT g_windowedPlacement = {};
 
 /* Brush selections past MAT_COUNT are tools that act on temperature rather than
    placing a material. */
@@ -273,8 +337,12 @@ static HBRUSH g_swatchBrush[N_BRUSH];
    behind an icon has three different background colours (normal, hovered,
    selected) and a key handles all three with one bitmap. */
 static const COLORREF ICON_KEY = RGB(255, 0, 255);
-static const int ICON_SCALE = 2;                  /* 14x14 art -> 28x28 icon */
-static const int ICON_PX    = SPR_W * ICON_SCALE;
+static const int ICON_SCALE   = 2; /* cache 21x21 art at a crisp 42x42 */
+static const int ICON_PX      = INV_SPR_W * ICON_SCALE;
+/* 38px was the previous compact pass. The new 100% baseline is another ten
+   percent smaller; UI scale lets the player move away from that default. */
+static const int ICON_DRAW_BASE_PX = 34;
+static int iconDrawPx() { return uiScaled(ICON_DRAW_BASE_PX); }
 static HDC     g_iconDC;
 static HBITMAP g_iconBmp[SPR_COUNT];
 static HBITMAP g_matIconBmp[MAT_COUNT];
@@ -301,6 +369,59 @@ static bool keyHeld(int vk) {
 }
 static bool inRect(const RECT& r, int x, int y);
 
+static void updatePresentRect(HWND hwnd) {
+    RECT client = { 0, 0, WIN_W, WIN_H };
+    if (hwnd) GetClientRect(hwnd, &client);
+    const int cw = imax(1, client.right - client.left);
+    const int ch = imax(1, client.bottom - client.top);
+    int w = cw, h = w * WIN_H / WIN_W;
+    if (h > ch) { h = ch; w = h * WIN_W / WIN_H; }
+    g_presentRect.left = (cw - w) / 2;
+    g_presentRect.top = (ch - h) / 2;
+    g_presentRect.right = g_presentRect.left + imax(1, w);
+    g_presentRect.bottom = g_presentRect.top + imax(1, h);
+}
+
+static void clientToLogical(int cx, int cy, int* x, int* y) {
+    const int w = g_presentRect.right - g_presentRect.left;
+    const int h = g_presentRect.bottom - g_presentRect.top;
+    if (cx < g_presentRect.left || cx >= g_presentRect.right ||
+        cy < g_presentRect.top || cy >= g_presentRect.bottom || w < 1 || h < 1) {
+        *x = *y = -1;
+        return;
+    }
+    *x = (cx - g_presentRect.left) * WIN_W / w;
+    *y = (cy - g_presentRect.top) * WIN_H / h;
+}
+
+static void updateMouseFromLParam(LPARAM lp) {
+    clientToLogical((short)LOWORD(lp), (short)HIWORD(lp), &g_mx, &g_my);
+}
+
+static void toggleFullscreen(HWND hwnd) {
+    if (!g_fullscreen) {
+        g_windowedStyle = (DWORD)GetWindowLongPtr(hwnd, GWL_STYLE);
+        g_windowedPlacement.length = sizeof(g_windowedPlacement);
+        GetWindowPlacement(hwnd, &g_windowedPlacement);
+        MONITORINFO mi; memset(&mi, 0, sizeof(mi)); mi.cbSize = sizeof(mi);
+        GetMonitorInfo(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &mi);
+        SetWindowLongPtr(hwnd, GWL_STYLE, g_windowedStyle & ~WS_OVERLAPPEDWINDOW);
+        SetWindowPos(hwnd, HWND_TOP, mi.rcMonitor.left, mi.rcMonitor.top,
+                     mi.rcMonitor.right - mi.rcMonitor.left,
+                     mi.rcMonitor.bottom - mi.rcMonitor.top,
+                     SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+        g_fullscreen = true;
+    } else {
+        SetWindowLongPtr(hwnd, GWL_STYLE, g_windowedStyle);
+        SetWindowPlacement(hwnd, &g_windowedPlacement);
+        SetWindowPos(hwnd, NULL, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
+                     SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+        g_fullscreen = false;
+    }
+    updatePresentRect(hwnd);
+}
+
 static u32 iconLight(u32 c, int add) {
     int r = ((c >> 16) & 255) + add, g = ((c >> 8) & 255) + add, b = (c & 255) + add;
     return ((u32)imin(255, imax(0, r)) << 16) | ((u32)imin(255, imax(0, g)) << 8) | (u32)imin(255, imax(0, b));
@@ -314,12 +435,12 @@ static void buildMaterialIcons(HDC screen) {
         FillRect(g_iconDC, &all, key); DeleteObject(key);
         const u32 base = MATS[m].dryA, hi = iconLight(base, 42), lo = iconLight(base, -38);
         const bool molten = m == MAT_LAVA || m == MAT_IRON_MELT || m == MAT_COPPER_MELT || m == MAT_RUBBER_MELT || m == MAT_SLAG_MELT;
-        for (int y = 0; y < SPR_H; ++y) for (int x = 0; x < SPR_W; ++x) {
+        for (int y = 0; y < INV_SPR_H; ++y) for (int x = 0; x < INV_SPR_W; ++x) {
             bool on = false;
-            if (MATS[m].kind == KIND_POWDER) on = y >= 6 + abs(x - 6) / 2;
-            else if (MATS[m].kind == KIND_LIQUID) on = y >= 7 + ((x + m) % 3 == 0 ? 1 : 0);
-            else if (MATS[m].kind == KIND_GAS) { const int dx = x - 6, dy = y - 7; on = dx*dx + dy*dy < 30 || ((x-3)*(x-3)+(y-5)*(y-5)<12); }
-            else on = x >= 2 && x <= 11 && y >= 2 && y <= 11;
+            if (MATS[m].kind == KIND_POWDER) on = x >= 1 && x <= 19 && y >= 9 + abs(x - 10) / 2;
+            else if (MATS[m].kind == KIND_LIQUID) on = x >= 1 && x <= 19 && y >= 11 + ((x + m) % 4 == 0 ? 1 : 0);
+            else if (MATS[m].kind == KIND_GAS) { const int dx = x - 10, dy = y - 11; on = dx*dx + dy*dy < 66 || ((x-5)*(x-5)+(y-7)*(y-7)<27); }
+            else on = x >= 3 && x <= 17 && y >= 3 && y <= 17;
             if (!on) continue;
             u32 c = ((x * 13 + y * 7 + m * 11) % 9 == 0) ? hi : (((x + y + m) % 11 == 0) ? lo : base);
             if (molten && ((x + y * 3 + m) % 5 == 0)) c = 0xFFD45A;
@@ -340,9 +461,14 @@ static void buildIcons() {
         HBRUSH key = CreateSolidBrush(ICON_KEY);
         FillRect(g_iconDC, &all, key);
         DeleteObject(key);
-        for (int y = 0; y < SPR_H; ++y)
-            for (int x = 0; x < SPR_W; ++x) {
-                const u32 c = g_sprite[s][y * SPR_W + x];
+        for (int y = 0; y < INV_SPR_H; ++y)
+            for (int x = 0; x < INV_SPR_W; ++x) {
+                /* Exact 3:2 nearest-neighbour enlargement. Authored shapes,
+                   palette identity, and transparency survive unchanged while
+                   every inventory icon receives the new 21px reading grid. */
+                const int sx = x * SPR_W / INV_SPR_W;
+                const int sy = y * SPR_H / INV_SPR_H;
+                const u32 c = g_sprite[s][sy * SPR_W + sx];
                 if (c == 0) continue;             /* transparent */
                 RECT r = { x * ICON_SCALE, y * ICON_SCALE,
                            x * ICON_SCALE + ICON_SCALE, y * ICON_SCALE + ICON_SCALE };
@@ -361,7 +487,7 @@ static void buildIcons() {
 static void drawItemIcon(HDC hdc, const RECT& r, ItemId item) {
     if (inRect(r, g_mx, g_my)) { g_hoverItem = item; g_hoverRect = r; }
     if (item < MAT_COUNT && g_matIconBmp[item]) {
-        const int side = imin(imin(r.right-r.left-2, r.bottom-r.top-2), ICON_PX);
+        const int side = imin(imin(r.right-r.left-2, r.bottom-r.top-2), iconDrawPx());
         if (side > 0) { const int x = r.left + (r.right-r.left-side)/2, y = r.top + (r.bottom-r.top-side)/2;
             HGDIOBJ old = SelectObject(g_iconDC, g_matIconBmp[item]); TransparentBlt(hdc,x,y,side,side,g_iconDC,0,0,ICON_PX,ICON_PX,ICON_KEY); SelectObject(g_iconDC,old); }
         return;
@@ -374,7 +500,7 @@ static void drawItemIcon(HDC hdc, const RECT& r, ItemId item) {
            the swatch area is wider than it is tall to leave room for the count.
            A colour swatch can be any shape; a picture cannot. */
         int side = imin(r.right - r.left - 2, r.bottom - r.top - 2);
-        if (side > ICON_PX) side = ICON_PX;
+        if (side > iconDrawPx()) side = iconDrawPx();
         if (side < 1) return;
         const int w = side, h = side;
         const int x = r.left + (r.right - r.left - w) / 2;
@@ -399,7 +525,7 @@ static void drawCircuitSignalIcon(HDC hdc, const RECT& r, int signal) {
     if (signal > MAT_EMPTY && signal < MAT_COUNT) { drawItemIcon(hdc, r, (ItemId)signal); return; }
     if (signal < CIR_SIG_1 || signal > CIR_SIG_9) return;
     const int sprite = SPR_SIGNAL1 + signal - CIR_SIG_1;
-    const int side = imin(imin(r.right - r.left - 2, r.bottom - r.top - 2), ICON_PX);
+    const int side = imin(imin(r.right - r.left - 2, r.bottom - r.top - 2), iconDrawPx());
     if (side <= 0 || !g_iconBmp[sprite]) return;
     const int x = r.left + (r.right - r.left - side) / 2;
     const int y = r.top + (r.bottom - r.top - side) / 2;
@@ -408,19 +534,118 @@ static void drawCircuitSignalIcon(HDC hdc, const RECT& r, int signal) {
     SelectObject(g_iconDC, old);
 }
 
+static void itemTooltipStats(const ItemDef& d, char* out, int cap) {
+    if (!out || cap < 1) return;
+    out[0] = 0;
+    if (d.kind == ITEMK_MODULE) {
+        snprintf(out, cap, "%u energy  |  %d damage  |  %d frame delay",
+                 (unsigned)d.energyCost, d.damage, (int)d.addDelay);
+    } else if (d.kind == ITEMK_TOOL && d.energyCapacity) {
+        snprintf(out, cap, "%u energy  |  +%u/sec  |  %u slots",
+                 (unsigned)d.energyCapacity, (unsigned)d.energyRecharge * 60u,
+                 (unsigned)d.toolSlots);
+    } else if (d.kind == ITEMK_MINING) {
+        snprintf(out, cap, "radius %u  |  %u cells/action",
+                 (unsigned)d.mineRadius, (unsigned)d.mineBite);
+    } else if (d.kind == ITEMK_MELEE) {
+        snprintf(out, cap, "%d damage  |  %u reach  |  %.1f knockback",
+                 d.damage, (unsigned)d.meleeReach, d.meleeKnock);
+    } else if (d.kind == ITEMK_FOOD) {
+        snprintf(out, cap, "+%d health  |  %d sec shared cooldown",
+                 (int)d.heal, HEAL_COOLDOWN_FRAMES / 60);
+    } else if (d.kind == ITEMK_THROWABLE) {
+        snprintf(out, cap, "%d damage", d.damage);
+    } else if (d.armour || d.heatResist || d.coldResist) {
+        snprintf(out, cap, "%d armour  |  %d heat  |  %d cold",
+                 (int)d.armour, (int)d.heatResist, (int)d.coldResist);
+    } else if (d.fly.fuel > 0) {
+        snprintf(out, cap, "%d fuel  |  %.2f rise speed", d.fly.fuel, d.fly.riseCap);
+    } else if (d.reachBonus) {
+        snprintf(out, cap, "+%d build reach", (int)d.reachBonus);
+    } else if (d.speedPct) {
+        snprintf(out, cap, "+%d%% movement speed", (int)d.speedPct);
+    } else if (d.regenPer) {
+        snprintf(out, cap, "1 health every %.1f sec", (float)d.regenPer / 60.0f);
+    } else if (d.lightGlow) {
+        snprintf(out, cap, "%d light", (int)d.lightGlow);
+    } else if (d.pickupRadius) {
+        snprintf(out, cap, "+%d pickup range", (int)d.pickupRadius);
+    } else if (d.shotSpeedPct) {
+        snprintf(out, cap, "+%d%% projectile speed", (int)d.shotSpeedPct);
+    } else if (d.damagePct) {
+        snprintf(out, cap, "+%d%% projectile damage", (int)d.damagePct);
+    } else if (d.cooldownPct) {
+        snprintf(out, cap, "%d%% shorter firing delay", (int)d.cooldownPct);
+    }
+}
+
 static void drawItemTooltip(HDC hdc) {
     /* An item under the cursor wins over a slot label: if the slot has
        something in it, what that something IS is the more useful fact, and the
        slot's own name is already implied by the group heading above it. */
     const char* name = 0;
-    if (g_hoverItem != ITEM_NONE && g_hoverItem < ITEM_COUNT) name = ITEMS[g_hoverItem].name;
+    const char* description = 0;
+    char stats[192]; stats[0] = 0;
+    if (g_hoverItem != ITEM_NONE && g_hoverItem < ITEM_COUNT) {
+        const ItemDef& d = ITEMS[g_hoverItem];
+        name = d.name;
+        description = d.description;
+        itemTooltipStats(d, stats, (int)sizeof(stats));
+    }
     else if (g_hoverLabel) name = g_hoverLabel;
     if (!name || !name[0]) return;
-    RECT r = { g_hoverRect.left, g_hoverRect.top - 22, g_hoverRect.left + 150, g_hoverRect.top - 4 };
-    if (r.top < 2) { r.top = g_hoverRect.bottom + 4; r.bottom = r.top + 18; }
-    FillRect(hdc, &r, g_panelBg); FrameRect(hdc, &r, g_accentBrush);
-    SetBkMode(hdc, TRANSPARENT); SetTextColor(hdc, RGB(245,224,150));
-    DrawTextA(hdc, name, -1, &r, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    HGDIOBJ oldFont = SelectObject(hdc, g_font);
+
+    /* Materials and empty-slot labels retain the small strip. Dirt and water
+       should identify themselves immediately without obscuring the playfield. */
+    if ((!description || !description[0]) && !stats[0]) {
+        const int stripW = uiScaled(250), stripH = uiScaled(18);
+        RECT r = { g_hoverRect.left, g_hoverRect.top - stripH - 4,
+                   g_hoverRect.left + stripW, g_hoverRect.top - 4 };
+        if (r.right > WIN_W - 2) { r.left -= r.right - (WIN_W - 2); r.right = WIN_W - 2; }
+        if (r.top < 2) { r.top = g_hoverRect.bottom + 4; r.bottom = r.top + stripH; }
+        FillRect(hdc, &r, g_panelBg); FrameRect(hdc, &r, g_accentBrush);
+        SetBkMode(hdc, TRANSPARENT); SetTextColor(hdc, RGB(245,224,150));
+        DrawTextA(hdc, name, -1, &r, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        SelectObject(hdc, oldFont);
+        return;
+    }
+
+    const int width = uiScaled(320), pad = uiScaled(9), titleH = uiScaled(18);
+    const int statsH = stats[0] ? uiScaled(18) : 0;
+    RECT calc = { 0, 0, width - pad * 2, 0 };
+    int descH = 0;
+    if (description && description[0]) {
+        DrawTextA(hdc, description, -1, &calc, DT_CALCRECT | DT_WORDBREAK);
+        descH = imax(16, calc.bottom - calc.top);
+    }
+    const int gap = descH ? 4 : 0;
+    const int height = pad + titleH + statsH + gap + descH + pad;
+    int left = g_hoverRect.left;
+    if (left + width > WIN_W - 2) left = WIN_W - width - 2;
+    if (left < 2) left = 2;
+    int top = g_hoverRect.top - height - 4;
+    if (top < 2) top = g_hoverRect.bottom + 4;
+    if (top + height > VIEW_H - 2) top = imax(2, VIEW_H - height - 2);
+    RECT box = { left, top, left + width, top + height };
+    FillRect(hdc, &box, g_panelBg); FrameRect(hdc, &box, g_accentBrush);
+    SetBkMode(hdc, TRANSPARENT);
+
+    RECT line = { left + pad, top + pad, left + width - pad, top + pad + titleH };
+    SetTextColor(hdc, RGB(245,224,150));
+    DrawTextA(hdc, name, -1, &line, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    if (stats[0]) {
+        line.top += titleH; line.bottom += titleH;
+        SetTextColor(hdc, RGB(142,198,220));
+        DrawTextA(hdc, stats, -1, &line, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    }
+    if (descH) {
+        RECT body = { left + pad, top + pad + titleH + statsH + gap,
+                      left + width - pad, top + height - pad };
+        SetTextColor(hdc, RGB(220,220,210));
+        DrawTextA(hdc, description, -1, &body, DT_LEFT | DT_WORDBREAK);
+    }
+    SelectObject(hdc, oldFont);
 }
 
 /* UI/input state */
@@ -432,7 +657,7 @@ static bool g_lmb = false, g_rmb = false;
    held right-button mining verb. The client cannot operate the local replica;
    it asks the host and receives the resulting device/door state back. */
 static bool g_interactPulse = false;
-static bool g_respawnPulse = false;
+static bool g_respawnPulse = false; /* temporary tap-R cursor teleport */
 /* One consumable use per click rather than one per frame. Most left-click actions
    in the game wants to repeat while held -- digging, building, sowing -- so the
    rate limiting they share is a cooldown rather than a latch. Eggs, food and
@@ -457,17 +682,222 @@ static bool g_useLatch = false;
    straight line is what you get by simply not moving the previous point until
    the button comes up. Nothing new draws anything.
 
-   --- sharing R with respawn ---
-   R was already "respawn at the cursor", which is the escape hatch when you
-   bury yourself and is worth keeping. The two coexist because one is a TAP and
-   the other is a HOLD: respawn moved to key-UP and is suppressed if the hold
-   was used to draw. That is subtle enough to be worth stating, and it is still
-   better than moving a binding somebody relies on. */
+   A quick tap still teleports an ALIVE player to the cursor for now. Death does
+   not accept that shortcut: its ten-second, authority-owned respawn remains
+   automatic. A completed line suppresses the tap action on key-up. */
 /* What the last save or load said, and for how long to keep saying it. A save
    that reports nothing is a save you do not trust; four seconds is long enough
    to read and short enough not to become furniture. */
 static char g_saveMsg[256] = "";
 static int  g_saveMsgFrames = 0;
+
+/* --- one-stroke terrain undo ---------------------------------------------
+   A stroke remembers the cells as they were BEFORE its first touch. A set
+   keeps an interpolated drag from storing the same cell hundreds of times,
+   while the vector preserves the compact snapshots needed after the stroke.
+
+   Inventory is recorded as a delta rather than copied wholesale. Undoing a
+   dig therefore returns the rock to the wall and takes its drops back out of
+   the pack, but it does not also rewind a hotbar selection or an unrelated
+   item move made after the stroke. */
+struct UndoCell {
+    i32 index;
+    Cell cell;
+    u8 temp, bg;
+};
+struct UndoPlacedDevice {
+    bool torch;
+    i32 index, x, y;
+    u8 type;
+};
+struct ActiveUndoStroke {
+    bool active, overflow;
+    std::vector<UndoCell> cell;
+    std::vector<UndoPlacedDevice> placed;
+    std::unordered_set<i32> seen;
+    int before[ITEM_COUNT];
+    ActiveUndoStroke() : active(false), overflow(false) { memset(before, 0, sizeof(before)); }
+};
+struct FinishedUndoStroke {
+    bool valid;
+    std::vector<UndoCell> cell;
+    std::vector<UndoPlacedDevice> placed;
+    int inventoryDelta[ITEM_COUNT];
+    FinishedUndoStroke() : valid(false) { memset(inventoryDelta, 0, sizeof(inventoryDelta)); }
+};
+static ActiveUndoStroke   g_activeUndo[MAX_PLAYERS];
+static FinishedUndoStroke g_lastUndo[MAX_PLAYERS];
+static const size_t UNDO_CELL_LIMIT = 500000;
+
+static bool undoCellChanged(const UndoCell& old) {
+    const Cell& now = g_world.cells[old.index];
+    return now.mat != old.cell.mat || now.moisture != old.cell.moisture ||
+           now.tint != old.cell.tint || now.flags != old.cell.flags ||
+           g_world.temp[old.index] != old.temp || g_world.bg[old.index] != old.bg;
+}
+
+static void undoBegin(int slot, const Inventory* inventory) {
+    if (slot < 0 || slot >= MAX_PLAYERS || g_activeUndo[slot].active) return;
+    ActiveUndoStroke& stroke = g_activeUndo[slot];
+    stroke.active = true; stroke.overflow = false;
+    stroke.cell.clear(); stroke.placed.clear(); stroke.seen.clear();
+    for (int item = 0; item < ITEM_COUNT; ++item)
+        stroke.before[item] = inventory ? inventory->countOf((ItemId)item) : 0;
+}
+
+static void undoCaptureCell(int slot, int x, int y) {
+    if (slot < 0 || slot >= MAX_PLAYERS || x < PLAY_X0 || x > PLAY_X1 ||
+        y < PLAY_Y0 || y > PLAY_Y1) return;
+    ActiveUndoStroke& stroke = g_activeUndo[slot];
+    if (!stroke.active || stroke.overflow) return;
+    const i32 index = y * SIM_W + x;
+    if (!stroke.seen.insert(index).second) return;
+    if (stroke.cell.size() >= UNDO_CELL_LIMIT) {
+        stroke.overflow = true; stroke.cell.clear(); stroke.seen.clear(); return;
+    }
+    UndoCell old;
+    old.index = index; old.cell = g_world.cells[index];
+    old.temp = g_world.temp[index]; old.bg = g_world.bg[index];
+    stroke.cell.push_back(old);
+}
+
+static void undoCaptureDisc(int slot, int cx, int cy, int radius) {
+    const int r = imax(0, radius), rr = r * r;
+    for (int y = imax(PLAY_Y0, cy - r); y <= imin(PLAY_Y1, cy + r); ++y)
+        for (int x = imax(PLAY_X0, cx - r); x <= imin(PLAY_X1, cx + r); ++x) {
+            const int dx = x - cx, dy = y - cy;
+            if (dx * dx + dy * dy <= rr) undoCaptureCell(slot, x, y);
+        }
+}
+
+static void undoFinish(int slot, const Inventory* inventory) {
+    if (slot < 0 || slot >= MAX_PLAYERS) return;
+    ActiveUndoStroke& active = g_activeUndo[slot];
+    if (!active.active) return;
+    active.active = false; active.seen.clear();
+    if (active.overflow) {
+        active.cell.clear(); active.placed.clear();
+        g_lastUndo[slot].valid = false; g_lastUndo[slot].cell.clear();
+        g_lastUndo[slot].placed.clear();
+        if (slot == LOCAL_PLAYER_ID) {
+            sprintf(g_saveMsg, "Stroke too large to undo"); g_saveMsgFrames = 150;
+        }
+        return;
+    }
+    size_t kept = 0;
+    for (size_t i = 0; i < active.cell.size(); ++i)
+        if (undoCellChanged(active.cell[i])) active.cell[kept++] = active.cell[i];
+    active.cell.resize(kept);
+    if (active.cell.empty() && active.placed.empty()) return;
+
+    FinishedUndoStroke& done = g_lastUndo[slot];
+    done.cell.swap(active.cell); done.placed.swap(active.placed); done.valid = true;
+    for (int item = 0; item < ITEM_COUNT; ++item)
+        done.inventoryDelta[item] = inventory ?
+            inventory->countOf((ItemId)item) - active.before[item] : 0;
+}
+
+static bool undoApply(int slot, Inventory* inventory) {
+    if (slot < 0 || slot >= MAX_PLAYERS || netRole() == NET_CLIENT) return false;
+    undoFinish(slot, inventory);
+    FinishedUndoStroke& stroke = g_lastUndo[slot];
+    if (!stroke.valid) {
+        if (slot == LOCAL_PLAYER_ID) {
+            sprintf(g_saveMsg, "Nothing to undo"); g_saveMsgFrames = 100;
+        }
+        return false;
+    }
+
+    /* An external device list accompanies machine footprints. Require every
+       placed object still to be the same object before removing it; otherwise
+       a destroyed/reused machine slot could turn undo into a free refund. */
+    for (size_t i = 0; i < stroke.placed.size(); ++i) {
+        const UndoPlacedDevice& placed = stroke.placed[i];
+        if (placed.torch) {
+            if (torchAt(placed.x, placed.y) < 0) {
+                if (slot == LOCAL_PLAYER_ID) {
+                    sprintf(g_saveMsg, "Placed object changed; undo cancelled"); g_saveMsgFrames = 150;
+                }
+                return false;
+            }
+        } else if (placed.index < 0 || placed.index >= MAX_DEVICES ||
+                   !g_devices[placed.index].used ||
+                   g_devices[placed.index].type != placed.type ||
+                   g_devices[placed.index].x != placed.x || g_devices[placed.index].y != placed.y ||
+                   g_devices[placed.index].count != 0 || g_devices[placed.index].count2 != 0) {
+            if (slot == LOCAL_PLAYER_ID) {
+                sprintf(g_saveMsg, "Placed machine changed; undo cancelled"); g_saveMsgFrames = 150;
+            }
+            return false;
+        }
+    }
+
+    /* Test the inventory reversal on a copy first. If mined drops have already
+       been spent, or refunded building material no longer fits, refusing is
+       safer than duplicating or deleting anything. Remove gains before adding
+       refunds so an overwrite stroke can free the space its refund needs. */
+    Inventory trial;
+    if (inventory) {
+        trial = *inventory;
+        for (int item = 1; item < ITEM_COUNT; ++item)
+            if (stroke.inventoryDelta[item] > 0 &&
+                trial.take((ItemId)item, stroke.inventoryDelta[item]) != stroke.inventoryDelta[item]) {
+                if (slot == LOCAL_PLAYER_ID) {
+                    sprintf(g_saveMsg, "Undo needs the mined items in your pack");
+                    g_saveMsgFrames = 150;
+                }
+                return false;
+            }
+        for (int item = 1; item < ITEM_COUNT; ++item)
+            if (stroke.inventoryDelta[item] < 0 &&
+                trial.add((ItemId)item, -stroke.inventoryDelta[item]) != 0) {
+                if (slot == LOCAL_PLAYER_ID) {
+                    sprintf(g_saveMsg, "Undo needs room to refund building material");
+                    g_saveMsgFrames = 150;
+                }
+                return false;
+            }
+    }
+
+    for (size_t i = stroke.placed.size(); i-- > 0;) {
+        const UndoPlacedDevice& placed = stroke.placed[i];
+        if (placed.torch) torchRemoveAt(torchAt(placed.x, placed.y));
+        else devRemove(g_world, &g_devices[placed.index]);
+    }
+
+    int minX = PLAY_X1, minY = PLAY_Y1, maxX = PLAY_X0, maxY = PLAY_Y0;
+    for (size_t i = 0; i < stroke.cell.size(); ++i) {
+        const UndoCell& old = stroke.cell[i];
+        g_world.cells[old.index] = old.cell;
+        g_world.temp[old.index] = old.temp;
+        g_world.bg[old.index] = old.bg;
+        const int x = old.index % SIM_W, y = old.index / SIM_W;
+        minX = imin(minX, x); minY = imin(minY, y);
+        maxX = imax(maxX, x); maxY = imax(maxY, y);
+    }
+    if (inventory) *inventory = trial;
+    if (!stroke.cell.empty()) {
+        g_world.dirtyArea(minX, minY, maxX, maxY);
+        roomsNotifyEdit(g_world, (minX + maxX) / 2, (minY + maxY) / 2);
+        netMarkWorldEdit((minX + maxX) / 2, (minY + maxY) / 2,
+                         imax(maxX - minX, maxY - minY) / 2 + 2);
+    }
+    stroke.valid = false; stroke.cell.clear(); stroke.placed.clear();
+    if (slot == LOCAL_PLAYER_ID) {
+        sprintf(g_saveMsg, "Undid last build/dig stroke"); g_saveMsgFrames = 100;
+    }
+    return true;
+}
+
+static void undoClearAll() {
+    for (int slot = 0; slot < MAX_PLAYERS; ++slot) {
+        g_activeUndo[slot].active = false; g_activeUndo[slot].overflow = false;
+        g_activeUndo[slot].cell.clear(); g_activeUndo[slot].placed.clear();
+        g_activeUndo[slot].seen.clear();
+        g_lastUndo[slot].valid = false; g_lastUndo[slot].cell.clear();
+        g_lastUndo[slot].placed.clear();
+    }
+}
 /* Overridable at compile time so a diagnostic build can be run ALONGSIDE a
    real session without the two fighting over one file. An agent or a soak test
    that shares the player's save will eventually overwrite a character somebody
@@ -568,14 +998,13 @@ static bool g_survival = true;
    Both verbs move together: in background mode left-click backs a wall and
    right-click scrapes it off, exactly mirroring the foreground. */
 static bool g_bgLayer = false;
-/* Grown from 34 to make room for a square icon. At 34 the swatch area was 21
-   wide by 13 tall once the count row was reserved, so a 14x14 sprite had to be
-   letterboxed into a strip and the module chips were unreadable. Icons want
-   square space, and the row still spans well under half the viewport. */
-static const int HOTBAR_SLOT = 42;   /* screen pixels per hotbar cell */
+/* Grown from 34, then again for the 21px reading grid. The count keeps its own
+   strip without forcing the 38px displayed sprite into a letterbox. */
+static const int HOTBAR_SLOT = 60;   /* room for a 38px icon plus its count */
 static RECT g_hotRect[HOTBAR_SLOTS];
 static RECT g_menuResume, g_menuHost, g_menuJoin, g_menuIp, g_menuStop, g_menuQuit, g_menuPanel;
 static RECT g_menuSave, g_menuLoad;
+static RECT g_menuUiMinus, g_menuUiValue, g_menuUiPlus;
 
 /* --- the save screen --------------------------------------------------------
    Ten slots, each showing a picture of where you were when you wrote it.
@@ -649,7 +1078,10 @@ static const int CRE_COLS = 4;
    swatch is a flat colour, so Stone, Wall, Slag and Ceramic were four grey
    squares and the only way to tell them apart was to point at each one. A list
    you can read is worth more than a list that fits. */
-static const int CRE_VIS_ROWS = 10;
+/* Larger 38px item art makes each result row substantially taller. Three rows
+   keep the worst-case inventory (equipment, drone chips, and tool bench all
+   present) inside the 768px logical canvas; the scrollbar handles breadth. */
+static const int CRE_VIS_ROWS = 3;
 static const int CRE_MAX_ENTRIES = ITEM_COUNT + 9;
 static int g_creScroll = 0;      /* first visible row */
 static int g_creRowCount = 0;    /* total rows, for clamping and the bar */
@@ -758,8 +1190,8 @@ static int  g_toolPackSlot  = -1;   /* which inventory slot the bench is showing
    unlike the bench -- an empty equipment row tells you the slots exist and what
    goes in them, whereas an absent tool bench tells you nothing is missing. */
 /* --- how the equipment row is arranged on screen ---------------------------
-   Eleven squares in a line said nothing about which of them went together, and
-   with four trinkets it said it eleven times. So the row is drawn in three
+   A flat line of squares said nothing about which of them went together. So
+   the row is drawn in three
    GROUPS with a heading over each -- what you are wearing, what you have
    chosen, what is flying beside you -- and the enum order is no longer the
    screen order.
@@ -774,13 +1206,13 @@ static int  g_toolPackSlot  = -1;   /* which inventory slot the bench is showing
 static const int EQ_ORDER[EQ_COUNT] = {
     EQ_FEET, EQ_BACK, EQ_HEAD, EQ_BODY,
     EQ_TRINKET_A, EQ_TRINKET_B, EQ_TRINKET_C, EQ_TRINKET_D,
-    EQ_LIGHT_DRONE, EQ_DRONE_A, EQ_DRONE_B
+    EQ_LIGHT_DRONE, EQ_DRONE_A, EQ_DRONE_B, EQ_DRONE_C
 };
 /* First screen position of each group, and one past the end. */
 static const int EQ_GROUP_AT[4]      = { 0, 4, 8, EQ_COUNT };
 static const char* const EQ_GROUP_NAME[3] = { "WORN", "TRINKETS", "DRONES" };
-static const int EQ_SLOT_PITCH = 40;
-static const int EQ_GROUP_GAP  = 24;
+static const int EQ_SLOT_PITCH = 50;
+static const int EQ_GROUP_GAP  = 16;
 
 /* Screen x of the square at position `pos`, measured from the row's left edge.
    One function so the layout and the drawing cannot disagree about where a box
@@ -792,7 +1224,7 @@ static int eqPosX(int pos) {
     return pos * EQ_SLOT_PITCH + group * EQ_GROUP_GAP;
 }
 /* Total width of the row, for placing the bin after it. */
-static int eqRowWidth() { return eqPosX(EQ_COUNT - 1) + 34; }
+static int eqRowWidth() { return eqPosX(EQ_COUNT - 1) + 46; }
 
 static RECT g_eqRect[EQ_COUNT];
 static RECT g_droneModuleRect[MAX_DRONES][Inventory::DRONE_MODULE_SLOTS_MAX];
@@ -863,7 +1295,7 @@ static void applyPlayerUses(PlayerSession& session, const PlayerCommand& command
 static void fireToolFor(Player& player, Inventory& inventory, const Aim& aim);
 static bool throwGlowflareFor(Player& player, Inventory& inventory, const Aim& aim);
 static void placeDeviceStrokeFor(Inventory& inventory, int& previousX, int& previousY,
-                                 u8 type, bool consume, const Aim& aim);
+                                 u8 type, bool consume, const Aim& aim, int undoSlot = -1);
 
 /* Lay down the line and end the drag. g_pmx/g_pmy still hold the press point,
    which is the whole trick -- applyBrush interpolates from there to the current
@@ -916,6 +1348,8 @@ static void wireCell(int x, int y) {
     if (old == MAT_COPPER) return;
     if (old != MAT_EMPTY) return;
     if (g_survival && g_playerOn && !g_inv.take(MAT_COPPER, 1)) return;
+    undoBegin(LOCAL_PLAYER_ID, 0);
+    undoCaptureCell(LOCAL_PLAYER_ID, x, y);
     g_world.setCell(x, y, MAT_COPPER);
 }
 
@@ -1174,13 +1608,15 @@ struct KeyHint { const char* key; const char* what; };
 static const KeyHint KEY_HINTS[] = {
     { "WASD / arrows", "move, and jump" },
     { "hold R + drag", "draw a straight line" },
-    { "tap R",         "respawn at the cursor" },
+    { "tap R",         "teleport to the cursor" },
     { "left / right",  "build / dig" },
+    { "Ctrl+Z",        "undo last build/dig stroke" },
     { "right-click",   "open a machine, or a door" },
     { "wheel",         "pick a hotbar slot" },
     { "Q + wheel",     "brush size" },
     { "C",             "crafting" },
     { "F5 / F9",       "save / load" },
+    { "F11",           "toggle fullscreen" },
     { "Tab",           "the item grid" },
     { "L",             "build on the backdrop" },
     { "V / K",         "cycle view / lights" },
@@ -1258,6 +1694,7 @@ static void loadFromSlot(int slot) {
         g_saveMsgFrames = 180; return;
     }
     if (netConnected()) netStop();   /* loaded topology needs a fresh join snapshot */
+    undoClearAll();
     const char* path = saveSlotPath(slot);
     if (saveRead(path, g_world)) {
         const double mb = (double)saveTotalBytes() / (1024.0 * 1024.0);
@@ -1434,8 +1871,10 @@ static void layoutMenu() {
        Resume rather than down beside Quit, because they are the things you open
        this menu FOR -- the networking block below them is a thing you set up
        once a session. */
-    const int w = 380, h = 300 + 80 + N_KEY_HINTS * 15 + 22
-                    + (saveTotalBytes() > 0 ? 26 + 8 * 15 : 0);
+    const int keyPitch = uiScaled(15);
+    const int savePitch = uiScaled(15);
+    const int w = 380, h = 300 + 120 + N_KEY_HINTS * keyPitch + 22
+                    + (saveTotalBytes() > 0 ? 26 + 8 * savePitch : 0);
     const int cx = PANEL_W + VIEW_W / 2, cy = VIEW_H / 2;
     SetRect(&g_menuPanel, cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2);
     const int bw = w - 120, bx = cx - bw / 2;
@@ -1448,6 +1887,10 @@ static void layoutMenu() {
     SetRect(&g_menuJoin,   bx + bw - 80, top + 202, bx + bw, top + 234);
     SetRect(&g_menuStop,   bx, top + 242, bx + bw, top + 274);
     SetRect(&g_menuQuit,   bx, top + 282, bx + bw, top + 314);
+    const int uy = top + 322;
+    SetRect(&g_menuUiMinus, bx, uy, bx + 42, uy + 30);
+    SetRect(&g_menuUiValue, bx + 50, uy, bx + bw - 50, uy + 30);
+    SetRect(&g_menuUiPlus,  bx + bw - 42, uy, bx + bw, uy + 30);
 }
 
 /* Laid out fresh on open, like the pause menu, and for the same reason: it is
@@ -1500,25 +1943,26 @@ static void layoutCreative() {
        skipped when drawing. inRect() then fails on them for free, so a click
        cannot land on a row that is scrolled out of sight -- which is the bug
        this shape avoids rather than the bug it would otherwise have. */
-    const int cw = 168, ch = 26, gap = 4, pad = 14;
-    const int ps = 34, pgap = 3;
+    const int cw = 168, ch = 46, gap = 4, pad = 14;
+    const int ps = 50, pgap = 3;
     g_creRowCount = (g_creCount + CRE_COLS - 1) / CRE_COLS;
     const int visRows = imin(CRE_VIS_ROWS, g_creRowCount);
     const int maxScroll = imax(0, g_creRowCount - CRE_VIS_ROWS);
     if (g_creScroll > maxScroll) g_creScroll = maxScroll;
     if (g_creScroll < 0) g_creScroll = 0;
 
-    const int benchH = g_toolSlotCount ? 62 : 0;
+    const int benchH = g_toolSlotCount ? 74 : 0;
     /* Taller than it was, and every one of the extra pixels is text: two lines
        of resolved stats above the row instead of one that ran off the end of
        the panel, and a line of group headings between them and the squares. */
-    const int equipH = signalPicker ? 0 : 96;
+    const int equipH = signalPicker ? 0 : 108;
     bool hasDrone = false;
     if (!signalPicker) for (int i = 0; i < MAX_DRONES; ++i) {
-        const int eq = i == 0 ? EQ_LIGHT_DRONE : (i == 1 ? EQ_DRONE_A : EQ_DRONE_B);
+        const int eq = i == 0 ? EQ_LIGHT_DRONE : i == 1 ? EQ_DRONE_A :
+                       i == 2 ? EQ_DRONE_B : EQ_DRONE_C;
         if (!g_inv.equip[eq].empty()) { hasDrone = true; break; }
     }
-    const int droneModuleH = hasDrone ? 62 : 0;
+    const int droneModuleH = hasDrone ? 74 : 0;
     const int paletteH = visRows * (ch + gap);
     const int packH    = signalPicker ? 0 : 22 + INV_ROWS * (ps + pgap) + 10;
     const int barW     = 10;
@@ -1580,19 +2024,20 @@ static void layoutCreative() {
         for (int i = 0; i < Inventory::DRONE_MODULE_SLOTS_MAX; ++i) SetRectEmpty(&g_droneModuleRect[d][i]);
     if (!signalPicker) for (int pos = 0; pos < EQ_COUNT; ++pos) {
         const int bx = x0 + pad + eqPosX(pos);
-        SetRect(&g_eqRect[EQ_ORDER[pos]], bx, eqY, bx + 34, eqY + 34);
+        SetRect(&g_eqRect[EQ_ORDER[pos]], bx, eqY, bx + 46, eqY + 46);
     }
     /* Well clear of the last group, so it reads as separate from the things you
-       are wearing rather than as a twelfth equipment slot. */
+       are wearing rather than as another equipment slot. */
     if (signalPicker) SetRectEmpty(&g_trashRect);
     else {
         const int binX = x0 + pad + eqRowWidth() + 26;
-        SetRect(&g_trashRect, binX, eqY, binX + 34, eqY + 34);
+        SetRect(&g_trashRect, binX, eqY, binX + 46, eqY + 46);
     }
 
     const int droneY = eqY + equipH - 40;
     if (!signalPicker) for (int d = 0; d < MAX_DRONES; ++d) {
-        const int eq = d == 0 ? EQ_LIGHT_DRONE : (d == 1 ? EQ_DRONE_A : EQ_DRONE_B);
+        const int eq = d == 0 ? EQ_LIGHT_DRONE : d == 1 ? EQ_DRONE_A :
+                       d == 2 ? EQ_DRONE_B : EQ_DRONE_C;
         if (g_inv.equip[eq].empty()) continue;
         /* Directly under the bay it belongs to, which means asking where that
            bay was DRAWN rather than where it sits in the enum. Reading the rect
@@ -1603,23 +2048,23 @@ static void layoutCreative() {
            empty until an upgraded chassis unlocks them, so the UI cannot
            accidentally accept a future slot early. */
         const int bayX = g_eqRect[eq].left;
-        SetRect(&g_droneModuleRect[d][0], bayX, droneY, bayX + 34, droneY + 34);
+        SetRect(&g_droneModuleRect[d][0], bayX, droneY, bayX + 46, droneY + 46);
     }
 
     /* Module slots: square, and noticeably bigger than a grid row, because they
-       are the one place on this screen where the arrangement carries meaning
-       (slot order decides which module is the shot). */
+       are the main interaction target. Their left-to-right order is also the
+       firing sequence, wrapping after the last occupied slot. */
     const int by2 = eqY + (equipH - 40) + droneModuleH;
     for (int i = 0; !signalPicker && i < g_toolSlotCount; ++i) {
-        const int bx = x0 + pad + i * 40;
-        SetRect(&g_toolSlotRect[i], bx, by2, bx + 34, by2 + 34);
+        const int bx = x0 + pad + i * 52;
+        SetRect(&g_toolSlotRect[i], bx, by2, bx + 46, by2 + 46);
     }
     /* One slot further along than the last module -- a visible gap would
        misread as "another module slot the tool does not have", so it sits
        flush against them and earns its own label in drawCreative() instead. */
     if (!signalPicker && g_toolPackSlot >= 0) {
-        const int bx = x0 + pad + g_toolSlotCount * 40;
-        SetRect(&g_toolPayloadRect, bx, by2, bx + 34, by2 + 34);
+        const int bx = x0 + pad + g_toolSlotCount * 52;
+        SetRect(&g_toolPayloadRect, bx, by2, bx + 46, by2 + 46);
     } else {
         SetRectEmpty(&g_toolPayloadRect);
     }
@@ -1732,15 +2177,15 @@ static void openChest(int index) {
     g_chestOpen = index; g_devPanel = -1; g_logisticsUiOpen = true;
     g_chestStack.item = d.count ? (ItemId)d.mat : ITEM_NONE;
     g_chestStack.count = d.count; g_chestStack.inst = 0;
-    const int x = PANEL_W + (VIEW_W - 560) / 2, y = (VIEW_H - 360) / 2;
-    SetRect(&g_chestPanel, x, y, x + 560, y + 360);
+    const int x = PANEL_W + (VIEW_W - 620) / 2, y = (VIEW_H - 430) / 2;
+    SetRect(&g_chestPanel, x, y, x + 620, y + 430);
     SetRect(&g_chestSlot, x + 54, y + 68, x + 106, y + 120);
-    SetRect(&g_chestClose, x + 520, y + 10, x + 544, y + 32);
+    SetRect(&g_chestClose, x + 580, y + 10, x + 604, y + 32);
     for (int i = 0; i < INV_SLOTS; ++i) {
         const int c = i % HOTBAR_SLOTS, r = i / HOTBAR_SLOTS;
         const int rr = r == 0 ? INV_ROWS - 1 : r - 1;
-        SetRect(&g_chestPack[i], x + 54 + c * 46, y + 170 + rr * 42,
-                x + 94 + c * 46, y + 210 + rr * 42);
+        SetRect(&g_chestPack[i], x + 54 + c * 52, y + 170 + rr * 54,
+                x + 104 + c * 52, y + 220 + rr * 54);
     }
 }
 
@@ -1772,7 +2217,7 @@ static void drawChestStack(HDC hdc, const RECT& r, const ItemStack& st) {
     FillRect(hdc, &r, inRect(r, g_mx, g_my) ? g_btnBgHot : g_btnBg);
     FrameRect(hdc, &r, g_borderBrush);
     if (st.empty()) return;
-    RECT ir = r; ir.left += 3; ir.right -= 3; ir.top += 2; ir.bottom -= 11;
+    RECT ir = r; InflateRect(&ir, -3, -3);
     drawItemIcon(hdc, ir, st.item);
     if (st.count > 1) { char s[20]; sprintf(s, "%u", (unsigned)st.count); RECT tr = r; tr.top = r.bottom - 12; tr.right -= 2; SetTextColor(hdc, RGB(210,216,224)); DrawTextA(hdc, s, -1, &tr, DT_RIGHT | DT_TOP | DT_SINGLELINE); }
 }
@@ -1963,7 +2408,7 @@ static bool handleCreativeClick(int mx, int my, bool remove) {
             if (g_drag.inst) toolInstFree(g_drag.inst);
             g_drag.item  = it;
             g_drag.count = ITEMS[it].maxStack;
-            g_drag.inst  = (ITEMS[it].kind == ITEMK_TOOL) ? toolInstNew() : 0;
+            g_drag.inst  = (ITEMS[it].kind == ITEMK_TOOL) ? toolInstNew(it) : 0;
         }
         layoutCreative();
         return true;
@@ -2100,8 +2545,11 @@ static void makeWorld() {
     /* Machines are entities beside the grid, so clearing the world does not clear
        them -- they have to be dropped explicitly or a fresh world arrives haunted
        by the last one's contraptions. Same reason roomsClear() exists. */
+    undoClearAll();
     devClear();
     g_restBed = -1;
+    g_playerSessions[0].respawnBedX = g_playerSessions[0].respawnBedY = -1;
+    g_playerSessions[0].respawnFrames = 0;
     sparkClear();
     /* Creatures are transient (see entity.h) but they are not automatically
        gone: they live in a global array beside the grid, exactly like devices,
@@ -2152,6 +2600,8 @@ static bool handlePanelClick(int mx, int my) {
             netJoin(g_joinIp); g_joinIpFocus = false; return true;
         }
         if (inRect(g_menuStop, mx, my)) { netStop(); g_joinIpFocus = false; return true; }
+        if (inRect(g_menuUiMinus, mx, my)) { changeUiScale(-1); return true; }
+        if (inRect(g_menuUiPlus,  mx, my)) { changeUiScale(+1); return true; }
         if (inRect(g_menuQuit,   mx, my)) { g_running = false; PostQuitMessage(0); return true; }
         return true;
     }
@@ -2320,9 +2770,12 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_ERASEBKGND:
         return 1;   /* we repaint every pixel ourselves; skip the flicker */
 
+    case WM_SIZE:
+        updatePresentRect(hwnd);
+        return 0;
+
     case WM_MOUSEMOVE:
-        g_mx = (short)LOWORD(lp);
-        g_my = (short)HIWORD(lp);
+        updateMouseFromLParam(lp);
         if (g_sizeDragging) setSizeFromSlider(g_mx);
         return 0;
 
@@ -2351,8 +2804,8 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         break;
 
     case WM_LBUTTONDOWN:
-        g_mx = (short)LOWORD(lp);
-        g_my = (short)HIWORD(lp);
+        updateMouseFromLParam(lp);
+        if (g_mx < 0 || g_my < 0) return 0; /* letterbox, not game space */
         if (g_chestOpen >= 0) { handleChestClick(g_mx, g_my, false); g_uiCapture = true; }
         else if (g_creativeOpen) { handleCreativeClick(g_mx, g_my, false); g_uiCapture = true; }
         /* The device panel floats over the world, so it has to swallow the click
@@ -2373,11 +2826,12 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_LBUTTONUP:
         commitWire();       /* before the button clears -- see commitLine */
         commitLine();
+        if (!(g_survival && g_playerOn)) undoFinish(LOCAL_PLAYER_ID, 0);
         g_lmb = false; g_useLatch = false; g_uiCapture = false;
         g_sizeDragging = false; ReleaseCapture(); return 0;
     case WM_RBUTTONDOWN:
-        g_mx = (short)LOWORD(lp);
-        g_my = (short)HIWORD(lp);
+        updateMouseFromLParam(lp);
+        if (g_mx < 0 || g_my < 0) return 0; /* letterbox, not game space */
         if (g_chestOpen >= 0)     handleChestClick(g_mx, g_my, true);
         else if (g_creativeOpen)  handleCreativeClick(g_mx, g_my, true);
         else if (g_mx >= PANEL_W) {
@@ -2407,6 +2861,8 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                         g_restBed = -1;
                     } else if (g_playerOn && atBed) {
                         g_restBed = idx;
+                        g_playerSessions[0].respawnBedX = d->x;
+                        g_playerSessions[0].respawnBedY = d->y;
                     } else {
                         sprintf(g_saveMsg, "Stand by the bed to rest");
                         g_saveMsgFrames = 120;
@@ -2445,6 +2901,7 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     case WM_RBUTTONUP:
         commitLine();
+        if (!(g_survival && g_playerOn)) undoFinish(LOCAL_PLAYER_ID, 0);
         g_rmb = false; ReleaseCapture(); return 0;
 
     case WM_CAPTURECHANGED:
@@ -2509,6 +2966,19 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     }
 
     case WM_KEYDOWN:
+        /* Display controls remain available on every modal screen. F11 is
+           intentionally handled before inventory/menu keyboard capture. */
+        if (wp == VK_F11) {
+            if ((lp & (1L << 30)) == 0) toggleFullscreen(hwnd);
+            return 0;
+        }
+        if (wp == 'Z' && (GetKeyState(VK_CONTROL) & 0x8000)) {
+            if ((lp & (1L << 30)) == 0) {
+                if (g_survival && g_playerOn) sendClientAction(NACT_UNDO);
+                else undoApply(LOCAL_PLAYER_ID, 0);
+            }
+            return 0;
+        }
         /* Inventory screens own the keyboard. This matters particularly for
            search: typing "iron" used to send I through to the gameplay toggle
            and silently hide the survival hotbar underneath the open inventory. */
@@ -2582,10 +3052,9 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             loadFromSlot(0);
             break;
         }
-        /* R HELD is the line tool; R TAPPED still respawns at the cursor. The
-           respawn moved to key-up so the two can share one key -- see the note
-           on g_lineKey. Auto-repeat means this arrives many times while held,
-           so the flags are set rather than toggled. */
+        /* R held is the line tool and a quick tap is the temporary teleport.
+           Auto-repeat means this arrives many times while held, so the flag is
+           set rather than toggled. */
         case 'R':
             g_lineKey = true;
             break;
@@ -2648,15 +3117,15 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
     case WM_KEYUP:
         if (wp == 'R') {
-            /* A TAP of R respawns. A HOLD that drew a line does not, because
-               teleporting to the cursor every time you finish drawing a wall
-               would be an unforgettable way to lose your place. Note this fires
-               on the release rather than the press: with the key doing two jobs
-               there is nothing to act on until it is known which one it was. */
+            /* A completed line suppresses the tap verb. Survival sends the
+               teleport through authority; character-off creative moves its
+               observer directly. Dead players cannot use it to skip respawn. */
             if (!g_lineDrew && g_mx >= PANEL_W && !g_menuOpen && !g_creativeOpen) {
-                if (g_survival && g_playerOn) g_respawnPulse = true;
-                else g_player.reset((float)((g_mx - PANEL_W) / cellPixels() + g_camX),
-                                    (float)(g_my / cellPixels() + g_camY));
+                if (g_survival && g_playerOn) {
+                    if (g_player.alive) g_respawnPulse = true;
+                } else
+                    g_player.reset((float)((g_mx - PANEL_W) / cellPixels() + g_camX),
+                                   (float)(g_my / cellPixels() + g_camY));
             }
             g_lineKey = false;
             g_lineDrew = false;
@@ -2989,7 +3458,10 @@ static void interactFor(PlayerSession& session, const Aim& aim) {
             const bool atBed = px >= d->x - 4 && px <= d->x + DEV_W + 4 &&
                                py >= d->y - 8 && py <= d->y + DEV_H + 8;
             if (session.restBed == idx) session.restBed = -1;
-            else if (atBed) session.restBed = idx;
+            else if (atBed) {
+                session.restBed = idx;
+                session.respawnBedX = d->x; session.respawnBedY = d->y;
+            }
         } else if (d->type == DEV_PULSE_BUTTON) {
             d->poked = true;
         } else if (d->type == DEV_PEDESTAL) {
@@ -3139,6 +3611,8 @@ static void meleeTickFor(PlayerSession& session) {
 }
 
 static void applyPlayerUses(PlayerSession& session, const PlayerCommand& command) {
+    const int undoSlot = (int)(&session - g_playerSessions);
+    const bool recordUndo = netRole() != NET_CLIENT;
     const u8 bits = command.bits;
     const u8 pressed = (u8)(command.pressed | (bits & ~session.previousCommandBits));
     const bool left = (bits & PCMD_USE_LEFT) != 0;
@@ -3205,12 +3679,14 @@ static void applyPlayerUses(PlayerSession& session, const PlayerCommand& command
     }
     if (!(bits & PCMD_USE_RIGHT)) session.suppressRightUse = false;
     if (session.suppressRightUse) right = false;
-    if (pressed & PCMD_RESPAWN) {
+    if ((pressed & PCMD_RESPAWN) && session.body.alive) {
         const float x = (float)imax(PLAY_X0, imin(PLAY_X1, command.aimX));
         const float y = (float)imax(PLAY_Y0, imin(PLAY_Y1, command.aimY));
-        session.body.reset(x, y); session.restBed = -1;
+        session.body.reset(x, y);
+        session.restBed = -1;
     }
     if (!left && !right) {
+        if (recordUndo) undoFinish(undoSlot, &session.inventory);
         session.previousAimX = session.previousAimY = -1;
         session.previousCommandBits = bits;
         return;
@@ -3246,16 +3722,18 @@ static void applyPlayerUses(PlayerSession& session, const PlayerCommand& command
     } else if (left && !right && !command.background && !held.empty() &&
                ITEMS[held.item].kind == ITEMK_DEVICE) {
         placeDeviceStrokeFor(inv, session.previousAimX, session.previousAimY,
-                             ITEMS[held.item].deviceType, true, aim);
+                             ITEMS[held.item].deviceType, true, aim,
+                             recordUndo ? undoSlot : -1);
     } else if (left && !right && !command.background && !held.empty() &&
                ITEMS[held.item].kind == ITEMK_SEED) {
+        if (recordUndo) {
+            undoBegin(undoSlot, &inv);
+            undoCaptureDisc(undoSlot, aim.x, aim.y, radius);
+        }
         sowSeeds(g_world, inv, aim.x, aim.y, radius);
     } else if (left && !right && !command.background && !held.empty() &&
                ITEMS[held.item].kind == ITEMK_FOOD) {
-        if ((pressed & PCMD_USE_LEFT) && player.hp < PLAYER_HP_MAX) {
-            const ItemId item = held.item;
-            if (inv.take(item, 1) == 1) player.heal(ITEMS[item].heal);
-        }
+        if (pressed & PCMD_USE_LEFT) playerConsumeHealing(session, held.item);
     } else if (left && !right && !command.background && !held.empty() &&
                ITEMS[held.item].kind == ITEMK_IGNITE) {
         g_world.ignite(aim.x, aim.y, IGNITE_RADIUS);
@@ -3269,6 +3747,11 @@ static void applyPlayerUses(PlayerSession& session, const PlayerCommand& command
         }
     } else if (command.background) {
         const ToolSpec tool = miningSpec(inv);
+        if (recordUndo) {
+            undoBegin(undoSlot, &inv);
+            undoCaptureDisc(undoSlot, aim.x, aim.y,
+                            right ? imin(radius, tool.maxRadius) : radius);
+        }
         if (right) {
             if (session.digCooldown <= 0) {
                 digBg(g_world, inv, aim.x, aim.y, imin(radius, tool.maxRadius), tool.cellsPerBite);
@@ -3280,6 +3763,10 @@ static void applyPlayerUses(PlayerSession& session, const PlayerCommand& command
         roomsNotifyEdit(g_world, aim.x, aim.y);
     } else if (right) {
         const ToolSpec tool = miningSpec(inv);
+        if (recordUndo) {
+            undoBegin(undoSlot, &inv);
+            undoCaptureDisc(undoSlot, aim.x, aim.y, imin(radius, tool.maxRadius));
+        }
         if (session.digCooldown <= 0) {
             digInto(g_world, inv, aim.x, aim.y, imin(radius, tool.maxRadius), tool.cellsPerBite,
                     tool.plantsOnly, tool.power, command.digFilterOn ? digFilter : 0);
@@ -3287,7 +3774,9 @@ static void applyPlayerUses(PlayerSession& session, const PlayerCommand& command
         }
         roomsNotifyEdit(g_world, aim.x, aim.y);
     } else if (left && !held.empty() && ITEMS[held.item].kind == ITEMK_MATERIAL) {
+        if (recordUndo) undoBegin(undoSlot, &inv);
         if (command.overwrite) {
+            if (recordUndo) undoCaptureDisc(undoSlot, aim.x, aim.y, radius);
             const ToolSpec tool = miningSpec(inv);
             if (session.digCooldown <= 0) {
                 const int replaced = overwriteFrom(g_world, inv, aim.x, aim.y,
@@ -3303,6 +3792,7 @@ static void applyPlayerUses(PlayerSession& session, const PlayerCommand& command
             for (int step = 0; step <= steps && !inv.held().empty(); ++step) {
                 const int x = steps ? x0 + (aim.x - x0) * step / steps : aim.x;
                 const int y = steps ? y0 + (aim.y - y0) * step / steps : aim.y;
+                if (recordUndo) undoCaptureDisc(undoSlot, x, y, radius);
                 placeFrom(g_world, inv, x, y, radius);
             }
         }
@@ -3354,18 +3844,22 @@ static void applySlotAction(PlayerSession& session, const NetAction& action) {
         if (action.a < EQ_COUNT && !right) {
             ItemStack& eq = inv.equip[action.a];
             const int bay = action.a == EQ_LIGHT_DRONE ? 0 : action.a == EQ_DRONE_A ? 1 :
-                            action.a == EQ_DRONE_B ? 2 : -1;
+                            action.a == EQ_DRONE_B ? 2 : action.a == EQ_DRONE_C ? 3 : -1;
             if (bay >= 0 && !eq.empty()) {
                 for (int i = 0; i < Inventory::DRONE_MODULE_SLOTS_MAX; ++i)
                     if (!inv.droneModule[bay][i].empty()) return;
             }
-            if (!cursor.empty() && !equipFits(cursor.item, action.a)) return;
+            if (!cursor.empty() &&
+                (!equipFits(cursor.item, action.a) || !inv.droneBayUnlocked(action.a))) return;
             slotClickFor(cursor, eq, false);
         }
         break;
     case NSLOT_DRONE_MODULE:
         if (action.a < MAX_DRONES && action.b < Inventory::DRONE_MODULE_SLOTS_MAX && !right) {
             if (!cursor.empty() && (ITEMS[cursor.item].kind != ITEMK_DRONE_MODULE || cursor.count != 1)) return;
+            const int eq = action.a == 0 ? EQ_LIGHT_DRONE : action.a == 1 ? EQ_DRONE_A :
+                           action.a == 2 ? EQ_DRONE_B : EQ_DRONE_C;
+            if (!cursor.empty() && !inv.droneBayUnlocked(eq)) return;
             slotClickFor(cursor, inv.droneModule[action.a][action.b], false);
         }
         break;
@@ -3494,34 +3988,42 @@ static Aim playerWireAim(const PlayerSession& session, int rawX, int rawY) {
     return aim;
 }
 
-static void playerWireCell(PlayerSession& session, int x, int y) {
+static void playerWireCell(int slot, PlayerSession& session, int x, int y) {
     if (x < PLAY_X0 || x > PLAY_X1 || y < PLAY_Y0 || y > PLAY_Y1) return;
     const u8 old = g_world.at(x, y).mat;
     if (old == MAT_COPPER || old != MAT_EMPTY) return;
     if (!session.inventory.take(MAT_COPPER, 1)) return;
+    undoCaptureCell(slot, x, y);
     g_world.setCell(x, y, MAT_COPPER);
 }
 
 static void applyPlayerWirePoint(PlayerSession& session, const NetAction& action) {
+    const int slot = (int)(&session - g_playerSessions);
     const Aim aim = playerWireAim(session, action.x, action.y);
     if (!(action.flags & 1)) { session.wireX = aim.x; session.wireY = aim.y; return; }
     if (session.wireX < 0) return;
+    if (netRole() != NET_CLIENT) undoBegin(slot, &session.inventory);
     int x = session.wireX, y = session.wireY;
     const int dx = abs(aim.x - x), sx = x < aim.x ? 1 : -1;
     const int dy = abs(aim.y - y), sy = y < aim.y ? 1 : -1;
     int err = dx - dy;
     for (;;) {
-        playerWireCell(session, x, y);
+        if (netRole() != NET_CLIENT) playerWireCell(slot, session, x, y);
+        else playerWireCell(-1, session, x, y);
         if (x == aim.x && y == aim.y) break;
         const int twice = err * 2; const bool moveX = twice > -dy; const bool moveY = twice < dx;
         int nx = x, ny = y;
         if (moveX) { err -= dy; nx += sx; }
         if (moveY) { err += dx; ny += sy; }
-        if (moveX && moveY) playerWireCell(session, nx, y);
+        if (moveX && moveY) {
+            if (netRole() != NET_CLIENT) playerWireCell(slot, session, nx, y);
+            else playerWireCell(-1, session, nx, y);
+        }
         x = nx; y = ny;
     }
     session.wireX = session.wireY = -1;
     roomsNotifyEdit(g_world, aim.x, aim.y);
+    if (netRole() != NET_CLIENT) undoFinish(slot, &session.inventory);
 }
 
 static void applyPlayerAction(const NetAction& action) {
@@ -3529,7 +4031,8 @@ static void applyPlayerAction(const NetAction& action) {
     if (slot < 0 || slot >= MAX_PLAYERS) return;
     PlayerSession& session = g_playerSessions[slot];
     if (!session.connected || session.generation != action.generation) return;
-    if (action.type == NACT_SLOT) applySlotAction(session, action);
+    if (action.type == NACT_UNDO) undoApply(slot, &session.inventory);
+    else if (action.type == NACT_SLOT) applySlotAction(session, action);
     else if (action.type == NACT_CRAFT && action.a < N_RECIPES) {
         craftScanStations(g_world, session.body);
         const int count = imax(1, imin(50, (int)action.b));
@@ -3570,7 +4073,7 @@ static void applyPlayerAction(const NetAction& action) {
             if (session.cursor.inst) toolInstFree(session.cursor.inst);
             session.cursor.item = item;
             session.cursor.count = ITEMS[item].maxStack;
-            session.cursor.inst = ITEMS[item].kind == ITEMK_TOOL ? toolInstNew() : 0;
+            session.cursor.inst = ITEMS[item].kind == ITEMK_TOOL ? toolInstNew(item) : 0;
         }
     }
 }
@@ -3596,10 +4099,48 @@ static void refreshHostLogisticsPause() {
     g_logisticsUiOpen = open;
 }
 
+static const int RESPAWN_DELAY_FRAMES = 10 * 60;
+
+static void tickDeadPlayer(int slot, PlayerSession& session) {
+    if (session.respawnFrames <= 0) session.respawnFrames = RESPAWN_DELAY_FRAMES;
+    if (--session.respawnFrames > 0) return;
+
+    float spawnX = 0.0f, spawnY = 0.0f;
+    Device* bed = (session.respawnBedX >= 0 && session.respawnBedY >= 0)
+        ? devAt(session.respawnBedX, session.respawnBedY) : 0;
+    if (bed && bed->used && bed->type == DEV_BED &&
+        bed->x == session.respawnBedX && bed->y == session.respawnBedY) {
+        /* Centre the body directly above the platform-topped bed. The one-cell
+           gap avoids spawning with the feet already intersecting its cells. */
+        spawnX = (float)bed->x + DEV_W * 0.5f;
+        spawnY = (float)bed->y - PLAYER_H * 0.5f - 1.0f;
+    } else {
+        session.respawnBedX = session.respawnBedY = -1;
+        worldSpawnPoint(&spawnX, &spawnY);
+    }
+
+    session.body.reset(spawnX, spawnY);
+    session.restBed = -1; session.openDevice = -1;
+    session.previousAimX = session.previousAimY = -1;
+    session.previousCommandBits = 0; session.suppressRightUse = false;
+    session.lineActive = false; session.wireX = session.wireY = -1;
+    session.circuitWireFrom = -1; session.circuitWirePort = 0;
+    session.respawnFrames = 0;
+    session.body.occupy(g_world, slot);
+}
+
 static void updatePlayerFromCommand(int slot, PlayerSession& session, PlayerCommand& command,
                                     bool allowMovement) {
     if (!session.connected || session.generation != command.generation) return;
+    playerHealingCooldownTick(session);
     session.inventory.selected = imax(0, imin(HOTBAR_SLOTS - 1, (int)command.selected));
+    if (!session.body.alive) {
+        undoFinish(slot, &session.inventory);
+        tickDeadPlayer(slot, session);
+        command.pressed = 0;
+        return;
+    }
+    session.respawnFrames = 0;
     if (session.restBed >= 0 && (!g_devices[session.restBed].used ||
                                 g_devices[session.restBed].type != DEV_BED))
         session.restBed = -1;
@@ -3613,6 +4154,12 @@ static void updatePlayerFromCommand(int slot, PlayerSession& session, PlayerComm
     session.body.speedMul = 1.0f + (float)session.inventory.speedBonus() / 100.0f;
     session.body.resist = session.inventory.tempResist();
     if (allowMovement && session.restBed < 0) session.body.update(g_world, in);
+    if (!session.body.alive) {
+        undoFinish(slot, &session.inventory);
+        session.respawnFrames = RESPAWN_DELAY_FRAMES;
+        command.pressed = 0;
+        return;
+    }
     session.body.occupy(g_world, slot);
     if (allowMovement) doorAuto(g_world, session.body);
     applyPlayerUses(session, command);
@@ -3693,7 +4240,14 @@ static void fireToolFor(Player& player, Inventory& inventory, const Aim& aim) {
 
     ToolInst& ti = g_toolInst[h.inst];
     if (ti.cooldown > 0) return;
-    ti.cooldown = accessoryShotDelay(inventory, s.delay);
+    /* Tools created by an older save acquire the current chassis battery on
+       first use. Normal creation configures this in toolInstNew(). */
+    if (!ti.energyCapacity) {
+        ti.energyCapacity = ITEMS[h.item].energyCapacity;
+        ti.energyRecharge = ITEMS[h.item].energyRecharge;
+        ti.energy = ti.energyCapacity;
+    }
+    if (!toolShotEnergyAvailable(h, s)) return;
     /* The two charms that change the shot itself. Resolved here, beside the
        delay, rather than inside toolResolve: what a TOOL does is a property of
        the tool and its modules, and folding the wearer's jewellery into that
@@ -3728,20 +4282,30 @@ static void fireToolFor(Player& player, Inventory& inventory, const Aim& aim) {
     int payload = MAT_EMPTY;
     if (s.payloadMat != MAT_EMPTY && ti.payload.count > 0) {
         payload = s.payloadMat;
-        if (--ti.payload.count == 0) { ti.payload.item = ITEM_NONE; ti.payload.inst = 0; }
     }
     const float vx = dx * SPEED, vy = dy * SPEED;
+    u8 owner = PLAYER_NONE;
+    for (int slot = 0; slot < MAX_PLAYERS; ++slot)
+        if (&g_playerSessions[slot].inventory == &inventory) { owner = (u8)slot; break; }
     const bool fired = projSpawn(pcx + dx * MUZZLE, pcy + dy * MUZZLE, vx, vy,
-                                 s.power, s.pierce, 90, s.colour, s.blast,
-                                 payload, shotDamage, false, s.gravity);
+                                 s.power, s.pierce, s.life, s.colour, s.blast,
+                                 payload, shotDamage, false, s.gravity, s.effect,
+                                 s.bounces, s.homing, owner);
+    if (!fired) return;
+
+    toolCommitShot(h, s, accessoryShotDelay(inventory, s.delay));
+    if (payload != MAT_EMPTY && --ti.payload.count == 0) {
+        ti.payload.item = ITEM_NONE; ti.payload.inst = 0;
+    }
     if (fired && accessoryTwinShot(inventory)) {
         /* Duplicate the command, as the drone controller does. One payload was
            spent above; the accessory rewards the slot with a second delivery,
            fanned just enough that both projectiles remain individually visible. */
         const float fanX = -vy * 0.10f, fanY = vx * 0.10f;
         projSpawn(pcx + dx * MUZZLE, pcy + dy * MUZZLE,
-                  vx + fanX, vy + fanY, s.power, s.pierce, 90, 0xD8A4FF,
-                  s.blast, payload, shotDamage, false, s.gravity);
+                  vx + fanX, vy + fanY, s.power, s.pierce, s.life, 0xD8A4FF,
+                  s.blast, payload, shotDamage, false, s.gravity, s.effect,
+                  s.bounces, s.homing, owner);
     }
 }
 
@@ -3779,20 +4343,44 @@ static bool throwGlowflare(const Aim& aim) { return throwGlowflareFor(g_player, 
    rejects overlapping footprints; charging only on success makes that rejection
    free and lets a stroke safely pass across devices already in place. */
 static void placeDeviceStrokeFor(Inventory& inventory, int& previousX, int& previousY,
-                                 u8 type, bool consume, const Aim& aim) {
+                                 u8 type, bool consume, const Aim& aim, int undoSlot) {
     const int x0 = previousX, y0 = previousY;
     const int steps = imax(abs(aim.x - x0), abs(aim.y - y0));
     for (int s = 0; s <= steps; ++s) {
         const int x = steps ? x0 + (aim.x - x0) * s / steps : aim.x;
         const int y = steps ? y0 + (aim.y - y0) * s / steps : aim.y;
-        if (devPlace(g_world, type, x, y) && consume) inventory.take(inventory.held().item, 1);
+        if (undoSlot >= 0) {
+            undoBegin(undoSlot, consume ? &inventory : 0);
+            /* Covers centred devices and the at-most-one-footprint logistics
+               lattice snap. Only genuinely changed cells survive finish. */
+            undoCaptureDisc(undoSlot, x, y, DEV_W * 2);
+        }
+        if (devPlace(g_world, type, x, y)) {
+            if (undoSlot >= 0) {
+                UndoPlacedDevice placed; memset(&placed, 0, sizeof(placed));
+                placed.torch = type == DEV_TORCH; placed.type = type;
+                if (placed.torch) {
+                    const int ti = torchAt(x, y);
+                    const TorchFixture* fixtures = torchData();
+                    if (ti >= 0 && fixtures) { placed.index = ti; placed.x = fixtures[ti].x; placed.y = fixtures[ti].y; }
+                    else placed.index = -1;
+                } else {
+                    Device* d = devAt(x, y);
+                    placed.index = d ? (int)(d - g_devices) : -1;
+                    placed.x = d ? d->x : devOriginX(x); placed.y = d ? d->y : devOriginY(y);
+                }
+                if (placed.index >= 0) g_activeUndo[undoSlot].placed.push_back(placed);
+            }
+            if (consume) inventory.take(inventory.held().item, 1);
+        }
         if (consume && inventory.held().empty()) break;
     }
     previousX = aim.x; previousY = aim.y;
 }
 
 static void placeDeviceStroke(u8 type, bool consume, const Aim& aim) {
-    placeDeviceStrokeFor(g_inv, g_pmx, g_pmy, type, consume, aim);
+    placeDeviceStrokeFor(g_inv, g_pmx, g_pmy, type, consume, aim,
+                         netRole() == NET_CLIENT ? -1 : LOCAL_PLAYER_ID);
 }
 
 static void applyBrush() {
@@ -3877,8 +4465,7 @@ static void applyBrush() {
             /* Refuse at full health rather than silently eating it. Wasting a
                loaf because you mis-clicked is exactly the kind of small theft
                players remember. */
-            if (g_player.hp < PLAYER_HP_MAX && g_inv.take(what, 1) == 1)
-                g_player.heal(ITEMS[what].heal);
+            playerConsumeHealing(g_playerSessions[0], what);
             g_useLatch = true;
         }
         return;
@@ -3964,6 +4551,8 @@ static void applyBrush() {
     int steps = imax(abs(x1 - x0), abs(y1 - y0));
 
     const int sel = g_rmb ? (int)MAT_EMPTY : g_brushMat;
+    const bool undoable = sel != TOOL_HEAT && sel != TOOL_COOL;
+    if (undoable) undoBegin(LOCAL_PLAYER_ID, 0);
     for (int s = 0; s <= steps; ++s) {
         int px = steps ? x0 + (x1 - x0) * s / steps : x1;
         int py = steps ? y0 + (y1 - y0) * s / steps : y1;
@@ -3980,6 +4569,7 @@ static void applyBrush() {
             else if (g_brushMat == TOOL_COOL) g_world.heat(px, py, g_brushRadius, -HEAT_STEP);
             else                              placeFrom(g_world, g_inv, px, py, buildRadius());
         } else {
+            if (undoable) undoCaptureDisc(LOCAL_PLAYER_ID, px, py, g_brushRadius);
             if (sel == TOOL_HEAT)      g_world.heat(px, py, g_brushRadius,  HEAT_STEP);
             else if (sel == TOOL_COOL) g_world.heat(px, py, g_brushRadius, -HEAT_STEP);
             else if (g_bgLayer)        g_world.paintBg(px, py, g_brushRadius, (u8)sel);
@@ -4431,16 +5021,15 @@ static void drawHotbar(HDC hdc) {
        bar goes orange or blue while it is happening, so the warning is in the
        place you are already looking for the consequence. */
     {
-        /* ABOVE the fuel gauge, which is above the two text rows. The stack from
-           the hotbar upward is: name (top-20..top-4), stats (top-36..top-20),
-           fuel (top-47..top-40), health here. Anything lower overprints the
-           readout, which is exactly what a first attempt at top-6 did.
+        /* Above the optional energy and fuel gauges. The stack from the hotbar
+           upward is: name, stats, energy, fuel, breath, then health. Reserving
+           every slot keeps health fixed when equipment or the held item changes.
 
            Health keeps its slot whether or not flight gear is worn, so the bar
            does not jump when you take a jetpack off -- the gap where the fuel
            gauge would be is the better cost. */
         const int x0 = g_hotRect[0].left;
-        const int y1 = g_hotRect[0].top - 51, y0 = y1 - 9;
+        const int y1 = g_hotRect[0].top - 67, y0 = y1 - 9;
         const int x1 = x0 + 132;
         RECT bar = { x0, y0, x1, y1 };
         FillRect(hdc, &bar, g_btnBg);
@@ -4487,13 +5076,23 @@ static void drawHotbar(HDC hdc) {
         }
 
         char hpTxt[64];
-        if (!g_player.alive)               sprintf(hpTxt, "DEAD  -  tap R to respawn");
+        if (!g_player.alive) {
+            const int frames = g_playerSessions[0].respawnFrames > 0
+                ? g_playerSessions[0].respawnFrames : RESPAWN_DELAY_FRAMES;
+            sprintf(hpTxt, "DEAD  -  respawning in %ds", (frames + 59) / 60);
+        }
         else if (g_player.breath == 0)     sprintf(hpTxt, "%d   DROWNING", g_player.hp);
         else if (g_player.hurtingHot())    sprintf(hpTxt, "%d   BURNING", g_player.hp);
         else if (g_player.hurtingCold())   sprintf(hpTxt, "%d   FREEZING", g_player.hp);
         else if (g_player.underwater)      sprintf(hpTxt, "%d   %ds of air",
                                                    g_player.hp, g_player.breath / 60);
         else                               sprintf(hpTxt, "%d", g_player.hp);
+        if (g_player.alive && g_playerSessions[0].healCooldown > 0) {
+            const int seconds = (g_playerSessions[0].healCooldown + 59) / 60;
+            const int used = (int)strlen(hpTxt);
+            snprintf(hpTxt + used, sizeof(hpTxt) - (size_t)used,
+                     "   HEAL LOCK %ds", seconds);
+        }
         /* Beside the bar rather than above it, so the whole readout is one row
            and cannot collide with anything below. */
         SetTextColor(hdc, g_player.alive ? RGB(206, 212, 224) : RGB(232, 96, 88));
@@ -4513,7 +5112,7 @@ static void drawHotbar(HDC hdc) {
            nearer than top-38 overprints the readout -- which is exactly what
            top-30 did: an orange bar straight through "no module installed". */
         const int x0 = g_hotRect[0].left, x1 = g_hotRect[HOTBAR_SLOTS - 1].right;
-        const int y1 = g_hotRect[0].top - 40, y0 = y1 - 7;
+        const int y1 = g_hotRect[0].top - 49, y0 = y1 - 7;
         RECT bar = { x0, y0, x1, y1 };
         FillRect(hdc, &bar, g_btnBg);
         const float frac = g_player.fuel / (float)g_player.fly.fuel;
@@ -4528,6 +5127,44 @@ static void drawHotbar(HDC hdc) {
             DeleteObject(b);
         }
         FrameRect(hdc, &bar, g_borderBrush);
+    }
+
+    /* --- held multitool energy ---------------------------------------------
+       A number is useful for exact loadout arithmetic, but poor moment-to-
+       moment feedback. The bar answers "can I fire yet" at a glance; its gold
+       notch marks the cost of the next module in the left-to-right sequence.
+       It appears only for an energy chassis, so the starter Bolt Caster does
+       not grow an unexplained permanently empty gauge. */
+    {
+        const ItemStack& held = g_inv.held();
+        if (!held.empty() && held.inst && ITEMS[held.item].kind == ITEMK_TOOL &&
+            ITEMS[held.item].energyCapacity > 0) {
+            const ToolInst& ti = g_toolInst[held.inst];
+            const ToolShot shot = toolResolve(held);
+            const int x0 = g_hotRect[0].left, x1 = g_hotRect[HOTBAR_SLOTS - 1].right;
+            const int y1 = g_hotRect[0].top - 40, y0 = y1 - 7;
+            RECT bar = { x0, y0, x1, y1 };
+            FillRect(hdc, &bar, g_btnBg);
+            const float frac = ti.energyCapacity
+                ? (float)ti.energy / (float)ti.energyCapacity : 0.0f;
+            const float shown = frac < 0.0f ? 0.0f : (frac > 1.0f ? 1.0f : frac);
+            RECT fill = bar;
+            fill.right = x0 + (int)((float)(x1 - x0) * shown);
+            if (fill.right > fill.left) {
+                const bool ready = !shot.canFire || ti.energy >= shot.energyCost;
+                HBRUSH b = CreateSolidBrush(ready ? RGB(78, 190, 224) : RGB(154, 86, 190));
+                FillRect(hdc, &fill, b);
+                DeleteObject(b);
+            }
+            FrameRect(hdc, &bar, g_borderBrush);
+            if (shot.canFire && shot.energyCost > 0 && ti.energyCapacity > 0) {
+                const int markX = x0 + (int)((float)(x1 - x0) *
+                    ((float)shot.energyCost / (float)ti.energyCapacity));
+                RECT mark = { imax(x0 + 1, imin(x1 - 2, markX)), y0 + 1,
+                              imax(x0 + 2, imin(x1 - 1, markX + 1)), y1 - 1 };
+                FillRect(hdc, &mark, g_accentBrush);
+            }
+        }
     }
 
     for (int i = 0; i < HOTBAR_SLOTS; ++i) {
@@ -4586,7 +5223,7 @@ static void drawHotbar(HDC hdc) {
        it, not down among the frame timings. The bonus is called out separately
        so it is obvious which part of it you would lose by dropping the item. */
     {
-        char s[96];
+        char s[160];
         const int bonus = g_inv.reachBonus();
         const ToolShot sh = toolResolve(h);
         /* Holding a tool, the line describes the tool -- because that is what
@@ -4597,9 +5234,13 @@ static void drawHotbar(HDC hdc) {
                     (unsigned)h.count, currentReach());
         }
         else if (!h.empty() && ITEMS[h.item].kind == ITEMK_TOOL) {
-            if (sh.canFire) sprintf(s, "%s  pow %d  pierce %d  %d/s  reach %d",
-                                    ITEMS[h.item].name, sh.power, sh.pierce,
-                                    60 / imax(1, sh.delay), currentReach());
+            if (sh.canFire && h.inst) {
+                const ToolInst& ti = g_toolInst[h.inst];
+                sprintf(s, "%s  E %u/%u  next %dE  dmg %d  %d/s",
+                        ITEMS[h.item].name, (unsigned)ti.energy,
+                        (unsigned)ti.energyCapacity, sh.energyCost, sh.damage,
+                        60 / imax(1, sh.delay));
+            }
             else            sprintf(s, "%s  no module installed  reach %d",
                                     ITEMS[h.item].name, currentReach());
         }
@@ -4651,6 +5292,53 @@ static void drawHotbar(HDC hdc) {
 
    Drawn only for the local player. Remote swings are not replicated -- see the
    note on PlayerSession::swingFrame. */
+static void drawMeleeSegment(u32* px, bool lit, ItemId item,
+                             float x0, float y0, float x1, float y1) {
+    const ItemDef& def = ITEMS[item];
+    const bool sword = def.meleeStyle == MELEE_SWING;
+    const float dx = x1 - x0, dy = y1 - y0;
+    const float len = sqrtf(dx * dx + dy * dy);
+    if (len < 0.5f) return;
+    const float nx = -dy / len, ny = dx / len;
+    const int steps = imax(1, (int)len);
+    /* Fixed-size furniture keeps the doubled swords looking like weapons.
+       Percentage furniture made a thirty-cell blade grow a five-cell handle
+       and an eight-cell guard region, which read as a striped pole. */
+    const int grip = sword ? 4 : imax(3, imin(5, steps / 4));
+
+    const auto put = [&](float fx, float fy, u32 colour) {
+        const int x = (int)fx, y = (int)fy;
+        if (x < 0 || x >= VIEW_CELLS_W || y < 0 || y >= VIEW_CELLS_H) return;
+        px[y * VIEW_CELLS_W + x] = lit ? shadeColor(colour, viewShade(x, y)) : colour;
+    };
+
+    for (int i = 0; i <= steps; ++i) {
+        const float along = (float)i / (float)steps;
+        const float fx = x0 + dx * along, fy = y0 + dy * along;
+        u32 colour;
+        if      (i < grip)       colour = 0xC8B070;       /* wrapped grip */
+        else if (i == grip)      colour = 0x6E7684;       /* steel collar */
+        else if (i >= steps - 1) colour = 0xF2F5FF;       /* bright point */
+        else                     colour = ITEMS[item].colour;
+
+        /* Long swords get a symmetric three-cell blade for their lower half,
+           narrowing to a single-cell point. The former one-sided thickness
+           made the blade visibly wobble around its hit segment as it rotated. */
+        int halfWidth = 0;
+        if (sword && i > grip && i < steps - 2 &&
+            i < grip + (steps - grip) * 3 / 5) halfWidth = 1;
+        for (int w = -halfWidth; w <= halfWidth; ++w)
+            put(fx + nx * (float)w, fy + ny * (float)w, colour);
+
+        /* A real crossguard, perpendicular to the blade, replaces the old
+           guard-coloured section running along it. This silhouette remains
+           unmistakably a sword at every aim angle and facing direction. */
+        if (sword && i == grip)
+            for (int w = -3; w <= 3; ++w)
+                put(fx + nx * (float)w, fy + ny * (float)w, 0x6E7684);
+    }
+}
+
 static void drawMeleeSwing(u32* px, bool lit) {
     PlayerSession& session = g_playerSessions[0];
     if (session.swingFrame <= 0) return;
@@ -4664,39 +5352,9 @@ static void drawMeleeSwing(u32* px, bool lit) {
     meleeBlade(g_player, def, session.swingDirX, session.swingDirY,
                phase, &hx, &hy, &tx, &ty);
 
-    const float dx = tx - hx, dy = ty - hy;
-    const float len = sqrtf(dx * dx + dy * dy);
-    if (len < 0.5f) return;
-    const float ux = dx / len, uy = dy / len;
-    const float nx = -uy, ny = ux;          /* perpendicular, for thickness */
-
-    const u32 metal = ITEMS[h.item].colour;
-    const int steps = (int)len;
-    for (int i = 0; i <= steps; ++i) {
-        const float t = (float)i / (float)steps;
-        const float fx = hx + dx * t - (float)g_camX;
-        const float fy = hy + dy * t - (float)g_camY;
-
-        /* Grip, then guard, then metal, then a bright tip -- the same reading
-           order the icon has, so the thing in your hand and the thing in the
-           hotbar are recognisably one object. The guard only exists on a sword;
-           a spear has none, which is what tells the two apart in motion. */
-        u32 c;
-        if      (t < 0.16f) c = 0xC8B070;                        /* grip */
-        else if (def.meleeStyle == MELEE_SWING && t < 0.26f) c = 0x6E7684;  /* crossguard */
-        else if (i >= steps - 1) c = 0xF2F5FF;                   /* the point */
-        else                     c = metal;
-
-        /* Two cells wide along the blade and one at the grip, so a sword has
-           some heft to it and a spear stays a line. */
-        const int thick = (t < 0.16f || def.meleeStyle == MELEE_STAB) ? 1 : 2;
-        for (int w = 0; w < thick; ++w) {
-            const int x = (int)(fx + nx * (float)w);
-            const int y = (int)(fy + ny * (float)w);
-            if (x < 0 || x >= VIEW_CELLS_W || y < 0 || y >= VIEW_CELLS_H) continue;
-            px[y * VIEW_CELLS_W + x] = lit ? shadeColor(c, viewShade(x, y)) : c;
-        }
-    }
+    drawMeleeSegment(px, lit, h.item,
+                     hx - (float)g_camX, hy - (float)g_camY,
+                     tx - (float)g_camX, ty - (float)g_camY);
 }
 
 static void drawHeldTool(u32* px, const Aim& aim, bool lit) {
@@ -4714,20 +5372,19 @@ static void drawHeldTool(u32* px, const Aim& aim, bool lit) {
             const float ad = sqrtf(ax * ax + ay * ay);
             if (ad > 0.001f) { ax /= ad; ay /= ad; }
             else { ax = (float)(g_player.facing >= 0 ? 1 : -1); ay = 0.0f; }
-            /* Held at rest is SHORTER than the weapon's reach: a spear carried
-               at full extension would read as a permanent attack, and the
-               difference between resting and striking is most of what makes a
-               stroke legible. */
-            const float rest = (float)def.meleeReach * 0.55f;
-            const u32 metal = ITEMS[m.item].colour;
-            for (int t = 0; t < (int)rest; ++t) {
-                const float f = (float)t / rest;
-                const u32 c = f < 0.25f ? 0xC8B070 : (t >= (int)rest - 1 ? 0xF2F5FF : metal);
-                const int x = (int)(pcx + ax * (2.0f + (float)t) - (float)g_camX);
-                const int y = (int)(pcy - 1.0f + ay * (2.0f + (float)t) - (float)g_camY);
-                if (x < 0 || x >= VIEW_CELLS_W || y < 0 || y >= VIEW_CELLS_H) continue;
-                px[y * VIEW_CELLS_W + x] = lit ? shadeColor(c, viewShade(x, y)) : c;
-            }
+            /* A sword is rigid: its resting segment must be exactly as long as
+               the visible swing segment, or starting an attack looks like the
+               blade telescopes outward. meleeBlade places a swing hilt two
+               cells from the player and its tip at meleeReach, hence reach-2.
+               Spears retain a withdrawn carry pose because extension is the
+               readable motion of a stab. */
+            const float rest = def.meleeStyle == MELEE_SWING
+                             ? (float)def.meleeReach - 2.0f
+                             : (float)def.meleeReach * 0.55f;
+            const float x0 = pcx + ax * 2.0f - (float)g_camX;
+            const float y0 = pcy - 1.0f + ay * 2.0f - (float)g_camY;
+            drawMeleeSegment(px, lit, m.item, x0, y0,
+                             x0 + ax * rest, y0 + ay * rest);
             return;
         }
     }
@@ -5186,21 +5843,20 @@ static void drawCreative(HDC hdc) {
         if (IsRectEmpty(&r)) continue;
         const int have = signalPicker ? 0 : g_inv.countOf((ItemId)it);
 
-        /* Swatches are made and destroyed per frame here rather than cached,
-           unlike the palette's. This is a modal screen that is open for a
-           second at a time, and 40 brush creations once in a while is nothing
-           next to keeping a second parallel array in step with ITEMS[]. */
-        /* Every entry reserves the same icon box. Materials now use their
-           generated 14px sprites here too, so the creative list no longer
-           falls back to anonymous colour swatches. */
-        HBRUSH iconSpace = CreateSolidBrush(RGB(36, 40, 49));
-        drawButton(hdc, r, signalPicker ? circuitSignalName(it) : ITEMS[it].name,
-                   iconSpace, have > 0, inRect(r, g_mx, g_my));
-        DeleteObject(iconSpace);
-        RECT ir = { r.left + 4, r.top + 1, r.left + 22, r.bottom - 1 };
+        /* Every entry reserves a full-size icon well. This is laid out here
+           rather than through drawButton's compact 16px swatch path: growing
+           only the picture without moving the label made the two overlap. */
+        const bool rowHot = inRect(r, g_mx, g_my);
+        FillRect(hdc, &r, have > 0 ? g_btnBgSel : (rowHot ? g_btnBgHot : g_btnBg));
+        FrameRect(hdc, &r, have > 0 ? g_accentBrush : g_borderBrush);
+        RECT ir = { r.left + 3, r.top + 2, r.left + 47, r.bottom - 2 };
         FillRect(hdc, &ir, g_panelBg);
         if (signalPicker) drawCircuitSignalIcon(hdc, ir, it);
         else              drawItemIcon(hdc, ir, (ItemId)it);
+        RECT label = r; label.left = ir.right + 7; label.right -= have > 0 ? 42 : 7;
+        SetTextColor(hdc, have > 0 ? RGB(245, 224, 150) : RGB(214, 216, 224));
+        DrawTextA(hdc, signalPicker ? circuitSignalName(it) : ITEMS[it].name,
+                  -1, &label, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 
         /* Ticked, when this grid is being used to build the dig whitelist. The
            accent frame is the whole feedback for a toggle -- without it the
@@ -5259,7 +5915,7 @@ static void drawCreative(HDC hdc) {
             FrameRect(hdc, &r, held ? g_accentBrush : g_borderBrush);
             if (st.empty()) continue;
             RECT ir = r;
-            ir.left += 3; ir.right -= 3; ir.top += 2; ir.bottom -= 11;
+            InflateRect(&ir, -3, -3);
             drawItemIcon(hdc, ir, st.item);
             /* Counts under the swatch, and only when there is more than one:
                a "1" on every tool is noise on a screen that is already dense. */
@@ -5348,6 +6004,7 @@ static void drawCreative(HDC hdc) {
             RECT r = g_eqRect[i];
             const ItemStack& eq = g_inv.equip[i];
             const bool hot = inRect(r, g_mx, g_my);
+            const bool locked = !g_inv.droneBayUnlocked(i);
             FillRect(hdc, &r, hot ? g_btnBgHot : g_btnBg);
             FrameRect(hdc, &r, eq.empty() ? g_borderBrush : g_accentBrush);
             if (!eq.empty()) {
@@ -5361,6 +6018,17 @@ static void drawCreative(HDC hdc) {
                 RECT tr = r; tr.top += 10;
                 DrawTextA(hdc, EQ_SHORT[i], -1, &tr, DT_CENTER | DT_TOP | DT_SINGLELINE);
                 if (hot) { g_hoverLabel = EQ_NAMES[i]; g_hoverRect = r; }
+            }
+            if (locked) {
+                /* Stored equipment remains visible and removable after losing
+                   a capacity bonus, but LOCK makes it clear that it is inert. */
+                SetTextColor(hdc, RGB(190, 126, 92));
+                RECT tr = r; tr.top = r.bottom - 17;
+                DrawTextA(hdc, "LOCK", -1, &tr, DT_CENTER | DT_TOP | DT_SINGLELINE);
+                if (hot) {
+                    g_hoverLabel = "Locked combat-drone bay -- use 2 Drone Armour pieces or a Drone Beacon";
+                    g_hoverRect = r;
+                }
             }
         }
 
@@ -5429,13 +6097,18 @@ static void drawCreative(HDC hdc) {
         RECT lr = g_crePanel;
         lr.left = g_toolSlotRect[0].left;
         lr.top  = g_toolSlotRect[0].top - 20;
-        char s[128];
+        char s[256];
         /* State the resolved numbers, not the tool's own -- the delay shown is
            what it will actually fire at with the modules currently in it, which
            is the only version of the number worth reading. */
-        if (sh.canFire)
-            sprintf(s, "%s  --  %d slots, %d frame delay, power %d, pierce %d",
-                    ITEMS[ts.item].name, g_toolSlotCount, sh.delay, sh.power, sh.pierce);
+        if (sh.canFire) {
+            const ToolInst& ti = g_toolInst[ts.inst];
+            const ItemId next = sh.moduleSlot >= 0 ? ti.slot[sh.moduleSlot] : ts.item;
+            sprintf(s, "%s  E %u/%u +%u/s  next %s: %dE, %df, dmg %d",
+                    ITEMS[ts.item].name, (unsigned)ti.energy,
+                    (unsigned)ti.energyCapacity, (unsigned)ti.energyRecharge * 60u,
+                    ITEMS[next].name, sh.energyCost, sh.delay, sh.damage);
+        }
         else
             sprintf(s, "%s  --  %d slots, empty (install a module to fire)",
                     ITEMS[ts.item].name, g_toolSlotCount);
@@ -5502,10 +6175,10 @@ static void drawCreative(HDC hdc) {
        readable on top of it -- a stack drawn centred on the hotspot swallows
        the pointer and you lose track of where you are actually clicking. */
     if (!signalPicker && !g_drag.empty()) {
-        RECT r = { g_mx + 8, g_my + 8, g_mx + 8 + 30, g_my + 8 + 30 };
+        RECT r = { g_mx + 8, g_my + 8, g_mx + 56, g_my + 56 };
         FillRect(hdc, &r, g_btnBgSel);
         FrameRect(hdc, &r, g_accentBrush);
-        RECT ir = r; ir.left += 3; ir.right -= 3; ir.top += 2; ir.bottom -= 11;
+        RECT ir = r; InflateRect(&ir, -3, -3);
         drawItemIcon(hdc, ir, g_drag.item);
         if (g_drag.count > 1) {
             char n[24];
@@ -5563,7 +6236,9 @@ bool g_craftOpen = false;
    this matters more every time the list grows: it went from 8 recipes to
    over 70 in one pass, and a panel sized to hold every row unconditionally
    would now run well past the bottom of the window. */
-static const int CRAFT_VIS_ROWS = 14;
+static const int CRAFT_VIS_ROWS = 12;
+static const int CRAFT_ROW_PITCH = 50;
+static const int CRAFT_ROW_H = 46;
 int  g_craftScroll = 0;
 static RECT g_craftTrack, g_craftThumb;
 
@@ -5585,7 +6260,7 @@ static void layoutCraft() {
     const int maxScroll = imax(0, N_RECIPES - CRAFT_VIS_ROWS);
     g_craftScroll = imax(0, imin(g_craftScroll, maxScroll));
 
-    const int h = 46 + visRows * 30 + 12;
+    const int h = 46 + visRows * CRAFT_ROW_PITCH + 12;
     const int cx = PANEL_W + VIEW_W / 2, cy = VIEW_H / 2;
     SetRect(&g_craftPanel, cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2);
 
@@ -5597,12 +6272,15 @@ static void layoutCraft() {
     for (int i = 0; i < N_RECIPES && i < 128; ++i) {
         const int row = i - g_craftScroll;
         if (row < 0 || row >= visRows) { SetRectEmpty(&g_craftRow[i]); continue; }
-        SetRect(&g_craftRow[i], g_craftPanel.left + 12, g_craftPanel.top + 40 + row * 30,
-                g_craftPanel.right - 12 - barW - 4, g_craftPanel.top + 40 + row * 30 + 26);
+        SetRect(&g_craftRow[i], g_craftPanel.left + 12,
+                g_craftPanel.top + 40 + row * CRAFT_ROW_PITCH,
+                g_craftPanel.right - 12 - barW - 4,
+                g_craftPanel.top + 40 + row * CRAFT_ROW_PITCH + CRAFT_ROW_H);
     }
 
     const int trackX = g_craftPanel.right - 12 - barW;
-    const int trackY0 = g_craftPanel.top + 40, trackY1 = trackY0 + visRows * 30 - 4;
+    const int trackY0 = g_craftPanel.top + 40;
+    const int trackY1 = trackY0 + visRows * CRAFT_ROW_PITCH - 4;
     SetRect(&g_craftTrack, trackX, trackY0, trackX + barW, trackY1);
     if (maxScroll > 0) {
         const int trackH = trackY1 - trackY0;
@@ -5683,7 +6361,7 @@ static void drawCraft(HDC hdc) {
 
         /* The output's own swatch, the same one the hotbar uses, so a row and
            the thing it makes are recognisably the same object. */
-        RECT sw = { r.left + 5, r.top + 4, r.left + 21, r.bottom - 4 };
+        RECT sw = { r.left + 3, r.top + 2, r.left + 47, r.bottom - 2 };
         drawItemIcon(hdc, sw, rc.out);
 
         /* The RIGHT-HAND text is measured and laid out FIRST, so the label can
@@ -5789,9 +6467,17 @@ static void drawMenu(HDC hdc) {
                NULL, false, inRect(g_menuStop, g_mx, g_my));
     drawButton(hdc, g_menuQuit,   "Quit",   NULL, false, inRect(g_menuQuit,   g_mx, g_my));
 
+    char uiScaleLabel[64];
+    sprintf(uiScaleLabel, "UI scale  %d%%", uiScalePct());
+    drawButton(hdc, g_menuUiMinus, "-", NULL, g_uiScaleIndex == 0,
+               inRect(g_menuUiMinus, g_mx, g_my));
+    drawButton(hdc, g_menuUiValue, uiScaleLabel, NULL, false, false);
+    drawButton(hdc, g_menuUiPlus, "+", NULL, g_uiScaleIndex == UI_SCALE_COUNT - 1,
+               inRect(g_menuUiPlus, g_mx, g_my));
+
     SetTextColor(hdc, netConnected() ? RGB(150, 210, 155) : RGB(176, 182, 194));
-    RECT netLine = { g_menuPanel.left + 16, g_menuQuit.bottom + 9,
-                     g_menuPanel.right - 16, g_menuQuit.bottom + 29 };
+    RECT netLine = { g_menuPanel.left + 16, g_menuUiValue.bottom + 9,
+                     g_menuPanel.right - 16, g_menuUiValue.bottom + 29 };
     DrawTextA(hdc, netStatus(), -1, &netLine, DT_CENTER | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS);
 
     /* Two columns: the key on the left, what it does on the right. Aligned on
@@ -5800,13 +6486,14 @@ static void drawMenu(HDC hdc) {
        length hard to scan. */
     const int keyX  = g_menuPanel.left + 16;
     const int whatX = g_menuPanel.left + 130;
-    int ry = g_menuQuit.bottom + 38;
-    for (int i = 0; i < N_KEY_HINTS; ++i, ry += 15) {
+    const int keyPitch = uiScaled(15), keyHeight = uiScaled(14);
+    int ry = g_menuUiValue.bottom + 38;
+    for (int i = 0; i < N_KEY_HINTS; ++i, ry += keyPitch) {
         SetTextColor(hdc, RGB(226, 190, 90));
-        RECT kr = { keyX, ry, whatX - 6, ry + 14 };
+        RECT kr = { keyX, ry, whatX - 6, ry + keyHeight };
         DrawTextA(hdc, KEY_HINTS[i].key, -1, &kr, DT_LEFT | DT_TOP | DT_SINGLELINE);
         SetTextColor(hdc, RGB(176, 182, 194));
-        RECT wr = { whatX, ry, g_menuPanel.right - 12, ry + 14 };
+        RECT wr = { whatX, ry, g_menuPanel.right - 12, ry + keyHeight };
         DrawTextA(hdc, KEY_HINTS[i].what, -1, &wr, DT_LEFT | DT_TOP | DT_SINGLELINE);
     }
 
@@ -5819,13 +6506,14 @@ static void drawMenu(HDC hdc) {
        Biggest first, and only sections above a kilobyte -- below that a row is
        noise, and eight rows of noise would bury the two that matter. */
     if (saveTotalBytes() > 0) {
-        int ry = g_menuQuit.bottom + 38 + N_KEY_HINTS * 15 + 10;
+        const int savePitch = uiScaled(15), saveHeight = uiScaled(14);
+        int ry = g_menuUiValue.bottom + 38 + N_KEY_HINTS * keyPitch + 10;
         char s[128];
         sprintf(s, "last save  %.2f MB", (double)saveTotalBytes() / (1024.0 * 1024.0));
         SetTextColor(hdc, RGB(226, 190, 90));
-        RECT tr = { g_menuPanel.left + 16, ry, g_menuPanel.right - 12, ry + 14 };
+        RECT tr = { g_menuPanel.left + 16, ry, g_menuPanel.right - 12, ry + saveHeight };
         DrawTextA(hdc, s, -1, &tr, DT_LEFT | DT_TOP | DT_SINGLELINE);
-        ry += 16;
+        ry += uiScaled(16);
         const SaveStat* st = saveStats();
         for (int i = 0; i < saveStatCount(); ++i) {
             if (st[i].bytes < 1024) break;
@@ -5834,12 +6522,12 @@ static void drawMenu(HDC hdc) {
             else
                 sprintf(s, "%.1f KB", (double)st[i].bytes / 1024.0);
             SetTextColor(hdc, RGB(150, 156, 168));
-            RECT nr = { g_menuPanel.left + 24, ry, g_menuPanel.left + 200, ry + 14 };
+            RECT nr = { g_menuPanel.left + 24, ry, g_menuPanel.left + 200, ry + saveHeight };
             DrawTextA(hdc, st[i].name, -1, &nr, DT_LEFT | DT_TOP | DT_SINGLELINE);
             SetTextColor(hdc, RGB(190, 196, 208));
-            RECT vr = { g_menuPanel.left + 200, ry, g_menuPanel.right - 16, ry + 14 };
+            RECT vr = { g_menuPanel.left + 200, ry, g_menuPanel.right - 16, ry + saveHeight };
             DrawTextA(hdc, s, -1, &vr, DT_RIGHT | DT_TOP | DT_SINGLELINE);
-            ry += 15;
+            ry += savePitch;
         }
     }
 
@@ -6190,8 +6878,7 @@ static void serverTick(const LARGE_INTEGER& perfFrequency) {
            are the only data ever accepted by the host. The authoritative RNG
            seed in each state keeps ordinary stretches close, while generic
            chunk repair handles unavoidable divergence from unseen host input. */
-        for (int i = 1; i < MAX_TOOL_INST; ++i)
-            if (g_toolInst[i].used && g_toolInst[i].cooldown > 0) --g_toolInst[i].cooldown;
+        toolInstTick();
         publishServerRegions();
         LARGE_INTEGER begin, end; QueryPerformanceCounter(&begin);
         g_world.step();
@@ -6220,8 +6907,7 @@ static void serverTick(const LARGE_INTEGER& perfFrequency) {
     const bool uiPausesActors = !onlineHost &&
         (g_menuOpen || g_creativeOpen || g_craftOpen || g_chestOpen >= 0);
 
-    for (int i = 1; i < MAX_TOOL_INST; ++i)
-        if (g_toolInst[i].used && g_toolInst[i].cooldown > 0) --g_toolInst[i].cooldown;
+    toolInstTick();
     /* Survival always uses PlayerCommand. The direct brush remains only for
        the character-off creative sandbox, which has no player authority. */
     if (!(g_survival && g_playerOn) && !g_menuOpen && !g_creativeOpen &&
@@ -6442,7 +7128,7 @@ static void clientRender(HWND hwnd) {
         RECT rest = { PANEL_W + 16, VIEW_H - 34, WIN_W - 16, VIEW_H - 14 };
         SetBkMode(g_backDC, TRANSPARENT);
         SetTextColor(g_backDC, RGB(226, 190, 90));
-        DrawTextA(g_backDC, "RESTING  -  time passes 4x  -  move or right-click bed to wake", -1,
+        DrawTextA(g_backDC, "RESTING  -  respawn set  -  time passes 4x  -  move to wake", -1,
                   &rest, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     }
     drawDevPanel(g_backDC);
@@ -6458,7 +7144,28 @@ static void clientRender(HWND hwnd) {
     drawItemTooltip(g_backDC);
 
     HDC hdc = GetDC(hwnd);
-    BitBlt(hdc, 0, 0, WIN_W, WIN_H, g_backDC, 0, 0, SRCCOPY);
+    RECT client; GetClientRect(hwnd, &client);
+    /* Paint only the letterbox. Clearing the whole client immediately before
+       StretchBlt exposed a complete black frame whenever the compositor
+       presented between those two GDI calls -- most visibly while walking,
+       when every frame changed. The playfield itself must be replaced by the
+       single blit below. */
+    HBRUSH black = (HBRUSH)GetStockObject(BLACK_BRUSH);
+    RECT bar = { client.left, client.top, client.right, g_presentRect.top };
+    if (bar.bottom > bar.top) FillRect(hdc, &bar, black);
+    bar.left = client.left; bar.top = g_presentRect.bottom;
+    bar.right = client.right; bar.bottom = client.bottom;
+    if (bar.bottom > bar.top) FillRect(hdc, &bar, black);
+    bar.left = client.left; bar.top = g_presentRect.top;
+    bar.right = g_presentRect.left; bar.bottom = g_presentRect.bottom;
+    if (bar.right > bar.left) FillRect(hdc, &bar, black);
+    bar.left = g_presentRect.right; bar.right = client.right;
+    if (bar.right > bar.left) FillRect(hdc, &bar, black);
+    SetStretchBltMode(hdc, COLORONCOLOR);
+    StretchBlt(hdc, g_presentRect.left, g_presentRect.top,
+               g_presentRect.right - g_presentRect.left,
+               g_presentRect.bottom - g_presentRect.top,
+               g_backDC, 0, 0, WIN_W, WIN_H, SRCCOPY);
     ReleaseDC(hwnd, hdc);
 }
 
@@ -6504,11 +7211,62 @@ static int runLocalCommandSmoke() {
     if (g_world.at(command.lineStartX, command.lineStartY).mat != MAT_STONE ||
         g_world.at(command.aimX, command.aimY).mat != MAT_STONE) return 206;
 
+    /* Death owns its destination and its clock. Exercise the actual authority
+       path for all 600 frames, first with a live bed and then with that bed
+       removed so the checkpoint must fall back to world spawn. */
+    g_world.reset(); devClear();
+    if (!devPlace(g_world, DEV_BED, 400, 400)) return 207;
+    g_player.reset(400.0f, 390.0f);
+    Aim bedAim; bedAim.x = bedAim.ghostX = 400; bedAim.y = bedAim.ghostY = 400; bedAim.clamped = false;
+    interactFor(g_playerSessions[0], bedAim);
+    if (g_playerSessions[0].restBed < 0 || g_playerSessions[0].respawnBedX < 0) return 208;
+    const char* respawnSave = "build\\respawn-smoke.tmp";
+    if (!saveWrite(respawnSave, g_world)) return 212;
+    const int savedBedX = g_playerSessions[0].respawnBedX;
+    const int savedBedY = g_playerSessions[0].respawnBedY;
+    g_playerSessions[0].respawnBedX = g_playerSessions[0].respawnBedY = -1;
+    if (!saveRead(respawnSave, g_world) || g_playerSessions[0].respawnBedX != savedBedX ||
+        g_playerSessions[0].respawnBedY != savedBedY) {
+        remove(respawnSave); return 213;
+    }
+    remove(respawnSave);
+    g_playerSessions[0].restBed = -1;
+    g_player.damage((float)PLAYER_HP_MAX * 2.0f);
+    memset(&command, 0, sizeof(command));
+    command.player = LOCAL_PLAYER_ID; command.generation = g_playerSessions[0].generation;
+    for (int frame = 0; frame < RESPAWN_DELAY_FRAMES - 1; ++frame)
+        updatePlayerFromCommand(0, g_playerSessions[0], command, false);
+    if (g_player.alive || g_playerSessions[0].respawnFrames != 1) return 209;
+    updatePlayerFromCommand(0, g_playerSessions[0], command, false);
+    Device* bed = devAt(400, 400);
+    if (!g_player.alive || !bed || fabsf(g_player.centreX() - (bed->x + DEV_W * 0.5f)) > 0.1f)
+        return 210;
+
+    devRemove(g_world, bed);
+    const int worldSpawnX = SIM_W / 5; g_surfaceY[worldSpawnX] = 300;
+    g_player.damage((float)PLAYER_HP_MAX * 2.0f);
+    for (int frame = 0; frame < RESPAWN_DELAY_FRAMES; ++frame)
+        updatePlayerFromCommand(0, g_playerSessions[0], command, false);
+    if (!g_player.alive || fabsf(g_player.centreX() - (float)worldSpawnX) > 0.1f ||
+        g_playerSessions[0].respawnBedX >= 0) return 211;
+
+    memset(&command, 0, sizeof(command));
+    command.player = LOCAL_PLAYER_ID; command.generation = g_playerSessions[0].generation;
+    command.bits = command.pressed = PCMD_RESPAWN; command.aimX = 600; command.aimY = 620;
+    updatePlayerFromCommand(0, g_playerSessions[0], command, false);
+    if (!g_player.alive || fabsf(g_player.centreX() - 600.0f) > 0.1f ||
+        fabsf(g_player.centreY() - 620.0f) > 0.1f) return 214;
+    g_player.damage((float)PLAYER_HP_MAX * 2.0f);
+    updatePlayerFromCommand(0, g_playerSessions[0], command, false);
+    if (g_player.alive || g_playerSessions[0].respawnFrames != RESPAWN_DELAY_FRAMES - 1)
+        return 215;
+
     puts("local command loopback smoke passed");
     return 0;
 }
 
 int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR commandLine, int) {
+    uiSettingsLoad();
     initMaterials();
     g_world.reset();
     initItems();
@@ -6571,7 +7329,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR commandLine, int) {
     wc.lpszClassName = "CrucibleWnd";
     RegisterClassA(&wc);
 
-    DWORD style = (WS_OVERLAPPEDWINDOW & ~WS_THICKFRAME & ~WS_MAXIMIZEBOX);
+    DWORD style = WS_OVERLAPPEDWINDOW;
     RECT r = { 0, 0, WIN_W, WIN_H };
     AdjustWindowRect(&r, style, FALSE);
 
@@ -6588,11 +7346,10 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR commandLine, int) {
                               NULL, NULL, hInst, NULL);
     if (!hwnd) return 1;
     g_hwnd = hwnd;   /* keyHeld() compares this against the foreground window */
+    updatePresentRect(hwnd);
     ShowWindow(hwnd, SW_SHOW);
 
-    g_font = CreateFontA(14, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-                         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                         CLEARTYPE_QUALITY, FF_DONTCARE, "Consolas");
+    rebuildUiFont();
 
     {
         HDC sdc = GetDC(hwnd);

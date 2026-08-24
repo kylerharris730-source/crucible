@@ -135,7 +135,7 @@ int main() {
     {
         entReset();
         /* Behind the swing, at the same distance the front target was hit at.
-           A tungsten sword reaches 15, so 8 cells the other way is comfortably
+           A tungsten sword reaches 38, so 8 cells the other way is comfortably
            inside a RADIUS of that size and comfortably outside a 130-degree arc
            pointed the other way. That gap is the whole test. */
         const int back = entSpawn(w, ENT_HUSK, p.centreX() - 8.0f, p.centreY());
@@ -146,6 +146,50 @@ int main() {
         if (dealt != 0) {
             fprintf(stderr, "FAIL: the arc hit something behind the swing -- "
                             "it is behaving as a radius, not an arc\n");
+            ++failures;
+        }
+    }
+
+    /* --- both weapon families use the extended ladders ------------------ */
+    {
+        static const ItemId sword[] = {
+            ITEM_SWORD_COPPER, ITEM_SWORD_BRONZE, ITEM_SWORD_IRON,
+            ITEM_SWORD_GOLD, ITEM_SWORD_STEEL, ITEM_SWORD_TITANIUM,
+            ITEM_SWORD_TUNGSTEN
+        };
+        static const ItemId spear[] = {
+            ITEM_SPEAR_COPPER, ITEM_SPEAR_BRONZE, ITEM_SPEAR_IRON,
+            ITEM_SPEAR_GOLD, ITEM_SPEAR_STEEL, ITEM_SPEAR_TITANIUM,
+            ITEM_SPEAR_TUNGSTEN
+        };
+        static const int swordReach[] = { 28, 30, 30, 28, 33, 35, 38 };
+        static const int spearReach[] = { 23, 24, 26, 23, 28, 30, 33 };
+        for (int i = 0; i < 7; ++i) {
+            if (ITEMS[sword[i]].meleeReach != swordReach[i]) {
+                fprintf(stderr, "FAIL: sword reach ladder drifted at tier %d (%u/%d)\n",
+                        i, ITEMS[sword[i]].meleeReach, swordReach[i]);
+                ++failures;
+            }
+            if (ITEMS[spear[i]].meleeReach != spearReach[i]) {
+                fprintf(stderr, "FAIL: spear reach ladder drifted at tier %d (%u/%d)\n",
+                        i, ITEMS[spear[i]].meleeReach, spearReach[i]);
+                ++failures;
+            }
+        }
+
+        entReset();
+        /* A bat centred 28 cells away begins beyond the previous 22-cell
+           copper blade even after its half-width is counted, but lies inside 28. */
+        const int far = entSpawn(w, ENT_BAT, p.centreX() + 28.0f, p.centreY());
+        if (far < 0) { fprintf(stderr, "could not place long-sword target\n"); return 2; }
+        g_entities[far].hp = 100000;
+        const int dealt = oneStroke(p, ITEM_SWORD_COPPER, 1.0f, 0.0f, far);
+        const float shove = sqrtf(g_entities[far].vx * g_entities[far].vx +
+                                  g_entities[far].vy * g_entities[far].vy);
+        printf("copper sword at 28 cells: %d damage, %.2f cells/frame shove\n",
+               dealt, shove);
+        if (dealt != ITEMS[ITEM_SWORD_COPPER].damage || shove < 2.0f) {
+            fprintf(stderr, "FAIL: extended copper sword did not reach and visibly knock back\n");
             ++failures;
         }
     }

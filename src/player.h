@@ -214,6 +214,9 @@ struct FlightSpec {
    other systems were tuned against -- the thresholds below were each measured
    on their own and the total is what fell out. */
 static const int PLAYER_HP_MAX = 100;
+/* Shared by every consumable heal. Thirty seconds makes health-per-use matter
+   without importing Terraria's full minute into this game's shorter fights. */
+static const int HEAL_COOLDOWN_FRAMES = 30 * 60;
 
 /* --- falling ---------------------------------------------------------------
    Damage comes from DISTANCE FALLEN, not from impact speed, and that is forced

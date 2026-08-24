@@ -422,7 +422,7 @@ int main() {
     lightClearDynamic();
     projRegisterLights();
     lightCompute(w, 640, 640);
-    if (lightAt(61, 60) < 180) {
+    if (lightAt(61, 60) < 90) {
         fprintf(stderr, "glowflare burst did not register strong dynamic light\n"); return 59;
     }
     projUpdate(w); projUpdate(w);
@@ -471,7 +471,7 @@ int main() {
     lightClearDynamic();
     projRegisterLights();
     lightCompute(w, 640, 640);
-    if (lightAt(61, 60) < 35) {
+    if (lightAt(61, 60) < 17) {
         fprintf(stderr, "glowflare impact faded before its afterglow elapsed\n"); return 66;
     }
     for (int frame = 0; frame < 130; ++frame) projUpdate(w);
@@ -491,11 +491,11 @@ int main() {
     if (lightAt(79, 50) == 0) {
         fprintf(stderr, "light did not penetrate thirty cells into solid material\n"); return 62;
     }
-    /* Water has exactly half an ordinary liquid's attenuation. Verify the
-       resulting solve as well as the table: across a sealed 44-cell pool the
-       same source remains visible through water and is exhausted by wax. */
-    if (g_matOpacity[MAT_WATER] * 2 != g_matOpacity[MAT_WAX]) {
-        fprintf(stderr, "water light attenuation was not halved\n"); return 68;
+    /* Water now has one quarter of an ordinary liquid's attenuation: half its
+       previous cost and therefore twice its previous reach. Verify the solve
+       at 100 cells, beyond the old 63-cell limit but inside the new 127. */
+    if (g_matOpacity[MAT_WATER] * 4 != g_matOpacity[MAT_WAX]) {
+        fprintf(stderr, "water light attenuation was not quarter strength\n"); return 68;
     }
     w.reset();
     for (int y = 430; y <= 570; ++y)
@@ -505,7 +505,7 @@ int main() {
     lightClearDynamic();
     lightAddDynamic(420, 500, 255);
     lightCompute(w, 350, 450);
-    const int throughWater = lightAt(114, 50);
+    const int throughWater = lightAt(170, 50);
     w.reset();
     for (int y = 430; y <= 570; ++y)
         for (int x2 = 380; x2 <= 620; ++x2)
@@ -514,9 +514,9 @@ int main() {
     lightClearDynamic();
     lightAddDynamic(420, 500, 255);
     lightCompute(w, 350, 450);
-    const int throughWax = lightAt(114, 50);
+    const int throughWax = lightAt(170, 50);
     if (throughWater < 40 || throughWax != 0) {
-        fprintf(stderr, "water permeability did not double in the light solve (%d/%d)\n",
+        fprintf(stderr, "water light reach did not double in the solve (%d/%d)\n",
                 throughWater, throughWax); return 69;
     }
     /* A torch is now a fixture: it can be installed under water without
@@ -905,6 +905,129 @@ int main() {
     w.step();
     if (w.at(550, 501).moisture != 0 || w.at(550, 502).mat != MAT_FUEL) {
         fprintf(stderr, "fuel did not flow out of sieve after slaking\n"); return 54;
+    }
+
+    /* A sieve saturated with steam must not trap a denser liquid occupant.
+       The gas below owns the exchange, rising while the fuel falls into its
+       previous slot. This is the packed-sieve counterpart of ordinary gas /
+       liquid buoyancy exchange. */
+    w.reset();
+    w.setLiveWindow(530, 480, 570, 530);
+    for (int y = 499; y <= 502; ++y) {
+        w.setCell(549, y, MAT_STONE); w.setCell(551, y, MAT_STONE);
+    }
+    w.setCell(550, 500, MAT_SIEVE);
+    w.setCell(550, 501, MAT_SIEVE);
+    w.cells[500 * SIM_W + 550].moisture = MAT_FUEL;
+    w.cells[501 * SIM_W + 550].moisture = MAT_STEAM;
+    w.step();
+    if (w.at(550, 500).moisture != MAT_STEAM ||
+        w.at(550, 501).moisture != MAT_FUEL) {
+        fprintf(stderr, "steam and denser fuel did not exchange inside saturated sieve\n");
+        return 116;
+    }
+
+    /* The upper boundary in the actual Coal / Fuel / Sieve / Steam stack:
+       Steam is already inside the sieve and must bubble into the ordinary
+       Fuel layer above while Fuel falls into the vacated mesh slot. */
+    w.reset();
+    w.setLiveWindow(530, 480, 570, 530);
+    for (int y = 499; y <= 502; ++y) {
+        w.setCell(549, y, MAT_STONE); w.setCell(551, y, MAT_STONE);
+    }
+    w.setCell(550, 500, MAT_FUEL);
+    w.setCell(550, 501, MAT_SIEVE);
+    w.cells[501 * SIM_W + 550].moisture = MAT_STEAM;
+    w.step();
+    if (w.at(550, 500).mat != MAT_STEAM ||
+        w.at(550, 501).moisture != MAT_FUEL) {
+        fprintf(stderr, "sieve-contained steam did not bubble through fuel layer\n");
+        return 120;
+    }
+
+    /* Exercise the complete production stack, not just its boundary. Steam
+       enters from below, crosses the sieve, bubbles through the existing Fuel
+       layer, and reaches Coal so the reaction can continue. */
+    w.reset();
+    w.setLiveWindow(530, 480, 570, 530);
+    for (int y = 498; y <= 504; ++y) {
+        w.setCell(549, y, MAT_STONE); w.setCell(551, y, MAT_STONE);
+    }
+    w.setCell(550, 499, MAT_COAL);
+    w.setCell(550, 500, MAT_FUEL);
+    w.setCell(550, 501, MAT_SIEVE);
+    w.setCell(550, 502, MAT_STEAM);
+    for (int frame = 0; frame < 4; ++frame) w.step();
+    if (w.at(550, 499).mat == MAT_COAL) {
+        fprintf(stderr, "Coal/Fuel/Sieve/Steam stack stopped before steam reached coal\n");
+        return 121;
+    }
+
+    /* This is the chamber-roof boundary from the original failure: the fuel
+       is inside a one-cell sieve layer while the steam immediately below is
+       still an ordinary world cell. It must make the same density exchange. */
+    w.reset();
+    w.setLiveWindow(530, 480, 570, 530);
+    for (int y = 499; y <= 502; ++y) {
+        w.setCell(549, y, MAT_STONE); w.setCell(551, y, MAT_STONE);
+    }
+    w.setCell(550, 500, MAT_SIEVE);
+    w.cells[500 * SIM_W + 550].moisture = MAT_FUEL;
+    w.setCell(550, 501, MAT_STEAM);
+    w.step();
+    if (w.at(550, 500).moisture != MAT_STEAM ||
+        w.at(550, 501).mat != MAT_FUEL) {
+        fprintf(stderr, "steam chamber did not displace fuel from sieve roof\n");
+        return 118;
+    }
+
+    /* A sealed chamber equalizes above zero pressure. The boundary parcel
+       still has to exchange without deleting its stored volumes: those move
+       into the connected steam parcel as fuel drops out of the sieve. */
+    w.reset();
+    w.setLiveWindow(530, 480, 570, 530);
+    for (int y = 499; y <= 503; ++y) {
+        w.setCell(549, y, MAT_STONE); w.setCell(551, y, MAT_STONE);
+    }
+    w.setCell(550, 500, MAT_SIEVE);
+    w.cells[500 * SIM_W + 550].moisture = MAT_FUEL;
+    w.setCell(550, 501, MAT_STEAM);
+    w.setCell(550, 502, MAT_STEAM);
+    w.setCell(550, 503, MAT_STONE);
+    w.cells[501 * SIM_W + 550].moisture = 1;
+    w.cells[502 * SIM_W + 550].moisture = 1;
+    w.step();
+    int compressedExcess = 0;
+    for (int y = 500; y <= 502; ++y) {
+        const Cell& pressureCell = w.at(550, y);
+        if (MATS[pressureCell.mat].kind == KIND_GAS)
+            compressedExcess += pressureCell.moisture & GAS_EXCESS_MASK;
+    }
+    if (w.at(550, 500).moisture != MAT_STEAM ||
+        w.at(550, 501).mat != MAT_FUEL || compressedExcess != 2) {
+        fprintf(stderr, "pressurized steam did not conserve volume while clearing sieve (%u/%u, %u/%u, excess %d)\n",
+                w.at(550, 500).mat, w.at(550, 500).moisture,
+                w.at(550, 501).mat, w.at(550, 501).moisture,
+                compressedExcess);
+        return 119;
+    }
+
+    /* A Gas Sieve cannot receive the displaced liquid, so its selectivity
+       still wins over the general density-exchange rule. */
+    w.reset();
+    w.setLiveWindow(530, 480, 570, 530);
+    for (int y = 499; y <= 502; ++y) {
+        w.setCell(549, y, MAT_STONE); w.setCell(551, y, MAT_STONE);
+    }
+    w.setCell(550, 500, MAT_SIEVE);
+    w.setCell(550, 501, MAT_GAS_SIEVE);
+    w.cells[500 * SIM_W + 550].moisture = MAT_FUEL;
+    w.cells[501 * SIM_W + 550].moisture = MAT_STEAM;
+    w.step();
+    if (w.at(550, 500).moisture != MAT_FUEL ||
+        w.at(550, 501).moisture != MAT_STEAM) {
+        fprintf(stderr, "gas sieve accepted liquid during occupant exchange\n");
+        return 117;
     }
 
     /* Convection moves a hot fluid parcel upward without moving either cell.

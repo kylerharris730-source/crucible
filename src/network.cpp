@@ -27,8 +27,8 @@
 #endif
 
 static const u32 NET_MAGIC = 0x54454E43u; /* CNET on little endian */
-static const u32 NET_PROTOCOL = 12;
-static const u32 NET_STATE_SCHEMA = 10;
+static const u32 NET_PROTOCOL = 13;
+static const u32 NET_STATE_SCHEMA = 14;
 static const u32 NET_MAX_PACKET = 256u * 1024u * 1024u;
 
 enum PacketType {
@@ -352,7 +352,10 @@ static void sendState() {
         w.u8v(s.networkId); w.u16v(s.generation);
         codecPlayer(blob, s.body); codecInventory(blob, s.inventory);
         codecItemStack(blob, s.cursor); codecItemStack(blob, s.trash);
-        blob.i32f(s.restBed); blob.i32f(s.openDevice);
+        blob.i32f(s.restBed);
+        blob.i32f(s.respawnBedX); blob.i32f(s.respawnBedY); blob.i32f(s.respawnFrames);
+        blob.i32f(s.healCooldown);
+        blob.i32f(s.openDevice);
         for (int d = 0; d < MAX_DRONES; ++d) codecDrone(blob, s.drones[d]);
     }
     codecOverlay(blob);
@@ -591,7 +594,10 @@ static void applyState(Reader& r) {
         PlayerSession& s = g_playerSessions[slot];
         codecPlayer(blob, s.body); codecInventory(blob, s.inventory);
         codecItemStack(blob, s.cursor); codecItemStack(blob, s.trash);
-        blob.i32f(s.restBed); blob.i32f(s.openDevice);
+        blob.i32f(s.restBed);
+        blob.i32f(s.respawnBedX); blob.i32f(s.respawnBedY); blob.i32f(s.respawnFrames);
+        blob.i32f(s.healCooldown);
+        blob.i32f(s.openDevice);
         for (int d = 0; d < MAX_DRONES; ++d) codecDrone(blob, s.drones[d]);
         if (!blob.ok) { r.ok = false; return; }
         s.connected = true; s.local = slot == 0; s.networkId = wire; s.generation = generation;
@@ -616,6 +622,7 @@ static void applyState(Reader& r) {
             memcpy(s.lineFilter, predictedLocal.lineFilter, sizeof(s.lineFilter));
             s.previousCommandBits = predictedLocal.previousCommandBits;
             s.garlicCooldown = predictedLocal.garlicCooldown;
+            s.healCooldown = imax(s.healCooldown, predictedLocal.healCooldown);
         }
     }
     codecOverlay(blob);

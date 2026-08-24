@@ -525,10 +525,9 @@ MatInfo MATS[MAT_COUNT] = {
      never connect to the decision. The colour carries the fire; the temperature
      column does not have to.
 
-     Dimmer than the lamp on purpose, and by enough to feel: 150 against 255
-     reaches 50 cells through air where the lamp reaches 85. That is the whole
-     difference between them apart from collision, so it has to be a real one, or
-     the lamp becomes the torch you happen to have more of.
+     Dimmer than the lamp on purpose: 118 against 128. The gap is modest because
+     the torch is the everyday fixture; the lamp still wins while neither
+     overwhelms the doubled spread.
 
      STR_LOOSE, softer than the lamp's STR_SOFT, so the starting tool clears one.
      A light you can walk through is a light you will put in the wrong place. */
@@ -1163,7 +1162,7 @@ static void initStrength() {
        air        2  -> 127 cells    daylight into a cave, a lamp's radius
        gas        5  ->  51          smoke and steam dim a room a little
        liquid     8  ->  32          ordinary fluid
-       water      4  ->  63          clear enough for long underwater sight
+       water      2  -> 127          clear enough for long underwater sight
        solid     38  ->   6          six cells of rock and it is properly dark
 
    Air started at 6, for 42 cells. Both revisions of that number came from
@@ -1207,21 +1206,10 @@ static void initLight() {
     for (int m = 0; m < MAT_COUNT; ++m) {
         g_matLight[m]   = 0;
         switch (MATS[m].kind) {
-        /* 3 -> 2, which is the only lever on how far a lamp reaches: a torch
-           already emits 235 of a possible 255, so brightness was out of road.
-           Reach is LIGHT_MAX / this, so 85 cells becomes 127.
-
-           LIGHT_MARGIN moves with it and MUST -- see the note on it in light.h.
-           The margin is exactly the furthest a source can reach, which is what
-           makes cutting the light rectangle off an exact operation rather than
-           an approximation; leaving it behind would put a visible seam wherever
-           a lamp sat just outside the frame. */
-        /* 2 -> 1. Measured why: filling a 160x90 chamber with six times as
-           many torches produced a byte-identical floor, because the sweeps take
-           the MAX of their neighbours and no cell was ever nearer two torches
-           at once. Count cannot buy brightness in that model, so reach is the
-           only lever there is, and a ceiling torch was dying to the ambient
-           floor about forty cells down. At 1 a torch carries 235 cells. */
+        /* Air moved from attenuation 2 to 1 to double spread. LIGHT_MARGIN
+           moves with it and MUST -- see light.h. Producer levels are halved
+           below, independently, so that wider flow does not also make every
+           object twice as powerful. */
         case KIND_EMPTY:  g_matOpacity[m] = 1;  break;
         case KIND_GAS:    g_matOpacity[m] = 5;  break;
         /* Ordinary liquids remain murkier than gases. Water is overridden
@@ -1232,62 +1220,37 @@ static void initLight() {
         }
     }
 
-    /* Halving attenuation doubles useful reach: full light travels about 63
-       water cells rather than 32. Keep this water-specific so wax, acid and
-       industrial molten fluids retain their heavier optical character. */
-    g_matOpacity[MAT_WATER] = 4;
+    /* Water carries light twice as far as it did at attenuation 4: full light
+       now travels about 127 water cells rather than 63. This makes it one
+       quarter of an ordinary liquid's attenuation. Keep the override strictly
+       water-specific so wax, acid and industrial molten fluids retain their
+       heavier optical character. */
+    g_matOpacity[MAT_WATER] = 2;
 
-    /* The lamp is the only thing you build for light, so it is the brightest
-       and everything else is measured against it. */
-    g_matLight[MAT_LAMP]     = LIGHT_MAX;
-    /* The torch. 150 was the first guess and it was wrong, in a way only a
-       screenshot found: it lit nothing. The trap is that emission sets PEAK
-       BRIGHTNESS and REACH with one number -- reach is emission/attenuation, and
-       attenuation belongs to the medium, not the source -- so "dimmer" cannot
-       mean "bright but local", it means murky everywhere. At 150 the torch
-       rendered its OWN CELL at 69% and a corridor built to its measured spacing
-       still read as unlit beside an identical corridor lit by lamps.
-
-       A reach test hid this, and it is worth naming why: it asked for light > 0,
-       and reported 49 cells. At the far end of a linear falloff the value is 1,
-       and 1 is not light, it is arithmetic. Half brightness or better -- with
-       unlit already rendering at 15% -- is the honest measure, and by it 150
-       reached 20 cells, not 49.
-
-       205 fixed that and was still too dim in play, which is the sort of thing
-       only using the game finds. 235 renders the torch's own cell at 95% and
-       holds half brightness to 36 cells, against the lamp's 100% and 42.
-
-       That gap is now narrow, and it is worth saying what is left of it. The
-       lamp keeps a sixth more reach, which is a room's width at these
-       distances, and it is the only one of the two that renders its own cell at
-       full brightness. What the torch bought by closing the gap is that it is
-       no longer a light you have to plan around -- which was the complaint, and
-       a torch you space carefully is a worse object than a torch you stud a
-       corridor with.
-
-       If a brighter light is ever wanted at the top of the ladder, raise the
-       LAMP rather than lowering this: at 235 against 255 there is not much room
-       left below it, and the two collapsing into one item would cost more than
-       the torch being dim ever did. */
-    g_matLight[MAT_TORCH]    = 235;
-    g_matLight[MAT_PLASMA]   = 240;
+    /* Air attenuation was halved, doubling every source's useful spread. The
+       producer ladder is therefore halved too: preserve the new propagation
+       behavior without letting every glowing object illuminate twice the
+       intended area. Keep relative ordering intact -- lamp, torch, fire,
+       molten material, utility glow. */
+    g_matLight[MAT_LAMP]      = 128;
+    g_matLight[MAT_TORCH]     = 118;
+    g_matLight[MAT_PLASMA]    = 120;
     /* Molten slag is incandescent, so a working furnace lights its own room --
        which is worth having, since a furnace is somewhere you stand and wait. */
-    g_matLight[MAT_SLAG_MELT] = 100;
+    g_matLight[MAT_SLAG_MELT] = 50;
     /* Burning things light the room they are burning in. Fuel brighter than coal,
        matching how much hotter it is. */
-    g_matLight[MAT_FUELFIRE]  = 210;
-    g_matLight[MAT_EMBER]     = 150;
-    g_matLight[MAT_FIRE]     = 200;
-    g_matLight[MAT_LAVA]     = 190;
-    g_matLight[MAT_GLOWFLUID] = 175;
-    g_matLight[MAT_IRON_MELT]   = 170;
-    g_matLight[MAT_COPPER_MELT] = 170;
+    g_matLight[MAT_FUELFIRE]   = 105;
+    g_matLight[MAT_EMBER]      = 75;
+    g_matLight[MAT_FIRE]       = 100;
+    g_matLight[MAT_LAVA]       = 95;
+    g_matLight[MAT_GLOWFLUID]  = 88;
+    g_matLight[MAT_IRON_MELT]   = 85;
+    g_matLight[MAT_COPPER_MELT] = 85;
     /* Cold fire is light too. It burns nothing, but a blue flame you cannot
        see by would be a strange thing to hold. */
-    g_matLight[MAT_COLDFIRE] = 120;
-    g_matLight[MAT_HEATER]   = 110;
+    g_matLight[MAT_COLDFIRE] = 60;
+    g_matLight[MAT_HEATER]   = 55;
 
     /* An open door is a hole you can see through, and that has to be true of
        LIGHT as well as of movement or the effect is half-built: you would walk

@@ -21,6 +21,12 @@
 static const int SPR_W = 14;
 static const int SPR_H = 14;
 
+/* Inventory presentation has more room than a world object. Keep the 14x14
+   simulation-facing master above (devices and creatures depend on it), then
+   resample it onto this 21x21 canvas for UI use. 21 is exactly 150% of 14. */
+static const int INV_SPR_W = 21;
+static const int INV_SPR_H = 21;
+
 enum SpriteId {
     SPR_NONE = 0,
     SPR_TOOL1,       /* screwdriver */
@@ -183,6 +189,16 @@ enum SpriteId {
     SPR_LENS,
     SPR_RELAY,
     SPR_BREAD,
+
+    /* Appended with their ItemIds so established sprite numbers remain save-
+       and UI-stable. All share the rimmed module-chip silhouette. */
+    SPR_MOD_BOUNCE,
+    SPR_MOD_HOMING,
+    SPR_MOD_TELEPORT,
+    SPR_ARMOUR_DRONE_VISOR,
+    SPR_ARMOUR_DRONE_HARNESS,
+    SPR_ARMOUR_DRONE_GREAVES,
+    SPR_ACC_DRONE_BEACON,
 
     SPR_COUNT
 };

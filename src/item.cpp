@@ -7,11 +7,16 @@
 ItemDef   ITEMS[ITEM_COUNT];
 ToolInst  g_toolInst[MAX_TOOL_INST];
 
-u16 toolInstNew() {
+u16 toolInstNew(ItemId tool) {
     for (int i = 1; i < MAX_TOOL_INST; ++i) {
         if (g_toolInst[i].used) continue;
         memset(&g_toolInst[i], 0, sizeof(ToolInst));
         g_toolInst[i].used = true;
+        if (tool < ITEM_COUNT && ITEMS[tool].kind == ITEMK_TOOL) {
+            g_toolInst[i].energyCapacity = ITEMS[tool].energyCapacity;
+            g_toolInst[i].energyRecharge = ITEMS[tool].energyRecharge;
+            g_toolInst[i].energy = ITEMS[tool].energyCapacity;
+        }
         return (u16)i;
     }
     return 0;   /* pool full; the caller gets a tool with no state, which still
@@ -43,13 +48,23 @@ void toolInstReconcile(Inventory& inv) {
         /* Two stacks naming one instance would share modules and ammo, which is
            worse than either losing them. The first keeps it; the second gets a
            blank one. */
-        if (referenced[s.inst]) { s.inst = toolInstNew(); if (!s.inst) continue; }
+        if (referenced[s.inst]) { s.inst = toolInstNew(s.item); if (!s.inst) continue; }
         referenced[s.inst] = true;
         /* ADOPT it. For a save written before the pool was persisted this is
            an empty tool rather than the loadout you had -- the modules were
            never written and cannot be conjured back -- but an empty tool that
            works beats a tool frozen after one shot. */
         g_toolInst[s.inst].used = true;
+        ToolInst& ti = g_toolInst[s.inst];
+        const u16 capacity = ITEMS[s.item].energyCapacity;
+        /* A pre-energy save has zero in all new fields. Adopt it as a fully
+           charged chassis; a load should not turn a working weapon into an
+           unexplained empty battery. Existing charge is clamped when balance
+           changes the chassis capacity. */
+        if (!ti.energyCapacity) ti.energy = capacity;
+        ti.energyCapacity = capacity;
+        ti.energyRecharge = ITEMS[s.item].energyRecharge;
+        if (ti.energy > capacity) ti.energy = capacity;
         /* A cooldown is transient. Restoring one means loading into a fraction
            of a firing delay, which is meaningless, and a corrupt one would
            reproduce the exact bug this function exists to fix. */
@@ -58,6 +73,18 @@ void toolInstReconcile(Inventory& inv) {
 
     for (int i = 1; i < MAX_TOOL_INST; ++i)
         if (!referenced[i] && g_toolInst[i].used) toolInstFree(i);
+}
+
+void toolInstTick() {
+    for (int i = 1; i < MAX_TOOL_INST; ++i) {
+        ToolInst& ti = g_toolInst[i];
+        if (!ti.used) continue;
+        if (ti.cooldown > 0) --ti.cooldown;
+        if (ti.energy < ti.energyCapacity) {
+            ti.energy = (u16)imin((int)ti.energyCapacity,
+                                  (int)ti.energy + (int)ti.energyRecharge);
+        }
+    }
 }
 
 /* STR_HARD, not something lower, and that is a deliberate non-change: before
@@ -164,6 +191,8 @@ void initItems() {
     ITEMS[ITEM_MULTITOOL].colour    = 0xC8B070;
     ITEMS[ITEM_MULTITOOL].toolSlots = 3;
     ITEMS[ITEM_MULTITOOL].baseDelay = 18;
+    ITEMS[ITEM_MULTITOOL].energyCapacity = 120;
+    ITEMS[ITEM_MULTITOOL].energyRecharge = 1;
     ITEMS[ITEM_MULTITOOL].sprite    = SPR_TOOL1;
 
     ITEMS[ITEM_MULTITOOL2].name      = "Multitool Mk II";
@@ -172,6 +201,8 @@ void initItems() {
     ITEMS[ITEM_MULTITOOL2].colour    = 0xE0D090;
     ITEMS[ITEM_MULTITOOL2].toolSlots = 5;
     ITEMS[ITEM_MULTITOOL2].baseDelay = 11;
+    ITEMS[ITEM_MULTITOOL2].energyCapacity = 300;
+    ITEMS[ITEM_MULTITOOL2].energyRecharge = 2;
     ITEMS[ITEM_MULTITOOL2].sprite    = SPR_TOOL2;
 
     /* The starting module. Power STR_LOOSE means it clears sand and dirt and is
@@ -189,12 +220,13 @@ void initItems() {
     ITEMS[ITEM_MOD_SHOT].maxStack   = 1;
     ITEMS[ITEM_MOD_SHOT].colour     = 0x70D0FF;
     ITEMS[ITEM_MOD_SHOT].addDelay   = 0;
+    ITEMS[ITEM_MOD_SHOT].energyCost = 20;
     ITEMS[ITEM_MOD_SHOT].power      = STR_LOOSE;
     /* 6 against a rock mite's 18 hp: three hits. Deliberately not two -- the
        first weapon in the game should make a layer 1 creature killable rather
        than trivial, since "get a weapon" is the whole difficulty curve of the
        first layer and it should feel like it resolved something. */
-    ITEMS[ITEM_MOD_SHOT].damage     = 6;
+    ITEMS[ITEM_MOD_SHOT].damage     = 7;
     ITEMS[ITEM_MOD_SHOT].pierce     = 10;
     ITEMS[ITEM_MOD_SHOT].shotColour = 0x9CE0FF;
     /* The one thing in the game that does not fall. It is a BEAM -- see the
@@ -219,7 +251,8 @@ void initItems() {
     ITEMS[ITEM_MOD_BLAST].kind       = ITEMK_MODULE;
     ITEMS[ITEM_MOD_BLAST].maxStack   = 1;
     ITEMS[ITEM_MOD_BLAST].colour     = 0xFFB040;
-    ITEMS[ITEM_MOD_BLAST].addDelay   = 24;
+    ITEMS[ITEM_MOD_BLAST].addDelay   = 20;
+    ITEMS[ITEM_MOD_BLAST].energyCost = 65;
     /* Above STR_ROCK rather than equal to it. With falloff, a blast whose
        power exactly matches a material's strength only breaks the handful of
        cells at the dead centre -- see the note in explodeAt(). 120 sits between
@@ -229,11 +262,70 @@ void initItems() {
     /* Enough to one-shot anything in layer 1, and it costs 24 frames of extra
        delay plus a hole in the floor to do it. The blast module is the answer
        to a group, not to a single creature. */
-    ITEMS[ITEM_MOD_BLAST].damage     = 22;
+    ITEMS[ITEM_MOD_BLAST].damage     = 24;
     ITEMS[ITEM_MOD_BLAST].pierce     = 1;
     ITEMS[ITEM_MOD_BLAST].blast      = 14;
     ITEMS[ITEM_MOD_BLAST].shotColour = 0xFFC060;
     ITEMS[ITEM_MOD_BLAST].sprite     = SPR_MOD_BLAST;
+
+    /* Cheap suppression fire. It gives up terrain power and damage for speed,
+       four visible ricochets, and an energy draw the Mk I can sustain. Unlike
+       a beam it arcs under ordinary gravity, making bank shots physical rather
+       than a weightless pinball line. */
+    ITEMS[ITEM_MOD_BOUNCE].name       = "Bounce Module";
+    ITEMS[ITEM_MOD_BOUNCE].kind       = ITEMK_MODULE;
+    ITEMS[ITEM_MOD_BOUNCE].maxStack   = 1;
+    ITEMS[ITEM_MOD_BOUNCE].colour     = 0x72E09A;
+    ITEMS[ITEM_MOD_BOUNCE].addDelay   = -5;
+    ITEMS[ITEM_MOD_BOUNCE].energyCost = 7;
+    ITEMS[ITEM_MOD_BOUNCE].power      = 0;
+    ITEMS[ITEM_MOD_BOUNCE].damage     = 4;
+    ITEMS[ITEM_MOD_BOUNCE].pierce     = 1;
+    ITEMS[ITEM_MOD_BOUNCE].shotColour = 0x72E09A;
+    ITEMS[ITEM_MOD_BOUNCE].shotSpeed  = 5.5f;
+    ITEMS[ITEM_MOD_BOUNCE].shotBeam   = 0;
+    ITEMS[ITEM_MOD_BOUNCE].shotBounces = 4;
+    ITEMS[ITEM_MOD_BOUNCE].shotLife   = 150;
+    ITEMS[ITEM_MOD_BOUNCE].sprite     = SPR_MOD_BOUNCE;
+
+    /* A slow floating seeker: quick trigger cadence, deliberately expensive
+       battery draw. Its steering is gentle enough to curve visibly instead of
+       snapping to a target, and it cannot mine terrain. */
+    ITEMS[ITEM_MOD_HOMING].name       = "Homing Module";
+    ITEMS[ITEM_MOD_HOMING].kind       = ITEMK_MODULE;
+    ITEMS[ITEM_MOD_HOMING].maxStack   = 1;
+    ITEMS[ITEM_MOD_HOMING].colour     = 0xD59CFF;
+    ITEMS[ITEM_MOD_HOMING].addDelay   = -4;
+    ITEMS[ITEM_MOD_HOMING].energyCost = 55;
+    ITEMS[ITEM_MOD_HOMING].power      = 0;
+    ITEMS[ITEM_MOD_HOMING].damage     = 9;
+    ITEMS[ITEM_MOD_HOMING].pierce     = 1;
+    ITEMS[ITEM_MOD_HOMING].shotColour = 0xD59CFF;
+    ITEMS[ITEM_MOD_HOMING].shotSpeed  = 1.65f;
+    ITEMS[ITEM_MOD_HOMING].shotBeam   = 1;
+    ITEMS[ITEM_MOD_HOMING].shotHoming = 0.085f;
+    ITEMS[ITEM_MOD_HOMING].shotLife   = 180;
+    ITEMS[ITEM_MOD_HOMING].sprite     = SPR_MOD_HOMING;
+
+    /* The quick-tap R teleport stays. This is its weapon-system counterpart:
+       the player moves to the last safe point before projectile impact. One
+       Mk I charge buys a shot; Mk II's larger bank and recharge are what make
+       repeated combat use practical. */
+    ITEMS[ITEM_MOD_TELEPORT].name       = "Teleport Module";
+    ITEMS[ITEM_MOD_TELEPORT].kind       = ITEMK_MODULE;
+    ITEMS[ITEM_MOD_TELEPORT].maxStack   = 1;
+    ITEMS[ITEM_MOD_TELEPORT].colour     = 0xFF72D8;
+    ITEMS[ITEM_MOD_TELEPORT].addDelay   = 8;
+    ITEMS[ITEM_MOD_TELEPORT].energyCost = 110;
+    ITEMS[ITEM_MOD_TELEPORT].power      = 0;
+    ITEMS[ITEM_MOD_TELEPORT].damage     = 0;
+    ITEMS[ITEM_MOD_TELEPORT].pierce     = 1;
+    ITEMS[ITEM_MOD_TELEPORT].shotColour = 0xFF72D8;
+    ITEMS[ITEM_MOD_TELEPORT].shotSpeed  = 4.0f;
+    ITEMS[ITEM_MOD_TELEPORT].shotBeam   = 1;
+    ITEMS[ITEM_MOD_TELEPORT].shotLife   = 140;
+    ITEMS[ITEM_MOD_TELEPORT].shotEffect = PROJ_EFFECT_TELEPORT;
+    ITEMS[ITEM_MOD_TELEPORT].sprite     = SPR_MOD_TELEPORT;
 
     /* --- the mining ladder --------------------------------------------
        Four tiers between bare hands and "clear whatever you want".
@@ -278,6 +370,7 @@ void initItems() {
            quiet promotion of the Disruptor. */
         ITEMS[t.id].minePower    = STR_HARD;
         ITEMS[t.id].sprite       = t.spr;
+        ITEMS[t.id].description  = "Excavates terrain in a wide area around the cursor.";
     }
 
     /* Grass seed. Stacks like a material because you use it by the handful,
@@ -417,6 +510,7 @@ void initItems() {
         ITEMS[t.id].fly.riseCap = t.riseCap;
         ITEMS[t.id].fly.fuel    = t.fuel;
         ITEMS[t.id].fly.refuel  = t.refuel;
+        ITEMS[t.id].description = "Hold jump in the air to fly. Fuel recharges while grounded.";
     }
 
     /* --- machines -----------------------------------------------------------
@@ -640,8 +734,8 @@ void initItems() {
     ITEMS[ITEM_FORGE_CORE].sprite   = SPR_FORGE_CORE;
 
     /* Drones are worn companions. The light occupies its own utility bay so
-       illumination never competes with combat, while attack drones share two
-       interchangeable bays ready for future slot-expanding equipment. */
+       illumination never competes with combat. General chassis fit all three
+       combat bays, while Inventory decides which earned bays are active. */
     ITEMS[ITEM_LIGHT_DRONE].name      = "Light Drone";
     ITEMS[ITEM_LIGHT_DRONE].kind      = ITEMK_WORN;
     ITEMS[ITEM_LIGHT_DRONE].equipSlot = EQ_LIGHT_DRONE;
@@ -671,7 +765,7 @@ void initItems() {
     ITEMS[ITEM_SHIELD_DRONE].sprite    = SPR_DRONE_SHIELD;
 
     /* The weapon chassis. All three go in a GENERAL drone bay -- equipSlot
-       names EQ_DRONE_A and equipFits reads that as "either" -- so the two bays
+       names EQ_DRONE_A and equipFits reads that as "any" -- so earned bays
        are a weapon loadout rather than one weapon and one utility. Two orbit
        drones is a legal and quite reasonable answer; so is a mortar and a
        pickup drone, and giving that up is what carrying two weapons costs. */
@@ -695,6 +789,47 @@ void initItems() {
     ITEMS[ITEM_ORBIT_DRONE].maxStack  = 1;
     ITEMS[ITEM_ORBIT_DRONE].colour    = 0xE4E9F2;
     ITEMS[ITEM_ORBIT_DRONE].sprite    = SPR_ACC_MAGNET;
+
+    /* Drone Armour is deliberately a modest iron-sidegrade for now: its power
+       is the loadout it enables, not raw protection. The ids are appended for
+       save compatibility even though the definitions live beside the drones. */
+    ITEMS[ITEM_DRONE_VISOR].name       = "Drone Visor";
+    ITEMS[ITEM_DRONE_VISOR].kind       = ITEMK_WORN;
+    ITEMS[ITEM_DRONE_VISOR].equipSlot  = EQ_HEAD;
+    ITEMS[ITEM_DRONE_VISOR].maxStack   = 1;
+    ITEMS[ITEM_DRONE_VISOR].colour     = 0x6FAFBE;
+    ITEMS[ITEM_DRONE_VISOR].armour     = 1;
+    ITEMS[ITEM_DRONE_VISOR].heatResist = 10;
+    ITEMS[ITEM_DRONE_VISOR].coldResist = 10;
+    ITEMS[ITEM_DRONE_VISOR].armourSet  = ARMOUR_SET_DRONE;
+    ITEMS[ITEM_DRONE_VISOR].sprite     = SPR_ARMOUR_DRONE_VISOR;
+
+    ITEMS[ITEM_DRONE_HARNESS].name       = "Drone Harness";
+    ITEMS[ITEM_DRONE_HARNESS].kind       = ITEMK_WORN;
+    ITEMS[ITEM_DRONE_HARNESS].equipSlot  = EQ_BODY;
+    ITEMS[ITEM_DRONE_HARNESS].maxStack   = 1;
+    ITEMS[ITEM_DRONE_HARNESS].colour     = 0x6FAFBE;
+    ITEMS[ITEM_DRONE_HARNESS].armour     = 2;
+    ITEMS[ITEM_DRONE_HARNESS].heatResist = 15;
+    ITEMS[ITEM_DRONE_HARNESS].coldResist = 15;
+    ITEMS[ITEM_DRONE_HARNESS].armourSet  = ARMOUR_SET_DRONE;
+    ITEMS[ITEM_DRONE_HARNESS].sprite     = SPR_ARMOUR_DRONE_HARNESS;
+
+    ITEMS[ITEM_DRONE_GREAVES].name      = "Drone Greaves";
+    ITEMS[ITEM_DRONE_GREAVES].kind      = ITEMK_WORN;
+    ITEMS[ITEM_DRONE_GREAVES].equipSlot = EQ_FEET;
+    ITEMS[ITEM_DRONE_GREAVES].maxStack  = 1;
+    ITEMS[ITEM_DRONE_GREAVES].colour    = 0x6FAFBE;
+    ITEMS[ITEM_DRONE_GREAVES].armour    = 1;
+    ITEMS[ITEM_DRONE_GREAVES].armourSet = ARMOUR_SET_DRONE;
+    ITEMS[ITEM_DRONE_GREAVES].sprite    = SPR_ARMOUR_DRONE_GREAVES;
+
+    ITEMS[ITEM_DRONE_BEACON].name      = "Drone Beacon";
+    ITEMS[ITEM_DRONE_BEACON].kind      = ITEMK_ACCESSORY;
+    ITEMS[ITEM_DRONE_BEACON].equipSlot = EQ_TRINKET_A;
+    ITEMS[ITEM_DRONE_BEACON].maxStack  = 1;
+    ITEMS[ITEM_DRONE_BEACON].colour    = 0x7ED8E8;
+    ITEMS[ITEM_DRONE_BEACON].sprite    = SPR_ACC_DRONE_BEACON;
 
     /* The pedestal. A DEVICE rather than a material, for the reason the
        workbench is one: it covers a rectangle, it snaps to the device lattice,
@@ -747,7 +882,7 @@ void initItems() {
          Titanium   26/30 = 52/s    21/22 = 57/s
          Tungsten   34/32 = 64/s    27/24 = 68/s
 
-       Against the Bolt Caster's 11/s and the Attack Drone's 6.4/s that looks
+       Against the Bolt Caster's 11/s and the Attack Drone's 2.1/s that looks
        enormous, and it should: those numbers are delivered from across a room
        at something that cannot reach you, and these are delivered from inside
        contact range of a creature that is hitting you back the whole time. A
@@ -761,12 +896,11 @@ void initItems() {
        deliberately not visible in a single number.
 
        --- reach ---
-       Grows slowly, and the spear is always far longer. A spear at the top of
-       the ladder reaches 26 cells, which is a little over a body length: enough
-       that a husk can be fought without being touched if you keep backing up,
-       and nowhere near enough to make it a ranged weapon. The player's build
-       reach is 56 for comparison, and is a completely separate number -- see
-       ItemDef::meleeReach. */
+       Both families are 25% longer than the previous pass, rounded upward at
+       half-cells so every tier receives the full increase. Swords now run
+       28--38 cells and keep their broad sweep; spears run 23--33 and keep their
+       narrow single-target thrust. The player's build reach is 56 for
+       comparison, and is a completely separate number -- see ItemDef::meleeReach. */
     struct MeleeTier {
         ItemId sword, spear;
         const char* metal;          /* the name the two weapons are prefixed with */
@@ -778,21 +912,21 @@ void initItems() {
     };
     static const MeleeTier MELEE[] = {
         /*                                     ---- sword ----   ---- spear ---- */
-        { ITEM_SWORD_COPPER,   ITEM_SPEAR_COPPER,   "Copper",     7, 30, 11,   6, 22, 18, 0xC87A32, SPR_SWORD_COPPER,   SPR_SPEAR_COPPER,   0.9f },
-        { ITEM_SWORD_BRONZE,   ITEM_SPEAR_BRONZE,   "Bronze",    10, 30, 12,   8, 22, 19, 0xCE9B4E, SPR_SWORD_BRONZE,   SPR_SPEAR_BRONZE,   1.0f },
-        { ITEM_SWORD_IRON,     ITEM_SPEAR_IRON,     "Iron",      14, 30, 12,  11, 22, 21, 0xA8ADB6, SPR_SWORD_IRON,     SPR_SPEAR_IRON,     1.1f },
+        { ITEM_SWORD_COPPER,   ITEM_SPEAR_COPPER,   "Copper",     7, 30, 28,   6, 22, 23, 0xC87A32, SPR_SWORD_COPPER,   SPR_SPEAR_COPPER,   0.9f },
+        { ITEM_SWORD_BRONZE,   ITEM_SPEAR_BRONZE,   "Bronze",    10, 30, 30,   8, 22, 24, 0xCE9B4E, SPR_SWORD_BRONZE,   SPR_SPEAR_BRONZE,   1.0f },
+        { ITEM_SWORD_IRON,     ITEM_SPEAR_IRON,     "Iron",      14, 30, 30,  11, 22, 26, 0xA8ADB6, SPR_SWORD_IRON,     SPR_SPEAR_IRON,     1.1f },
         /* Gold: the fast tier. Its reach is the SHORTEST of anything past
            copper, which is the other half of paying for the speed -- a quick
            weapon that also kept you at range would have no downside at all. */
-        { ITEM_SWORD_GOLD,     ITEM_SPEAR_GOLD,     "Gold",      15, 22, 11,  12, 16, 18, 0xE8C233, SPR_SWORD_GOLD,     SPR_SPEAR_GOLD,     0.8f },
-        { ITEM_SWORD_STEEL,    ITEM_SPEAR_STEEL,    "Steel",     20, 30, 13,  16, 22, 22, 0x8E97A6, SPR_SWORD_STEEL,    SPR_SPEAR_STEEL,    1.3f },
-        { ITEM_SWORD_TITANIUM, ITEM_SPEAR_TITANIUM, "Titanium",  26, 30, 14,  21, 22, 24, 0xD2DAE4, SPR_SWORD_TITANIUM, SPR_SPEAR_TITANIUM, 1.4f },
+        { ITEM_SWORD_GOLD,     ITEM_SPEAR_GOLD,     "Gold",      15, 22, 28,  12, 16, 23, 0xE8C233, SPR_SWORD_GOLD,     SPR_SPEAR_GOLD,     0.8f },
+        { ITEM_SWORD_STEEL,    ITEM_SPEAR_STEEL,    "Steel",     20, 30, 33,  16, 22, 28, 0x8E97A6, SPR_SWORD_STEEL,    SPR_SPEAR_STEEL,    1.3f },
+        { ITEM_SWORD_TITANIUM, ITEM_SPEAR_TITANIUM, "Titanium",  26, 30, 35,  21, 22, 30, 0xD2DAE4, SPR_SWORD_TITANIUM, SPR_SPEAR_TITANIUM, 1.4f },
         /* Tungsten is the heaviest thing on the ladder and swings slowest of
            the top three, which is what stops the last tier being strictly
            better than everything at everything. It hits hardest and shoves
            furthest; titanium remains the one you pick if you want to keep
            moving. */
-        { ITEM_SWORD_TUNGSTEN, ITEM_SPEAR_TUNGSTEN, "Tungsten",  34, 32, 15,  27, 24, 26, 0x6F7A86, SPR_SWORD_TUNGSTEN, SPR_SPEAR_TUNGSTEN, 1.8f },
+        { ITEM_SWORD_TUNGSTEN, ITEM_SPEAR_TUNGSTEN, "Tungsten",  34, 32, 38,  27, 24, 33, 0x6F7A86, SPR_SWORD_TUNGSTEN, SPR_SPEAR_TUNGSTEN, 1.8f },
     };
 
     /* Shared across the whole ladder rather than being per-tier columns,
@@ -830,7 +964,12 @@ void initItems() {
         sw.meleeArc      = MELEE_SWORD_ARC;
         sw.meleeFrames   = MELEE_SWORD_FRAMES;
         sw.meleeCooldown = t.swordCool;
-        sw.meleeKnock    = t.knock;
+        /* The old 0.8--1.8 shove technically changed velocity but disappeared
+           into the creature's next movement frame. Three times that impulse
+           produces a visible separation and gives the long sweep a defensive
+           payoff without changing damage or attack cadence. */
+        sw.meleeKnock    = t.knock * 3.0f;
+        sw.description   = "A long sweeping blade that can strike several enemies and knock them back.";
 
         ItemDef& sp = ITEMS[t.spear];
         sp.name          = spearName[i];
@@ -848,6 +987,7 @@ void initItems() {
            rather than an edge, and the whole reason to carry one is that it
            keeps things away by LENGTH instead of by force. */
         sp.meleeKnock    = t.knock * 0.6f;
+        sp.description   = "A narrow thrusting weapon with quick, precise attacks.";
     }
 
     ITEMS[ITEM_OVERCLOCK_CHIP].name      = "Overclock Chip";
@@ -926,17 +1066,14 @@ void initItems() {
     ITEMS[ITEM_CARAPACE_CHARM].colour    = 0xB07848;
     ITEMS[ITEM_CARAPACE_CHARM].sprite    = SPR_ACC_CARAPACE;
 
-    /* Moth. The character had no light of their own at all -- every lumen in
-       the game came from a torch, a drone or a burning projectile -- so this is
-       a new capability rather than a bigger number, and it is the charm most
-       likely to change where somebody is willing to go. 150 against the light
-       drone's 210: enough to see your feet and the wall you are standing at,
-       not enough to replace the companion whose whole job this is. */
+    /* Moth. Half the rebalanced light drone: enough to see your feet and the
+       wall you are standing at, not enough to replace the companion whose
+       whole job this is. */
     ITEMS[ITEM_MOTH_LANTERN].name      = "Moth Lantern";
     ITEMS[ITEM_MOTH_LANTERN].kind      = ITEMK_ACCESSORY;
     ITEMS[ITEM_MOTH_LANTERN].equipSlot = EQ_TRINKET_A;
     ITEMS[ITEM_MOTH_LANTERN].maxStack  = 1;
-    ITEMS[ITEM_MOTH_LANTERN].lightGlow = 150;
+    ITEMS[ITEM_MOTH_LANTERN].lightGlow = 75;
     ITEMS[ITEM_MOTH_LANTERN].colour    = 0xFFC24A;
     ITEMS[ITEM_MOTH_LANTERN].sprite    = SPR_ACC_LANTERN;
 
@@ -1083,6 +1220,7 @@ void initItems() {
            eggColour -- so the icon cannot disagree with the swatch, and an
            eighth creature needs no edit here either. */
         ITEMS[id].sprite   = (u8)(SPR_EGG_FIRST + (t - 1));
+        ITEMS[id].description = "Creative testing item. Use it to spawn this creature.";
     }
 
     /* The boss summon. An egg by KIND -- it spawns a creature and is consumed,
@@ -1120,6 +1258,102 @@ void initItems() {
     ITEMS[ITEM_FORGE_CORE].maxStack = 16;
     ITEMS[ITEM_FORGE_CORE].colour   = 0xE07A32;
 
+    /* Hover descriptions are authored only for items with a use, equipment
+       effect, or non-obvious role. Material ids keep description == 0, with
+       Forge Core as the intentional exception: it looks like a carried part
+       but unlocks a station and therefore needs explaining. */
+    ITEMS[ITEM_MULTITOOL].description =
+        "A three-slot energy weapon. Installed shot modules fire from left to right.";
+    ITEMS[ITEM_MULTITOOL2].description =
+        "A five-slot chassis with a larger battery, faster recharge, and quicker firing.";
+    ITEMS[ITEM_MOD_SHOT].description =
+        "Fires a straight beam that damages enemies and bores through loose terrain.";
+    ITEMS[ITEM_MOD_BLAST].description =
+        "Launches a heavy explosive shot that breaks stone and damages groups.";
+    ITEMS[ITEM_MOD_BOUNCE].description =
+        "Fires a cheap arcing bolt that ricochets naturally from nearby surfaces.";
+    ITEMS[ITEM_MOD_HOMING].description =
+        "Fires a large, slow floating orb that curves toward nearby enemies.";
+    ITEMS[ITEM_MOD_TELEPORT].description =
+        "Teleports you to the last safe position before the projectile hits.";
+
+    ITEMS[ITEM_SICKLE].description =
+        "Harvests plants in a broad sweep without damaging the ground beneath them.";
+    ITEMS[ITEM_GRASS_SEED].description =
+        "Sow on exposed dirt to grow a patch of grass.";
+    ITEMS[ITEM_LENS].description = "Extends your building and interaction reach while equipped.";
+    ITEMS[ITEM_RELAY].description = "Greatly extends your building and interaction reach while equipped.";
+    ITEMS[ITEM_ROCKET_BOOTS].description =
+        "Hold jump in the air for a short upward boost. Fuel recharges on the ground.";
+    ITEMS[ITEM_HERMES].description = "Greatly increases movement speed while worn.";
+
+    ITEMS[ITEM_THERMOCOUPLE].description = "Outputs a circuit signal based on local temperature.";
+    ITEMS[ITEM_CLOCK].description = "Outputs a repeating circuit timing signal.";
+    ITEMS[ITEM_PLACER].description = "Places stored material when activated by a circuit signal.";
+    ITEMS[ITEM_MINER].description = "Excavates material in front of it when activated.";
+    ITEMS[ITEM_TORCH_DEV].description = "A placeable light source that also provides heat.";
+    ITEMS[ITEM_ITEM_PIPE].description = "Transfers stored items between adjacent machines.";
+    ITEMS[ITEM_PIPE_CROSSOVER].description = "Lets two item-pipe routes cross without mixing.";
+    ITEMS[ITEM_WORKBENCH].description = "A basic crafting station for early tools and components.";
+    ITEMS[ITEM_ANVIL].description = "A metalworking station for equipment and mechanical parts.";
+    ITEMS[ITEM_CHEMSTN].description = "A crafting station for chemical processing and advanced materials.";
+    ITEMS[ITEM_ASSEMBLY].description = "An advanced station for precise machines and guided weapons.";
+    ITEMS[ITEM_FORGESTN].description = "A high-temperature station for late-game alloys and equipment.";
+    ITEMS[ITEM_BED].description = "Rest to pass time quickly and set your respawn point.";
+    ITEMS[ITEM_CHEST].description = "Stores item stacks outside your inventory.";
+    ITEMS[ITEM_SPOUT].description = "Moves liquids and gases out of connected storage.";
+    ITEMS[ITEM_DRAIN].description = "Collects nearby liquids and gases into connected storage.";
+    ITEMS[ITEM_BLOCK_WATCHER].description = "Outputs a signal when the watched cell changes.";
+    ITEMS[ITEM_PULSE_BUTTON].description = "Sends a brief circuit pulse when pressed.";
+    ITEMS[ITEM_CONSTANT_COMBINATOR].description = "Outputs a configurable constant circuit signal.";
+    ITEMS[ITEM_ARITHMETIC_COMBINATOR].description = "Performs arithmetic on circuit signals.";
+    ITEMS[ITEM_DECIDER_COMBINATOR].description = "Tests circuit conditions and outputs a chosen signal.";
+    ITEMS[ITEM_PEDESTAL].description = "Displays and illuminates a single item placed upon it.";
+
+    ITEMS[ITEM_STEEL_HELMET].description = "Protective headgear with armour and temperature resistance.";
+    ITEMS[ITEM_STEEL_SUIT].description = "Protective body armour with strong temperature resistance.";
+    ITEMS[ITEM_TITANIUM_HELMET].description = "Advanced headgear with heavy armour and temperature resistance.";
+    ITEMS[ITEM_TITANIUM_SUIT].description = "Advanced body armour built for severe heat, cold, and combat.";
+    ITEMS[ITEM_FORGE_CORE].description = "A Brood Queen relic used to construct a Blast Furnace.";
+
+    ITEMS[ITEM_LIGHT_DRONE].description = "Follows you and illuminates nearby terrain.";
+    ITEMS[ITEM_ATTACK_DRONE].description = "Follows you and fires bolts at enemies with a clear line of sight.";
+    ITEMS[ITEM_PICKUP_DRONE].description = "Collects nearby loose items and returns them to your pack.";
+    ITEMS[ITEM_SHIELD_DRONE].description = "Intercepts hostile shots and pushes nearby enemies away.";
+    ITEMS[ITEM_LANCE_DRONE].description = "A close-range combat drone that drives a piercing lance through enemies.";
+    ITEMS[ITEM_MORTAR_DRONE].description = "Lobs explosive shells at distant enemies.";
+    ITEMS[ITEM_ORBIT_DRONE].description = "Orbits you as a damaging defensive weapon.";
+    ITEMS[ITEM_DRONE_VISOR].description =
+        "Drone Armour. 2 pieces: +1 combat-drone bay. 3 pieces: +50% drone damage.";
+    ITEMS[ITEM_DRONE_HARNESS].description =
+        "Drone Armour. 2 pieces: +1 combat-drone bay. 3 pieces: +50% drone damage.";
+    ITEMS[ITEM_DRONE_GREAVES].description =
+        "Drone Armour. 2 pieces: +1 combat-drone bay. 3 pieces: +50% drone damage.";
+    ITEMS[ITEM_DRONE_BEACON].description =
+        "Unlocks one additional combat-drone bay. Duplicate Beacons do not stack.";
+    ITEMS[ITEM_OVERCLOCK_CHIP].description = "Install in an attack drone to reduce the delay between shots.";
+    ITEMS[ITEM_TWIN_CONTROLLER].description = "Install in an attack drone to fire a second bolt with each attack.";
+    ITEMS[ITEM_GARLIC_FIELD_CHIP].description = "Install in a shield drone to damage enemies inside its field.";
+
+    ITEMS[ITEM_GLOW_FLARE].description = "Throw to create a temporary glowing marker.";
+    ITEMS[ITEM_GARLIC_ACCESSORY].description = "Periodically damages enemies close to you.";
+    ITEMS[ITEM_OVERLOAD_ACCESSORY].description = "Reduces weapon firing delay by 25%.";
+    ITEMS[ITEM_TWIN_ACCESSORY].description = "Fires a second, slightly offset projectile with each weapon shot.";
+    ITEMS[ITEM_CARAPACE_CHARM].description = "A hardened trinket that adds flat armour.";
+    ITEMS[ITEM_MOTH_LANTERN].description = "Makes the wearer emit a soft light.";
+    ITEMS[ITEM_SLIME_MAGNET].description = "Pulls loose items toward you from farther away.";
+    ITEMS[ITEM_HUSK_HEART].description = "Slowly restores health while you are injured.";
+    ITEMS[ITEM_SWIFT_CHARM].description = "Increases movement speed while equipped.";
+    ITEMS[ITEM_SPITTER_BRACER].description = "Increases projectile speed and reduces long-range drop.";
+    ITEMS[ITEM_WHETSTONE].description = "Increases damage dealt by weapon projectiles.";
+    ITEMS[ITEM_CHRONOMETER].description = "Reduces the delay between weapon shots.";
+
+    ITEMS[ITEM_BOLTER].description = "A simple starter weapon. Damages creatures but cannot break terrain.";
+    ITEMS[ITEM_BREAD].description =
+        "Eat to restore health. All consumable healing shares one cooldown.";
+    ITEMS[ITEM_FLINT].description = "Use on a nearby flammable material to ignite it.";
+    ITEMS[ITEM_BROOD_CALL].description = "Consume to summon the Brood Queen nearby.";
+
     /* Spawn eggs. Named from the creature table so the two can never disagree
        about what an egg makes, and swatched in each creature's own colour so
        three otherwise identical entries in the creative list are told apart the
@@ -1136,7 +1370,7 @@ void initItems() {
 
 const char* const EQ_NAMES[EQ_COUNT] = { "Feet", "Back", "Trinket 1", "Trinket 2",
                                         "Head", "Body", "Light Drone", "Drone A", "Drone B",
-                                        "Trinket 3", "Trinket 4" };
+                                        "Trinket 3", "Trinket 4", "Drone C" };
 /* What is actually PAINTED in an empty slot. The long names above are for the
    tooltip, where there is room for them; drawn into the square itself they were
    clipped to "rinke" and "ht Dr", which is worse than no label at all because
@@ -1146,7 +1380,7 @@ const char* const EQ_NAMES[EQ_COUNT] = { "Feet", "Back", "Trinket 1", "Trinket 2
    nothing. */
 const char* const EQ_SHORT[EQ_COUNT] = { "Feet", "Back", "1", "2",
                                          "Head", "Body", "Lamp", "A", "B",
-                                         "3", "4" };
+                                         "3", "4", "C" };
 
 bool eqIsTrinket(int eqSlot) {
     for (int i = 0; i < EQ_TRINKET_COUNT; ++i) if (EQ_TRINKETS[i] == eqSlot) return true;
@@ -1198,7 +1432,7 @@ int Inventory::add(ItemId item, int count) {
         /* A tool becomes a distinct object the moment it exists. Doing this
            here rather than at every call site means there is no way to end up
            holding a multitool that cannot remember its own modules. */
-        slot[i].inst  = (ITEMS[item].kind == ITEMK_TOOL) ? toolInstNew() : 0;
+        slot[i].inst  = (ITEMS[item].kind == ITEMK_TOOL) ? toolInstNew(item) : 0;
         count -= put;
     }
     return count;   /* whatever would not fit */
@@ -1312,8 +1546,20 @@ int Inventory::cooldownPct()  const { return bestWorn(*this, &ItemDef::cooldownP
 
 int Inventory::armour() const {
     int total = 0;
-    for (int i = 0; i < EQ_COUNT; ++i)
-        if (!equip[i].empty()) total += ITEMS[equip[i].item].armour;
+    bool accessorySeen[ITEM_COUNT];
+    memset(accessorySeen, 0, sizeof(accessorySeen));
+    for (int i = 0; i < EQ_COUNT; ++i) {
+        if (equip[i].empty()) continue;
+        const ItemId item = equip[i].item;
+        /* Worn armour pieces add across body slots. An accessory still joins
+           that total, but a duplicate of the same accessory is never a second
+           effect -- the same non-stacking rule every scalar charm uses. */
+        if (ITEMS[item].kind == ITEMK_ACCESSORY) {
+            if (accessorySeen[item]) continue;
+            accessorySeen[item] = true;
+        }
+        total += ITEMS[item].armour;
+    }
     return total;
 }
 
@@ -1322,6 +1568,34 @@ bool Inventory::hasEquipped(ItemId item) const {
     for (int i = 0; i < EQ_COUNT; ++i)
         if (!equip[i].empty() && equip[i].item == item) return true;
     return false;
+}
+
+int Inventory::armourSetPieces(u8 set) const {
+    if (set == ARMOUR_SET_NONE) return 0;
+    int count = 0;
+    for (int i = 0; i < EQ_COUNT; ++i)
+        if (!equip[i].empty() && ITEMS[equip[i].item].armourSet == set) ++count;
+    return count;
+}
+
+int Inventory::combatDroneSlots() const {
+    int slots = 1;
+    if (armourSetPieces(ARMOUR_SET_DRONE) >= 2) ++slots;
+    /* hasEquipped is boolean by design: a second copy is visible equipment but
+       cannot apply the Beacon effect twice. */
+    if (hasEquipped(ITEM_DRONE_BEACON)) ++slots;
+    return imin(slots, DRONE_BAY_COUNT - 1);
+}
+
+bool Inventory::droneBayUnlocked(int eqSlot) const {
+    if (eqSlot == EQ_DRONE_A) return true;
+    if (eqSlot == EQ_DRONE_B) return combatDroneSlots() >= 2;
+    if (eqSlot == EQ_DRONE_C) return combatDroneSlots() >= 3;
+    return true;
+}
+
+int Inventory::droneDamagePct() const {
+    return armourSetPieces(ARMOUR_SET_DRONE) >= 3 ? 50 : 0;
 }
 
 bool equipFits(ItemId item, int eqSlot) {
@@ -1334,7 +1608,8 @@ bool equipFits(ItemId item, int eqSlot) {
        what stopped the third and fourth slots being unreachable the moment they
        were added, which is the exact bug the second one had. */
     if (eqIsTrinket(d.equipSlot) && eqIsTrinket(eqSlot)) return true;
-    return (d.equipSlot == EQ_DRONE_A && eqSlot == EQ_DRONE_B);
+    return (d.equipSlot == EQ_DRONE_A &&
+            (eqSlot == EQ_DRONE_B || eqSlot == EQ_DRONE_C));
 }
 
 int Inventory::packWorn(int eqSlot) const {
@@ -1356,10 +1631,10 @@ bool Inventory::equipFromPack(ItemId item) {
        first while the slot next to it sat empty. */
     int target = -1;
     for (int i = 0; i < EQ_COUNT; ++i)
-        if (equipFits(item, i) && equip[i].empty()) { target = i; break; }
+        if (equipFits(item, i) && droneBayUnlocked(i) && equip[i].empty()) { target = i; break; }
     if (target < 0)
         for (int i = 0; i < EQ_COUNT; ++i)
-            if (equipFits(item, i)) { target = i; break; }
+            if (equipFits(item, i) && droneBayUnlocked(i)) { target = i; break; }
     if (target < 0) return false;
 
     ItemStack& eq = equip[target];
@@ -1445,8 +1720,10 @@ static void resolveFlight(const ItemDef& d, ToolShot& s) {
 ToolShot toolResolve(const ItemStack& st) {
     ToolShot s;
     s.canFire = false; s.delay = 0; s.power = 0; s.damage = 0; s.pierce = 0; s.blast = 0;
+    s.energyCost = 0; s.moduleSlot = -1; s.life = 90; s.bounces = 0;
     s.colour = 0xFFFFFF; s.payloadMat = MAT_EMPTY;
-    s.speed = SHOT_SPEED_DEFAULT; s.gravity = PROJ_GRAVITY;
+    s.speed = SHOT_SPEED_DEFAULT; s.gravity = PROJ_GRAVITY; s.homing = 0.0f;
+    s.effect = PROJ_EFFECT_NONE;
     if (st.empty() || ITEMS[st.item].kind != ITEMK_TOOL) return s;
 
     const ItemDef& tool = ITEMS[st.item];
@@ -1485,26 +1762,43 @@ ToolShot toolResolve(const ItemStack& st) {
         s.payloadMat = (u8)ti.payload.item;
 
     const int n = imin(tool.toolSlots, TOOL_SLOTS_MAX);
-    for (int i = 0; i < n; ++i) {
+    const int start = n ? ti.shotCursor % n : 0;
+    for (int offset = 0; offset < n; ++offset) {
+        const int i = (start + offset) % n;
         const ItemId m = ti.slot[i];
         if (m == ITEM_NONE || ITEMS[m].kind != ITEMK_MODULE) continue;
-        /* The FIRST module decides what the shot is; later ones only add to the
-           delay. That is a placeholder with a deliberate shape: it means slot
-           order already matters, so when modules start combining, "leftmost is
-           the shot, the rest modify it" is a rule players will already have
-           learned rather than a new one being introduced. */
-        if (!s.canFire) {
-            s.canFire = true;
-            s.power   = ITEMS[m].power;
-            s.damage  = ITEMS[m].damage;
-            s.pierce  = ITEMS[m].pierce;
-            s.blast   = ITEMS[m].blast;
-            s.colour  = ITEMS[m].shotColour;
-            resolveFlight(ITEMS[m], s);
-        }
-        s.delay += ITEMS[m].addDelay;
+        /* One socket is one shot in the firing sequence. Advancing happens
+           only after a successful spawn, so a full projectile pool or empty
+           battery cannot silently eat a turn in the configured order. */
+        const ItemDef& d = ITEMS[m];
+        s.canFire = true; s.moduleSlot = i;
+        s.power = d.power; s.damage = d.damage; s.pierce = d.pierce;
+        s.blast = d.blast; s.colour = d.shotColour;
+        s.delay = imax(3, (int)tool.baseDelay + (int)d.addDelay);
+        s.energyCost = d.energyCost;
+        s.life = d.shotLife ? d.shotLife : 90;
+        s.bounces = d.shotBounces; s.homing = d.shotHoming; s.effect = d.shotEffect;
+        resolveFlight(d, s);
+        break;
     }
     return s;
+}
+
+bool toolShotEnergyAvailable(const ItemStack& st, const ToolShot& shot) {
+    return st.inst > 0 && st.inst < MAX_TOOL_INST &&
+           g_toolInst[st.inst].used &&
+           (int)g_toolInst[st.inst].energy >= shot.energyCost;
+}
+
+void toolCommitShot(ItemStack& st, const ToolShot& shot, int cooldown) {
+    if (!toolShotEnergyAvailable(st, shot)) return;
+    ToolInst& ti = g_toolInst[st.inst];
+    ti.energy = (u16)((int)ti.energy - shot.energyCost);
+    ti.cooldown = imax(0, cooldown);
+    if (shot.moduleSlot >= 0) {
+        const int slots = imin((int)ITEMS[st.item].toolSlots, TOOL_SLOTS_MAX);
+        ti.shotCursor = (u8)(slots ? (shot.moduleSlot + 1) % slots : 0);
+    }
 }
 
 int digInto(World& w, Inventory& inv, int cx, int cy, int r, int maxCells,

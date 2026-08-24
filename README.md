@@ -35,10 +35,32 @@ build.bat
 
 Then launch `build\crucible.exe`.
 
+For the player-facing distribution, build `build\crucible-launcher.exe` with
+`build_launcher.bat`. Players download the launcher once; it installs the latest
+tagged GitHub Release into `%LOCALAPPDATA%\Crucible`, verifies updates before
+replacing files, and can launch the installed version offline when GitHub is
+unavailable. See [LAUNCHER.md](LAUNCHER.md) for publishing and self-update details.
+
 The left catalog has materials and devices. `Tab` opens the creative inventory,
 `X` enters Circuit Wire mode, `F` enters the one-cell copper wiring tool, and
 holding `Q` shows the brush footprint while also making the wheel adjust brush
-size.
+size. `Ctrl+Z` reverses the most recent build or dig stroke (materials,
+background walls, copper wiring, and placed devices), including its survival
+inventory cost or mining drops.
+
+Multitools store energy and recharge continuously. Each installed module is a
+complete shot with its own energy cost and cadence; occupied module slots fire
+from left to right and wrap. A shot waits when the battery cannot pay its cost
+rather than skipping ahead. Bounce is cheap rapid suppression, Shot is the
+general beam, Blast trades charge and cadence for a crater, Homing is a slow
+expensive seeker, and Teleport moves its owner to the projectile's last safe
+point on impact. Quick-tap `R` cursor teleport remains available.
+
+The window is resizable. The game keeps its native aspect ratio and letterboxes
+as needed so UI hit targets and the visible world remain stable. Press `F11` to
+toggle borderless fullscreen. The pause menu has a persistent 80--120% UI scale
+setting for interface text and item artwork; 100% uses the compact 34-pixel icon
+baseline while leaving click targets comfortably sized.
 
 ## Documentation
 

@@ -20,10 +20,10 @@ static const float LEAD_MAX_FRAMES = 40.0f;
 /* --- the three weapon chassis ----------------------------------------------
    Numbers first, because the whole design is in the relationship between them.
 
-   The Attack Drone is the baseline: 3 damage every 28 frames at a target it
-   picks itself, which is 6.4 damage a second delivered wherever the trouble is.
-   All three of these come out near that figure and buy their differences with
-   the SHAPE of the delivery rather than with the total.
+   The Attack Drone is the baseline: 1 damage every 28 frames at a target it
+   picks itself, which is 2.1 damage a second delivered wherever the trouble is.
+   It sits below the aimed/specialized chassis because it asks nothing of the
+   player and its Twin and Overclock chips can multiply that output.
 
    LANCE  -- 4 x 3 in a burst of three, then a long rest: 7.5/s, but only in the
              direction the character faces. It is the highest of the three and
@@ -61,7 +61,7 @@ static const int   ORBIT_DAMAGE      = 3;
 static const int   ORBIT_HIT_RADIUS  = 7;
 static const int   ORBIT_COOLDOWN    = 18;
 
-static const int ATTACK_DRONE_DAMAGE = 3;
+static const int ATTACK_DRONE_DAMAGE = 1;
 static const int ATTACK_DRONE_COOLDOWN = 28;
 static const int OVERCLOCK_DRONE_COOLDOWN = 20;
 static const float ATTACK_ACQUIRE_RADIUS = 220.0f;
@@ -82,13 +82,21 @@ static bool hasChip(const Inventory& inv, int droneBay, ItemId item) {
     return false;
 }
 
+static int droneDamage(const Inventory& inv, int base) {
+    const int pct = inv.droneDamagePct();
+    if (pct <= 0 || base <= 0) return base;
+    return base + imax(1, base * pct / 100);
+}
+
 void droneReset() {
     for (int player = 0; player < MAX_PLAYERS; ++player)
         memset(g_playerSessions[player].drones, 0, sizeof(g_playerSessions[player].drones));
 }
 
 static u8 equippedDrone(const Inventory& inv, int i) {
-    const int slot = i == 0 ? EQ_LIGHT_DRONE : (i == 1 ? EQ_DRONE_A : EQ_DRONE_B);
+    const int slot = i == 0 ? EQ_LIGHT_DRONE : i == 1 ? EQ_DRONE_A :
+                     i == 2 ? EQ_DRONE_B : EQ_DRONE_C;
+    if (!inv.droneBayUnlocked(slot)) return DRONE_NONE;
     if (inv.equip[slot].empty()) return DRONE_NONE;
     return inv.equip[slot].item == ITEM_LIGHT_DRONE  ? DRONE_LIGHT
          : inv.equip[slot].item == ITEM_ATTACK_DRONE ? DRONE_ATTACK
@@ -353,7 +361,7 @@ static void addSeparation(Drone* drones, Drone& d, int self) {
    Player::facing LATCHES (see player.h), so it is a stable heading rather than
    something that flickers while you shuffle -- which is what makes firing along
    it feel aimed rather than random. */
-static void lanceFire(const World& w, const Player& p, Drone& d) {
+static void lanceFire(const World& w, const Player& p, Drone& d, const Inventory& inv) {
     if (d.shotCool > 0) { --d.shotCool; return; }
     if (!shotOpen(w, (int)d.x, (int)d.y)) return;
 
@@ -366,7 +374,7 @@ static void lanceFire(const World& w, const Player& p, Drone& d) {
     projSpawn(d.x + dirX * 4.0f, d.y,
               dirX / len * LANCE_SPEED, dirY / len * LANCE_SPEED,
               0, LANCE_PIERCE, 80, 0xBFE9FF, 0, MAT_EMPTY,
-              LANCE_DAMAGE, false, 0.0f);
+              droneDamage(inv, LANCE_DAMAGE), false, 0.0f);
 
     /* The burst, and the rest between bursts, are one counter read twice. A
        burst is what makes this weapon a rhythm rather than a stream: three
@@ -386,7 +394,7 @@ static void lanceFire(const World& w, const Player& p, Drone& d) {
    lands on that point" is one question with one answer, and having two
    different ballistic solvers in one game is how a shell and a glob end up
    feeling like they obey different physics. */
-static void mortarFire(const World& w, Drone& d, const Entity& target) {
+static void mortarFire(const World& w, Drone& d, const Entity& target, const Inventory& inv) {
     if (d.shotCool > 0) { --d.shotCool; return; }
     if (!shotOpen(w, (int)d.x, (int)d.y)) return;
 
@@ -414,7 +422,7 @@ static void mortarFire(const World& w, Drone& d, const Entity& target) {
     const float my = (mlen > 0.001f) ? vy / mlen : 0.0f;
     projSpawn(d.x + mx * 5.0f, d.y + my * 5.0f, vx, vy,
               0, 1, 200, 0xFFC24A, MORTAR_BLAST, MAT_EMPTY,
-              MORTAR_DAMAGE, false, PROJ_GRAVITY);
+              droneDamage(inv, MORTAR_DAMAGE), false, PROJ_GRAVITY);
     d.shotCool = MORTAR_COOLDOWN;
 }
 
@@ -429,7 +437,7 @@ static void mortarFire(const World& w, Drone& d, const Entity& target) {
    The consequence to know: it passes through rock. That is correct for what it
    is -- it never leaves the player's own body radius, so it can only be inside
    a wall if the player is. */
-static void orbitTick(Drone& d, const Player& p, int bay) {
+static void orbitTick(Drone& d, const Player& p, int bay, const Inventory& inv) {
     d.phase += ORBIT_SPEED;
     if (d.phase > 6.28318530718f) d.phase -= 6.28318530718f;
     /* Half a turn apart per bay, so two blades cover opposite sides instead of
@@ -443,7 +451,8 @@ static void orbitTick(Drone& d, const Player& p, int bay) {
     d.x = nx; d.y = ny;
 
     if (d.effectCool > 0) { --d.effectCool; return; }
-    if (entDamageDisc((int)d.x, (int)d.y, ORBIT_HIT_RADIUS, ORBIT_DAMAGE) > 0)
+    if (entDamageDisc((int)d.x, (int)d.y, ORBIT_HIT_RADIUS,
+                      droneDamage(inv, ORBIT_DAMAGE)) > 0)
         d.effectCool = ORBIT_COOLDOWN;
 }
 
@@ -475,7 +484,7 @@ static void droneTickBank(Drone* drones, const World& w, const Player& p, Invent
            has no answer to: it is never outside its envelope, never has a task,
            and never goes home. See orbitTick. */
         if (d.type == DRONE_ORBIT) {
-            orbitTick(d, p, i);
+            orbitTick(d, p, i, inv);
             continue;
         }
 
@@ -582,22 +591,22 @@ static void droneTickBank(Drone* drones, const World& w, const Player& p, Invent
                 if (len > 0.01f) {
                     dx *= DRONE_SHOT_SPEED / len; dy *= DRONE_SHOT_SPEED / len;
                     projSpawn(d.x, d.y, dx, dy, 0, 0, 70, 0xF2C16D, 0,
-                              MAT_EMPTY, ATTACK_DRONE_DAMAGE, false, 0.0f);
+                              MAT_EMPTY, droneDamage(inv, ATTACK_DRONE_DAMAGE), false, 0.0f);
                     if (twin) {
                         const float px = -dy * 0.10f, py = dx * 0.10f;
                         projSpawn(d.x, d.y, dx + px, dy + py, 0, 0, 70, 0xD8A4FF, 0,
-                                  MAT_EMPTY, ATTACK_DRONE_DAMAGE, false, 0.0f);
+                                  MAT_EMPTY, droneDamage(inv, ATTACK_DRONE_DAMAGE), false, 0.0f);
                     }
                     d.shotCool = overclock ? OVERCLOCK_DRONE_COOLDOWN : ATTACK_DRONE_COOLDOWN;
                 }
             }
         }
-        if (d.type == DRONE_LANCE)  lanceFire(w, p, d);
+        if (d.type == DRONE_LANCE)  lanceFire(w, p, d, inv);
         if (d.type == DRONE_MORTAR) {
             /* Counted down even with nothing to shoot at, so a shell is ready
                when something arrives rather than a second and a half after it
                does -- at 96 frames that difference is most of a fight. */
-            if (enemy) mortarFire(w, d, *enemy);
+            if (enemy) mortarFire(w, d, *enemy, inv);
             else if (d.shotCool > 0) --d.shotCool;
         }
         if (d.type == DRONE_PICKUP) pickupCollect(d, inv);
@@ -605,9 +614,10 @@ static void droneTickBank(Drone* drones, const World& w, const Player& p, Invent
             shieldIntercept(d);
             if (d.effectCool > 0) --d.effectCool;
             if (d.effectCool == 0) {
-                entDamageKnockbackDisc((int)p.centreX(), (int)p.centreY(), 34, 1, 1.25f);
+                entDamageKnockbackDisc((int)p.centreX(), (int)p.centreY(), 34,
+                                       droneDamage(inv, 1), 1.25f);
                 if (hasChip(inv, i, ITEM_GARLIC_FIELD_CHIP))
-                    entDamageDisc((int)d.x, (int)d.y, 14, 1);
+                    entDamageDisc((int)d.x, (int)d.y, 14, droneDamage(inv, 1));
                 d.effectCool = 24;
             }
         }
@@ -628,7 +638,7 @@ void droneRegisterLights() {
         for (int i = 0; i < MAX_DRONES; ++i)
             if (g_playerSessions[player].drones[i].type == DRONE_LIGHT)
                 lightAddDynamic((int)g_playerSessions[player].drones[i].x,
-                                (int)g_playerSessions[player].drones[i].y, 210);
+                                (int)g_playerSessions[player].drones[i].y, 105);
 }
 
 void droneDraw(u32* px, int camX, int camY, bool lit) {

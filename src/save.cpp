@@ -8,6 +8,7 @@
 #include "device.h"
 #include "tree.h"
 #include "worldgen.h"
+#include "multiplayer.h"
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
@@ -202,7 +203,7 @@ static ItemId remapSavedItem(ItemId old) {
 static void remapInventoryItems() {
     for (int i = 0; i < INV_SLOTS; ++i) g_inv.slot[i].item = remapSavedItem(g_inv.slot[i].item);
     for (int i = 0; i < EQ_COUNT; ++i) g_inv.equip[i].item = remapSavedItem(g_inv.equip[i].item);
-    for (int d = 0; d < 3; ++d)
+    for (int d = 0; d < DRONE_BAY_COUNT; ++d)
         for (int i = 0; i < Inventory::DRONE_MODULE_SLOTS_MAX; ++i)
             g_inv.droneModule[d][i].item = remapSavedItem(g_inv.droneModule[d][i].item);
 }
@@ -315,6 +316,17 @@ bool saveWrite(const char* path, const World& w, const u8* thumbRgb) {
     {
         SectionWriter s; s.begin(f, "PLYR", "character");
         fwrite(&g_player, sizeof(Player), 1, f);
+        s.end();
+    }
+    {
+        /* Session state kept out of Player so adding it does not invalidate
+           every existing raw PLYR section. Optional framing gives old saves
+           the natural fallback: no bed, therefore world spawn. */
+        SectionWriter s; s.begin(f, "RSPN", "respawn checkpoint");
+        const i32 checkpoint[3] = { g_playerSessions[0].respawnBedX,
+                                    g_playerSessions[0].respawnBedY,
+                                    g_playerSessions[0].healCooldown };
+        fwrite(checkpoint, sizeof(checkpoint), 1, f);
         s.end();
     }
     {
@@ -548,6 +560,9 @@ bool saveRead(const char* path, World& w) {
     w.reset();
     devClear(); sparkClear(); roomsClear(w); treesClear();
     g_inv.clear();
+    g_playerSessions[0].respawnBedX = g_playerSessions[0].respawnBedY = -1;
+    g_playerSessions[0].respawnFrames = 0;
+    g_playerSessions[0].healCooldown = 0;
 
     bool haveMats = false;
     for (;;) {
@@ -622,6 +637,16 @@ bool saveRead(const char* path, World& w) {
         } else if (tag == fourcc("PLYR")) {
             if (len == sizeof(Player)) fread(&g_player, sizeof(Player), 1, f);
             statAdd("character", len + 12);
+        } else if (tag == fourcc("RSPN")) {
+            if (len == sizeof(i32) * 2 || len == sizeof(i32) * 3) {
+                i32 checkpoint[3] = { -1, -1, 0 };
+                fread(checkpoint, 1, (size_t)len, f);
+                g_playerSessions[0].respawnBedX = checkpoint[0];
+                g_playerSessions[0].respawnBedY = checkpoint[1];
+                g_playerSessions[0].healCooldown =
+                    imin(HEAL_COOLDOWN_FRAMES, imax(0, checkpoint[2]));
+            }
+            statAdd("respawn checkpoint", len + 12);
         } else if (tag == fourcc("INVN")) {
             /* Inventory grew by APPENDING durable state (such as drone chip
                bays) for as long as every change was at the end, and a short
@@ -644,8 +669,28 @@ bool saveRead(const char* path, World& w) {
                 ItemStack droneModule[3][Inventory::DRONE_MODULE_SLOTS_MAX];
                 u8        droneLevel[3];
             };
+            struct InventoryV2 {
+                ItemStack slot[INV_SLOTS];
+                ItemStack equip[11];         /* before Drone C */
+                int       selected;
+                ItemStack droneModule[3][Inventory::DRONE_MODULE_SLOTS_MAX];
+                u8        droneLevel[3];
+            };
             if (len == sizeof(Inventory)) {
                 fread(&g_inv, 1, (size_t)len, f);
+                remapInventoryItems();
+            } else if (len == sizeof(InventoryV2)) {
+                InventoryV2 old;
+                fread(&old, 1, sizeof(old), f);
+                g_inv.clear();
+                for (int i = 0; i < INV_SLOTS; ++i) g_inv.slot[i] = old.slot[i];
+                for (int i = 0; i < 11; ++i)        g_inv.equip[i] = old.equip[i];
+                g_inv.selected = old.selected;
+                for (int d = 0; d < 3; ++d) {
+                    for (int i = 0; i < Inventory::DRONE_MODULE_SLOTS_MAX; ++i)
+                        g_inv.droneModule[d][i] = old.droneModule[d][i];
+                    g_inv.droneLevel[d] = old.droneLevel[d];
+                }
                 remapInventoryItems();
             } else if (len <= sizeof(InventoryV1)) {
                 InventoryV1 old;
@@ -684,6 +729,28 @@ bool saveRead(const char* path, World& w) {
             if (len == sizeof(ToolInst) * MAX_TOOL_INST) {
                 fread(g_toolInst, sizeof(ToolInst), MAX_TOOL_INST, f);
                 remapToolItems();
+            } else {
+                /* ToolInst before batteries and shot sequencing. Preserve the
+                   loadout/payload, then toolInstReconcile() below adopts each
+                   referenced chassis with a full current-capacity battery. */
+                struct ToolInstV1 {
+                    ItemId slot[TOOL_SLOTS_MAX];
+                    int cooldown;
+                    bool used;
+                    ItemStack payload;
+                };
+                if (len == sizeof(ToolInstV1) * MAX_TOOL_INST) {
+                    ToolInstV1 old[MAX_TOOL_INST];
+                    fread(old, sizeof(ToolInstV1), MAX_TOOL_INST, f);
+                    memset(g_toolInst, 0, sizeof(g_toolInst));
+                    for (int i = 0; i < MAX_TOOL_INST; ++i) {
+                        memcpy(g_toolInst[i].slot, old[i].slot, sizeof(old[i].slot));
+                        g_toolInst[i].cooldown = old[i].cooldown;
+                        g_toolInst[i].used = old[i].used;
+                        g_toolInst[i].payload = old[i].payload;
+                    }
+                    remapToolItems();
+                }
             }
             statAdd("tool loadouts", len + 12);
         } else if (tag == fourcc("DEVS")) {

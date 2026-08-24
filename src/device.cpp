@@ -1001,7 +1001,7 @@ void devRemove(World& w, Device* d) {
 
 void devRegisterLights() {
     for (int i = 0; i < (int)g_torches.size(); ++i)
-        lightAddDynamic(g_torches[i].x + DEV_W / 2, g_torches[i].y + DEV_H / 2, 235);
+        lightAddDynamic(g_torches[i].x + DEV_W / 2, g_torches[i].y + DEV_H / 2, 118);
     /* A pedestal is a light source only while it is HOLDING something. An empty
        plinth going on glowing would be the object lying to you about the one
        fact it exists to communicate -- and it is the fact you read from across

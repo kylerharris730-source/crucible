@@ -237,7 +237,22 @@ enum {
     ITEM_SWORD_STEEL,    ITEM_SPEAR_STEEL,
     ITEM_SWORD_TITANIUM, ITEM_SPEAR_TITANIUM,
     ITEM_SWORD_TUNGSTEN, ITEM_SPEAR_TUNGSTEN,
+    /* Appended: saves store numeric item ids, so new projectile modules never
+       go beside the older pair even though that would look tidier here. */
+    ITEM_MOD_BOUNCE,
+    ITEM_MOD_HOMING,
+    ITEM_MOD_TELEPORT,
+    /* Appended equipment: numeric item ids are persisted in saves. */
+    ITEM_DRONE_VISOR,
+    ITEM_DRONE_HARNESS,
+    ITEM_DRONE_GREAVES,
+    ITEM_DRONE_BEACON,
     ITEM_COUNT
+};
+
+enum ArmourSet {
+    ARMOUR_SET_NONE = 0,
+    ARMOUR_SET_DRONE
 };
 
 enum ItemKind {
@@ -356,6 +371,10 @@ enum MeleeStyle {
 
 struct ItemDef {
     const char* name;
+    /* Authored hover text for items whose purpose is not obvious from their
+       name and numbers. Ordinary world materials deliberately leave this null:
+       dirt, water and acid need a compact label, not a paragraph. */
+    const char* description;
     u8   kind;
     /* u32, not u16, and that is forced rather than generous: a material stack
        is 100000 and a u16 stops at 65535, so the cap would silently wrap to
@@ -410,16 +429,21 @@ struct ItemDef {
     /* Flat health subtracted from each contact with a creature. Zero on
        everything that is not armour.
 
-       SUMMED across slots, which is the one place this file breaks its own
+       SUMMED across different pieces, which is the one place this file breaks its own
        "largest, never summed" rule, so it is worth being explicit about why.
        That rule exists to stop two cheap items beating one good one, and it
        bites where several slots can hold the same KIND of thing -- two trinket
-       slots, boots against a jetpack. Armour cannot do that: a helmet only fits
-       EQ_HEAD and a suit only EQ_BODY, so there is no slot to stuff and no
+       slots, boots against a jetpack. Worn armour cannot do that: a helmet only
+       fits EQ_HEAD and a suit only EQ_BODY, so there is no slot to stuff and no
        ladder to shortcut. A helmet and a suit are a SET, and a game where
        wearing both protects you exactly as much as wearing one is a game that
-       has taught you not to bother with the helmet. See Inventory::armour. */
+       has taught you not to bother with the helmet. Accessory armour joins the
+       total once per ItemId; duplicate accessories never stack. */
     i16  armour;
+
+    /* Set membership for worn armour. A zero value means the piece has no set
+       bonuses; sets opt in rather than every armour ladder needing filler. */
+    u8   armourSet;
 
     /* Thrust, for boots and jetpacks. Zero on everything else, and resolved
        through flightSpec() rather than read directly -- see the note there for
@@ -429,6 +453,8 @@ struct ItemDef {
     /* --- ITEMK_TOOL only --------------------------------------------- */
     u8   toolSlots;   /* how many modules it holds; this IS the tier */
     u8   baseDelay;   /* frames between shots before any module says otherwise */
+    u16  energyCapacity; /* maximum charge stored by this multitool chassis */
+    u8   energyRecharge; /* charge restored per simulation frame */
 
     /* --- ITEMK_MINING only -------------------------------------------
        Zero means "not a mining tool", which is what every other item is. */
@@ -459,11 +485,11 @@ struct ItemDef {
     u8   minePlantsOnly;
 
     /* --- ITEMK_MODULE only ------------------------------------------- */
-    /* Added to the tool's baseDelay. A module that hits harder should cost
-       something, and time-between-shots is the cost that stays legible when
-       several modules are stacked -- unlike, say, a damage multiplier, where
-       two modules interact in a way nobody can predict from the tooltips. */
-    u8   addDelay;
+    /* Added to the tool's baseDelay for this module's turn in the firing
+       sequence. Negative values make light shots faster; energyCost provides
+       the other half of their sustained-fire balance. */
+    i16  addDelay;
+    u16  energyCost;  /* charge spent only when a projectile actually spawns */
     /* --- power is TERRAIN, damage is COMBAT ---------------------------
        Two numbers, and keeping them apart is what lets the game have a
        progression at all.
@@ -508,6 +534,10 @@ struct ItemDef {
        ordinary case, a thing thrown into the air coming back down, is what you
        get by saying nothing. */
     u8   shotBeam;
+    u8   shotBounces;
+    u8   shotLife;
+    u8   shotEffect;  /* ProjectileEffect */
+    float shotHoming; /* steering fraction per frame; zero flies ballistically */
 
     /* --- ITEMK_EGG only ----------------------------------------------
        Which EntityType this spawns. ENT_NONE (0) on everything else.
@@ -548,10 +578,10 @@ struct ItemDef {
        DIFFERENT charms strictly better than hoarding duplicates, which is the
        loadout actually being a loadout.
 
-       Armour is the exception and stays summed, for the reason already written
+       Armour is the exception and stays summed across different pieces, for the reason already written
        on ItemDef::armour -- and it now has a trinket in it, which is worth
-       flagging: the Carapace does stack with a helmet and a suit. That is
-       intentional and it is the same rule, not an exception to it. Armour is
+       flagging: the Carapace stacks with a helmet and a suit, but a second
+       Carapace does not. Armour is
        the one stat the game already committed to being additive, and having one
        trinket join that ladder is what stops the trinket row being a separate
        game with its own arithmetic.
@@ -686,6 +716,10 @@ struct ToolInst {
     ItemId slot[TOOL_SLOTS_MAX];
     int    cooldown;   /* frames until it can fire again */
     bool   used;
+    u16    energy;
+    u16    energyCapacity;
+    u8     energyRecharge;
+    u8     shotCursor; /* next module-slot index considered, wrapping left-to-right */
     /* --- payload ---------------------------------------------------------
        A real ItemStack, not a bare ItemId, and that is the whole design: a
        module slot only ever needs to remember WHICH unique item is
@@ -703,8 +737,9 @@ extern ToolInst g_toolInst[MAX_TOOL_INST];
 
 /* Returns a fresh instance handle in 1..MAX_TOOL_INST-1, or 0 if the pool is
    full. Index 0 is deliberately never handed out so that 0 can mean "none". */
-u16  toolInstNew();
+u16  toolInstNew(ItemId tool = ITEM_NONE);
 void toolInstFree(u16 inst);
+void toolInstTick();
 
 
 /* --- equipment slots -------------------------------------------------------
@@ -733,7 +768,7 @@ enum EquipSlot {
     EQ_BODY,
     /* Drone bays are deliberately separate from trinkets: a light is utility,
        and combat companions are a build choice rather than jewellery. One light
-       bay is fixed; the two attack bays are the first expandable minion budget. */
+       and one combat bay are innate; the other combat bays are loadout bonuses. */
     EQ_LIGHT_DRONE,
     EQ_DRONE_A,
     EQ_DRONE_B,
@@ -751,8 +786,15 @@ enum EquipSlot {
        a choice between good options rather than a shortlist. */
     EQ_TRINKET_C,
     EQ_TRINKET_D,
+    /* Appended so every older equipment-slot number keeps its meaning. */
+    EQ_DRONE_C,
     EQ_COUNT
 };
+
+/* One utility follower plus three possible combat followers. Combat bays B/C
+   are capacity-gated; keeping the storage allocated lets old saves retain an
+   item in a bay that is currently locked. */
+static const int DRONE_BAY_COUNT = 4;
 
 /* The interchangeable trinket slots, in the order the screen shows them. One
    table rather than a chain of ORs in equipFits, so adding a fifth is a line
@@ -784,12 +826,12 @@ struct Inventory {
     int       selected;
 
     /* A drone chassis has its own small loadout. The index is the bay rather
-       than the visual follower, so slot 0 is always the light bay and 1/2 are
-       the two general bays. Present chassis have one socket; higher chassis
+       than the visual follower, so slot 0 is always the light bay and 1..3 are
+       the three general bays. Present chassis have one socket; higher chassis
        levels can expose more without changing the saved shape. */
     static const int DRONE_MODULE_SLOTS_MAX = 3;
-    ItemStack droneModule[3][DRONE_MODULE_SLOTS_MAX];
-    u8        droneLevel[3];
+    ItemStack droneModule[DRONE_BAY_COUNT][DRONE_MODULE_SLOTS_MAX];
+    u8        droneLevel[DRONE_BAY_COUNT];
 
     void clear();
 
@@ -816,6 +858,13 @@ struct Inventory {
 
     int  countOf(ItemId item) const;
     int  freeSlots() const;
+
+    /* One combat bay is innate. Drone Armour's 2-piece bonus and one Drone
+       Beacon each add one, capped by the three allocated combat bays. */
+    int  combatDroneSlots() const;
+    bool droneBayUnlocked(int eqSlot) const;
+    int  armourSetPieces(u8 set) const;
+    int  droneDamagePct() const;
 
     ItemStack& held() { return slot[selected]; }
     const ItemStack& held() const { return slot[selected]; }
@@ -908,6 +957,10 @@ struct ToolShot {
     int    damage;     /* see ItemDef::damage -- not derived from power */
     int    pierce;
     int    blast;
+    int    energyCost;
+    int    moduleSlot;
+    int    life;
+    int    bounces;
     u32    colour;
     /* Cells per frame at the muzzle, and how fast it falls. Resolved here
        rather than being a constant at the firing site so that two modules in
@@ -916,6 +969,8 @@ struct ToolShot {
        different objects. See ItemDef::shotSpeed and ItemDef::shotBeam. */
     float  speed;
     float  gravity;
+    float  homing;
+    u8     effect;
     /* A MatId loaded in the tool's payload slot, or MAT_EMPTY. Read from the
        ToolInst directly (see ToolInst::payload) rather than being a module's
        own stat -- this is "whatever you loaded it with", not a fixed part of
@@ -924,6 +979,8 @@ struct ToolShot {
     u8     payloadMat;
 };
 ToolShot toolResolve(const ItemStack& st);
+bool toolShotEnergyAvailable(const ItemStack& st, const ToolShot& shot);
+void toolCommitShot(ItemStack& st, const ToolShot& shot, int cooldown);
 
 
 /* Session-zero compatibility alias; storage lives in multiplayer.cpp. */

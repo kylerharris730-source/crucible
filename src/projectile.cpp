@@ -8,6 +8,73 @@
 
 Projectile g_proj[MAX_PROJ];
 
+/* --- projectile wake ------------------------------------------------------
+   A tail is history, not a copy of the projectile drawn backwards. These
+   visual-only motes are shed into world space, then drift and fade on their own.
+   Slight scatter breaks the ruler-straight laser streak without touching the
+   simulation RNG or changing projectile collision. */
+struct TrailMote {
+    float x, y, vx, vy;
+    u32 colour;
+    i16 life, fullLife;
+    bool alive;
+};
+
+static const int MAX_TRAIL_MOTES = 512;
+static TrailMote g_trailMotes[MAX_TRAIL_MOTES];
+static int g_trailMoteCursor = 0;
+static u32 g_trailRandom = 0x73a91f25u;
+
+static float trailRandom() {
+    /* Separate from material RNG: changing a cosmetic tail must never change
+       where sand falls or whether a reaction occurs. */
+    g_trailRandom ^= g_trailRandom << 13;
+    g_trailRandom ^= g_trailRandom >> 17;
+    g_trailRandom ^= g_trailRandom << 5;
+    return (float)(g_trailRandom & 0xffffu) / 65535.0f;
+}
+
+static void trailMoteEmit(const Projectile& p) {
+    const float speed = sqrtf(p.vx * p.vx + p.vy * p.vy);
+    if (speed < 0.001f) return;
+    const float forwardX = p.vx / speed, forwardY = p.vy / speed;
+    const float sideX = -forwardY, sideY = forwardX;
+    /* One guaranteed mote makes even a quick close-range shot leave a readable
+       wake; the occasional second mote supplies density without becoming a
+       continuous line again. */
+    const int count = trailRandom() < 0.45f ? 2 : 1;
+    for (int n = 0; n < count; ++n) {
+        int slot = g_trailMoteCursor;
+        for (int scanned = 0; scanned < MAX_TRAIL_MOTES; ++scanned) {
+            const int candidate = (g_trailMoteCursor + scanned) % MAX_TRAIL_MOTES;
+            if (!g_trailMotes[candidate].alive) { slot = candidate; break; }
+        }
+        TrailMote& m = g_trailMotes[slot];
+        const float behind = 0.5f + 2.4f * trailRandom();
+        const float aside = (trailRandom() - 0.5f) * 1.5f;
+        m.x = p.x - forwardX * behind + sideX * aside;
+        m.y = p.y - forwardY * behind + sideY * aside;
+        const float driftBack = 0.015f + 0.045f * trailRandom();
+        const float driftSide = (trailRandom() - 0.5f) * 0.12f;
+        m.vx = -forwardX * driftBack + sideX * driftSide;
+        m.vy = -forwardY * driftBack + sideY * driftSide;
+        m.colour = p.colour;
+        m.life = m.fullLife = (i16)(11 + (int)(10.0f * trailRandom()));
+        m.alive = true;
+        g_trailMoteCursor = (slot + 1) % MAX_TRAIL_MOTES;
+    }
+}
+
+static void trailMotesTick() {
+    for (int i = 0; i < MAX_TRAIL_MOTES; ++i) {
+        TrailMote& m = g_trailMotes[i];
+        if (!m.alive) continue;
+        if (--m.life <= 0) { m.alive = false; continue; }
+        m.x += m.vx; m.y += m.vy;
+        m.vx *= 0.94f; m.vy *= 0.94f;
+    }
+}
+
 /* --- Glowflare reveal burst -----------------------------------------------
 
    These are overlays rather than cells or projectiles. They deliberately do
@@ -214,6 +281,9 @@ int projExplosionsThisFrame = 0;
 
 void projClear() {
     for (int i = 0; i < MAX_PROJ; ++i) g_proj[i].alive = false;
+    for (int i = 0; i < MAX_TRAIL_MOTES; ++i) g_trailMotes[i].alive = false;
+    g_trailMoteCursor = 0;
+    g_trailRandom = 0x73a91f25u;
     for (int i = 0; i < MAX_GLOW_MOTES; ++i) g_glowMotes[i].alive = false;
     for (int i = 0; i < MAX_GLOW_AFTERGLOWS; ++i) g_glowAfterglows[i].alive = false;
     g_glowAfterglowCursor = 0;
@@ -221,14 +291,17 @@ void projClear() {
 
 bool projSpawn(float x, float y, float vx, float vy,
                int power, int pierce, int life, u32 colour, int blast,
-               int payload, int damage, bool hostile, float gravity, int effect) {
+               int payload, int damage, bool hostile, float gravity, int effect,
+               int bounces, float homing, u8 owner) {
     for (int i = 0; i < MAX_PROJ; ++i) {
         if (g_proj[i].alive) continue;
         Projectile& p = g_proj[i];
         p.x = x; p.y = y; p.vx = vx; p.vy = vy;
         p.power = power; p.pierce = pierce; p.life = life; p.blast = blast;
+        p.bounces = (i16)bounces; p.homing = homing;
         p.colour = colour; p.payload = (u8)payload; p.damage = damage;
-        p.hostile = hostile; p.gravity = gravity; p.effect = (u8)effect; p.alive = true;
+        p.hostile = hostile; p.gravity = gravity; p.effect = (u8)effect;
+        p.owner = owner; p.alive = true;
         return true;
     }
     /* Full: drop it. Silently, because the alternative -- replacing the oldest
@@ -237,9 +310,114 @@ bool projSpawn(float x, float y, float vx, float vy,
     return false;
 }
 
+static bool teleportFits(const World& w, float cx, float cy) {
+    const int left = (int)(cx - PLAYER_W * 0.5f);
+    const int top  = (int)(cy - PLAYER_H * 0.5f);
+    for (int y = top; y < top + PLAYER_H; ++y)
+        for (int x = left; x < left + PLAYER_W; ++x)
+            if (x < PLAY_X0 || x > PLAY_X1 || y < PLAY_Y0 || y > PLAY_Y1 ||
+                playerSolid(w, x, y)) return false;
+    return true;
+}
+
+static void teleportProjectileOwner(const World& w, Projectile& p, int impactX, int impactY) {
+    if (p.owner >= MAX_PLAYERS || !g_playerSessions[p.owner].connected) return;
+    PlayerSession& session = g_playerSessions[p.owner];
+    Player& body = session.body;
+    if (!body.alive) return;
+    float speed = sqrtf(p.vx * p.vx + p.vy * p.vy);
+    float backX = speed > 0.001f ? -p.vx / speed : -1.0f;
+    float backY = speed > 0.001f ? -p.vy / speed : 0.0f;
+    /* The impact cell is safe for a projectile, not necessarily a whole body.
+       Walk backward along the shot until the complete player box fits. */
+    for (int step = 0; step <= PLAYER_H * 2; ++step) {
+        const float cx = (float)impactX + 0.5f + backX * (float)step;
+        const float cy = (float)impactY + 0.5f + backY * (float)step;
+        if (!teleportFits(w, cx, cy)) continue;
+        body.x = cx - PLAYER_W * 0.5f;
+        body.y = cy - PLAYER_H * 0.5f;
+        body.vx = body.vy = 0.0f;
+        body.fallFromY = body.y;
+        body.onGround = false; body.buried = false;
+        session.restBed = -1;
+        return;
+    }
+}
+
+static bool projectileObstacle(const World& w, int x, int y, int power) {
+    if (x < PLAY_X0 || x > PLAY_X1 || y < PLAY_Y0 || y > PLAY_Y1) return true;
+    const u8 mat = w.at(x, y).mat;
+    if (mat == MAT_TORCH) return false;
+    const int strength = g_matStrength[mat];
+    return strength != STR_NOTHING && strength > power;
+}
+
+/* Fit a short line through nearby boundary pixels, then use its perpendicular
+   as the collision normal. The old normal was whichever grid axis happened to
+   be crossed last, so a diagonal rock face still behaved as a stack of tiny
+   floors and walls. A four-cell neighbourhood is large enough to see the line
+   behind those steps and small enough not to average across a whole cave. */
+static void projectileSurfaceNormal(const World& w, int hitX, int hitY, int power,
+                                    float vx, float vy, float* outX, float* outY) {
+    static const int R = 4;
+    float pointX[(R * 2 + 1) * (R * 2 + 1)];
+    float pointY[(R * 2 + 1) * (R * 2 + 1)];
+    float weight[(R * 2 + 1) * (R * 2 + 1)];
+    int count = 0;
+    float meanX = 0.0f, meanY = 0.0f, weightSum = 0.0f;
+    for (int y = hitY - R; y <= hitY + R; ++y) {
+        for (int x = hitX - R; x <= hitX + R; ++x) {
+            if (!projectileObstacle(w, x, y, power)) continue;
+            /* Only the exposed outline defines the visible surface. Interior
+               mass would bias the fit toward whichever side has more rock. */
+            if (projectileObstacle(w, x - 1, y, power) &&
+                projectileObstacle(w, x + 1, y, power) &&
+                projectileObstacle(w, x, y - 1, power) &&
+                projectileObstacle(w, x, y + 1, power)) continue;
+            const float px = (float)x + 0.5f, py = (float)y + 0.5f;
+            const float dx = px - ((float)hitX + 0.5f);
+            const float dy = py - ((float)hitY + 0.5f);
+            const float wgt = 1.0f / (1.0f + 0.18f * (dx * dx + dy * dy));
+            pointX[count] = px; pointY[count] = py; weight[count] = wgt;
+            meanX += px * wgt; meanY += py * wgt; weightSum += wgt;
+            ++count;
+        }
+    }
+
+    float nx = 0.0f, ny = 0.0f;
+    if (count >= 2 && weightSum > 0.001f) {
+        meanX /= weightSum; meanY /= weightSum;
+        float xx = 0.0f, xy = 0.0f, yy = 0.0f;
+        for (int i = 0; i < count; ++i) {
+            const float dx = pointX[i] - meanX, dy = pointY[i] - meanY;
+            xx += weight[i] * dx * dx;
+            xy += weight[i] * dx * dy;
+            yy += weight[i] * dy * dy;
+        }
+        /* Principal axis is the local surface tangent; rotate it 90 degrees. */
+        const float angle = 0.5f * atan2f(2.0f * xy, xx - yy);
+        nx = -sinf(angle); ny = cosf(angle);
+    }
+
+    float length = sqrtf(nx * nx + ny * ny);
+    if (length < 0.001f) {
+        /* One isolated pixel has no line to fit. Its honest normal is directly
+           against the incoming motion, producing a clean return rather than an
+           arbitrary x/y flip. */
+        length = sqrtf(vx * vx + vy * vy);
+        nx = length > 0.001f ? -vx / length : 0.0f;
+        ny = length > 0.001f ? -vy / length : -1.0f;
+    } else {
+        nx /= length; ny /= length;
+    }
+    if (vx * nx + vy * ny > 0.0f) { nx = -nx; ny = -ny; }
+    *outX = nx; *outY = ny;
+}
+
 int projUpdate(World& w) {
     int destroyed = 0;
     projExplosionsThisFrame = 0;
+    trailMotesTick();
     glowAfterglowsTick();
     glowMotesTick();
 
@@ -253,6 +431,32 @@ int projUpdate(World& w) {
            can connect to an action they took. Blasts happen where you hit
            something. */
         if (--p.life <= 0) { p.alive = false; continue; }
+
+        if (!p.hostile && p.homing > 0.0f) {
+            int target = -1;
+            float best = 120.0f * 120.0f;
+            for (int e = 0; e < MAX_ENTITIES; ++e) {
+                if (!g_entities[e].alive()) continue;
+                const float dx = g_entities[e].centreX() - p.x;
+                const float dy = g_entities[e].centreY() - p.y;
+                const float d2 = dx * dx + dy * dy;
+                if (d2 < best) { best = d2; target = e; }
+            }
+            if (target >= 0) {
+                const float dx = g_entities[target].centreX() - p.x;
+                const float dy = g_entities[target].centreY() - p.y;
+                const float dist = sqrtf(dx * dx + dy * dy);
+                const float speed = sqrtf(p.vx * p.vx + p.vy * p.vy);
+                if (dist > 0.001f && speed > 0.001f) {
+                    const float desiredX = dx * speed / dist;
+                    const float desiredY = dy * speed / dist;
+                    p.vx += (desiredX - p.vx) * p.homing;
+                    p.vy += (desiredY - p.vy) * p.homing;
+                }
+            }
+        }
+
+        trailMoteEmit(p);
 
         /* --- grid traversal, not point sampling --------------------------
            This walks EVERY cell the frame's path passes through, using the
@@ -308,7 +512,7 @@ int projUpdate(World& w) {
            bound is generous: a shot cannot cross more cells in a frame than the
            width and height of the world put together. */
         int guard = SIM_W + SIM_H;
-        bool blocked = false;
+        bool blocked = false, ricochet = false;
         /* Where a payload gets DEPOSITED, which is not always (cx,cy) -- see
            the note below on the two shapes a stop can take. -1 means "no
            valid impact point", for a shot that left the play area. */
@@ -370,6 +574,17 @@ int projUpdate(World& w) {
             if (strength == STR_NOTHING) continue;   /* gases: fly straight through */
 
             if (strength > p.power) {
+                if (p.bounces > 0) {
+                    p.x = (float)px_ + 0.5f; p.y = (float)py_ + 0.5f;
+                    float nx, ny;
+                    projectileSurfaceNormal(w, cx, cy, p.power, p.vx, p.vy, &nx, &ny);
+                    const float into = p.vx * nx + p.vy * ny;
+                    p.vx -= 2.0f * into * nx;
+                    p.vy -= 2.0f * into * ny;
+                    --p.bounces;
+                    ricochet = true;
+                    break;
+                }
                 /* Stopped BY something it could not break -- that cell is
                    still occupied, so a payload cannot land there. It lands
                    one step back instead, in the last cell the shot actually
@@ -387,6 +602,8 @@ int projUpdate(World& w) {
             dropX = cx; dropY = cy;
             if (--p.pierce <= 0) { p.alive = false; blocked = true; break; }
         }
+
+        if (ricochet) continue;
 
         /* Stop where it stopped, not where it was aimed -- otherwise the blast
            of an exploding shot goes off a few cells past the wall it hit. */
@@ -419,6 +636,8 @@ int projUpdate(World& w) {
         }
         if (blocked && p.effect == PROJ_EFFECT_GLOWFLARE && dropX >= 0)
             glowBurst(p.x, p.y, p.vx, p.vy);
+        if (blocked && p.effect == PROJ_EFFECT_TELEPORT && dropX >= 0)
+            teleportProjectileOwner(w, p, dropX, dropY);
     }
     return destroyed;
 }
@@ -428,18 +647,18 @@ void projRegisterLights() {
        point with a fan of stronger sources travelling through the rock. */
     for (int i = 0; i < MAX_PROJ; ++i)
         if (g_proj[i].alive && g_proj[i].effect == PROJ_EFFECT_GLOWFLARE)
-            lightAddDynamic((int)g_proj[i].x, (int)g_proj[i].y, 220);
+            lightAddDynamic((int)g_proj[i].x, (int)g_proj[i].y, 110);
     for (int i = 0; i < MAX_GLOW_MOTES; ++i) {
         const GlowMote& m = g_glowMotes[i];
         if (!m.alive) continue;
-        const int level = imin(255, (int)m.life * 8);
+        const int level = imin(128, (int)m.life * 4);
         const int x = (int)m.x, y = (int)m.y;
         lightAddDynamic(x, y, (u8)level);
-        /* The core is already at the lighting system's 255 ceiling. A softer
+        /* The rebalanced core tops out at 128. A softer
            source in each neighbouring light sample makes that energy occupy
            an area instead of a single four-cell sample, so thick stone is
            visibly brighter without changing global rock opacity. */
-        const u8 halo = (u8)imin(220, (int)m.life * 6);
+        const u8 halo = (u8)imin(110, (int)m.life * 3);
         lightAddDynamic(x - LIGHT_CELL, y, halo);
         lightAddDynamic(x + LIGHT_CELL, y, halo);
         lightAddDynamic(x, y - LIGHT_CELL, halo);
@@ -452,8 +671,8 @@ void projRegisterLights() {
            trail is invisible: only the moving dust is drawn, while these
            points preserve the glimpse it opened in the stone. */
         const int level = glow.life > GLOW_AFTERGLOW_FADE
-                        ? 220
-                        : (220 * (int)glow.life) / GLOW_AFTERGLOW_FADE;
+                        ? 110
+                        : (110 * (int)glow.life) / GLOW_AFTERGLOW_FADE;
         lightAddDynamic((int)glow.x, (int)glow.y, (u8)level);
     }
 }
@@ -474,34 +693,43 @@ static inline u32 fade(u32 c, int num, int den) {
 }
 
 void projDraw(u32* px, int camX, int camY) {
+    /* Persistent particles first, so fresh projectile heads remain crisp over
+       their own wake. Each mote fades independently instead of forming the old
+       solid velocity ruler behind every shot. */
+    for (int i = 0; i < MAX_TRAIL_MOTES; ++i) {
+        const TrailMote& m = g_trailMotes[i];
+        if (!m.alive || m.fullLife <= 0) continue;
+        const int x = (int)m.x - camX, y = (int)m.y - camY;
+        const u32 c = fade(m.colour, m.life, m.fullLife);
+        plot(px, x, y, c);
+        if (m.life * 3 > m.fullLife * 2 && (i & 1) == 0) {
+            const u32 halo = fade(c, 1, 2);
+            plot(px, x + ((i & 2) ? 1 : -1), y, halo);
+        }
+    }
+
     for (int i = 0; i < MAX_PROJ; ++i) {
         const Projectile& p = g_proj[i];
         if (!p.alive) continue;
 
-        /* The trail is derived from the velocity rather than recorded from past
-           positions. Shots travel in straight lines and never turn, so a stored
-           history would hold exactly the points this computes -- at the cost of
-           a ring buffer per projectile and a decision about what to do with a
-           half-filled one on the frame it spawns. Recreating it is both cheaper
-           and has no start-up case. */
-        const float sp = (p.vx * p.vx + p.vy * p.vy);
-        if (sp > 0.0001f) {
-            const int TRAIL = 7;
-            /* Normalised backwards step, one cell at a time. */
-            float inv = 1.0f / (float)sqrt((double)sp);
-            const float bx = -p.vx * inv, by = -p.vy * inv;
-            for (int t = 1; t <= TRAIL; ++t) {
-                const int x = (int)(p.x + bx * t) - camX, y = (int)(p.y + by * t) - camY;
-                plot(px, x, y, fade(p.colour, TRAIL + 1 - t, TRAIL + 2));
-            }
-        }
-
-        /* The head: a 3x3 with the corners knocked off, so it reads as a round
-           bolt rather than a square. A single pixel -- and even the 2x2 this
-           replaces -- is genuinely hard to follow across speckled terrain, and
-           a shot you cannot see is a shot you cannot aim. */
+        /* Homing shots are deliberately a much larger orb. Their slow movement
+           and expensive battery draw should look like a substantial guided
+           object, not the ordinary bolt drifting lazily. Other heads remain a
+           compact 3x3 with their corners knocked off. */
         const int cx = (int)p.x - camX, cy = (int)p.y - camY;
         const u32 c = p.colour, e = fade(p.colour, 3, 5);
+        if (p.homing > 0.0f) {
+            const int radius = 3;
+            for (int dy = -radius; dy <= radius; ++dy) {
+                for (int dx = -radius; dx <= radius; ++dx) {
+                    const int d2 = dx * dx + dy * dy;
+                    if (d2 > radius * radius) continue;
+                    const u32 orb = d2 <= 1 ? 0xFFFFFF : (d2 <= 4 ? c : e);
+                    plot(px, cx + dx, cy + dy, orb);
+                }
+            }
+            continue;
+        }
         plot(px, cx,     cy,     0xFFFFFF);
         plot(px, cx - 1, cy,     c);
         plot(px, cx + 1, cy,     c);
@@ -531,6 +759,12 @@ void projDraw(u32* px, int camX, int camY) {
 int projCount() {
     int n = 0;
     for (int i = 0; i < MAX_PROJ; ++i) if (g_proj[i].alive) ++n;
+    return n;
+}
+
+int projTrailMoteCount() {
+    int n = 0;
+    for (int i = 0; i < MAX_TRAIL_MOTES; ++i) if (g_trailMotes[i].alive) ++n;
     return n;
 }
 

@@ -36,6 +36,10 @@ static int pixelsIn(int s) {
 }
 
 int main() {
+    if (INV_SPR_W * 2 != SPR_W * 3 || INV_SPR_H * 2 != SPR_H * 3) {
+        fprintf(stderr, "inventory sprite canvas is not an exact 3:2 enlargement\n");
+        return 10;
+    }
     initMaterials();
     initItems();
     initSprites();

@@ -158,10 +158,9 @@ enum DeviceType {
     DEV_COUNT
 };
 
-/* How far a pedestal throws light. Bright, and deliberately brighter than a
-   torch is at range: the point of the object is to be visible before you have
-   decided to go and look. */
-static const int PEDESTAL_LIGHT = 245;
+/* Kept just above a torch in the rebalanced producer ladder: the displayed
+   object should still call attention to itself without lighting the biome. */
+static const int PEDESTAL_LIGHT = 123;
 
 /* Circuit signals use material ids directly, so an item sensor can say
    "Copper: 40" without a second translation table. The nine generic channels

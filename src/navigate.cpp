@@ -26,13 +26,15 @@
 static const int NAV_PERIOD = 12;
 static const int NAV_CLIMB  = 3;
 static const int NAV_LEVEL  = 2;
-static const int NAV_HEIGHT[NAV_CLASSES] = { 3, 6 };   /* nodes: 12 and 24 cells */
+static const int NAV_HEIGHT[NAV_CLASSES] = { 3, 6, 2 }; /* 12, 24, 8 cells */
+static const int NAV_WIDTH [NAV_CLASSES] = { 3, 3, 3 }; /* 12 cells wide */
 
 static const u16 NAV_FAR = 0xFFFF;
 
 static u8  g_open [NAV_W * NAV_H];   /* no solid cell anywhere in the block */
 static u8  g_head [NAV_W * NAV_H];   /* open nodes ending here, counting UP */
 static u8  g_floor[NAV_W * NAV_H];   /* open nodes between here and the floor */
+static u8  g_fit  [NAV_CLASSES][NAV_W * NAV_H]; /* whole body fits here */
 static u16 g_dist [NAV_CLASSES][NAV_W * NAV_H];
 static int g_queue[NAV_W * NAV_H];
 static int g_reached[NAV_CLASSES];
@@ -130,6 +132,22 @@ static void readTerrain(const World& w) {
             if (air < 255) ++air;
         }
     }
+
+    /* A route node represents the centre of an agent's bottom four-cell band.
+       Headroom alone accepted a one-node-wide tube for an eleven-cell-wide
+       body. Require the rounded-up width across neighbouring columns as well,
+       so the field cannot advertise a passage collision will reject. */
+    for (int cls = 0; cls < NAV_CLASSES; ++cls) {
+        const int H = NAV_HEIGHT[cls], W = NAV_WIDTH[cls];
+        const int left = W / 2, right = W - left - 1;
+        for (int ny = 0; ny < NAV_H; ++ny)
+            for (int nx = 0; nx < NAV_W; ++nx) {
+                bool fit = ny >= H - 1 && nx >= left && nx + right < NAV_W;
+                for (int xx = nx - left; fit && xx <= nx + right; ++xx)
+                    if (g_head[ny * NAV_W + xx] < H) fit = false;
+                g_fit[cls][ny * NAV_W + nx] = fit ? 1 : 0;
+            }
+    }
 }
 
 /* --- the search ------------------------------------------------------------
@@ -162,14 +180,13 @@ static void readTerrain(const World& w) {
    every creature at once. */
 static void sweep(int cls, const int* seeds, int seedCount) {
     u16* dist = g_dist[cls];
-    const int H = NAV_HEIGHT[cls];
     for (int i = 0; i < NAV_W * NAV_H; ++i) dist[i] = NAV_FAR;
 
     int head = 0, tail = 0;
     for (int s = 0; s < seedCount; ++s) {
         const int i = seeds[s];
         if (i < 0 || dist[i] != NAV_FAR) continue;
-        if (!g_open[i] || g_head[i] < H) continue;
+        if (!g_fit[cls][i]) continue;
         dist[i] = 0;
         g_queue[tail++] = i;
     }
@@ -178,22 +195,29 @@ static void sweep(int cls, const int* seeds, int seedCount) {
         const int b = g_queue[head++];
         const int bx = b % NAV_W, by = b / NAV_W;
         const u16 nd = (u16)(dist[b] + 1);
-        const bool bClimbable = g_floor[b] <= NAV_CLIMB;
+        const bool flying = cls == NAV_FLY;
+        const bool bClimbable = flying || g_floor[b] <= NAV_CLIMB;
 
         for (int dy = -1; dy <= 1; ++dy) {
             /* dy is where `a` sits relative to b, so it reads inverted: a
                ABOVE b (dy < 0) means the creature fell from a into b. */
-            if (dy > 0 && !bClimbable) continue;      /* it climbed up into b */
+            if (!flying && dy > 0 && !bClimbable) continue; /* climbed into b */
             for (int dx = -1; dx <= 1; ++dx) {
                 if (!dx && !dy) continue;
                 const int ax = bx + dx, ay = by + dy;
                 if (ax < 0 || ax >= NAV_W || ay < 0 || ay >= NAV_H) continue;
                 const int a = ay * NAV_W + ax;
                 if (dist[a] != NAV_FAR) continue;
-                if (!g_open[a] || g_head[a] < H) continue;
+                if (!g_fit[cls][a]) continue;
+                /* A body cannot take a diagonal through a corner merely
+                   because both endpoint boxes fit. Both orthogonal shoulders
+                   must fit too, matching moveAxis's x-then-y traversal. */
+                if (flying && dx && dy &&
+                    (!g_fit[cls][by * NAV_W + ax] ||
+                     !g_fit[cls][ay * NAV_W + bx])) continue;
                 /* Walking and climbing both start from a standing creature.
                    Falling does not, which is why dy < 0 skips this. */
-                if (dy >= 0 && g_floor[a] > NAV_LEVEL) continue;
+                if (!flying && dy >= 0 && g_floor[a] > NAV_LEVEL) continue;
                 dist[a] = nd;
                 g_queue[tail++] = a;
             }
@@ -218,22 +242,31 @@ void navUpdate(const World& w, const float* seedX, const float* seedY, int seeds
 
     readTerrain(w);
 
-    int idx[16];
-    int n = 0;
-    for (int s = 0; s < seeds && n < 8; ++s) {
-        const int nx = ((int)seedX[s] - g_navX0) >> NAV_SHIFT;
-        const int ny = ((int)seedY[s] - g_navY0) >> NAV_SHIFT;
-        if (nx < 0 || nx >= NAV_W || ny < 0 || ny >= NAV_H) continue;
-        idx[n++] = ny * NAV_W + nx;
+    for (int c = 0; c < NAV_CLASSES; ++c) {
+        int idx[16], n = 0;
+        for (int s = 0; s < seeds && n < 16; ++s) {
+            const int tx = ((int)seedX[s] - g_navX0) >> NAV_SHIFT;
+            const int ty = ((int)seedY[s] - g_navY0) >> NAV_SHIFT;
+            int best = -1, bestD2 = 0x7FFFFFFF;
+            /* Usually the exact node or the one above wins. If the player is
+               inside a tube the class cannot enter, choose the closest place
+               that body CAN occupy. The field then leads to the tube mouth
+               and stops instead of inventing a route down its centreline. */
+            for (int ny = 0; ny < NAV_H; ++ny)
+                for (int nx = 0; nx < NAV_W; ++nx) {
+                    const int i = ny * NAV_W + nx;
+                    if (!g_fit[c][i]) continue;
+                    const int dx = nx - tx, dy = ny - ty;
+                    const int d2 = dx * dx + dy * dy;
+                    if (d2 < bestD2) { bestD2 = d2; best = i; }
+                }
+            if (best < 0) continue;
+            bool duplicate = false;
+            for (int i = 0; i < n; ++i) if (idx[i] == best) duplicate = true;
+            if (!duplicate) idx[n++] = best;
+        }
+        sweep(c, idx, n);
     }
-    /* A player standing with their feet in the floor block -- which is where
-       feet normally are -- would seed a solid node and the search would die on
-       the spot. So each seed also offers the node above it and sweep() takes
-       whichever is actually open. */
-    for (int s = 0, had = n; s < had; ++s)
-        if (idx[s] >= NAV_W) idx[n++] = idx[s] - NAV_W;
-
-    for (int c = 0; c < NAV_CLASSES; ++c) sweep(c, idx, n);
     g_navValid = true;
 }
 
@@ -244,7 +277,6 @@ bool navHeading(int footX, int footY, int agentH, int* dirX, bool* climb) {
 
     const int cls = agentH > (NAV_HEIGHT[NAV_SHORT] << NAV_SHIFT) ? NAV_TALL : NAV_SHORT;
     const u16* dist = g_dist[cls];
-    const int H = NAV_HEIGHT[cls];
 
     const int nx = (footX - g_navX0) >> NAV_SHIFT;
     const int ny = (footY - g_navY0) >> NAV_SHIFT;
@@ -264,7 +296,7 @@ bool navHeading(int footX, int footY, int agentH, int* dirX, bool* climb) {
         for (int dx = -1; dx <= 1; ++dx) {
             if (!dx && !dy) continue;
             const int i = (hy + dy) * NAV_W + (hx + dx);
-            if (!g_open[i] || g_head[i] < H) continue;
+            if (!g_fit[cls][i]) continue;
             /* Strictly closer wins, and on a TIE a step straight down beats
                a diagonal one. That preference is load-bearing rather than
                cosmetic. A wide shaft gives its whole width the same distance,
@@ -285,10 +317,41 @@ bool navHeading(int footX, int footY, int agentH, int* dirX, bool* climb) {
             if (!better) continue;
             bestD = dist[i]; best = i; bestDx = dx;
         }
-    if (best == here) return false;    /* standing on the player, or in a pit */
+    if (best == here) return true; /* target, or closest body-sized approach */
 
     const int bx = best % NAV_W, by = best / NAV_W;
     *dirX  = bx > hx ? 1 : (bx < hx ? -1 : 0);
     *climb = by < hy;
+    return true;
+}
+
+bool navFlyHeading(int centreX, int footY, int* dirX, int* dirY) {
+    *dirX = *dirY = 0;
+    if (!g_navValid) return false;
+    const u16* dist = g_dist[NAV_FLY];
+    const int nx = (centreX - g_navX0) >> NAV_SHIFT;
+    const int ny = (footY - g_navY0) >> NAV_SHIFT;
+    if (nx < 1 || nx >= NAV_W - 1 || ny < 1 || ny >= NAV_H - 1) return false;
+
+    int here = ny * NAV_W + nx;
+    if (dist[here] == NAV_FAR && dist[here - NAV_W] != NAV_FAR) here -= NAV_W;
+    if (dist[here] == NAV_FAR) return false;
+
+    const int hx = here % NAV_W, hy = here / NAV_W;
+    int best = here, bestDx = 0, bestDy = 0;
+    u16 bestD = dist[here];
+    for (int dy = -1; dy <= 1; ++dy)
+        for (int dx = -1; dx <= 1; ++dx) {
+            if (!dx && !dy) continue;
+            const int i = (hy + dy) * NAV_W + hx + dx;
+            if (!g_fit[NAV_FLY][i] || dist[i] >= bestD) continue;
+            if (dx && dy &&
+                (!g_fit[NAV_FLY][hy * NAV_W + hx + dx] ||
+                 !g_fit[NAV_FLY][(hy + dy) * NAV_W + hx])) continue;
+            bestD = dist[i]; best = i; bestDx = dx; bestDy = dy;
+        }
+    if (best == here) return true;
+    *dirX = bestDx;
+    *dirY = bestDy;
     return true;
 }

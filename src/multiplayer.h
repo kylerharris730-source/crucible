@@ -41,7 +41,7 @@ enum DroneType {
     DRONE_ORBIT,    /* no shots at all: a blade circling the player */
     DRONE_COUNT
 };
-static const int MAX_DRONES = 3;
+static const int MAX_DRONES = DRONE_BAY_COUNT;
 struct Drone {
     u8 type;
     float x, y, vx, vy;
@@ -67,6 +67,9 @@ struct PlayerSession {
     Inventory inventory;
     Drone drones[MAX_DRONES];
     i32 garlicCooldown;
+    /* Shared consumable-healing lockout. Session-owned so adding it does not
+       invalidate the raw Player block in existing saves. */
+    i32 healCooldown;
     /* Frames since the Husk Heart last returned a point. Beside the garlic
        clock rather than on the Player, for the reason this whole struct exists:
        a passive is a property of the SLOT, not of the body, and the body is
@@ -112,7 +115,13 @@ struct PlayerSession {
        between a copper sword and an instant kill. Cleared when a stroke
        begins. */
     u8 swingHit[(96 + 7) / 8];
+    /* `restBed` is only the bed currently accelerating time and is cleared on
+       wake. The checkpoint is separate and position-based so waking does not
+       forget it, while a removed bed can still be detected before respawn.
+       respawnFrames is host-authoritative and replicated for the death HUD. */
     i32 restBed;
+    i32 respawnBedX, respawnBedY;
+    i32 respawnFrames;
     i32 openDevice;
     i32 wireX, wireY;
     i32 circuitWireFrom;
@@ -149,6 +158,10 @@ PlayerId playerSessionOpen(bool local, float spawnX, float spawnY);
 void playerSessionClose(PlayerId id);
 bool playerSessionConnected(PlayerId id);
 int playerSessionSlotForNetworkId(PlayerId networkId);
+/* Consumes exactly one healing item and starts the shared cooldown. Passive
+   regeneration calls Player::heal directly and intentionally bypasses this. */
+bool playerConsumeHealing(PlayerSession& session, ItemId item);
+void playerHealingCooldownTick(PlayerSession& session);
 /* Retain the joined player's body/inventory when leaving a host, discard
    replicated peers, and return slot zero to ordinary offline identity. */
 void playerSessionsReturnToOffline();

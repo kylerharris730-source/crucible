@@ -1,0 +1,45 @@
+#include "world.h"
+#include "materials.h"
+#include "item.h"
+#include "sprite.h"
+#include "entity.h"
+#include "render.h"
+#include <stdio.h>
+#include <string.h>
+
+/* Every creature must change silhouette across its restrained procedural
+   cycle. This catches the easy regression where a new species is added to the
+   table but not to entityPixelMotion and goes back to being a decal dragged
+   through the world. Compile with all source files except main.cpp. */
+int main() {
+    initMaterials(); initItems(); initSprites(); entReset(); g_world.reset();
+    static u32 first[VIEW_CELLS_W * VIEW_CELLS_H];
+    static u32 second[VIEW_CELLS_W * VIEW_CELLS_H];
+    const int later[ENT_COUNT] = { 0, 5, 6, 9, 7, 4, 6, 6 };
+
+    for (int type = ENT_NONE + 1; type < ENT_COUNT; ++type) {
+        memset(g_entities, 0, sizeof(g_entities));
+        Entity& e = g_entities[0];
+        e.type = (u8)type; e.hp = ENT_DEFS[type].hp; e.facing = 1;
+        e.x = 100.0f; e.y = 100.0f; e.vx = 0.5f; e.onGround = true;
+
+        memset(first, 0, sizeof(first)); g_world.frame = 0;
+        entDraw(first, 0, 0, false);
+        memset(second, 0, sizeof(second)); g_world.frame = (u32)later[type];
+        entDraw(second, 0, 0, false);
+
+        int visible = 0, changed = 0;
+        for (int p = 0; p < VIEW_CELLS_W * VIEW_CELLS_H; ++p) {
+            if (first[p] || second[p]) ++visible;
+            if (first[p] != second[p]) ++changed;
+        }
+        if (!visible || changed < 4) {
+            fprintf(stderr, "%s animation changed only %d pixels\n",
+                    ENT_DEFS[type].name, changed);
+            return 10 + type;
+        }
+    }
+
+    puts("all enemy and boss silhouettes animate");
+    return 0;
+}

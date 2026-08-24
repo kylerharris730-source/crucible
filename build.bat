@@ -72,8 +72,8 @@ REM *chk.exe files, a live_grace.exe and a stray empty build\build directory:
 REM not one of them matched a pattern, and no pattern list ever will, because
 REM the names are invented one at a time by whoever is debugging.
 REM
-REM Inverted, there is nothing to keep up to date. build\crucible.exe is the
-REM only executable that belongs here and everything else with that extension
+REM Inverted, there is nothing to keep up to date. The game and launcher are
+REM the only executables that belong here; everything else with that extension
 REM goes. Diagnostic and harness builds are meant to be disposable, so losing
 REM one to a normal build is the correct outcome rather than an unfortunate
 REM one -- each is a single command to rebuild. An executable that is currently
@@ -83,7 +83,7 @@ REM ONLY .exe is touched, and that restriction is load-bearing. Saves live in
 REM this folder too -- crucible.sav plus the numbered slots -- so a cleanup
 REM written against *.* would delete somebody's world. Never widen this.
 for %%f in (build\*.exe) do (
-    if /i not "%%~nxf"=="crucible.exe" del /q "%%f" 2>nul
+    if /i not "%%~nxf"=="crucible.exe" if /i not "%%~nxf"=="crucible-launcher.exe" del /q "%%f" 2>nul
 )
 REM An empty build\build, left behind when a build ran with the working
 REM directory already inside build\. rmdir WITHOUT /s, so it removes the

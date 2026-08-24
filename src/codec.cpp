@@ -33,6 +33,8 @@ void codecToolInst(Blob& b, ToolInst& t) {
     if (!b.countf(TOOL_SLOTS_MAX)) return;
     for (int i = 0; i < TOOL_SLOTS_MAX; ++i) b.itemf(t.slot[i]);
     b.intf(t.cooldown); b.boolf(t.used);
+    b.u16f(t.energy); b.u16f(t.energyCapacity);
+    b.u8f(t.energyRecharge); b.u8f(t.shotCursor);
     codecItemStack(b, t.payload);
 }
 
@@ -41,11 +43,11 @@ void codecInventory(Blob& b, Inventory& v) {
     for (int i = 0; i < INV_SLOTS; ++i) codecItemStack(b, v.slot[i]);
     for (int i = 0; i < EQ_COUNT; ++i) codecItemStack(b, v.equip[i]);
     b.intf(v.selected);
-    if (!b.countf(3) || !b.countf(Inventory::DRONE_MODULE_SLOTS_MAX)) return;
-    for (int d = 0; d < 3; ++d)
+    if (!b.countf(DRONE_BAY_COUNT) || !b.countf(Inventory::DRONE_MODULE_SLOTS_MAX)) return;
+    for (int d = 0; d < DRONE_BAY_COUNT; ++d)
         for (int i = 0; i < Inventory::DRONE_MODULE_SLOTS_MAX; ++i)
             codecItemStack(b, v.droneModule[d][i]);
-    for (int d = 0; d < 3; ++d) b.u8f(v.droneLevel[d]);
+    for (int d = 0; d < DRONE_BAY_COUNT; ++d) b.u8f(v.droneLevel[d]);
 }
 
 void codecEntity(Blob& b, Entity& e) {
@@ -69,7 +71,8 @@ void codecProjectile(Blob& b, Projectile& p) {
     b.f32f(p.x); b.f32f(p.y); b.f32f(p.vx); b.f32f(p.vy); b.f32f(p.gravity);
     b.i32f(p.power); b.i32f(p.damage); b.boolf(p.hostile);
     b.i32f(p.pierce); b.i32f(p.life); b.i32f(p.blast);
-    b.u32f(p.colour); b.u8f(p.payload); b.u8f(p.effect); b.boolf(p.alive);
+    b.i16f(p.bounces); b.f32f(p.homing);
+    b.u32f(p.colour); b.u8f(p.payload); b.u8f(p.effect); b.u8f(p.owner); b.boolf(p.alive);
 }
 
 void codecDevice(Blob& b, Device& d) {

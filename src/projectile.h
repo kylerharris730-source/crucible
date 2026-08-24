@@ -43,7 +43,8 @@ static const float PROJ_GRAVITY = 0.18f;
 
 enum ProjectileEffect {
     PROJ_EFFECT_NONE = 0,
-    PROJ_EFFECT_GLOWFLARE
+    PROJ_EFFECT_GLOWFLARE,
+    PROJ_EFFECT_TELEPORT
 };
 
 struct Projectile {
@@ -71,6 +72,8 @@ struct Projectile {
     i32   pierce;    /* cells it can still destroy before it is spent */
     i32   life;      /* frames remaining */
     i32   blast;     /* explosion radius on impact; 0 for an ordinary shot */
+    i16   bounces;   /* solid-surface ricochets remaining */
+    float homing;    /* fraction of heading corrected toward a target each frame */
     u32   colour;
     /* A MatId, or MAT_EMPTY for an ordinary shot. See the note on projSpawn.
        This is the whole of "a launcher fires whatever you load it with" --
@@ -84,6 +87,7 @@ struct Projectile {
        glowfluid is also valid ammunition in an ordinary multitool, while a
        Glowflare is specifically the ampoule that bursts into revealing motes. */
     u8    effect;
+    u8    owner;     /* PlayerId for owner-specific effects such as teleport */
     bool  alive;
 };
 
@@ -113,7 +117,9 @@ bool projSpawn(float x, float y, float vx, float vy,
                   say why -- there is exactly one reason so far (a mining beam,
                   which has to bore a straight tunnel). */
                float gravity = PROJ_GRAVITY,
-               int effect = PROJ_EFFECT_NONE);
+               int effect = PROJ_EFFECT_NONE,
+               int bounces = 0, float homing = 0.0f,
+               u8 owner = 0xff);
 
 /* Blows a hole, sets fire to the middle of it and heats the lot. Exposed
    because an explosion is a world event rather than a projectile one -- the
@@ -133,6 +139,7 @@ int  projUpdate(World& w);
 void projRegisterLights();
 void projDraw(u32* px, int camX, int camY);
 int  projCount();
+int  projTrailMoteCount();
 int  projGlowMoteCount();
 int  projGlowAfterglowCount();
 /* Copies live mote positions for diagnostics and deterministic regression

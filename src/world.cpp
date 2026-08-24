@@ -383,7 +383,69 @@ bool World::tryMove(int sx, int sy, int tx, int ty,
     const bool enteringFilter = filterAllows(t.mat, s.mat);
     const bool enteringReactivePowder = reactivePowderAllowsGas(t.mat, s.mat);
     if (enteringFilter || enteringReactivePowder) {
-        if (t.moisture) return false;   /* one occupant parcel per host cell */
+        if (t.moisture) {
+            /* A free gas immediately beneath an occupied sieve can exchange
+               with its denser occupant. The gas enters the mesh and the
+               displaced liquid falls into the cell it vacated. Ownership is
+               deliberately gas-only, matching ordinary gas/liquid buoyancy
+               and preventing a liquid from relaying one gas parcel through
+               several cells during the in-place scan. */
+            const u8 displacedPacked = t.moisture;
+            const u8 displaced = occupantMat(displacedPacked);
+            const bool gasExchange = enteringFilter && MATS[s.mat].kind == KIND_GAS;
+            if (!gasExchange || !displaced ||
+                materialDensityQ8(displaced, temp[ti]) <=
+                    materialDensityQ8(s.mat, temp[si]) + DENSITY_SWAP_EPS_Q8)
+                return false;
+
+            const u8 sourceMat = s.mat;
+            const u8 sourceVolumeOnly = (u8)(s.moisture & GAS_VOLUME_ONLY);
+            const int sourceExcess = s.moisture & GAS_EXCESS_MASK;
+
+            /* The sieve occupant slot holds one gas volume, not a pressure
+               count. Before the source cell becomes the falling liquid, move
+               any stored excess into adjacent parcels of the same connected
+               gas pocket. This conserves every steam volume while allowing a
+               pressurized chamber boundary to exchange; the old one-volume
+               restriction was the reason a full boiler still plugged. */
+            int pressureReceiver[4], pressureReceiverCount = 0, pressureRoom = 0;
+            for (int k = 0; k < 4; ++k) {
+                const int nx = sx + NB_DX[k], ny = sy + NB_DY[k];
+                if (nx < PLAY_X0 || nx > PLAY_X1 || ny < PLAY_Y0 || ny > PLAY_Y1)
+                    continue;
+                const int ni = ny * SIM_W + nx;
+                if (cells[ni].mat != sourceMat) continue;
+                pressureReceiver[pressureReceiverCount++] = ni;
+                pressureRoom += GAS_EXCESS_MASK -
+                                (cells[ni].moisture & GAS_EXCESS_MASK);
+            }
+            if (pressureRoom < sourceExcess) return false;
+
+            const u8 sourceDir = (u8)(s.flags & F_DIR);
+            const u8 targetDir = (u8)(t.flags & F_DIR);
+            const u8 st = (u8)(stamp() << STAMP_SHIFT);
+            int excessLeft = sourceExcess;
+            for (int k = 0; k < pressureReceiverCount && excessLeft; ++k) {
+                Cell& receiver = cells[pressureReceiver[k]];
+                const int receiverExcess = receiver.moisture & GAS_EXCESS_MASK;
+                const int give = imin(excessLeft, GAS_EXCESS_MASK - receiverExcess);
+                receiver.moisture = (u8)((receiver.moisture & GAS_VOLUME_ONLY) |
+                                         (receiverExcess + give));
+                receiver.flags = (u8)((receiver.flags & F_DIR) | st);
+                dirtyPoint(pressureReceiver[k] % SIM_W,
+                           pressureReceiver[k] / SIM_W);
+                excessLeft -= give;
+            }
+            s.mat = displaced;
+            s.moisture = MATS[displaced].kind == KIND_GAS
+                       ? (u8)(displacedPacked & GAS_VOLUME_ONLY) : 0;
+            t.moisture = (u8)(sourceMat | sourceVolumeOnly);
+            const u8 tt = temp[ti]; temp[ti] = temp[si]; temp[si] = tt;
+            s.flags = (u8)(targetDir | st);
+            t.flags = (u8)(sourceDir | st);
+            dirtyPoint(sx, sy); dirtyPoint(tx, ty);
+            return true;
+        }
         const bool gas = MATS[s.mat].kind == KIND_GAS;
         const u8 volumeOnly = gas ? (u8)(s.moisture & GAS_VOLUME_ONLY) : 0;
         const u8 excess = gas ? (u8)(s.moisture & GAS_EXCESS_MASK) : 0;
@@ -517,10 +579,69 @@ bool World::moveFilterFluid(int sx, int sy, int tx, int ty) {
     if (!moving) return false;
 
     if (filterAllows(t.mat, moving)) {
-        if (t.moisture) return false;
+        if (t.moisture) {
+            const u8 displacedPacked = t.moisture;
+            const u8 displaced = occupantMat(displacedPacked);
+            if (!displaced || !filterAllows(s.mat, displaced)) return false;
+
+            /* An occupied run of mesh must still permit buoyancy exchange.
+               Give ownership to the lower-density gas, just as tryMove does
+               in open cells: it rises into a denser occupant and carries that
+               parcel back into its old sieve slot. This prevents a liquid
+               produced in a steam-filled sieve (fuel from slaked coal, for
+               example) from becoming a permanent plug. Requiring both sieve
+               types to accept the displaced parcel preserves Gas Sieve's
+               liquid rejection rule. */
+            if (MATS[moving].kind != KIND_GAS) return false;
+            const int movingDensity = materialDensityQ8(moving, temp[si]);
+            const int displacedDensity = materialDensityQ8(displaced, temp[ti]);
+            if (displacedDensity <= movingDensity + DENSITY_SWAP_EPS_Q8) return false;
+
+            s.moisture = displacedPacked;
+            t.moisture = packed;
+            const u8 tt = temp[ti]; temp[ti] = temp[si]; temp[si] = tt;
+            const u8 sourceDir = (u8)(s.flags & F_DIR);
+            const u8 targetDir = (u8)(t.flags & F_DIR);
+            const u8 st = (u8)(stamp() << STAMP_SHIFT);
+            s.flags = (u8)(targetDir | st);
+            t.flags = (u8)(sourceDir | st);
+            dirtyPoint(sx, sy);
+            dirtyPoint(tx, ty);
+            return true;
+        }
         t.moisture = packed;
     } else {
-        if (t.mat != MAT_EMPTY || blocksCell(tx, ty)) return false;
+        if (t.mat != MAT_EMPTY) {
+            const u8 displaced = t.mat;
+            const u8 displacedKind = MATS[displaced].kind;
+            /* Leaving the mesh is also a fluid boundary. A gas occupant may
+               rise into a denser ordinary liquid/gas cell while that parcel
+               drops into the sieve slot it vacated. Without this half of the
+               exchange, the real boiler stack -- Coal, Fuel, Sieve, Steam --
+               stops at Fuel even though Steam entered the sieve correctly. */
+            if (blocksCell(tx, ty) || MATS[moving].kind != KIND_GAS ||
+                (displacedKind != KIND_LIQUID && displacedKind != KIND_GAS) ||
+                !filterAllows(s.mat, displaced) ||
+                materialDensityQ8(displaced, temp[ti]) <=
+                    materialDensityQ8(moving, temp[si]) + DENSITY_SWAP_EPS_Q8)
+                return false;
+
+            s.moisture = (u8)(displaced |
+                (displacedKind == KIND_GAS ? (t.moisture & GAS_VOLUME_ONLY) : 0));
+            t.mat = moving;
+            t.moisture = MATS[moving].kind == KIND_GAS
+                       ? (u8)(packed & GAS_VOLUME_ONLY) : 0;
+            const u8 tt = temp[ti]; temp[ti] = temp[si]; temp[si] = tt;
+            const u8 sourceDir = (u8)(s.flags & F_DIR);
+            const u8 targetDir = (u8)(t.flags & F_DIR);
+            const u8 st = (u8)(stamp() << STAMP_SHIFT);
+            s.flags = (u8)(targetDir | st);
+            t.flags = (u8)(sourceDir | st);
+            dirtyPoint(sx, sy);
+            dirtyPoint(tx, ty);
+            return true;
+        }
+        if (blocksCell(tx, ty)) return false;
         t.mat = moving;
         t.moisture = MATS[moving].kind == KIND_GAS
                    ? (u8)(packed & GAS_VOLUME_ONLY) : 0;

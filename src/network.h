@@ -48,7 +48,8 @@ enum NetActionType {
     NACT_WIRE_POINT,
     NACT_CIRCUIT_TERMINAL,
     NACT_STOW_CURSOR,
-    NACT_CREATIVE_ITEM
+    NACT_CREATIVE_ITEM,
+    NACT_UNDO
 };
 
 enum NetDeviceOperation {

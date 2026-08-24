@@ -1,8 +1,20 @@
 # Sprite language
 
-Inventory art is 14×14 pixels, enlarged with nearest-neighbour scaling. The
-world remains LUT-rendered; item sprites communicate what a stack *is* without
-adding per-cell render cost.
+Inventory art is presented on a **21×21 pixel reading grid**, cached 2× with
+nearest-neighbour scaling and displayed as a 38×38 screen icon. This is the
+inventory standard: every slot intended to identify an item must reserve at
+least that much square icon space; counts may overlay an edge but must not
+squash the art.
+
+The simulation-facing sprite master remains 14×14 because machines and
+creatures use those pixels as world-scale art. Inventory rendering converts
+that master to 21×21 with an exact 3:2 nearest-neighbour resample. This keeps
+world footprints, collisions, and silhouettes stable while making every item
+sprite 50% larger in each dimension. Materials are generated directly at
+21×21, using the phase and silhouette language below.
+
+The world remains LUT-rendered; item sprites communicate what a stack *is*
+without adding per-cell render cost.
 
 ## Material silhouettes
 
@@ -48,7 +60,13 @@ and reusing a colour that already means something else, and the second of those
 is exactly how a shared palette stops being shared — so prefer punctuation, and
 give it a comment saying what the colour *means* rather than what it looks like.
 
-Two things this doc can only assert and a picture can settle:
+Three things this doc can only assert and a picture can settle:
+
+- **Use the full reading grid.** Inventory silhouettes should occupy most of
+  the 21×21 canvas while retaining at least one pixel of transparent breathing
+  room. Fine texture does not justify a small silhouette. The 38px display cap
+  provides additional breathing room around the enlarged art. Counts belong at the
+  slot edge and must never reduce or distort the square reserved for the icon.
 
 - **Check art by rendering it.** Every art problem this project has had — the
   head that merged into the torso, the visor on the crown, the crouch that read
@@ -62,6 +80,22 @@ Two things this doc can only assert and a picture can settle:
   are light (pale steel, cream handle), the crude starter weapon is dark (rough
   wood, dark barrel). Light against dark survives being three pixels tall.
   Eleven rows against thirteen does not.
+
+Held melee weapons are procedural world sprites rather than rotated inventory
+icons. Their world silhouette must preserve the same identifying furniture as
+the icon: swords have a wrapped grip, a perpendicular crossguard, a broad lower
+blade, and a tapering bright point; spears remain a narrow shaft and head. When
+reach changes, update both the attack segment and resting held length, then keep
+the guard and grip fixed-size so a longer blade does not turn them into stripes.
+A held sword uses the same hilt-to-tip length as its swing; only a spear shortens
+at rest, because extending the shaft is part of its stabbing motion.
+
+Drone Armour is a three-piece visual family: all pieces use the same blue-steel
+body colour and cyan control strip, while each keeps a different equipment
+silhouette (visor, harness, split greaves). Set membership must be readable from
+the repeated trim without making the three slot roles look interchangeable. The
+Drone Beacon repeats that cyan signal colour but uses antenna arcs and a cased
+puck, so it reads as the set's controller rather than a fourth armour piece.
 
 ## Circuit signals
 

@@ -565,6 +565,24 @@ bool stalkTick(Entity& e, const Player& p, const StalkSpec& spec) {
    moving, which is when you shoot it. */
 static const StalkSpec MOTH_STALK = { 64, 20, 16, 1.75f };
 
+/* Can the flyer's WHOLE collision box travel to a point in a straight line?
+   A centreline ray can pass through a narrow tube while both wings are in
+   rock. Sampling a full body box every nav cell agrees with moveAxis and is
+   fine enough that a 9x7 creature cannot skip across a corner. */
+static bool flyerLineClear(const World& w, const Entity& e, float tx, float ty) {
+    const EntityDef& d = ENT_DEFS[e.type];
+    const float x0 = e.centreX(), y0 = e.centreY();
+    const float dx = tx - x0, dy = ty - y0;
+    const int steps = (int)(fmaxf(fabsf(dx), fabsf(dy)) / (float)NAV) + 1;
+    for (int s = 1; s <= steps; ++s) {
+        const float q = (float)s / (float)steps;
+        const int x = (int)(x0 + dx * q - d.w * 0.5f);
+        const int y = (int)(y0 + dy * q - d.h * 0.5f);
+        if (solidBox(w, x, y, d.w, d.h)) return false;
+    }
+    return true;
+}
+
 static void mothTick(World& w, Entity& e, const Player& p) {
     const EntityDef& d = ENT_DEFS[e.type];
 
@@ -599,13 +617,29 @@ static void mothTick(World& w, Entity& e, const Player& p) {
         }
     }
 
-    float wantX, wantY;
-    if (best >= 0) { wantX = (float)DX8[best]; wantY = (float)DY8[best]; }
+    float wantX, wantY, targetX, targetY;
+    if (best >= 0) {
+        wantX = (float)DX8[best]; wantY = (float)DY8[best];
+        targetX = e.centreX() + wantX * 90.0f;
+        targetY = e.centreY() + wantY * 90.0f;
+    }
     else {
-        wantX = p.centreX() - e.centreX();
-        wantY = p.centreY() - e.centreY();
+        targetX = p.centreX(); targetY = p.centreY();
+        wantX = targetX - e.centreX();
+        wantY = targetY - e.centreY();
         const float len = sqrtf(wantX * wantX + wantY * wantY);
         if (len > 0.01f) { wantX /= len; wantY /= len; }
+    }
+    /* The original heat/player gradient remains the whole personality in open
+       space. Only an obstructed full-body line consults the clearance field,
+       so a too-small tube becomes a route around it (or a stop at its mouth). */
+    if (!flyerLineClear(w, e, targetX, targetY)) {
+        int rx = 0, ry = 0;
+        if (navFlyHeading((int)e.centreX(), e.bottom(), &rx, &ry)) {
+            wantX = (float)rx; wantY = (float)ry;
+            if (rx && ry) { wantX *= 0.70710678f; wantY *= 0.70710678f; }
+            if (!rx && !ry) { e.vx *= 0.82f; e.vy *= 0.82f; }
+        }
     }
     /* A wingbeat bob, so it does not travel as if on rails. Cosmetic, and it
        also makes a moth genuinely harder to hit than a walker, which is the
@@ -737,14 +771,27 @@ static void huskTick(Entity& e, const Player& p) {
    aimHold is the commitment. While it runs, the bat flies at a point it decided
    on earlier -- so if you move after it commits, it arrives where you WERE,
    sails past, and has to come round again. */
-static void batTick(Entity& e, const Player& p) {
+static void batTick(const World& w, Entity& e, const Player& p) {
     const EntityDef& d = ENT_DEFS[e.type];
     if (--e.aimHold <= 0) {
-        /* Re-aim at where the player is RIGHT NOW, then stop looking. The
-           jitter stops two bats in one room flying as a matched pair. */
-        e.aimX = p.centreX() + (float)((int)(rngNext() % 41u) - 20);
-        e.aimY = p.centreY() + (float)((int)(rngNext() % 41u) - 20);
-        e.aimHold = 34 + (int)(rngNext() % 26u);
+        if (!flyerLineClear(w, e, p.centreX(), p.centreY())) {
+            int rx = 0, ry = 0;
+            if (navFlyHeading((int)e.centreX(), e.bottom(), &rx, &ry)) {
+                /* Short commitments while negotiating terrain. Once the
+                   player is visible, the original long dodgeable line resumes. */
+                e.aimX = e.centreX() + (float)rx * 64.0f;
+                e.aimY = e.centreY() + (float)ry * 64.0f;
+                e.aimHold = 8;
+            } else {
+                e.aimX = p.centreX(); e.aimY = p.centreY(); e.aimHold = 12;
+            }
+        } else {
+            /* Re-aim at where the player is RIGHT NOW, then stop looking. The
+               jitter stops two bats in one room flying as a matched pair. */
+            e.aimX = p.centreX() + (float)((int)(rngNext() % 41u) - 20);
+            e.aimY = p.centreY() + (float)((int)(rngNext() % 41u) - 20);
+            e.aimHold = 34 + (int)(rngNext() % 26u);
+        }
     }
     float ax = e.aimX - e.centreX(), ay = e.aimY - e.centreY();
     const float len = sqrtf(ax * ax + ay * ay);
@@ -1088,7 +1135,7 @@ static void entTickMode(World& w, Player& fallbackPlayer, Inventory& fallbackInv
         case ENT_MOTH:    mothTick(w, e, p);    break;
         case ENT_SLIME:   slimeTick(w, e, p);   break;
         case ENT_HUSK:    huskTick(e, p);       break;
-        case ENT_BAT:     batTick(e, p);        break;
+        case ENT_BAT:     batTick(w, e, p);     break;
         case ENT_SPITTER: spitterTick(w, e, p); break;
         case ENT_BROOD:   broodTick(w, e, p);   break;
         default: break;
@@ -1430,6 +1477,97 @@ void entSpawnTick(World& w, const Player& p, int camX, int camY, bool lightField
    antennae and a slime's wobble should not be things you can be hit by, and a
    collision box that matched the art exactly would make every creature feel
    larger than it looks. */
+/* A few cells of procedural articulation keep enemies from reading as decals
+   translated across the world. This deliberately moves DRAWN pixels only:
+   hitboxes, aim points, attacks and pathfinding retain their exact geometry.
+
+   Each species moves the part its silhouette already teaches you to watch --
+   wings on fliers, feet on walkers, the slime's loose underside, the spitter's
+   venom sac. One or two cells is enough at this scale; more turns readable
+   pixel art into flicker. `entityIndex` offsets otherwise identical creatures
+   so a group does not flap in mechanical unison. */
+static void entityPixelMotion(const Entity& e, int entityIndex, int sx, int sy,
+                              int* dx, int* dy) {
+    *dx = *dy = 0;
+    const u32 tick = g_world.frame + (u32)(entityIndex * 17);
+    const bool moving = fabsf(e.vx) > 0.04f || fabsf(e.vy) > 0.04f;
+
+    switch (e.type) {
+    case ENT_MITE: {
+        const int gait = (int)((tick / 5u) & 1u);
+        if (moving && gait) --*dy;                         /* shell rises on a step */
+        if (sy >= 10) *dx += (((sx / 2) + gait) & 1) ? 1 : -1;
+        break;
+    }
+    case ENT_MOTH: {
+        static const int wing[4] = { -1, 0, 1, 0 };
+        const int beat = wing[(tick / 3u) & 3u];
+        if (sy >= 3 && sy <= 9 && (sx <= 4 || sx >= 9)) {
+            *dy += beat;
+        } else if (sx >= 5 && sx <= 8) {
+            *dy += (int)((tick / 14u) & 1u);               /* hot core breathes */
+        }
+        break;
+    }
+    case ENT_SLIME: {
+        const int squash = (int)((tick / 9u) & 1u);
+        if (sy >= 3 && sy <= 6) *dy += squash;
+        if (sy >= 9 && sy <= 12) {
+            const int side = sx < SPR_W / 2 ? -1 : 1;
+            *dx += squash ? -side : side;                  /* belly spreads/collects */
+        }
+        if (sy == 13) *dy += squash ? 1 : -1;              /* loose drips lag behind */
+        break;
+    }
+    case ENT_HUSK: {
+        const int gait = (int)((tick / 7u) & 1u);
+        if (moving) {
+            if (sy >= 12) *dx += (sx < SPR_W / 2) == (gait != 0) ? 1 : -1;
+            if (sy >= 7 && sy <= 10 && (sx <= 3 || sx >= 10))
+                *dx += (sx < SPR_W / 2) == (gait != 0) ? -1 : 1;
+            if (gait) --*dy;
+        } else if (sy >= 5 && sy <= 10) {
+            *dy += (int)((tick / 24u) & 1u);               /* slow idle weight shift */
+        }
+        break;
+    }
+    case ENT_BAT: {
+        static const int wing[4] = { -1, 0, 1, 0 };
+        const int beat = wing[(tick / 2u) & 3u];
+        if (sy >= 1 && sy <= 8 && (sx <= 5 || sx >= 8)) *dy += beat;
+        else if (sx >= 6 && sx <= 7) *dy += (int)((tick / 10u) & 1u);
+        break;
+    }
+    case ENT_SPITTER: {
+        const int gait = (int)((tick / 6u) & 1u);
+        if (sy >= 10) *dx += (((sx / 2) + gait) & 1) ? 1 : -1;
+        if (sy >= 2 && sy <= 5) {
+            /* The sac tightens as the shot comes due, otherwise breathes at a
+               slow idle rhythm. It is a warning encoded in the moving part. */
+            const bool primed = e.shotTimer > 0 && e.shotTimer < 18;
+            *dy -= (primed || ((tick / 16u) & 1u)) ? 1 : 0;
+        } else if (moving && gait) --*dy;
+        break;
+    }
+    case ENT_BROOD: {
+        const int gait = (int)((tick / (e.phase ? 4u : 6u)) & 1u);
+        if (sy >= 11) {
+            /* Source-space grouping keeps every enlarged block of one authored
+               leg together instead of tearing it at a scale boundary. */
+            *dx += (((sx / 2) + gait) & 1) ? 1 : -1;
+            if (gait) --*dy;
+        } else if (e.telegraph > 0) {
+            if (sy <= 5) ++*dy;                            /* brace into the wind-up */
+        } else {
+            if (sy <= 6) *dy -= (int)((tick / 18u) & 1u); /* armoured breathing */
+            if (e.weightless) *dx += e.facing;             /* lean through the dash */
+        }
+        break;
+    }
+    default: break;
+    }
+}
+
 void entDraw(u32* px, int camX, int camY, bool lit) {
     for (int i = 0; i < MAX_ENTITIES; ++i) {
         const Entity& e = g_entities[i];
@@ -1450,12 +1588,14 @@ void entDraw(u32* px, int camX, int camY, bool lit) {
         const int stepX = scaled ? d.w : SPR_W, stepY = scaled ? d.h : SPR_H;
         for (int qy = 0; qy < stepY; ++qy) {
             const int sy = scaled ? qy * SPR_H / stepY : qy;
-            const int vy = oy + qy;
-            if (vy < 0 || vy >= VIEW_CELLS_H) continue;
             for (int qx = 0; qx < stepX; ++qx) {
                 const int sx = scaled ? qx * SPR_W / stepX : qx;
-                const int vx = ox + qx;
+                int motionX, motionY;
+                entityPixelMotion(e, i, sx, sy, &motionX, &motionY);
+                const int vx = ox + qx + motionX;
+                const int vy = oy + qy + motionY;
                 if (vx < 0 || vx >= VIEW_CELLS_W) continue;
+                if (vy < 0 || vy >= VIEW_CELLS_H) continue;
                 /* Mirrored by facing, so a creature walking left looks left.
                    Read from the far column rather than writing to it, so the
                    bounds test above still governs where the pixel lands. */

@@ -51,8 +51,9 @@ static const int NAV       = 1 << NAV_SHIFT;   /* world cells per nav node */
 
    It deliberately does NOT reach ENT_DESPAWN_DIST, which is 700. Covering that
    would mean a 1400-cell square, three and a half times the area, for
-   creatures two screens away that nobody can see. Measured on a generated
-   world: 1.14 ms to rebuild a 768-cell square, and cost scales with area.
+   creatures two screens away that nobody can see. With full-body walker and
+   flyer clearance included, the regression scene measures 2.88 ms per rebuild
+   (0.24 ms/frame on the twelve-frame cadence), and cost scales with area.
    Beyond the window a creature falls back to the straight-line chase it has
    always had, which off screen is indistinguishable from anything better. */
 static const int NAV_W     = 288;              /* 1152 world cells across */
@@ -66,7 +67,7 @@ static const int NAV_H     = 224;              /*  896 world cells down */
 
    Heights are in NODES and round UP, so a class is never optimistic about what
    fits. */
-enum NavClass { NAV_SHORT = 0, NAV_TALL, NAV_CLASSES };
+enum NavClass { NAV_SHORT = 0, NAV_TALL, NAV_FLY, NAV_CLASSES };
 
 /* Re-read the terrain around the players and re-run the search, but only every
    NAV_PERIOD frames -- call it every frame and let it decide. */
@@ -92,6 +93,13 @@ void navReset();
    `climb` is set when the next node is above this one, which is the
    creature's cue to hop. */
 bool navHeading(int footX, int footY, int agentH, int* dirX, bool* climb);
+
+/* Two-dimensional heading for the 9x7 flying body used by bats and moths.
+   Unlike the walker field it ignores floors and climb limits, but it still
+   requires the creature's full width and height to fit at every node. A true
+   result with both directions zero means this is the closest reachable point
+   to a target hidden in a passage too small for the flyer. */
+bool navFlyHeading(int centreX, int footY, int* dirX, int* dirY);
 
 /* Diagnostics, for the harnesses: how many nodes the last search reached, and
    whether the field currently covers a point at all. */

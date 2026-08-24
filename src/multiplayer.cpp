@@ -9,12 +9,15 @@ static void clearSession(PlayerSession& s) {
     s.inventory.clear();
     memset(s.drones, 0, sizeof(s.drones));
     s.garlicCooldown = 0;
+    s.healCooldown = 0;
     s.cursor = ItemStack();
     s.trash = ItemStack();
     s.body.reset(0.0f, 0.0f);
     s.previousAimX = s.previousAimY = -1;
     s.digCooldown = 0;
     s.restBed = -1;
+    s.respawnBedX = s.respawnBedY = -1;
+    s.respawnFrames = 0;
     s.openDevice = -1;
     s.wireX = s.wireY = -1;
     s.circuitWireFrom = -1; s.circuitWirePort = 0;
@@ -26,6 +29,20 @@ static void clearSession(PlayerSession& s) {
     s.connected = false;
     s.local = false;
     s.networkId = PLAYER_NONE;
+}
+
+bool playerConsumeHealing(PlayerSession& session, ItemId item) {
+    if (item == ITEM_NONE || item >= ITEM_COUNT || ITEMS[item].kind != ITEMK_FOOD ||
+        ITEMS[item].heal <= 0 || !session.body.alive ||
+        session.body.hp >= PLAYER_HP_MAX || session.healCooldown > 0) return false;
+    if (session.inventory.take(item, 1) != 1) return false;
+    session.body.heal(ITEMS[item].heal);
+    session.healCooldown = HEAL_COOLDOWN_FRAMES;
+    return true;
+}
+
+void playerHealingCooldownTick(PlayerSession& session) {
+    if (session.healCooldown > 0) --session.healCooldown;
 }
 
 void playerSessionsReset() {
@@ -62,7 +79,7 @@ void playerSessionClose(PlayerId id) {
     PlayerSession& s = g_playerSessions[id];
     for (int i = 0; i < INV_SLOTS; ++i) if (s.inventory.slot[i].inst) toolInstFree(s.inventory.slot[i].inst);
     for (int i = 0; i < EQ_COUNT; ++i) if (s.inventory.equip[i].inst) toolInstFree(s.inventory.equip[i].inst);
-    for (int d = 0; d < 3; ++d) /* Inventory owns three fixed drone bays. */
+    for (int d = 0; d < DRONE_BAY_COUNT; ++d)
         for (int m = 0; m < Inventory::DRONE_MODULE_SLOTS_MAX; ++m)
             if (s.inventory.droneModule[d][m].inst) toolInstFree(s.inventory.droneModule[d][m].inst);
     if (s.cursor.inst) toolInstFree(s.cursor.inst);
