@@ -28,8 +28,8 @@ jobs:
       - name: Build game and launcher
         shell: cmd
         run: |
-          build.bat
-          build_launcher.bat
+          call build.bat
+          call build_launcher.bat
 
       - name: Create verified release manifest
         shell: powershell
