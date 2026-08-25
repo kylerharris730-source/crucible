@@ -92,7 +92,7 @@ void toolInstTick() {
    hands could already clear tungsten given the time. Introducing a gate is not
    an excuse to quietly re-balance the mining ladder underneath it -- the only
    material anything here cannot bite is MAT_STRATUM. */
-const ToolSpec HAND = { "Hands", 6, 10, 6, false, STR_HARD };
+const ToolSpec HAND = { "Hands", 7, 12, 6, false, STR_HARD };
 
 DiscOff g_disc[DISC_MAX_CELLS];
 int     g_discEnd[DISC_MAX_R + 1];
@@ -336,22 +336,22 @@ void initItems() {
        sells is AREA PER SECOND, and the felt difference is being able to take a
        room-sized bite in one sweep instead of forty.
 
-       Throughput against bare hands, which move 100 cells a second:
+       Throughput against bare hands, which move 120 cells a second:
 
-         Hand Drill      r10   16 / 5f  =  192/s    2x
-         Rock Auger      r16   30 / 5f  =  360/s    3.6x
-         Thermal Lance   r24   60 / 4f  =  900/s    9x
-         Disruptor       r40  140 / 3f  = 2800/s   28x
+         Hand Drill      r12   20 / 5f  =  240/s    2x
+         Rock Auger      r19   36 / 5f  =  432/s    3.6x
+         Thermal Lance   r29   72 / 4f  = 1080/s    9x
+         Disruptor       r48  168 / 3f  = 3360/s   28x
 
-       The top of the ladder clears a full radius-40 disc -- 5025 cells -- in
+       The top of the ladder clears a full radius-48 disc -- 7213 cells -- in
        under two seconds, which is the "basically whatever size you want" end
        of it. Nothing here touches placement: see ITEMK_MINING in item.h. */
     struct MineTier { ItemId id; const char* name; u8 r, bite, cool; u32 col; u8 spr; };
     static const MineTier MINE[] = {
-        { ITEM_DRILL,     "Hand Drill",     10,  16, 5, 0xB07848, SPR_MINE1 },
-        { ITEM_AUGER,     "Rock Auger",     16,  30, 5, 0x9AA6B4, SPR_MINE2 },
-        { ITEM_LANCE,     "Thermal Lance",  24,  60, 4, 0xE0B048, SPR_MINE3 },
-        { ITEM_DISRUPTOR, "Disruptor",      40, 140, 3, 0xB070E8, SPR_MINE4 },
+        { ITEM_DRILL,     "Hand Drill",     12,  20, 5, 0xB07848, SPR_MINE1 },
+        { ITEM_AUGER,     "Rock Auger",     19,  36, 5, 0x9AA6B4, SPR_MINE2 },
+        { ITEM_LANCE,     "Thermal Lance",  29,  72, 4, 0xE0B048, SPR_MINE3 },
+        { ITEM_DISRUPTOR, "Disruptor",      48, 168, 3, 0xB070E8, SPR_MINE4 },
     };
     for (int i = 0; i < (int)(sizeof(MINE) / sizeof(MINE[0])); ++i) {
         const MineTier& t = MINE[i];
@@ -393,7 +393,7 @@ void initItems() {
        ground is a tool you can use carelessly, and carelessness is the whole
        point of a harvesting pass.
 
-       Generous on radius (18) and bite (40) because there is nothing to be
+       Generous on radius (22) and bite (48) because there is nothing to be
        careful ABOUT: the filter is the safety, so the tool may as well be
        broad. That is also what makes it feel like a scythe rather than a
        smaller drill -- one sweep takes a row. */
@@ -401,8 +401,8 @@ void initItems() {
     ITEMS[ITEM_SICKLE].kind           = ITEMK_MINING;
     ITEMS[ITEM_SICKLE].maxStack       = 1;
     ITEMS[ITEM_SICKLE].colour         = 0x8CD44C;
-    ITEMS[ITEM_SICKLE].mineRadius     = 18;
-    ITEMS[ITEM_SICKLE].mineBite       = 40;
+    ITEMS[ITEM_SICKLE].mineRadius     = 22;
+    ITEMS[ITEM_SICKLE].mineBite       = 48;
     ITEMS[ITEM_SICKLE].mineCooldown   = 5;
     ITEMS[ITEM_SICKLE].minePlantsOnly = 1;
     /* Set explicitly rather than left at the zero the table is cleared to. A
@@ -874,13 +874,13 @@ void initItems() {
        START of a stroke, so the two numbers below are the whole story:
 
                     sword           spear
-         Copper      7/30 = 14/s     6/22 = 16/s
-         Bronze     10/30 = 20/s     8/22 = 22/s
-         Iron       14/30 = 28/s    11/22 = 30/s
-         Gold       15/22 = 41/s    12/16 = 45/s
-         Steel      20/30 = 40/s    16/22 = 44/s
-         Titanium   26/30 = 52/s    21/22 = 57/s
-         Tungsten   34/32 = 64/s    27/24 = 68/s
+         Copper      7/33 = 13/s     6/22 = 16/s
+         Bronze     10/33 = 18/s     8/22 = 22/s
+         Iron       14/33 = 25/s    11/22 = 30/s
+         Gold       15/24 = 38/s    12/16 = 45/s
+         Steel      20/33 = 36/s    16/22 = 44/s
+         Titanium   26/33 = 47/s    21/22 = 57/s
+         Tungsten   34/35 = 58/s    27/24 = 68/s
 
        Against the Bolt Caster's 11/s and the Attack Drone's 2.1/s that looks
        enormous, and it should: those numbers are delivered from across a room
@@ -896,10 +896,10 @@ void initItems() {
        deliberately not visible in a single number.
 
        --- reach ---
-       Both families are 25% longer than the previous pass, rounded upward at
-       half-cells so every tier receives the full increase. Swords now run
-       28--38 cells and keep their broad sweep; spears run 23--33 and keep their
-       narrow single-target thrust. The player's build reach is 56 for
+       From the previous pass, swords are about 15% longer and spears about 70%
+       longer, rounded to whole simulation cells. Swords now run 32--44 cells
+       and keep their broad sweep; spears run 39--56 and keep their narrow
+       single-target thrust. The player's build reach is 56 for
        comparison, and is a completely separate number -- see ItemDef::meleeReach. */
     struct MeleeTier {
         ItemId sword, spear;
@@ -912,21 +912,21 @@ void initItems() {
     };
     static const MeleeTier MELEE[] = {
         /*                                     ---- sword ----   ---- spear ---- */
-        { ITEM_SWORD_COPPER,   ITEM_SPEAR_COPPER,   "Copper",     7, 30, 28,   6, 22, 23, 0xC87A32, SPR_SWORD_COPPER,   SPR_SPEAR_COPPER,   0.9f },
-        { ITEM_SWORD_BRONZE,   ITEM_SPEAR_BRONZE,   "Bronze",    10, 30, 30,   8, 22, 24, 0xCE9B4E, SPR_SWORD_BRONZE,   SPR_SPEAR_BRONZE,   1.0f },
-        { ITEM_SWORD_IRON,     ITEM_SPEAR_IRON,     "Iron",      14, 30, 30,  11, 22, 26, 0xA8ADB6, SPR_SWORD_IRON,     SPR_SPEAR_IRON,     1.1f },
+        { ITEM_SWORD_COPPER,   ITEM_SPEAR_COPPER,   "Copper",     7, 33, 32,   6, 22, 39, 0xC87A32, SPR_SWORD_COPPER,   SPR_SPEAR_COPPER,   0.9f },
+        { ITEM_SWORD_BRONZE,   ITEM_SPEAR_BRONZE,   "Bronze",    10, 33, 35,   8, 22, 41, 0xCE9B4E, SPR_SWORD_BRONZE,   SPR_SPEAR_BRONZE,   1.0f },
+        { ITEM_SWORD_IRON,     ITEM_SPEAR_IRON,     "Iron",      14, 33, 35,  11, 22, 44, 0xA8ADB6, SPR_SWORD_IRON,     SPR_SPEAR_IRON,     1.1f },
         /* Gold: the fast tier. Its reach is the SHORTEST of anything past
            copper, which is the other half of paying for the speed -- a quick
            weapon that also kept you at range would have no downside at all. */
-        { ITEM_SWORD_GOLD,     ITEM_SPEAR_GOLD,     "Gold",      15, 22, 28,  12, 16, 23, 0xE8C233, SPR_SWORD_GOLD,     SPR_SPEAR_GOLD,     0.8f },
-        { ITEM_SWORD_STEEL,    ITEM_SPEAR_STEEL,    "Steel",     20, 30, 33,  16, 22, 28, 0x8E97A6, SPR_SWORD_STEEL,    SPR_SPEAR_STEEL,    1.3f },
-        { ITEM_SWORD_TITANIUM, ITEM_SPEAR_TITANIUM, "Titanium",  26, 30, 35,  21, 22, 30, 0xD2DAE4, SPR_SWORD_TITANIUM, SPR_SPEAR_TITANIUM, 1.4f },
+        { ITEM_SWORD_GOLD,     ITEM_SPEAR_GOLD,     "Gold",      15, 24, 32,  12, 16, 39, 0xE8C233, SPR_SWORD_GOLD,     SPR_SPEAR_GOLD,     0.8f },
+        { ITEM_SWORD_STEEL,    ITEM_SPEAR_STEEL,    "Steel",     20, 33, 38,  16, 22, 48, 0x8E97A6, SPR_SWORD_STEEL,    SPR_SPEAR_STEEL,    1.3f },
+        { ITEM_SWORD_TITANIUM, ITEM_SPEAR_TITANIUM, "Titanium",  26, 33, 40,  21, 22, 51, 0xD2DAE4, SPR_SWORD_TITANIUM, SPR_SPEAR_TITANIUM, 1.4f },
         /* Tungsten is the heaviest thing on the ladder and swings slowest of
            the top three, which is what stops the last tier being strictly
            better than everything at everything. It hits hardest and shoves
            furthest; titanium remains the one you pick if you want to keep
            moving. */
-        { ITEM_SWORD_TUNGSTEN, ITEM_SPEAR_TUNGSTEN, "Tungsten",  34, 32, 38,  27, 24, 33, 0x6F7A86, SPR_SWORD_TUNGSTEN, SPR_SPEAR_TUNGSTEN, 1.8f },
+        { ITEM_SWORD_TUNGSTEN, ITEM_SPEAR_TUNGSTEN, "Tungsten",  34, 35, 44,  27, 24, 56, 0x6F7A86, SPR_SWORD_TUNGSTEN, SPR_SPEAR_TUNGSTEN, 1.8f },
     };
 
     /* Shared across the whole ladder rather than being per-tier columns,
@@ -937,11 +937,12 @@ void initItems() {
        130 degrees is a little over a right angle either side of where you
        pointed: wide enough to catch the second creature standing beside the
        first, narrow enough that "behind me" is genuinely a place you are not
-       covering. 14 frames is a quarter of a second, which is about as slow as a
-       stroke can be before the delay between clicking and connecting reads as
-       lag rather than as weight. */
+       covering. The 16-frame stroke is a little over a quarter second: enough
+       readable weight to slow the blade without turning the initial motion
+       into input lag. Tier cooldowns rise alongside it so repeat cadence slows
+       as well. */
     static const int MELEE_SWORD_ARC    = 130;
-    static const int MELEE_SWORD_FRAMES = 14;
+    static const int MELEE_SWORD_FRAMES = 16;
     /* A stab is quicker than a swing at every tier and covers no width at all.
        10 frames out and back is a jab rather than a lunge. */
     static const int MELEE_SPEAR_FRAMES = 10;

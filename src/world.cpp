@@ -353,6 +353,205 @@ static_assert(MAT_COUNT <= 128,
               "sparse occupants reserve bit 7 for gas volume provenance");
 static inline u8 occupantMat(u8 packed) { return (u8)(packed & GAS_EXCESS_MASK); }
 
+/* Let a denser liquid advance into a gas pocket without deleting the gas.
+
+   Gas normally owns liquid/gas exchange on its upward turn. That prevents an
+   in-place scan from relaying one bubble through a whole lake, but it also made
+   the opposite boundary unrealistically rigid: a broad pour of Water could sit
+   against a huge pressurised Steam pocket as though the gas were stone.
+
+   Displacement here moves a PRESSURE WAVE rather than repeatedly swapping one
+   gas cell. Starting at the touched gas cell, prefer a straight open outlet
+   above, then search a small connected part of the gas pocket for any opening.
+   Shift every gas parcel along that path by one cell and put the liquid into
+   the vacated boundary. Cell payload and temperature travel with each parcel,
+   so Steam volume and condensation ownership are exactly conserved.
+
+   A completely sealed expanded pocket has no cell to shift into. In that case
+   one representable expansion volume may be folded into an adjacent parcel as
+   stored pressure. If even that cannot represent the pocket exactly, Water and
+   the touched Steam parcel trade places. That last rule is intentionally the
+   simple gameplay invariant: liquid treats gas as displacement space, while a
+   movement stamp guarantees the same gas parcel can be pushed only once in the
+   frame rather than relayed through an entire lake. */
+bool World::displaceGasForLiquid(int sx, int sy, int tx, int ty) {
+    const int si = sy * SIM_W + sx, ti = ty * SIM_W + tx;
+    Cell& liquid = cells[si];
+    Cell& gas = cells[ti];
+    if (MATS[liquid.mat].kind != KIND_LIQUID || MATS[gas.mat].kind != KIND_GAS)
+        return false;
+    if (materialDensityQ8(liquid.mat, temp[si]) <=
+        materialDensityQ8(gas.mat, temp[ti]) + DENSITY_SWAP_EPS_Q8)
+        return false;
+
+    const u8 now = stamp();
+    if (((gas.flags >> STAMP_SHIFT) & STAMP_MASK) == now) return false;
+
+    const u8 gasMat = gas.mat;
+    const u8 st = (u8)(now << STAMP_SHIFT);
+    const auto freshGas = [&](int i) {
+        return cells[i].mat == gasMat &&
+               ((cells[i].flags >> STAMP_SHIFT) & STAMP_MASK) != now;
+    };
+    const auto finishLiquid = [&]() {
+        const Cell moving = liquid;
+        const u8 movingTemp = temp[si];
+        gas = moving;
+        gas.flags = (u8)((gas.flags & F_DIR) | st);
+        temp[ti] = movingTemp;
+        liquid.mat = MAT_EMPTY;
+        liquid.moisture = 0;
+        liquid.tint = 0;
+        liquid.flags = st;
+        temp[si] = AMBIENT_TEMP;
+        dirtyPoint(sx, sy);
+        dirtyPoint(tx, ty);
+    };
+
+    if (pressureRoutesRemaining > 0) {
+        --pressureRoutesRemaining;
+        /* The pictured boiler case: a tall Steam body with a real outlet above.
+           This costs a straight ray rather than a flood over the whole pocket. */
+        for (int d = 1; d <= GAS_PRESSURE_VERTICAL_REACH && ty - d >= PLAY_Y0; ++d) {
+            const int di = (ty - d) * SIM_W + tx;
+            if (cells[di].mat == MAT_EMPTY && !blocksCell(tx, ty - d)) {
+                for (int k = d; k >= 1; --k) {
+                    const int dst = (ty - k) * SIM_W + tx;
+                    const int src = (ty - k + 1) * SIM_W + tx;
+                    cells[dst] = cells[src];
+                    temp[dst] = temp[src];
+                    cells[dst].flags = (u8)((cells[dst].flags & F_DIR) | st);
+                }
+                finishLiquid();
+                dirtyArea(tx, ty - d, tx, ty);
+                return true;
+            }
+            if (!freshGas(di)) break;
+        }
+    }
+
+    /* Bent local pockets. parent[] is both the visited set and the route from
+       the outlet back to the touched boundary, keeping work strictly bounded. */
+    if (pressureRoutesRemaining > 0) {
+        --pressureRoutesRemaining;
+        static const int R = GAS_PRESSURE_LIQUID_RADIUS;
+        static const int SIDE = R * 2 + 1;
+        static const int CAP = SIDE * SIDE;
+        i16 parent[CAP], queue[CAP];
+        for (int k = 0; k < CAP; ++k) parent[k] = -2;
+        const int center = R * SIDE + R;
+        int head = 0, tail = 0, goal = -1, outlet = -1;
+        parent[center] = -1;
+        queue[tail++] = (i16)center;
+        const int orderX[4] = { 0, -1, 1, 0 };
+        const int orderY[4] = { -1, 0, 0, 1 };
+
+        while (head < tail && goal < 0) {
+            const int li = queue[head++];
+            const int lx = li % SIDE, ly = li / SIDE;
+            const int wx = tx - R + lx, wy = ty - R + ly;
+            for (int k = 0; k < 4; ++k) {
+                const int nx = wx + orderX[k], ny = wy + orderY[k];
+                if (nx < PLAY_X0 || nx > PLAY_X1 || ny < PLAY_Y0 || ny > PLAY_Y1)
+                    continue;
+                const int ni = ny * SIM_W + nx;
+                if (cells[ni].mat == MAT_EMPTY && !blocksCell(nx, ny)) {
+                    goal = li; outlet = ni; break;
+                }
+            }
+            if (goal >= 0) break;
+            for (int k = 0; k < 4; ++k) {
+                const int nlx = lx + orderX[k], nly = ly + orderY[k];
+                if (nlx < 0 || nlx >= SIDE || nly < 0 || nly >= SIDE) continue;
+                const int niLocal = nly * SIDE + nlx;
+                if (parent[niLocal] != -2) continue;
+                const int nx = tx - R + nlx, ny = ty - R + nly;
+                if (nx < PLAY_X0 || nx > PLAY_X1 || ny < PLAY_Y0 || ny > PLAY_Y1)
+                    continue;
+                if (!freshGas(ny * SIM_W + nx)) continue;
+                parent[niLocal] = (i16)li;
+                queue[tail++] = (i16)niLocal;
+            }
+        }
+
+        if (goal >= 0) {
+            int dst = outlet, path = goal;
+            while (path >= 0) {
+                const int px = tx - R + path % SIDE;
+                const int py = ty - R + path / SIDE;
+                const int src = py * SIM_W + px;
+                cells[dst] = cells[src];
+                temp[dst] = temp[src];
+                cells[dst].flags = (u8)((cells[dst].flags & F_DIR) | st);
+                dirtyPoint(dst % SIM_W, dst / SIM_W);
+                dst = src;
+                path = parent[path];
+            }
+            finishLiquid();
+            return true;
+        }
+    }
+
+    /* Sealed pocket: compress only when the one-bit condensation provenance
+       remains exactly representable after the merge. */
+    const int volumes = 1 + (gas.moisture & GAS_EXCESS_MASK);
+    const bool gasVolumeOnly = (gas.moisture & GAS_VOLUME_ONLY) != 0;
+    static const int RX[4] = { 0, -1, 1, 0 };
+    static const int RY[4] = { -1, 0, 0, 1 };
+    for (int k = 0; k < 4; ++k) {
+        const int nx = tx + RX[k], ny = ty + RY[k];
+        const int ri = ny * SIM_W + nx;
+        if (!freshGas(ri)) continue;
+        Cell& receiver = cells[ri];
+        const int receiverExcess = receiver.moisture & GAS_EXCESS_MASK;
+        if (receiverExcess + volumes > GAS_EXCESS_MASK) continue;
+        const bool receiverVolumeOnly = (receiver.moisture & GAS_VOLUME_ONLY) != 0;
+        if (!gasVolumeOnly && !receiverVolumeOnly) continue;
+        receiver.moisture = (u8)((gasVolumeOnly ? (receiver.moisture & GAS_VOLUME_ONLY) : 0) |
+                                 (receiverExcess + volumes));
+        receiver.flags = (u8)((receiver.flags & F_DIR) | st);
+        if (temp[ti] > temp[ri]) temp[ri] = temp[ti];
+        dirtyPoint(nx, ny);
+        finishLiquid();
+        return true;
+    }
+    /* Ordinary owner-bearing Steam in a sealed pocket cannot be merged without
+       losing condensation mass. Swapping is the exact conservative fallback:
+       Water advances, the complete Steam cell moves into the space it vacated,
+       and both are stamped so neither can be relayed again this frame.
+
+       A lone submerged bubble is deliberately excluded from SIDEWAYS swaps.
+       Water surrounding one pixel of Steam would otherwise shove it left and
+       right before its own buoyant turn. Downward liquid still pushes any gas
+       upward, while lateral displacement requires a connected gas BODY -- the
+       boiler/chamber case this rule exists to solve. */
+    {
+        bool connectedBody = false;
+        for (int k = 0; k < 4; ++k) {
+            const int nx = tx + NB_DX[k], ny = ty + NB_DY[k];
+            if (cells[ny * SIM_W + nx].mat == gasMat) {
+                connectedBody = true;
+                break;
+            }
+        }
+        const bool liquidFallingOntoGas = tx == sx && ty > sy;
+        if (!liquidFallingOntoGas && !connectedBody) return false;
+        const Cell displaced = gas;
+        const u8 displacedTemp = temp[ti];
+        const Cell moving = liquid;
+        const u8 movingTemp = temp[si];
+        gas = moving;
+        gas.flags = (u8)((gas.flags & F_DIR) | st);
+        temp[ti] = movingTemp;
+        liquid = displaced;
+        liquid.flags = (u8)((liquid.flags & F_DIR) | st);
+        temp[si] = displacedTemp;
+        dirtyPoint(sx, sy);
+        dirtyPoint(tx, ty);
+        return true;
+    }
+}
+
 bool World::tryMove(int sx, int sy, int tx, int ty,
                     bool allowOwnedLiquidDisplacement) {
     /* Nothing moves into an occupied entity box -- see the note in world.h.
@@ -537,14 +736,12 @@ bool World::tryMove(int sx, int sy, int tx, int ty,
             }
             else {
                 if (sourceDensity <= targetDensity + DENSITY_SWAP_EPS_Q8) return false;
-                /* Gas owns a LIQUID/Gas swap on the gas cell's turn. Letting a
-                   liquid push a gas target sounds symmetric but is not under
-                   an in-place scan: neighbouring water cells can relay one
-                   stamped Steam cell sideways/upward many times before it gets
-                   a turn. Powders use the same ownership rule now: gas rises
-                   through one powder cell on its turn, so a displaced parcel
-                   cannot relay up an entire pile during the scan. */
-                if (tm.kind == KIND_GAS) return false;
+                /* A liquid does not directly swap with a gas: it advances only
+                   when the gas can be conserved by shifting or compression.
+                   The routed pressure wave is stamped as a unit, so no parcel
+                   can relay repeatedly during this in-place scan. */
+                if (tm.kind == KIND_GAS)
+                    return displaceGasForLiquid(sx, sy, tx, ty);
             }
         }
     }

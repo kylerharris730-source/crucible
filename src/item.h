@@ -1009,7 +1009,7 @@ struct ToolSpec {
 
 /* Hands. Slow and small on purpose: this is the baseline every tool is measured
    against, and if bare hands were comfortable no tool would feel like progress.
-   10 cells every 6 frames is 100 cells a second -- a 6-wide tunnel advances
+   12 cells every 6 frames is 120 cells a second -- a 7-wide tunnel advances
    about a body length every second, which is workable for getting somewhere and
    genuinely tiresome for undoing a mistake. That last part is the design: it is
    what makes a precision tool worth building rather than a luxury. */

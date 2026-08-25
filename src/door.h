@@ -62,3 +62,10 @@ int doorToggle(World& w, int x, int y);
    the player has cleared the doorway. Enemies never call this: their contact
    with a door remains ordinary solid collision. */
 void doorAuto(World& w, const Player& p);
+
+/* Multiplayer runs every player before deciding which automatic doors may
+   close.  Splitting the two halves prevents a far-away player from closing a
+   doorway that another player is still approaching.  World occupancy is the
+   shared source of truth, so doorAutoClose sees local and remote bodies alike. */
+void doorAutoOpen(World& w, const Player& p);
+void doorAutoClose(World& w);

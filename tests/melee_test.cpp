@@ -1,10 +1,10 @@
 /* --- does a stroke land exactly once, and only where the blade is? ----------
 
    Two properties, and the first is the one a melee weapon gets wrong by
-   default. A stroke lasts ten to fourteen frames and the hit test runs on every
+   default. A stroke lasts ten to sixteen frames and the hit test runs on every
    one of them, so the naive version takes the weapon's damage off a creature
-   ten to fourteen times -- a copper sword doing 7 becomes a copper sword doing
-   98, which is more than the whole first tier of the roster has health. That
+   ten to sixteen times -- a copper sword doing 7 becomes a copper sword doing
+   112, which is more than the whole first tier of the roster has health. That
    is not a tuning error that shows up as "melee feels strong"; it is a copper
    sword one-shotting everything in the layer.
 
@@ -162,8 +162,9 @@ int main() {
             ITEM_SPEAR_GOLD, ITEM_SPEAR_STEEL, ITEM_SPEAR_TITANIUM,
             ITEM_SPEAR_TUNGSTEN
         };
-        static const int swordReach[] = { 28, 30, 30, 28, 33, 35, 38 };
-        static const int spearReach[] = { 23, 24, 26, 23, 28, 30, 33 };
+        static const int swordReach[] = { 32, 35, 35, 32, 38, 40, 44 };
+        static const int spearReach[] = { 39, 41, 44, 39, 48, 51, 56 };
+        static const int swordCool[] = { 33, 33, 33, 24, 33, 33, 35 };
         for (int i = 0; i < 7; ++i) {
             if (ITEMS[sword[i]].meleeReach != swordReach[i]) {
                 fprintf(stderr, "FAIL: sword reach ladder drifted at tier %d (%u/%d)\n",
@@ -175,18 +176,24 @@ int main() {
                         i, ITEMS[spear[i]].meleeReach, spearReach[i]);
                 ++failures;
             }
+            if (ITEMS[sword[i]].meleeFrames != 16 ||
+                ITEMS[sword[i]].meleeCooldown != swordCool[i]) {
+                fprintf(stderr, "FAIL: sword timing drifted at tier %d (%u/%u, expected 16/%d)\n",
+                        i, ITEMS[sword[i]].meleeFrames,
+                        ITEMS[sword[i]].meleeCooldown, swordCool[i]);
+                ++failures;
+            }
         }
 
         entReset();
-        /* A bat centred 28 cells away begins beyond the previous 22-cell
-           copper blade even after its half-width is counted, but lies inside 28. */
-        const int far = entSpawn(w, ENT_BAT, p.centreX() + 28.0f, p.centreY());
+        /* A bat centred 32 cells away lies at the new copper blade tip. */
+        const int far = entSpawn(w, ENT_BAT, p.centreX() + 32.0f, p.centreY());
         if (far < 0) { fprintf(stderr, "could not place long-sword target\n"); return 2; }
         g_entities[far].hp = 100000;
         const int dealt = oneStroke(p, ITEM_SWORD_COPPER, 1.0f, 0.0f, far);
         const float shove = sqrtf(g_entities[far].vx * g_entities[far].vx +
                                   g_entities[far].vy * g_entities[far].vy);
-        printf("copper sword at 28 cells: %d damage, %.2f cells/frame shove\n",
+        printf("copper sword at 32 cells: %d damage, %.2f cells/frame shove\n",
                dealt, shove);
         if (dealt != ITEMS[ITEM_SWORD_COPPER].damage || shove < 2.0f) {
             fprintf(stderr, "FAIL: extended copper sword did not reach and visibly knock back\n");

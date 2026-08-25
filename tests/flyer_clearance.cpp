@@ -21,25 +21,28 @@ static void fill(World& w, int x0, int y0, int x1, int y1, u8 mat) {
         for (int x = x0; x <= x1; ++x) w.setCell(x, y, mat);
 }
 
-static bool crosses(EntityType type) {
+static bool crosses(EntityType type, bool far) {
     World& w = g_testWorld;
     w.reset();
-    const int wallL = 1000, wallR = 1040;
+    /* The far version starts 660 cells from the player. That is still inside
+       ENT_DESPAWN_DIST but was outside the old routing window, where both
+       flyers reverted to aiming through the false tube forever. */
+    const int wallL = far ? 1200 : 1000, wallR = wallL + 40;
     fill(w, wallL, 400, wallR, 800, MAT_STONE);
     fill(w, wallL, 480, wallR, 520, MAT_EMPTY); /* body-sized route */
     fill(w, wallL, 590, wallR, 595, MAT_EMPTY); /* false six-cell tube */
-    w.setLiveWindow(820, 360, 1220, 840);
+    w.setLiveWindow(far ? 800 : 820, 360, far ? 1720 : 1220, 840);
 
     Player& p = g_player;
-    p.reset(1120.0f, 575.0f);
+    p.reset(far ? 1580.0f : 1120.0f, 575.0f);
     p.alive = true; p.hp = PLAYER_HP_MAX;
 
     entReset();
-    const int slot = entSpawn(w, type, 900.0f, 589.0f);
+    const int slot = entSpawn(w, type, far ? 920.0f : 900.0f, 589.0f);
     if (slot < 0) return false;
 
     for (int frame = 0; frame < 3600; ++frame) {
-        p.x = 1120.0f; p.y = 575.0f;
+        p.x = far ? 1580.0f : 1120.0f; p.y = 575.0f;
         p.alive = true; p.hp = PLAYER_HP_MAX;
         entTick(w, p, g_inv);
         const Entity& e = g_entities[slot];
@@ -54,11 +57,14 @@ int main() {
     initItems();
     playerSessionsReset();
 
-    const bool bat = crosses(ENT_BAT);
-    const bool moth = crosses(ENT_MOTH);
-    printf("body-sized detour: bat %s, moth %s\n",
-           bat ? "passed" : "STUCK", moth ? "passed" : "STUCK");
-    if (!bat || !moth) return 1;
+    const bool bat = crosses(ENT_BAT, false);
+    const bool moth = crosses(ENT_MOTH, false);
+    const bool farBat = crosses(ENT_BAT, true);
+    const bool farMoth = crosses(ENT_MOTH, true);
+    printf("body-sized detour: bat %s, moth %s; far bat %s, far moth %s\n",
+           bat ? "passed" : "STUCK", moth ? "passed" : "STUCK",
+           farBat ? "passed" : "STUCK", farMoth ? "passed" : "STUCK");
+    if (!bat || !moth || !farBat || !farMoth) return 1;
     puts("PASS");
     return 0;
 }

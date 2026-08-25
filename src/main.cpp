@@ -3473,7 +3473,14 @@ static void interactFor(PlayerSession& session, const Aim& aim) {
         }
         return;
     }
-    if (doorToggle(g_world, aim.x, aim.y)) roomsNotifyEdit(g_world, aim.x, aim.y);
+    if (doorToggle(g_world, aim.x, aim.y)) {
+        roomsNotifyEdit(g_world, aim.x, aim.y);
+        /* A painted door may span several chunks. The ordinary hash scan will
+           eventually find all of them, but interaction should arrive as one
+           visible action on joined clients rather than a patchwork over the
+           next few scans. */
+        netMarkWorldEdit(aim.x, aim.y, DOOR_REACH);
+    }
 }
 
 /* ===========================================================================
@@ -3671,9 +3678,15 @@ static void applyPlayerUses(PlayerSession& session, const PlayerCommand& command
     }
     if (session.digCooldown > 0) --session.digCooldown;
 
-    if (pressed & PCMD_INTERACT) interactFor(session, aim);
-    if ((pressed & PCMD_USE_RIGHT) &&
-        (devAt(aim.x, aim.y) || isDoor(g_world.at(aim.x, aim.y).mat))) {
+    const bool interactiveTarget = devAt(aim.x, aim.y) ||
+                                   isDoor(g_world.at(aim.x, aim.y).mat);
+    if (pressed & PCMD_INTERACT) {
+        interactFor(session, aim);
+        /* A stale held-right bit can accompany the discrete interaction after
+           capture loss or packet coalescing. It is still one click: never
+           toggle the door a second time or fall through into right-use. */
+        if (interactiveTarget && (bits & PCMD_USE_RIGHT)) session.suppressRightUse = true;
+    } else if ((pressed & PCMD_USE_RIGHT) && interactiveTarget) {
         interactFor(session, aim);
         session.suppressRightUse = true;
     }
@@ -4161,7 +4174,7 @@ static void updatePlayerFromCommand(int slot, PlayerSession& session, PlayerComm
         return;
     }
     session.body.occupy(g_world, slot);
-    if (allowMovement) doorAuto(g_world, session.body);
+    if (allowMovement) doorAutoOpen(g_world, session.body);
     applyPlayerUses(session, command);
     command.pressed = 0; /* edge verbs are consumed once, even if this held command is reused */
 }
@@ -6934,6 +6947,10 @@ static void serverTick(const LARGE_INTEGER& perfFrequency) {
         updatePlayerFromCommand(0, g_playerSessions[0], g_localInput, localCanMove);
     }
     if (onlineHost) updateRemotePlayersFromCommands(!g_paused || singleStep);
+    /* Closing is a group decision. Every connected body has published its
+       latest occupancy by now, so one distant client cannot undo the nearby
+       client's automatic open earlier in this same frame. */
+    if ((!g_paused || singleStep) && g_survival && g_playerOn) doorAutoClose(g_world);
     processPlayerActions();
     refreshHostLogisticsPause();
 
@@ -7210,6 +7227,27 @@ static int runLocalCommandSmoke() {
     updatePlayerFromCommand(0, g_playerSessions[0], command, false);
     if (g_world.at(command.lineStartX, command.lineStartY).mat != MAT_STONE ||
         g_world.at(command.aimX, command.aimY).mat != MAT_STONE) return 206;
+
+    /* A joined peer can deliver the discrete interaction edge beside a stale
+       held-right bit. That packet still represents one click and must toggle a
+       door exactly once, not open then immediately close it. */
+    g_world.reset();
+    const int smokeDoorX = (int)g_player.centreX() + 24;
+    const int smokeDoorY = (int)g_player.centreY();
+    g_world.setCell(smokeDoorX, smokeDoorY, MAT_DOOR);
+    memset(&command, 0, sizeof(command));
+    command.player = LOCAL_PLAYER_ID; command.generation = g_playerSessions[0].generation;
+    command.bits = command.pressed = PCMD_INTERACT | PCMD_USE_RIGHT;
+    command.aimX = smokeDoorX; command.aimY = smokeDoorY;
+    updatePlayerFromCommand(0, g_playerSessions[0], command, false);
+    if (g_world.at(smokeDoorX, smokeDoorY).mat != MAT_DOOR_OPEN) return 216;
+    memset(&command, 0, sizeof(command));
+    command.player = LOCAL_PLAYER_ID; command.generation = g_playerSessions[0].generation;
+    updatePlayerFromCommand(0, g_playerSessions[0], command, false);
+    command.bits = command.pressed = PCMD_USE_RIGHT;
+    command.aimX = smokeDoorX; command.aimY = smokeDoorY;
+    updatePlayerFromCommand(0, g_playerSessions[0], command, false);
+    if (g_world.at(smokeDoorX, smokeDoorY).mat != MAT_DOOR) return 217;
 
     /* Death owns its destination and its clock. Exercise the actual authority
        path for all 600 frames, first with a live bed and then with that bed

@@ -1,7 +1,7 @@
 /* --- what does routing cost per frame? --------------------------------------
 
    The flow field is the one thing in the creature code whose price is paid
-   whether or not any creature uses it: navUpdate re-reads a 1152 x 896 block
+   whether or not any creature uses it: navUpdate re-reads a 1664 x 1664 block
    of the world and runs two searches over it, on a clock, regardless of
    whether there is a single husk alive. So it is worth a standing measurement
    rather than a one-off one.
@@ -82,6 +82,19 @@ int main() {
     if (navReached(1) < 2000) {
         fprintf(stderr, "FAIL: the tall search reached only %d nodes -- it is "
                         "fast because it is not finding anything\n", navReached(1));
+        ++failures;
+    }
+    /* Every ordinary enemy remains alive to this radius. A routing window
+       smaller than that produces the worst possible discontinuity: an enemy
+       is close enough to keep simulating but too far away to know about walls,
+       so it visibly reverts to pressing straight into them. Keep a one-node
+       margin because navHeading needs neighbours around its current node. */
+    const int edge = ENT_DESPAWN_DIST - NAV;
+    if (!navCovers((int)px - edge, (int)py) ||
+        !navCovers((int)px + edge, (int)py) ||
+        !navCovers((int)px, (int)py - edge) ||
+        !navCovers((int)px, (int)py + edge)) {
+        fprintf(stderr, "FAIL: routing does not cover the active-enemy radius\n");
         ++failures;
     }
 

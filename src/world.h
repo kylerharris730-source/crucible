@@ -809,6 +809,7 @@ private:
     void updateLiquid(int x, int y);
     void updateGas(int x, int y);
     bool updateGasPressure(int x, int y);
+    bool displaceGasForLiquid(int sx, int sy, int tx, int ty);
     void updateFilterFluid(int x, int y);
     bool moveFilterFluid(int sx, int sy, int tx, int ty);
     void convert(int x, int y, u8 mat);

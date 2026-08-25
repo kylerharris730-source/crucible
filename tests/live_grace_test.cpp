@@ -312,6 +312,29 @@ int main() {
         bestMine.cooldown != ITEMS[ITEM_LANCE].mineCooldown) {
         fprintf(stderr, "best carried miner was not selected\n"); return 31;
     }
+    {
+        const ItemId miners[] = { ITEM_DRILL, ITEM_AUGER, ITEM_LANCE, ITEM_DISRUPTOR };
+        const int radius[] = { 12, 19, 29, 48 };
+        const int bite[] = { 20, 36, 72, 168 };
+        const int cool[] = { 5, 5, 4, 3 };
+        if (HAND.maxRadius != 7 || HAND.cellsPerBite != 12 || HAND.cooldown != 6) {
+            fprintf(stderr, "base mining stats drifted (%d/%d/%d)\n",
+                    HAND.maxRadius, HAND.cellsPerBite, HAND.cooldown); return 116;
+        }
+        for (int k = 0; k < 4; ++k) {
+            const ItemDef& miner = ITEMS[miners[k]];
+            if (miner.mineRadius != radius[k] || miner.mineBite != bite[k] ||
+                miner.mineCooldown != cool[k]) {
+                fprintf(stderr, "mining tier %d drifted (%u/%u/%u)\n", k,
+                        miner.mineRadius, miner.mineBite, miner.mineCooldown);
+                return 116;
+            }
+        }
+        if (ITEMS[ITEM_SICKLE].mineRadius != 22 ||
+            ITEMS[ITEM_SICKLE].mineBite != 48) {
+            fprintf(stderr, "sickle mining stats drifted\n"); return 116;
+        }
+    }
     /* Overwrite gives the displaced material back before consuming the held
        replacement, so sealing a cell cannot silently delete what was there. */
     Inventory replaceInv; replaceInv.clear(); replaceInv.add((ItemId)MAT_WOOD, 1);
@@ -376,6 +399,22 @@ int main() {
     doorAuto(w, doorPlayer);
     if (w.at(doorX, doorY).mat != MAT_DOOR) {
         fprintf(stderr, "door did not close after player cleared it\n"); return 29;
+    }
+    /* Automatic closure is evaluated after the whole multiplayer group. A
+       far-away peer must not close the door being approached by slot zero. */
+    w.setCell(doorX, doorY, MAT_DOOR);
+    Player farPlayer; farPlayer.reset(500.0f, 500.0f);
+    doorPlayer.reset(406.0f, 400.0f);
+    w.clearBlockBoxes(); doorPlayer.occupy(w, 0); farPlayer.occupy(w, 1);
+    doorAutoOpen(w, doorPlayer); doorAutoOpen(w, farPlayer); doorAutoClose(w);
+    if (w.at(doorX, doorY).mat != MAT_DOOR_OPEN) {
+        fprintf(stderr, "distant peer closed nearby player's door\n"); return 72;
+    }
+    doorPlayer.reset(460.0f, 460.0f);
+    w.clearBlockBoxes(); doorPlayer.occupy(w, 0); farPlayer.occupy(w, 1);
+    doorAutoOpen(w, doorPlayer); doorAutoOpen(w, farPlayer); doorAutoClose(w);
+    if (w.at(doorX, doorY).mat != MAT_DOOR) {
+        fprintf(stderr, "multiplayer door did not close after everyone cleared it\n"); return 73;
     }
     /* Torches are light fixtures, not bullet cover: a basic shot passes
        through without destroying either the torch or itself. */
@@ -1863,6 +1902,54 @@ int main() {
         curvedSteam + curvedExcess != 17) {
         fprintf(stderr, "shared pressure did not follow curved Steam pocket (%d steam, %d water, %d excess)\n",
                 curvedSteam, curvedWater, curvedExcess); return 109;
+    }
+
+    /* A broad liquid face may advance into a sealed gas pocket by displacing
+       it. Before this rule, liquid/gas exchange belonged only to
+       the rising gas turn, so Water flowing sideways treated a large Steam
+       body as a solid wall. Count physical cells PLUS stored excess: the Water
+       must enter, every Steam volume must remain, and its sole condensation
+       owner must survive the compression. */
+    w.reset();
+    const int shoveX = 900, shoveY = 700;
+    w.setLiveWindow(shoveX - 30, shoveY - 20, shoveX + 20, shoveY + 10);
+    for (int y = shoveY - 11; y <= shoveY + 1; ++y)
+        for (int x = shoveX - 21; x <= shoveX + 10; ++x)
+            w.setCell(x, y, MAT_STONE);
+    int initialShoveVolumes = 0;
+    for (int y = shoveY - 10; y <= shoveY; ++y)
+        for (int x = shoveX - 20; x < shoveX; ++x) {
+            w.setCell(x, y, MAT_STEAM);
+            w.cells[y * SIM_W + x].moisture = GAS_VOLUME_ONLY;
+            ++initialShoveVolumes;
+        }
+    /* Make every Steam cell a real condensation owner. This is deliberately
+       the case pressure cannot merge: Water still has to advance by swapping
+       the complete Steam parcel into its old space, without losing an owner. */
+    for (int y = shoveY - 10; y <= shoveY; ++y)
+        for (int x = shoveX - 20; x < shoveX; ++x)
+            w.cells[y * SIM_W + x].moisture = 0;
+    for (int x = shoveX; x < shoveX + 8; ++x)
+        w.setCell(x, shoveY, MAT_WATER);
+    w.dirtyArea(shoveX - 20, shoveY - 10, shoveX + 7, shoveY);
+    w.step();
+
+    int shoveSteamCells = 0, shoveExcess = 0, shoveOwners = 0;
+    int waterEnteredSteam = 0;
+    for (int y = shoveY - 10; y <= shoveY; ++y)
+        for (int x = shoveX - 20; x <= shoveX + 7; ++x) {
+            const Cell& sc = w.at(x, y);
+            if (sc.mat == MAT_WATER && x < shoveX) ++waterEnteredSteam;
+            if (sc.mat != MAT_STEAM) continue;
+            ++shoveSteamCells;
+            shoveExcess += sc.moisture & GAS_EXCESS_MASK;
+            if (!(sc.moisture & GAS_VOLUME_ONLY)) ++shoveOwners;
+        }
+    if (waterEnteredSteam < 2 || shoveSteamCells + shoveExcess != initialShoveVolumes ||
+        shoveOwners != initialShoveVolumes) {
+        fprintf(stderr, "Water did not displace sealed Steam pocket (entered %d, volumes %d/%d, owners %d)\n",
+                waterEnteredSteam, shoveSteamCells + shoveExcess,
+                initialShoveVolumes, shoveOwners); return 110;
     }
 
     /* Pressure lifts a connected water column immediately instead of waiting

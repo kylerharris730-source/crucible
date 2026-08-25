@@ -49,15 +49,19 @@ static const int NAV       = 1 << NAV_SHIFT;   /* world cells per nav node */
    following the field well before it is visible, so it comes round the corner
    rather than appearing to notice you.
 
-   It deliberately does NOT reach ENT_DESPAWN_DIST, which is 700. Covering that
-   would mean a 1400-cell square, three and a half times the area, for
-   creatures two screens away that nobody can see. With full-body walker and
-   flyer clearance included, the regression scene measures 2.88 ms per rebuild
-   (0.24 ms/frame on the twelve-frame cadence), and cost scales with area.
-   Beyond the window a creature falls back to the straight-line chase it has
-   always had, which off screen is indistinguishable from anything better. */
-static const int NAV_W     = 288;              /* 1152 world cells across */
-static const int NAV_H     = 224;              /*  896 world cells down */
+   The window must cover ENT_DESPAWN_DIST, which is 700, PLUS somewhere for a
+   route to bend. The earlier 1152x896 window ended only 576 cells left/right
+   and 448 cells vertically from the player. Enemies were still alive outside
+   it, so they fell back to the old straight-line chase and visibly ground into
+   walls whenever a distant route was even slightly indirect.
+
+   1664 cells gives 832 cells from the player to every edge: the entire active
+   radius plus 132 cells for a route to go around the wrong side of an obstacle.
+   It is 2.7 times the old node area, but it is rebuilt only every twelve frames
+   and shared by the whole roster. tests/nav_cost.cpp keeps the measured price
+   honest. */
+static const int NAV_W     = 416;              /* 1664 world cells across */
+static const int NAV_H     = 416;              /* 1664 world cells down */
 
 /* Two size classes rather than one field, because one field cannot serve both.
    Built for a husk (22 cells) it would refuse every tunnel a slime (8 cells)
