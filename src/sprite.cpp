@@ -173,6 +173,11 @@ static u32 paletteOf(char c) {
     case '[': return 0xC89A5A;     /* bread crust */
     case ']': return 0xE8D2A2;     /* bread crumb */
     case '{': return 0x2A2620;     /* egg speckle, dark on every shell */
+    /* The crash dummy. Hazard stripes, which is the one livery that says
+       "equipment, not creature" before any of the shape resolves. */
+    case ':': return 0xE8C233;     /* hazard yellow */
+    case ';': return 0x2A2E36;     /* hazard stripe, and its eye slot */
+    case '<': return 0x9AA2AE;     /* dummy frame and limbs */
 
     default:  return 0xFF00FF;     /* unmapped: loud on purpose */
     }
@@ -1722,6 +1727,34 @@ static const char* ART_BREAD[SPR_H] = {
     "..............",
 };
 
+/* --- the crash dummy -------------------------------------------------------
+   Hazard stripes on a jointed figure, which is the one look that says "this is
+   equipment, not a creature" before anything else about it resolves.
+
+   Drawn SHORT and WIDE on purpose. entDraw scales any sprite whose box is much
+   bigger than the canvas, and this one is PLAYER_W by PLAYER_H = 11 by 30, so
+   fourteen columns are squeezed into eleven and fourteen rows are stretched
+   over thirty. A figure drawn at natural proportions here arrives on screen
+   twice as tall as it should be. The husk has the same problem and solves it
+   the same way; the rule for this canvas is to draw for the box, not for the
+   square. */
+static const char* ART_DUMMY[SPR_H] = {
+    "....<<<<<<....",
+    "...<<:;;:<<...",
+    "....<<<<<<....",
+    ".....<<<<.....",
+    "..<<<<<<<<<<..",
+    "..::::::::::..",
+    "..;;;;;;;;;;..",
+    "..::::::::::..",
+    "..;;;;;;;;;;..",
+    "..::::::::::..",
+    "..<<<<<<<<<<..",
+    "..<<......<<..",
+    "...<<....<<...",
+    "...<<....<<...",
+};
+
 void initSprites() {
     memset(g_sprite, 0, sizeof(g_sprite));
     expand(SPR_MITE,      ART_MITE);
@@ -1729,6 +1762,7 @@ void initSprites() {
     expand(SPR_BAT,       ART_BAT);
     expand(SPR_SPITTER,   ART_SPITTER);
     expand(SPR_BROOD,     ART_BROOD);
+    expand(SPR_DUMMY,     ART_DUMMY);
     expand(SPR_MOTH,      ART_MOTH);
     expand(SPR_SLIME,     ART_SLIME);
     expand(SPR_TOOL1,     ART_TOOL1);

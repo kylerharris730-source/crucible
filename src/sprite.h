@@ -103,6 +103,7 @@ enum SpriteId {
        reads as a big creature, and a second canvas size would mean a second set
        of art conventions for one sprite. */
     SPR_BROOD,
+    SPR_DUMMY,
     /* Player accessories: pendant, charged coil, and paired lens. Appended so
        the established sprite ids above keep their meaning. */
     SPR_ACC_GARLIC,

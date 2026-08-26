@@ -1210,7 +1210,12 @@ void initItems() {
        of them is a slot you have to clear out. */
     static char eggNames[ENT_COUNT][40];
     for (int t = ENT_NONE + 1; t < ENT_COUNT; ++t) {
-        const ItemId id = (ItemId)(ITEM_EGG_MITE + (t - 1));
+        /* Stated by the creature, not computed from it. This was
+           ITEM_EGG_MITE + (t - 1), arithmetic across two enums in headers that
+           cannot see each other, and the eighth creature would have run that
+           sum off the end of the egg block and overwritten ITEM_FORGE_CORE. */
+        const ItemId id = ENT_DEFS[t].eggItem;
+        if (id == ITEM_NONE) continue;
         sprintf(eggNames[t], "%s Egg", ENT_DEFS[t].name);
         ITEMS[id].name     = eggNames[t];
         ITEMS[id].kind     = ITEMK_EGG;

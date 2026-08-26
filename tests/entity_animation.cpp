@@ -15,9 +15,18 @@ int main() {
     initMaterials(); initItems(); initSprites(); entReset(); g_world.reset();
     static u32 first[VIEW_CELLS_W * VIEW_CELLS_H];
     static u32 second[VIEW_CELLS_W * VIEW_CELLS_H];
-    const int later[ENT_COUNT] = { 0, 5, 6, 9, 7, 4, 6, 6 };
+    /* A frame far enough into each creature's own cycle to have moved. Adding
+       a species and forgetting a row here zero-fills it, so both samples come
+       from frame 0 and the creature is reported as not animating when the real
+       fault is in this table -- checked below rather than left as a puzzle. */
+    const int later[ENT_COUNT] = { 0, 5, 6, 9, 7, 4, 6, 6, 6 };
 
     for (int type = ENT_NONE + 1; type < ENT_COUNT; ++type) {
+        if (later[type] == 0) {
+            fprintf(stderr, "%s has no sample frame -- add a row to later[]\n",
+                    ENT_DEFS[type].name);
+            return 9;
+        }
         memset(g_entities, 0, sizeof(g_entities));
         Entity& e = g_entities[0];
         e.type = (u8)type; e.hp = ENT_DEFS[type].hp; e.facing = 1;

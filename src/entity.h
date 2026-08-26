@@ -63,6 +63,16 @@ enum EntityType {
     /* --- the layer 1 boss -------------------------------------------------
        Summoned, never spawned. See BOSS_LAYER1 and the summon item. */
     ENT_BROOD,
+    /* --- the crash dummy ---------------------------------------------------
+       Not a creature. A test rig, summoned from an egg, shaped exactly like the
+       character and unable to die: it stands where you put it and runs from
+       anything that would hurt YOU. It is here so hazards can be seen working
+       on a body instead of inferred from a health bar.
+
+       Appended after the boss deliberately. g_bossesBeaten is a bitmask indexed
+       by EntityType, so inserting anything above ENT_BROOD would move which bit
+       means "you beat the Brood Mother" in every existing save. */
+    ENT_DUMMY,
     ENT_COUNT
 };
 
@@ -137,6 +147,17 @@ struct EntityDef {
        rather than beside the egg item so there is one table describing a
        creature and not two that can disagree about what colour it is. */
     u32   eggColour;
+    /* Which egg item summons this, stated rather than derived. It used to be
+       index arithmetic -- ITEM_EGG_MITE + (type - 1) -- across two enums in
+       headers that cannot see each other, and the eighth creature would have
+       walked that sum straight off the end of the egg block and overwritten
+       ITEM_FORGE_CORE with a spawn egg. Stating it also frees the egg ids to be
+       appended wherever saves need them rather than kept adjacent. */
+    ItemId eggItem;
+    /* Cannot be killed: damage still registers, and still hurts, but health is
+       restored before anything can act on it being gone. For the crash dummy,
+       which is a target rather than an opponent. */
+    bool  indestructible;
 };
 
 extern const EntityDef ENT_DEFS[ENT_COUNT];

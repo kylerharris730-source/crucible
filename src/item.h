@@ -247,6 +247,13 @@ enum {
     ITEM_DRONE_HARNESS,
     ITEM_DRONE_GREAVES,
     ITEM_DRONE_BEACON,
+    /* The crash dummy's egg, appended for the same reason as everything else in
+       this tail: saves store numeric item ids. It does NOT go beside the other
+       eggs, where it belongs by meaning, because inserting there would shift
+       ITEM_FORGE_CORE and every id after it and quietly turn one item in every
+       existing save into a different one. Which egg makes which creature is
+       stated outright by EntityDef::eggItem, so nothing needs them adjacent. */
+    ITEM_EGG_DUMMY,
     ITEM_COUNT
 };
 

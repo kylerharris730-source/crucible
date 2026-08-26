@@ -39,8 +39,8 @@ static const float ENT_GRAVITY  = 0.18f;
 static const float ENT_MAX_FALL = 6.0f;
 
 const EntityDef ENT_DEFS[ENT_COUNT] = {
-    /* name       w   h  hp dmg  cd   speed accel  fly layers night | shotEvery dmg spd standOff boss | drop min max sprite egg */
-    { "none",      0,  0,  0,   0,   0, 0.00f, 0.00f, false, 0,  false,   0, 0, 0.0f, 0.0f, false, ITEM_NONE,        0, 0, ITEM_NONE,            0, SPR_NONE,  0x000000 },
+    /* name       w   h  hp dmg  cd   speed accel  fly layers night | shotEvery dmg spd standOff boss | drop min max charm 1-in sprite egg | eggItem indestructible */
+    { "none",      0,  0,  0,   0,   0, 0.00f, 0.00f, false, 0,  false,   0, 0, 0.0f, 0.0f, false, ITEM_NONE,        0, 0, ITEM_NONE,            0, SPR_NONE,  0x000000, ITEM_NONE,          false },
 
     /* --- rock mite ---------------------------------------------------------
        The one that makes the first twenty minutes treacherous. Slow enough to
@@ -54,7 +54,7 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
        matriarch. That is the Terraria shape: the summon is assembled out of
        what the place is already made of, so deciding to fight the boss is a
        decision you make gradually while doing something else. */
-    { "Rock Mite",12,  9, 18,   6,  36, 0.34f, 0.05f, false, 1,  true,    0, 0, 0.0f, 0.0f, false, (ItemId)MAT_CHITIN, 1, 2, ITEM_CARAPACE_CHARM, 50, SPR_MITE,  0x8E7758 },
+    { "Rock Mite",12,  9, 18,   6,  36, 0.34f, 0.05f, false, 1,  true,    0, 0, 0.0f, 0.0f, false, (ItemId)MAT_CHITIN, 1, 2, ITEM_CARAPACE_CHARM, 50, SPR_MITE,  0x8E7758, ITEM_EGG_MITE,      false },
 
     /* --- cinder moth -------------------------------------------------------
        Navigates to the hottest cell it can sense, which means it navigates to
@@ -78,7 +78,7 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
        rather than stockpiled. See the note in PROGRESSION about what this costs:
        glass is back to being gated on that one beach, and the honest fix is for
        sand to generate somewhere underground too. */
-    { "Cinder Moth",9,  7, 10,   4,  30, 0.52f, 0.09f, true,  1,  true,    0, 0, 0.0f, 0.0f, false, (ItemId)MAT_COAL,   1, 2, ITEM_MOTH_LANTERN,   50, SPR_MOTH,  0xE0561C },
+    { "Cinder Moth",9,  7, 10,   4,  30, 0.52f, 0.09f, true,  1,  true,    0, 0, 0.0f, 0.0f, false, (ItemId)MAT_COAL,   1, 2, ITEM_MOTH_LANTERN,   50, SPR_MOTH,  0xE0561C, ITEM_EGG_MOTH,      false },
 
     /* --- drip slime --------------------------------------------------------
        The corroder, and the slowest thing in the game: it is not a chase, it is
@@ -89,7 +89,7 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
        Introduces acid a whole layer above where acid pockets generate, so the
        material is familiar before the terrain is full of it. Drops it too,
        which is the only way to get any in layer 1. */
-    { "Drip Slime",11,  8, 24,   5,  40, 0.20f, 0.04f, false, 1,  false,   0, 0, 0.0f, 0.0f, false, (ItemId)MAT_ACID,   1, 3, ITEM_SLIME_MAGNET,   50, SPR_SLIME, 0x6FA23C },
+    { "Drip Slime",11,  8, 24,   5,  40, 0.20f, 0.04f, false, 1,  false,   0, 0, 0.0f, 0.0f, false, (ItemId)MAT_ACID,   1, 3, ITEM_SLIME_MAGNET,   50, SPR_SLIME, 0x6FA23C, ITEM_EGG_SLIME,     false },
 
     /* --- husk ---------------------------------------------------------------
        The zombie, and deliberately the dullest thing in the game: it walks at
@@ -102,7 +102,7 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
        that you cannot casually kill it, so it turns a corridor into somewhere
        you have to decide about. Everything interesting about the encounter
        comes from the terrain it is standing in. */
-    { "Husk",     11, 22, 46,  11,  34, 0.42f, 0.06f, false, 1,  true,    0, 0, 0.0f, 0.0f, false, (ItemId)MAT_CHITIN, 1, 3, ITEM_HUSK_HEART,     50, SPR_HUSK,  0x6E7A52 },
+    { "Husk",     11, 22, 46,  11,  34, 0.42f, 0.06f, false, 1,  true,    0, 0, 0.0f, 0.0f, false, (ItemId)MAT_CHITIN, 1, 3, ITEM_HUSK_HEART,     50, SPR_HUSK,  0x6E7A52, ITEM_EGG_HUSK,      false },
 
     /* --- bat ----------------------------------------------------------------
        Fast, and BAD AT STEERING. The overshoot is the entire creature.
@@ -116,7 +116,7 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
 
        Fragile to match: two hits from the starting shot. A bat you had to chase
        AND could not kill would be a tax rather than an encounter. */
-    { "Bat",       9,  7, 12,   7,  26, 1.35f, 0.055f, true, 1,  true,    0, 0, 0.0f, 0.0f, false, (ItemId)MAT_CHITIN, 1, 1, ITEM_SWIFT_CHARM,    50, SPR_BAT,   0x6A4C68 },
+    { "Bat",       9,  7, 12,   7,  26, 1.35f, 0.055f, true, 1,  true,    0, 0, 0.0f, 0.0f, false, (ItemId)MAT_CHITIN, 1, 1, ITEM_SWIFT_CHARM,    50, SPR_BAT,   0x6A4C68, ITEM_EGG_BAT,       false },
 
     /* --- spitter ------------------------------------------------------------
        The one that makes standing still wrong. It holds its distance and shoots,
@@ -152,7 +152,7 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
        ARC rather than a flat line, which is easier to read the landing point
        of, not harder. Whether that trade is right is a play-testing question
        and it is on the list. */
-    { "Spitter",  10, 12, 22,   5,  30, 0.26f, 0.05f, false, 1,  false,  95, 9, 4.7f, 90.0f, false, (ItemId)MAT_CHITIN, 1, 2, ITEM_SPITTER_BRACER, 50, SPR_SPITTER, 0x8A5A3A },
+    { "Spitter",  10, 12, 22,   5,  30, 0.26f, 0.05f, false, 1,  false,  95, 9, 4.7f, 90.0f, false, (ItemId)MAT_CHITIN, 1, 2, ITEM_SPITTER_BRACER, 50, SPR_SPITTER, 0x8A5A3A, ITEM_EGG_SPITTER, false },
 
     /* --- the brood mother, layer 1's boss ------------------------------------
        A rock mite grown enormous, which is the right shape for a first boss:
@@ -166,7 +166,22 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
        hp 900 against a starting shot that does 6 is a real fight without being
        a war of attrition, and it is meant to be fought AFTER the Blast Module,
        which does 22. Drops the Forge Core -- see the note there. */
-    { "Brood Mother", 34, 24, 900, 16, 26, 0.55f, 0.05f, false, 0, false,  0, 0, 0.0f, 0.0f, true,  ITEM_FORGE_CORE, 1, 1, ITEM_NONE,            0, SPR_BROOD, 0xB04838 },
+    { "Brood Mother", 34, 24, 900, 16, 26, 0.55f, 0.05f, false, 0, false,  0, 0, 0.0f, 0.0f, true,  ITEM_FORGE_CORE, 1, 1, ITEM_NONE,            0, SPR_BROOD, 0xB04838, ITEM_EGG_BROOD,     false },
+
+    /* --- the crash dummy ---------------------------------------------------
+       A test rig, not a creature, and every column says so: no touch damage, no
+       layer it spawns in, no drop, no charm. You place it with an egg.
+
+       PLAYER_W by PLAYER_H exactly, because the whole point is to watch a body
+       the size of YOURS get hurt by something. A dummy that was a different
+       shape would answer a different question -- whether that ceiling of lava
+       reaches a 14-cell creature, rather than whether it reaches you.
+
+       hp is a real number rather than something enormous, and indestructible
+       does the work instead: see the restore in entTickMode. A huge hp bar
+       would still tick down, still show damage numbers climbing toward an end,
+       and would eventually get there if you left something burning it. */
+    { "Crash Dummy", PLAYER_W, PLAYER_H, 100, 0, 60, 0.62f, 0.09f, false, 0, false, 0, 0, 0.0f, 0.0f, false, ITEM_NONE, 0, 0, ITEM_NONE, 0, SPR_DUMMY, 0xE8C233, ITEM_EGG_DUMMY, true },
 };
 
 /* Not saved with the creatures -- see entity.h. Written by save.cpp as one u32
@@ -725,6 +740,122 @@ static float routedDir(Entity& e, const Player& p, bool* climb) {
     return dx > 0 ? 1.0f : -1.0f;
 }
 
+/* --- the crash dummy: running away from things that would hurt YOU -----------
+
+   It stands still until something frightens it, and the only things that
+   frighten it are the things that damage the character. That is not a
+   resemblance, it is the same two tables: bodyTemp's HEAT_HURT_AT and
+   COLD_HURT_AT lines, and g_matContactDamage. Player::update asks exactly those
+   two questions of exactly those sources -- see the two blocks in it -- so a
+   hazard the dummy flinches from is a hazard that hurts you, and one it walks
+   through does not. A second opinion here would make it a liar, and a liar is
+   worse than no dummy at all.
+
+   The BARE lines rather than a Player's, since it wears nothing. It is a
+   measure of the room, not of your gear. */
+/* How far off it notices trouble. Forty-eight rather than thirty, which is
+   more than a body-length: at thirty it could only see a fire once the fire was
+   nearer than the dummy is TALL, so it started running when it was already
+   uncomfortable rather than when it saw the thing. */
+static const int   DUMMY_SENSE   = 48;
+/* Sampling step for the far scan. Two is cheap and blurry, and blurry is fine
+   for "something over there is bad" -- but see the body scan in dummyTick,
+   which is deliberately not blurry, because a stride of two steps straight over
+   a hazard one cell wide. */
+static const int   DUMMY_STRIDE  = 2;
+/* How long it keeps running after the last frightening thing left its senses.
+   This is the "it runs further than it has to" number and it is the whole
+   character of the thing: stopping the instant it was safe would look like a
+   machine satisfying a condition, and bolting for another second and a half
+   looks like something that got a fright. */
+static const int   DUMMY_PANIC   = 90;
+static const float DUMMY_RUN     = 1.7f;  /* multiplies its walk when fleeing */
+
+/* Is this cell one of the things that would damage the character? */
+static bool dummyHazard(const World& w, int x, int y) {
+    if (x < 0 || x >= SIM_W || y < 0 || y >= SIM_H) return false;
+    const int i = y * SIM_W + x;
+    if (g_matContactDamage[w.cells[i].mat] > 0.0f) return true;
+    const u8 t = w.temp[i];
+    return t >= HEAT_HURT_AT || t <= COLD_HURT_AT;
+}
+
+static void dummyTick(World& w, Entity& e, const Player& p) {
+    const EntityDef& d = ENT_DEFS[e.type];
+
+    /* Cells the body is actually IN, at FULL resolution and weighted heavily.
+       The far scan below steps by two to stay cheap, and a stride of two walks
+       straight over a hazard one cell wide -- a single acid drip sitting on an
+       even column would be invisible to it. Blurring the horizon is fine;
+       blurring "am I standing in it" is not, because that is the one answer
+       this thing exists to give. */
+    float away = 0.0f;
+    int found = 0;
+    bool touching = false;
+    const int cx = (int)e.centreX(), cy = (int)e.centreY();
+    for (int y = e.top(); y <= e.bottom(); ++y)
+        for (int x = e.left(); x <= e.right(); ++x)
+            if (dummyHazard(w, x, y)) {
+                ++found; touching = true;
+                away += (float)(cx - x) * 4.0f;
+            }
+
+    /* Then the horizon. A REPULSION rather than a nearest threat, weighted by
+       1/distance so a wall of fire on one side outvotes a single warm cell on
+       the other, and so being surrounded pushes it toward the gap instead of
+       toward whichever hazard the scan happened to reach first. */
+    for (int y = cy - DUMMY_SENSE; y <= cy + DUMMY_SENSE; y += DUMMY_STRIDE)
+        for (int x = cx - DUMMY_SENSE; x <= cx + DUMMY_SENSE; x += DUMMY_STRIDE) {
+            if (!dummyHazard(w, x, y)) continue;
+            ++found;
+            const float dx = (float)(cx - x), dy = (float)(cy - y);
+            const float d2 = dx * dx + dy * dy;
+            if (d2 < 1.0f) continue;      /* underfoot: the body scan has it */
+            away += dx / d2 * 64.0f;
+        }
+
+    /* Pain from anything else -- a shot, a swing, a falling rock -- reads as
+       "get away from whoever did that". The source is not recorded anywhere, so
+       it flees the character, which is right almost every time because the
+       character is what is poking it. */
+    if (e.hurtFlash > 0 && !found) {
+        away += p.centreX() > e.centreX() ? -1.0f : 1.0f;
+        ++found;
+    }
+
+    if (found) {
+        /* Committed on the frame the fright happens and not revisited while the
+           panic lasts. Re-deciding every frame in a symmetrical hazard makes it
+           jitter on the spot, which reads as a broken thing rather than a
+           frightened one. */
+        if (away > 0.01f || away < -0.01f) e.aimX = away > 0.0f ? 1.0f : -1.0f;
+        /* Standing dead centre in something, so no side is worse. It has to
+           pick one and commit rather than balance: a body in the middle of a
+           pool that keeps re-deciding stays in the pool. */
+        else if (touching || e.aimX == 0.0f) e.aimX = e.facing >= 0 ? 1.0f : -1.0f;
+        e.actTimer = DUMMY_PANIC;
+    }
+
+    if (e.actTimer > 0) {
+        --e.actTimer;
+        const float top = d.speed * DUMMY_RUN;
+        e.vx += e.aimX * d.accel;
+        if (e.vx >  top) e.vx =  top;
+        if (e.vx < -top) e.vx = -top;
+        if (e.vx > 0.05f) e.facing = 1; else if (e.vx < -0.05f) e.facing = -1;
+        /* A scramble over a lip while running, which is the difference between
+           fleeing and cowering against the first step it meets. */
+        if (e.onGround && e.vx == 0.0f) e.vy = -2.2f;
+        return;
+    }
+
+    /* Calm: it stands where you put it. Braked rather than stopped dead so the
+       end of a run is a skid, and so a shove still slides it a little way --
+       which is most of what poking it around is. */
+    e.vx *= 0.80f;
+    if (e.vx < 0.02f && e.vx > -0.02f) e.vx = 0.0f;
+}
+
 /* Walk toward the player, or away to hold a standoff. Shared by everything that
    moves along the ground, because "which way is the player" is the same
    question however the creature answers it. */
@@ -1081,6 +1212,12 @@ static void entTickMode(World& w, Player& fallbackPlayer, Inventory& fallbackInv
     for (int i = 0; i < MAX_ENTITIES; ++i) {
         Entity& e = g_entities[i];
         if (e.type == ENT_NONE) continue;
+        /* A dummy cannot die, and the restore happens HERE -- before the death
+           check, before contact, before the hazard pass -- so there is no
+           ordering in which a big enough hit gets to kill it first. It still
+           takes the damage and still flashes, because the flinch is the point;
+           it just never runs out. */
+        if (ENT_DEFS[e.type].indestructible) e.hp = ENT_DEFS[e.type].hp;
         if (e.hp <= 0) { entDie(w, e); continue; }
 
         Player* targetPlayer = &fallbackPlayer;
@@ -1138,6 +1275,7 @@ static void entTickMode(World& w, Player& fallbackPlayer, Inventory& fallbackInv
         case ENT_BAT:     batTick(w, e, p);     break;
         case ENT_SPITTER: spitterTick(w, e, p); break;
         case ENT_BROOD:   broodTick(w, e, p);   break;
+        case ENT_DUMMY:   dummyTick(w, e, p);   break;
         default: break;
         }
 
@@ -1528,6 +1666,23 @@ static void entityPixelMotion(const Entity& e, int entityIndex, int sx, int sy,
             if (gait) --*dy;
         } else if (sy >= 5 && sy <= 10) {
             *dy += (int)((tick / 24u) & 1u);               /* slow idle weight shift */
+        }
+        break;
+    }
+    case ENT_DUMMY: {
+        /* A rig, so its motion is JOINTED rather than organic: the legs swing
+           and the striped torso rocks a little, and nothing breathes. When it
+           is standing it is dead still -- every other creature here idles,
+           because a living thing that stops completely looks broken, and this
+           one is supposed to look like equipment somebody stood up.
+
+           The sy bands are read on the 14-row canvas, not the 30-cell box; the
+           art is drawn short and wide because entDraw stretches it. Rows 11-13
+           are the legs, 5-9 the striped torso. */
+        const int gait = (int)((tick / 6u) & 1u);
+        if (moving) {
+            if (sy >= 11) *dx += (sx < SPR_W / 2) == (gait != 0) ? 1 : -1;
+            if (sy >= 5 && sy <= 9 && gait) --*dy;         /* torso rocks on a step */
         }
         break;
     }
