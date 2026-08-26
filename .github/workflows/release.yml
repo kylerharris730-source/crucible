@@ -31,6 +31,18 @@ jobs:
           call build.bat
           call build_launcher.bat
 
+      - name: Reject non-Windows runtime DLL dependencies
+        shell: powershell
+        run: |
+          $binaries = @('build/crucible.exe', 'build/crucible-launcher.exe')
+          foreach ($binary in $binaries) {
+            $imports = (& objdump -p $binary | Select-String 'DLL Name').Line
+            $forbidden = $imports | Select-String -Pattern 'libwinpthread|libgcc|libstdc\+\+' -CaseSensitive:$false
+            if ($forbidden) {
+              throw "$binary depends on a MinGW runtime DLL:`n$($forbidden -join "`n")"
+            }
+          }
+
       - name: Create verified release manifest
         shell: powershell
         env:

@@ -45,7 +45,11 @@ REM you had -- which is how a missing source file turned into a deleted game.
 REM Embed the MinGW C++ runtimes. Otherwise the EXE works on this development
 REM machine but a copied release also requires libgcc_s_dw2-1.dll and
 REM libstdc++-6.dll beside it.
-g++ -std=c++11 -O2 -Wall -Wextra -mwindows -static-libgcc -static-libstdc++ -DCRUCIBLE_BUILD_ID=\"!BUILD_ID!\" !SRC! ^
+REM -static, not only -static-libgcc/-static-libstdc++. The 64-bit MinGW used
+REM by GitHub Actions builds libstdc++ against libwinpthread; leaving that last
+REM runtime dynamic produced executables that worked on the runner and failed
+REM on clean Windows installs with "libwinpthread-1.dll was not found".
+g++ -std=c++11 -O2 -Wall -Wextra -mwindows -static -static-libgcc -static-libstdc++ -DCRUCIBLE_BUILD_ID=\"!BUILD_ID!\" !SRC! ^
     -o build\crucible.new.exe ^
     -lgdi32 -luser32 -lwinmm -lmsimg32 -lws2_32
 
