@@ -1670,19 +1670,23 @@ static void entityPixelMotion(const Entity& e, int entityIndex, int sx, int sy,
         break;
     }
     case ENT_DUMMY: {
-        /* A rig, so its motion is JOINTED rather than organic: the legs swing
-           and the striped torso rocks a little, and nothing breathes. When it
-           is standing it is dead still -- every other creature here idles,
-           because a living thing that stops completely looks broken, and this
-           one is supposed to look like equipment somebody stood up.
+        /* A rig, so its motion is JOINTED rather than organic: legs swing, arms
+           swing the opposite way, and nothing breathes. Standing, it is dead
+           still -- every other creature here idles, because a living thing that
+           stops completely looks broken, and this one is meant to look like
+           equipment somebody stood up.
 
-           The sy bands are read on the 14-row canvas, not the 30-cell box; the
-           art is drawn short and wide because entDraw stretches it. Rows 11-13
-           are the legs, 5-9 the striped torso. */
+           The sy bands are rows of the 14-row CANVAS, not cells of the 30-cell
+           box: rows 5-8 are the arms and shoulders, 11-13 the legs. */
         const int gait = (int)((tick / 6u) & 1u);
         if (moving) {
-            if (sy >= 11) *dx += (sx < SPR_W / 2) == (gait != 0) ? 1 : -1;
-            if (sy >= 5 && sy <= 9 && gait) --*dy;         /* torso rocks on a step */
+            if (sy >= 12) *dx += (sx < SPR_W / 2) == (gait != 0) ? 1 : -1;
+            /* Arms counter-swing. Only the outer columns, which are the arms --
+               the torso between them must not shear or the whole body wobbles
+               like jelly, which is the one thing a rig should never do. */
+            if (sy >= 5 && sy <= 8 && (sx <= 2 || sx >= 11))
+                *dy += (sx < SPR_W / 2) == (gait != 0) ? 1 : -1;
+            if (gait) --*dy;
         }
         break;
     }

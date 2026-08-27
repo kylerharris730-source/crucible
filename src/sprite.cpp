@@ -173,11 +173,13 @@ static u32 paletteOf(char c) {
     case '[': return 0xC89A5A;     /* bread crust */
     case ']': return 0xE8D2A2;     /* bread crumb */
     case '{': return 0x2A2620;     /* egg speckle, dark on every shell */
-    /* The crash dummy. Hazard stripes, which is the one livery that says
-       "equipment, not creature" before any of the shape resolves. */
-    case ':': return 0xE8C233;     /* hazard yellow */
-    case ';': return 0x2A2E36;     /* hazard stripe, and its eye slot */
-    case '<': return 0x9AA2AE;     /* dummy frame and limbs */
+    /* The crash dummy. ONE colour, in three values -- it was hazard yellow on
+       black and read as a warning sign rather than as a body: the stripes were
+       the loudest thing on screen and the silhouette was the thing you actually
+       needed to see. Beige carries better against cave rock than either. */
+    case ':': return 0xD6BE9A;     /* dummy: body */
+    case ';': return 0xA8916C;     /* dummy: shade, where a limb needs an edge */
+    case '<': return 0x6E5E46;     /* dummy: joints and eye slots */
 
     default:  return 0xFF00FF;     /* unmapped: loud on purpose */
     }
@@ -1728,31 +1730,49 @@ static const char* ART_BREAD[SPR_H] = {
 };
 
 /* --- the crash dummy -------------------------------------------------------
-   Hazard stripes on a jointed figure, which is the one look that says "this is
-   equipment, not a creature" before anything else about it resolves.
+   One beige, in three values, with ARMS -- and the arms are the reason this
+   file's usual "just draw it" does not apply.
 
-   Drawn SHORT and WIDE on purpose. entDraw scales any sprite whose box is much
-   bigger than the canvas, and this one is PLAYER_W by PLAYER_H = 11 by 30, so
-   fourteen columns are squeezed into eleven and fourteen rows are stretched
-   over thirty. A figure drawn at natural proportions here arrives on screen
-   twice as tall as it should be. The husk has the same problem and solves it
-   the same way; the rule for this canvas is to draw for the box, not for the
-   square. */
+   entDraw squeezes fourteen columns into eleven for a body this shape, and the
+   squeeze is nearest-neighbour: it samples source columns 0,1,2,3,5,6,7,8,10,
+   11,12 and NEVER SAMPLES 4, 9 or 13. A gap drawn in one of those three
+   vanishes completely, which is exactly how the first version ended up a
+   solid slab with no arms in it -- the arms were there, the gap beside them
+   was not.
+
+   So the layout is placed on columns that survive, and the budget is spent on
+   the TORSO rather than split evenly: arms on 0-1 and 11-12, gaps on 2 and 10,
+   torso on 3-8. On screen that lands as two pixels of arm, one of gap, five of
+   torso, one of gap, two of arm. An earlier version gave the arms three
+   columns each and the torso four, and the result was a totem pole -- limbs
+   as thick as the body read as a stack of blocks rather than as a figure.
+
+   The legs split at columns 6-7, both of which are sampled, so the gap between
+   them is two pixels wide and actually visible.
+
+   Row 5 is deliberately SOLID all the way across. With the gap running the
+   full height of the arm the limbs read as two rectangles floating beside the
+   body rather than as arms; one connected shoulder line is all it takes to
+   attach them, and it doubles as the widest part of the silhouette.
+
+   Drawn short and wide for the same reason as before: fourteen rows are
+   stretched over thirty, so a figure at natural proportions arrives twice as
+   tall as it should. */
 static const char* ART_DUMMY[SPR_H] = {
-    "....<<<<<<....",
-    "...<<:;;:<<...",
-    "....<<<<<<....",
-    ".....<<<<.....",
-    "..<<<<<<<<<<..",
-    "..::::::::::..",
-    "..;;;;;;;;;;..",
-    "..::::::::::..",
-    "..;;;;;;;;;;..",
-    "..::::::::::..",
-    "..<<<<<<<<<<..",
-    "..<<......<<..",
-    "...<<....<<...",
-    "...<<....<<...",
+    "...::::::.....",
+    "...::::::.....",
+    "...::<:<:.....",
+    "...::::::.....",
+    ".....::.......",
+    "::::::::::::..",
+    "::.::::::..::.",
+    ";;.::::::..;;.",
+    "::.::::::..::.",
+    "...::::::.....",
+    "...::::::.....",
+    "...::::::::...",
+    "...:::..:::...",
+    "...;;;..;;;...",
 };
 
 void initSprites() {
