@@ -36,6 +36,7 @@ int main() {
     initMaterials();
     initItems();
     playerSessionsReset();
+    int failures = 0;
 
     World& w = g_bench;
     w.reset();
@@ -43,6 +44,34 @@ int main() {
        and blockOpen stops at the first solid cell, so a synthetic cavern would
        measure the early-out rather than the work. */
     generateWorld(w);
+
+    /* The sky should read blue even near the horizon, and springs should exist
+       in both forms: dry hidden seams and visible chamber pools. This scan
+       piggybacks on the generated world the navigation test already needs. */
+    const u32 horizon = g_skyLut[SKY_BAND - 1];
+    const int horizonG = (int)((horizon >> 8) & 255), horizonB = (int)(horizon & 255);
+    if (horizonB - horizonG < 20) {
+        fprintf(stderr, "FAIL: lower sky drifted grey (%06lx)\n", (unsigned long)horizon);
+        ++failures;
+    }
+    int wetSpringCells = 0, drySpringCells = 0;
+    for (int y = PLAY_Y0 + 12; y <= PLAY_Y1 - 12; ++y) {
+        for (int x = PLAY_X0 + 12; x <= PLAY_X1 - 12; ++x) {
+            if (w.at(x, y).mat != MAT_SPRING) continue;
+            bool wet = false;
+            for (int yy = y - 10; yy <= y + 10 && !wet; ++yy)
+                for (int xx = x - 10; xx <= x + 10; ++xx)
+                    if (w.at(xx, yy).mat == MAT_WATER) { wet = true; break; }
+            if (wet) ++wetSpringCells; else ++drySpringCells;
+        }
+    }
+    printf("springs: %d chamber pools, %d wet source cells, %d hidden source cells\n",
+           g_openSpringsPlaced, wetSpringCells, drySpringCells);
+    if (g_openSpringsPlaced != 4 || wetSpringCells < 16 || drySpringCells < 100) {
+        fprintf(stderr, "FAIL: visible/hidden spring mix missing (pools %d, wet %d, dry %d)\n",
+                g_openSpringsPlaced, wetSpringCells, drySpringCells);
+        ++failures;
+    }
 
     float px, py;
     worldSpawnPoint(&px, &py);
@@ -69,7 +98,6 @@ int main() {
            ms, navReached(0), navReached(1), NAV_W * NAV_H);
     printf("at one rebuild in 12 frames that is %.3f ms/frame of 16.7\n", ms / 12.0);
 
-    int failures = 0;
     if (ms > 12.0) {
         fprintf(stderr, "FAIL: %.2f ms a rebuild is most of a frame -- routing "
                         "has become the expensive thing in the game\n", ms);

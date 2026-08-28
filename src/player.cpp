@@ -13,12 +13,14 @@ static_assert(PSPR_W == PLAYER_W && PSPR_H == PLAYER_H,
 static_assert(CSPR_W == PLAYER_W && CSPR_H == CROUCH_H,
               "the crouch sprite must be exactly the size of the crouched box");
 
-/* Tuning, in cells and frames at the fixed 60Hz step. Written as the numbers
-   they are rather than derived, but the jump is worth showing the working for:
-   peak height is v^2 / 2g, so 2.6 and 0.18 give about 18 cells of clearance and
-   an apex a quarter of a second away. That is deliberately snappy -- a floatier
-   jump reads badly when the ground can vanish underneath you mid-arc. */
+/* Tuning, in cells and frames at the fixed 60Hz step. A released jump keeps the
+   old 0.18 gravity and its short, snappy ~19-cell hop. Holding Up/Jump while
+   rising uses 0.10 instead: the same takeoff speed then peaks around 34 cells,
+   just over one PLAYER_H. This is variable height without a second impulse, so
+   releasing never produces an abrupt velocity cut and pressing again while
+   falling cannot become a double jump. */
 static const float GRAVITY     = 0.18f;
+static const float JUMP_HELD_GRAVITY = 0.10f;
 static const float MAX_FALL    = 6.0f;   /* terminal velocity, cells/frame */
 static const float MOVE_ACCEL  = 0.35f;
 static const float MAX_SPEED   = 1.2f;   /* ~72 cells/second */
@@ -628,7 +630,10 @@ void Player::update(const World& w, const PlayerInput& in) {
         fallFromY = y;
     } else {
         if (in.jump && onGround) { vy = -JUMP_VEL; onGround = false; }
-        vy += GRAVITY;
+        /* Holding the jump key supports the ASCENT; it does not push. That
+           distinction is what keeps this a taller version of the same jump:
+           no fuel, no extra impulse, and no effect once the apex is passed. */
+        vy += (in.jump && vy < 0.0f) ? JUMP_HELD_GRAVITY : GRAVITY;
     }
 
     /* --- thrust --------------------------------------------------------

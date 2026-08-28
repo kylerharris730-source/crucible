@@ -1395,7 +1395,10 @@ static void initZoneColours() {
        underground is handled where it actually happens -- at the chunk
        boundary, by backdrop() -- rather than by trying to shape this curve to
        land on the cave colour at a depth that is different in every column. */
-    const u32 STOPS[4] = { 0x24406E, 0x3D6698, 0x6E8CA8, 0x8FA0AC };
+    /* Keep the same value progression, but carry visibly more blue through
+       the middle and lower sky. The previous horizon stop had only twelve
+       more blue than green and read as grey anywhere except high overhead. */
+    const u32 STOPS[4] = { 0x244778, 0x3D70AA, 0x6B98BD, 0x8EAFC7 };
     const int nSeg = 3;
     const int span = SKY_BAND / nSeg;
     for (int y = 0; y < SKY_BAND; ++y) {

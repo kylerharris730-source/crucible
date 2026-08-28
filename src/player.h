@@ -224,9 +224,10 @@ static const int HEAL_COOLDOWN_FRAMES = 30 * 60;
    30-cell drop and a 300-cell drop arrive at exactly the same speed. Speed
    cannot tell them apart and distance can.
 
-   The safe distance has to clear a plain jump or jumping would cost health. The
-   jump is 2.6 cells/frame against 0.18 gravity, so its peak is v^2/2g = 18.8
-   cells and you land from 19.
+   The safe distance has to clear a plain jump or jumping would cost health. A
+   tapped jump is 2.6 cells/frame against 0.18 gravity and peaks near 19 cells;
+   holding Up reduces gravity during ascent and peaks near 34. Both are far
+   below the safe distance here.
 
    174. The doubling went one step too far -- 208 cells is a drop you would
    look down at and not take, and it cost nothing -- so both numbers came back

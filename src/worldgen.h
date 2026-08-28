@@ -86,6 +86,11 @@ void generateWorld(World& w);
 /* How many trees the last generation put down, for the HUD and for tests. */
 extern int g_treesPlanted;
 
+/* Number of chamber-floor spring pools placed by the last generation. Hidden
+   seams are intentionally not included. Published for the deterministic
+   world-generation regression just like g_treesPlanted. */
+extern int g_openSpringsPlaced;
+
 /* Where the character should start: on the grass, in the plains, clear of
    anything. */
 void worldSpawnPoint(float* outX, float* outY);

@@ -666,11 +666,13 @@ static void carveChamber(World& w, u32 seed, int cx, int cy, int rx, int ry) {
 static int g_chamberX[CHAMBER_COUNT];
 static int g_chamberY[CHAMBER_COUNT];
 static int g_chamberR[CHAMBER_COUNT];
+static int g_chamberRX[CHAMBER_COUNT];
 
 static void generateChambers(World& w) {
     for (int i = 0; i < CHAMBER_COUNT; ++i) {
         g_chamberX[i] = g_chamberY[i] = -1;
         g_chamberR[i] = 0;
+        g_chamberRX[i] = 0;
         const u32 seed = 0xC4A3u + (u32)i * 7919u;
 
         /* Spread by index across the world and jittered, the same way the worms
@@ -763,7 +765,8 @@ static void generateChambers(World& w) {
         if (rx < 12 || ry < 12) continue;
 
         carveChamber(w, seed, cx, cy, rx, ry);
-        g_chamberX[i] = cx; g_chamberY[i] = cy; g_chamberR[i] = ry;
+        g_chamberX[i] = cx; g_chamberY[i] = cy;
+        g_chamberRX[i] = rx; g_chamberR[i] = ry;
     }
 }
 
@@ -1313,14 +1316,16 @@ static void generateAcidPockets(World& w) {
    backdrop around the seam marks the place without putting anything in the way,
    and it costs no new mechanism at all -- the renderer already draws bg, and the
    simulation already ignores it. */
-static const int SPRING_COUNT  = 14;
+static const int HIDDEN_SPRING_COUNT = 10;
+static const int OPEN_SPRING_COUNT   = 4;
 static const int SPRING_MIN_DEP = 120;   /* below the stone line, so never in soil */
 static const int SPRING_R      = 7;      /* the seam itself: small */
 static const int SPRING_HALO   = 26;     /* how far the blue reaches */
+int g_openSpringsPlaced = 0;
 
-static void generateSprings(World& w) {
-    for (int i = 0; i < SPRING_COUNT; ++i) {
-        const float fx = ((float)i + 0.5f) / (float)SPRING_COUNT * (float)SIM_W
+static void generateHiddenSprings(World& w) {
+    for (int i = 0; i < HIDDEN_SPRING_COUNT; ++i) {
+        const float fx = ((float)i + 0.5f) / (float)HIDDEN_SPRING_COUNT * (float)SIM_W
                        + (float)(int)(hash1(i, 0x5B09u) % 300u) - 150.0f;
         const int cx = imin(PLAY_X1 - 60, imax(PLAY_X0 + 60, (int)fx));
         /* Layer 1 only, and clear of both the soil above and the barrier below. */
@@ -1355,6 +1360,106 @@ static void generateSprings(World& w) {
                 if (w.at(x, y).mat != MAT_STONE) continue;
                 w.setCell(x, y, MAT_SPRING);
             }
+        }
+    }
+}
+
+/* Put a source into the low point of a broad chamber and seed the water it
+   would eventually make. Distant chunks sleep, so relying on simulation alone
+   would leave a newly discovered spring as a dry blue fleck until the player
+   waited beside it. A shallow generated pool makes the feature readable the
+   instant the room enters view, while the ordinary spring rule still owns all
+   replenishment after that. */
+static bool generateOpenSpring(World& w, int chamber, int ordinal) {
+    if (chamber < 0 || chamber >= CHAMBER_COUNT || g_chamberX[chamber] < 0 ||
+        g_chamberRX[chamber] < 60 || g_chamberR[chamber] < 36) return false;
+
+    const int cx = g_chamberX[chamber], cy = g_chamberY[chamber];
+    const int half = imin(28, g_chamberRX[chamber] / 3);
+    const int limit = imin(PLAY_Y1 - 4, cy + g_chamberR[chamber] + 10);
+
+    /* The chamber is an irregular bowl. Search its middle third for the
+       deepest exposed STONE floor rather than assuming the geometric centre
+       survived ore and pocket passes unchanged. */
+    int sx = -1, floorY = -1;
+    for (int x = cx - half; x <= cx + half; ++x) {
+        int fy = -1;
+        for (int y = cy; y <= limit; ++y) {
+            if (w.at(x, y).mat == MAT_EMPTY) continue;
+            fy = y; break;
+        }
+        if (fy > floorY && fy > cy + 5 && w.at(x, fy).mat == MAT_STONE) {
+            floorY = fy; sx = x;
+        }
+    }
+    if (sx < 0) return false;
+
+    /* A compact blue seam in the bed. Follow the local floor so the spring is
+       visible as material rather than buried beneath a rectangular stamp. */
+    int springCells = 0;
+    for (int x = sx - 4; x <= sx + 4; ++x) {
+        int fy = -1;
+        for (int y = floorY - 5; y <= floorY + 5; ++y) {
+            if (y < PLAY_Y0 || y > PLAY_Y1 || w.at(x, y).mat == MAT_EMPTY) continue;
+            fy = y; break;
+        }
+        if (fy < 0) continue;
+        for (int y = fy; y <= fy + 2 && y <= PLAY_Y1; ++y) {
+            if (w.at(x, y).mat != MAT_STONE) continue;
+            w.setCell(x, y, MAT_SPRING); ++springCells;
+        }
+    }
+    if (springCells < 4) return false;
+
+    /* Blue-stained rock around the source connects the pool to the same visual
+       language as the hidden seams. */
+    const int halo = 18;
+    for (int y = floorY - halo; y <= floorY + 6; ++y)
+        for (int x = sx - halo; x <= sx + halo; ++x) {
+            if (x < PLAY_X0 || x > PLAY_X1 || y < PLAY_Y0 || y > PLAY_Y1) continue;
+            const int dx = x - sx, dy = y - floorY;
+            if (dx * dx + dy * dy <= halo * halo)
+                w.setBg(x, y, MAT_WATER, false);
+        }
+
+    /* Fill only up to six cells above the low point and only inside a modest
+       width. Columns whose floor rises above that line naturally become the
+       banks, so this remains a lake in the cavern rather than a generated tank. */
+    const int waterline = floorY - 6;
+    int waterCells = 0;
+    const int poolHalf = 24 + (ordinal & 1) * 4;
+    for (int x = sx - poolHalf; x <= sx + poolHalf; ++x) {
+        if (x < PLAY_X0 || x > PLAY_X1) continue;
+        int fy = -1;
+        for (int y = waterline; y <= floorY + 8 && y <= PLAY_Y1; ++y) {
+            if (w.at(x, y).mat == MAT_EMPTY) continue;
+            fy = y; break;
+        }
+        if (fy <= waterline) continue;
+        for (int y = waterline; y < fy; ++y) {
+            if (w.at(x, y).mat != MAT_EMPTY) break;
+            w.setCell(x, y, MAT_WATER); ++waterCells;
+        }
+    }
+    return waterCells >= 40;
+}
+
+static void generateSprings(World& w) {
+    generateHiddenSprings(w);
+
+    bool used[CHAMBER_COUNT] = {};
+    g_openSpringsPlaced = 0;
+    /* Start points are spread around the chamber table; the forward search
+       skips shafts, cramped/rejected rooms, and pedestal chambers. The latter
+       keeps a reward platform from being generated in the new pool later. */
+    for (int wanted = 0; wanted < OPEN_SPRING_COUNT; ++wanted) {
+        const int start = (wanted * CHAMBER_COUNT) / OPEN_SPRING_COUNT + 1;
+        for (int step = 0; step < CHAMBER_COUNT; ++step) {
+            const int chamber = (start + step) % CHAMBER_COUNT;
+            if (used[chamber] || chamber % 3 == 0) continue;
+            used[chamber] = true;
+            if (!generateOpenSpring(w, chamber, wanted)) continue;
+            ++g_openSpringsPlaced; break;
         }
     }
 }
