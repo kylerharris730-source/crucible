@@ -832,8 +832,27 @@ private:
     bool moveFilterFluid(int sx, int sy, int tx, int ty);
     void convert(int x, int y, u8 mat);
     void phaseChange(int x, int y, u8 mat);
+    /* Whether an unlike-liquid exchange is permitted, and WHICH WAY.
+
+       A bool was enough while only one direction existed. The general gravity
+       path never exchanges unlike liquids; the submerged-leveling calls opt in
+       once they have proved the move is right. Both of those were the denser
+       parcel moving toward a lower level, so tryMove could simply require the
+       source to be the denser one.
+
+       The lighter-pocket leveling needs the opposite exchange -- a light parcel
+       trading upward into a denser one -- and it cannot share the old flag,
+       because the callers that pass DENSER_WINS rely on tryMove's density test
+       to reject the inverse for them. Making the test symmetric would let a
+       light parcel sink into a dense one, which is the bug the test exists to
+       prevent. So the direction is stated instead of guessed.
+
+       NONE is 0 and DENSER_WINS is 1, so the historical `true` still means what
+       it always meant. */
+    enum LiquidSwap { LIQ_SWAP_NONE = 0, LIQ_SWAP_DENSER_WINS, LIQ_SWAP_LIGHTER_WINS };
+
     bool tryMove(int sx, int sy, int tx, int ty,
-                 bool allowOwnedLiquidDisplacement = false);
+                 int liquidSwap = LIQ_SWAP_NONE);
 };
 
 extern World g_world;

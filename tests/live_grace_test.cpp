@@ -1640,6 +1640,24 @@ int main() {
        Three Sand cells require pressure four (base two plus two more cells),
        then exactly one expansion volume occupies the vacated face. */
     w.reset();
+    /* Pinned, because this stage inherits the RNG stream from everything that
+       ran before it and its outcome depends on where that stream happens to be.
+       World::reset() does not reseed -- it CONSUMES the stream, re-rolling every
+       cell's tint -- so any change anywhere earlier that draws a different
+       number of randoms lands this stage on a different draw.
+
+       Measured over 400 seeded runs of exactly this scene: the steam source
+       parcel stays put with its pressure intact in 367 and wanders out of its
+       own pocket in 33, about eight percent. That rate is identical with and
+       without the liquid-layering rule that first exposed it, so it is a
+       property of the scene and not of any one change.
+
+       What this stage is actually about is the SAND: that a pressure of four
+       cannot shift five packed cells. Pinning makes it a controlled experiment
+       about that, instead of a coin flip about whether the steam stayed still.
+       Other stages in this file share the same coupling and have simply been
+       luckier. */
+    g_rng = 0x5EED1234u;
     const int pushX = 940, pushY = 720;
     w.setLiveWindow(pushX - 5, pushY - 10, pushX + 5, pushY + 5);
     for (int y = pushY - 8; y <= pushY + 1; ++y) {

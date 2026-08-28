@@ -597,7 +597,7 @@ bool World::displaceGasForLiquid(int sx, int sy, int tx, int ty) {
 }
 
 bool World::tryMove(int sx, int sy, int tx, int ty,
-                    bool allowOwnedLiquidDisplacement) {
+                    int liquidSwap) {
     /* Nothing moves into an occupied entity box -- see the note in world.h.
        First test in the function and first comparison of the box test, so the
        common case (no entity, or nowhere near it) costs one predictable
@@ -769,7 +769,7 @@ bool World::tryMove(int sx, int sy, int tx, int ty,
                    explicit submerged-leveling calls in updateLiquid may opt
                    in when they have proved that THIS source is the denser,
                    exposed parcel moving toward a supported lower level. */
-                if (!allowOwnedLiquidDisplacement) return false;
+                if (!liquidSwap) return false;
             }
             const int sourceDensity = materialDensityQ8(s.mat, temp[si]);
             const int targetDensity = materialDensityQ8(t.mat, temp[ti]);
@@ -777,6 +777,16 @@ bool World::tryMove(int sx, int sy, int tx, int ty,
                which is how steam bubbles up through water. */
             if (sm.kind == KIND_GAS) {
                 if (targetDensity <= sourceDensity + DENSITY_SWAP_EPS_Q8) return false;
+            }
+            else if (liquidSwap == LIQ_SWAP_LIGHTER_WINS &&
+                     sm.kind == KIND_LIQUID && tm.kind == KIND_LIQUID) {
+                /* The inverse exchange, and ONLY between two liquids with a
+                   caller that asked for it by name. A light parcel rising into
+                   a denser one is how a pocket under a lid spreads out; it is
+                   never something the ordinary gravity path should do, and it
+                   must not extend to gases -- a liquid still has to go through
+                   displaceGasForLiquid to enter one. */
+                if (sourceDensity + DENSITY_SWAP_EPS_Q8 >= targetDensity) return false;
             }
             else {
                 if (sourceDensity <= targetDensity + DENSITY_SWAP_EPS_Q8) return false;
@@ -1197,6 +1207,69 @@ void World::updateLiquid(int x, int y) {
                 }
                 if (tryMove(x, y, tx, targetY, true)) {
                     dirtyArea(imin(x, tx), y, imax(x, tx), targetY);
+                    return;
+                }
+                break;
+            }
+        }
+    }
+
+    /* --- and the same thing for a POCKET of the lighter liquid -------------
+       The block above relaxes a MOUND of the denser liquid, and it is the only
+       leveling rule there was. Nothing relaxed the opposite shape, and in a
+       SEALED vessel that is exactly the shape you get: the lighter liquid rises
+       until it meets the lid and then stops dead, still square, because every
+       other rule that could spread it needs somewhere emptier to go and a full
+       vessel has nowhere.
+
+       Reported from play as a pocket of molten slag in a lava chamber forming a
+       square at the top, and stated more generally as "any contained vessel of
+       liquid with some of a less dense liquid in it, the less dense liquid
+       doesn't flatten out at all". Measured: a 13x13 blob of water released in
+       a sealed vessel of mercury reached the lid and was still 13 wide by 13
+       tall two thousand frames later.
+
+       This is the block above reflected in the horizontal, deliberately line
+       for line. A BOTTOM parcel with its own liquid directly ABOVE looks across
+       the row above for its first edge against something DENSER, follows that
+       denser column upward, and trades with the highest parcel it reaches.
+       Same reach, same epsilon, same single move per frame.
+
+       The mirror inherits the property that makes the original stop: a
+       one-cell-thick layer has no source parcel below it, so a pocket relaxes
+       to flat and then stays there rather than smearing sideways forever. */
+    const u8 belowLevelMat = cells[i + SIM_W].mat;
+    if (y - 1 >= PLAY_Y0 && belowLevelMat != mat &&
+        MATS[belowLevelMat].kind == KIND_LIQUID &&
+        cells[i - SIM_W].mat == mat &&
+        sourceDensity + DENSITY_SWAP_EPS_Q8 <
+            materialDensityQ8(belowLevelMat, temp[i + SIM_W])) {
+        for (int attempt = 0; attempt < 2; ++attempt) {
+            const int dir = attempt == 0 ? dx : -dx;
+            for (int step = 1; step <= SUBMERGED_LEVEL_REACH; ++step) {
+                const int tx = x + dir * step;
+                if (tx < PLAY_X0 || tx > PLAY_X1) break;
+                const int ti = (y - 1) * SIM_W + tx;
+                const u8 target = cells[ti].mat;
+                if (target == mat) continue;
+                if (MATS[target].kind != KIND_LIQUID ||
+                    sourceDensity + DENSITY_SWAP_EPS_Q8 >=
+                        materialDensityQ8(target, temp[ti]))
+                    break;
+                int targetY = y - 1;
+                for (int rise = 1; rise < SUBMERGED_SINK_REACH; ++rise) {
+                    const int nextY = targetY - 1;
+                    if (nextY < PLAY_Y0) break;
+                    const int nextI = nextY * SIM_W + tx;
+                    const u8 next = cells[nextI].mat;
+                    if (MATS[next].kind != KIND_LIQUID ||
+                        sourceDensity + DENSITY_SWAP_EPS_Q8 >=
+                            materialDensityQ8(next, temp[nextI]))
+                        break;
+                    targetY = nextY;
+                }
+                if (tryMove(x, y, tx, targetY, LIQ_SWAP_LIGHTER_WINS)) {
+                    dirtyArea(imin(x, tx), targetY, imax(x, tx), y);
                     return;
                 }
                 break;
