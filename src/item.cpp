@@ -1807,6 +1807,16 @@ void toolCommitShot(ItemStack& st, const ToolShot& shot, int cooldown) {
     }
 }
 
+/* Which item puts this machine down, found by asking the item table rather
+   than by keeping a second list beside DEVS. Linear, and it does not matter:
+   this runs when somebody digs a machine, not per cell per frame. */
+ItemId itemForDeviceType(u8 deviceType) {
+    for (int i = 1; i < ITEM_COUNT; ++i)
+        if (ITEMS[i].kind == ITEMK_DEVICE && ITEMS[i].deviceType == deviceType)
+            return (ItemId)i;
+    return ITEM_NONE;
+}
+
 int digInto(World& w, Inventory& inv, int cx, int cy, int r, int maxCells,
             bool plantsOnly, int power, const bool* whitelist) {
     int dug = 0;
@@ -1822,6 +1832,25 @@ int digInto(World& w, Inventory& inv, int cx, int cy, int r, int maxCells,
         if (fixture >= 0) {
             if (inv.add(ITEM_TORCH_DEV, 1) != 0) continue;
             torchRemoveAt(fixture);
+            ++dug;
+            continue;
+        }
+        /* A machine met by a dig is PICKED UP, whole, not chipped at. Same
+           shape as the torch case above and for the same reason: the thing in
+           these cells is an object, not material, and the only sensible answer
+           to "mine it" is to hand back the object.
+
+           Before this a dig took one cell of the footprint, banked a bogus
+           "Device" item, and left the Device struct registered over a hole --
+           which then either limped on or was silently destroyed by devIntact,
+           losing the machine with nothing returned. */
+        if (Device* dev = devAt(x, y)) {
+            const ItemId back = itemForDeviceType(dev->type);
+            /* No item means no way to hand it back, so it is not diggable at
+               all -- better an immovable machine than one that evaporates. */
+            if (back == ITEM_NONE) continue;
+            if (inv.add(back, 1) != 0) continue;
+            devRemove(w, dev);
             ++dug;
             continue;
         }

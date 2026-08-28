@@ -687,6 +687,24 @@ struct World {
        old speckle. This one is for an object that stayed itself. */
     void swapMat(int x, int y, u8 mat);
 
+    /* Shove a column of loose material up one cell, leaving (x, y) empty.
+
+       This is a PISTON, not part of the simulation: nothing about buoyancy or
+       density decides it, and it happens because a machine did it. The spout
+       uses it to dispense against a head of its own output -- without it, a
+       spout pointed up stops the instant one cell of water is sitting on its
+       face, which is the moment you actually wanted a pump.
+
+       Only loose material moves. Anything static -- rock, a device, a door --
+       refuses the lift outright rather than being shunted, so this cannot push
+       a wall or extrude a machine. `maxLift` is how far up it will look for
+       somewhere to put the column, and it is the pump's HEAD: past that the
+       lift simply fails and the spout skips that cell.
+
+       Returns false and changes nothing on failure, so a caller can treat it as
+       "did the piston fire". */
+    bool liftColumn(int x, int y, int maxLift);
+
     /* Destroy a cell the way a blast or a falling canopy does: it leaves
        nothing behind, UNLESS it was a husk -- something whose whole job is to
        hold something smaller. A seed pod broken in mid-air leaves its seed,

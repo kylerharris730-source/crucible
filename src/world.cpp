@@ -254,6 +254,50 @@ void World::breakCell(int x, int y) {
     setCell(x, y, (drop != m && g_matIsSeed[drop]) ? drop : (u8)MAT_EMPTY);
 }
 
+/* See the note in world.h. The shift itself is the same three lines the gas
+   pressure route uses further up this file -- copy the cell, copy its
+   temperature, restamp it so the movement pass does not treat it as a cell that
+   has not moved yet -- because it is the same operation and should not be a
+   second implementation of it. */
+bool World::liftColumn(int x, int y, int maxLift) {
+    if (x < PLAY_X0 || x > PLAY_X1 || y < PLAY_Y0 || y > PLAY_Y1) return false;
+
+    /* Find the roof of the column: the first empty cell above. Everything
+       between here and there gets shoved into it. */
+    int top = -1;
+    for (int d = 1; d <= maxLift; ++d) {
+        const int r = y - d;
+        if (r < PLAY_Y0) return false;
+        const u8 m = cells[r * SIM_W + x].mat;
+        if (m == MAT_EMPTY) {
+            /* Refuse to shove material into a body. The player and the
+               creatures publish a collision box to the grid, and the ordinary
+               movement rules already will not move into one; a piston that
+               ignored that would push a column of sand through somebody. */
+            if (blocksCell(x, r)) return false;
+            top = r;
+            break;
+        }
+        /* Static means static. A lift that shunted rock would let a spout bore
+           upward through the world, and one that shunted a device would drag a
+           machine off its own footprint and leave the Device struct pointing at
+           cells it no longer owns. */
+        if (MATS[m].kind == KIND_STATIC) return false;
+    }
+    if (top < 0) return false;      /* solid to the limit: no head left */
+
+    const u8 st = (u8)(stamp() << STAMP_SHIFT);
+    for (int r = top; r < y; ++r) {
+        const int dst = r * SIM_W + x, src = (r + 1) * SIM_W + x;
+        cells[dst] = cells[src];
+        temp[dst]  = temp[src];
+        cells[dst].flags = (u8)((cells[dst].flags & F_DIR) | st);
+    }
+    setCell(x, y, MAT_EMPTY);
+    dirtyArea(x, top, x, y);
+    return true;
+}
+
 void World::swapMat(int x, int y, u8 mat) {
     cells[y * SIM_W + x].mat = mat;
     dirtyPoint(x, y);

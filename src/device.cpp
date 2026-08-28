@@ -1268,7 +1268,28 @@ static void devSpout(World& w, Device& d) {
     for (int k = 0; k < rate && d.count > 0; ++k) {
         const int i = k * DEV_W / rate;
         int x, y; devFaceCell(d, i, &x, &y);
-        if (x < PLAY_X0 || x > PLAY_X1 || y < PLAY_Y0 || y > PLAY_Y1 || w.at(x, y).mat != MAT_EMPTY) continue;
+        if (x < PLAY_X0 || x > PLAY_X1 || y < PLAY_Y0 || y > PLAY_Y1) continue;
+        if (w.at(x, y).mat != MAT_EMPTY) {
+            /* --- the pump ------------------------------------------------
+               Blocked, so shove the column above up one and dispense into the
+               cell that frees. That turns a spout pointed UP from something
+               that stops the instant one cell of its own output settles on its
+               face into something that fills a shaft, a tank or a pipe run
+               against a real head of liquid.
+
+               UP ONLY, and that is a decision rather than a gap. Up has one
+               obvious answer -- everything above you moves up one -- and the
+               world's own rules then take over, because falling back down is
+               what loose material does anyway. Sideways would need to decide
+               how far along the row to push and what happens at the far end,
+               and down would be pushing material into the ground; neither has
+               an answer that is one line long, and a half-answered piston is
+               worse than an honest limit.
+
+               A failed lift is skipped rather than retried, exactly like a
+               blocked cell was before: the rate is a budget, not a quota. */
+            if (d.face != 1 || !w.liftColumn(x, y, DEV_SPOUT_LIFT)) continue;
+        }
         w.setCell(x, y, d.mat); --d.count; ++done;
     }
     (void)done;

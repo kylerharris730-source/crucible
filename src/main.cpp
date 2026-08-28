@@ -6827,6 +6827,25 @@ static void clientInputTick() {
         g_interactPulse = false;
         g_respawnPulse = false;
         g_lineCommitPulse = false;
+    } else if (authoritative) {
+        /* Sandbox, or survival with the character switched off. Painting
+           already has a direct path here -- see applyBrush() and wireCell() --
+           because those verbs do not need a body. INTERACTING did not, and it
+           is the same kind of verb: opening a chest, toggling a spout, nudging
+           a machine's setpoint are all things done to the WORLD.
+
+           So with no character, interaction was simply unreachable: the pulse
+           only ever rode on a player command, and player commands are only
+           built when there is a player. Reported from play as "player off mode
+           has trouble configuring devices".
+
+           Aimed with currentAim(), which already returns unclamped cursor
+           position when there is no character to measure reach from. */
+        if (g_interactPulse && !g_uiCapture && g_mx >= PANEL_W)
+            interactFor(g_playerSessions[0], currentAim());
+        g_interactPulse = false;
+        g_respawnPulse = false;
+        g_lineCommitPulse = false;
     } else if (netRole() == NET_CLIENT) {
         predictionClear();
         actionPredictionClear();

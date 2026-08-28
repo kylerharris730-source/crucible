@@ -355,6 +355,17 @@ int  shedCount();
 void shedClear();
 void shedDraw(u32* px, int camX, int camY);
 
+/* How far a spout pointed up will shove its own output to make room -- the
+   pump's HEAD, in cells. Past this the lift fails and the spout skips that
+   cell, so a column taller than this stalls exactly the way a real pump does
+   and the answer is another spout further up.
+
+   Sixty-four is chosen against the cost, not against the fiction: the lift
+   only runs when the face cell is already blocked, which is the working case
+   for a pump, and a fourteen-wide face can therefore move up to 14 * 64 cells
+   in a pulse. See tests/spout_lift.cpp, which measures it. */
+static const int DEV_SPOUT_LIFT = 64;
+
 struct DeviceInfo {
     const char* name;
     /* What the adjustable number MEANS, for the panel. Every device has exactly

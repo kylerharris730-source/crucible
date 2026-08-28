@@ -1101,6 +1101,10 @@ void initDiscTable();   /* called by initItems() */
    passes it: digInto is also the miner device's and a dozen harnesses' way of
    removing cells, and a hidden mode switch that silently changed what a MACHINE
    digs would be a bug nobody could see from the machine. */
+/* Which ITEMK_DEVICE item places this machine, or ITEM_NONE if none does.
+   Used when a dig meets a machine and has to hand the machine back. */
+ItemId itemForDeviceType(u8 deviceType);
+
 int digInto(World& w, Inventory& inv, int cx, int cy, int r, int maxCells = 0,
             bool plantsOnly = false, int power = STR_ABSOLUTE,
             const bool* whitelist = 0);

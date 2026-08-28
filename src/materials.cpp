@@ -1865,6 +1865,18 @@ static void initDrops() {
     /* Identity by default, so a material added later drops itself without
        anyone having to remember this table exists. */
     for (int m = 0; m < MAT_COUNT; ++m) g_matDropsAs[m] = (u8)m;
+    /* A machine's footprint is not a material you can hold. Left at the
+       default -- every material drops as itself -- digging one cell of a spout
+       banked a "Device" item, which is a thing with no recipe, no use and no
+       meaning, while leaving the Device struct registered and pointing at a
+       footprint with a hole in it. Reported from play as "you can delete the
+       device pixels and get them in your inventory, weird".
+
+       digInto now mines the MACHINE when it meets one of these cells, and
+       returns the machine's own item; this is the backstop for a footprint cell
+       that has somehow outlived its Device, which should yield nothing rather
+       than nonsense. */
+    g_matDropsAs[MAT_DEVICE] = MAT_EMPTY;
     g_matDropsAs[MAT_DOOR_OPEN] = MAT_DOOR;
     /* A pod in the canopy gives you a SEED, which is what makes trees
        renewable without anything having to model reproduction. Breaking the pod
