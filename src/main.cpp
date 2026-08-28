@@ -2153,6 +2153,29 @@ static bool sendClientAction(u8 type, u8 container, u8 a, u8 b, u8 flags, i32 x,
     g_localActions[tail] = action; ++g_localActionCount; return true;
 }
 
+/* Open a machine's panel, or close it with -1.
+
+   Two variables describe one fact and both have to know it. `g_devPanel` is
+   what the UI draws; `PlayerSession::openDevice` is what applyDeviceAction
+   reads to find out which machine a button press is about. In survival the
+   session owns it -- interactFor sets it and syncClientDeviceUi mirrors it back
+   into g_devPanel -- but with the character switched OFF there is no command
+   stream to carry an interaction, so the mouse handler opens the panel
+   directly and used to set only the UI half.
+
+   The panel therefore appeared and every control in it was inert: Turn, plus,
+   minus, Take, depth and mode all resolved against openDevice == -1 and
+   returned immediately. Reported as not being able to change a spout's facing
+   with the player off, which was the visible corner of all of them.
+
+   Only written here when the character is off. Doing it unconditionally would
+   let a survival click on empty ground clear an openDevice the command stream
+   still believes in, which is the session's to decide and not the UI's. */
+static void setDevicePanel(int index) {
+    g_devPanel = index;
+    if (!(g_survival && g_playerOn)) g_playerSessions[0].openDevice = index;
+}
+
 static bool popLocalAction(NetAction* action) {
     if (!action || g_localActionCount <= 0) return false;
     *action = g_localActions[g_localActionHead];
@@ -2873,7 +2896,7 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 if (d->type == DEV_CHEST) { openChest((int)(d - g_devices)); break; }
                 if (d->type == DEV_PULSE_BUTTON) { d->poked = true; break; }
                 /* Toggle: clicking the same machine again closes it. */
-                g_devPanel = (g_devPanel == idx) ? -1 : idx;
+                setDevicePanel(g_devPanel == idx ? -1 : idx);
             } else if (doorToggle(g_world, a.x, a.y)) {
                 /* A door is the other thing you poke rather than dig, and it
                    sits here for the same reason a machine does: right-click
@@ -2892,7 +2915,7 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                    untouched everywhere in the world that is not a door. */
                 roomsNotifyEdit(g_world, a.x, a.y);
             } else {
-                g_devPanel = -1;
+                setDevicePanel(-1);
                 g_rmb = true;   /* right-drag digs, but only over the sim */
                 startLine();
             }
@@ -6827,25 +6850,6 @@ static void clientInputTick() {
         g_interactPulse = false;
         g_respawnPulse = false;
         g_lineCommitPulse = false;
-    } else if (authoritative) {
-        /* Sandbox, or survival with the character switched off. Painting
-           already has a direct path here -- see applyBrush() and wireCell() --
-           because those verbs do not need a body. INTERACTING did not, and it
-           is the same kind of verb: opening a chest, toggling a spout, nudging
-           a machine's setpoint are all things done to the WORLD.
-
-           So with no character, interaction was simply unreachable: the pulse
-           only ever rode on a player command, and player commands are only
-           built when there is a player. Reported from play as "player off mode
-           has trouble configuring devices".
-
-           Aimed with currentAim(), which already returns unclamped cursor
-           position when there is no character to measure reach from. */
-        if (g_interactPulse && !g_uiCapture && g_mx >= PANEL_W)
-            interactFor(g_playerSessions[0], currentAim());
-        g_interactPulse = false;
-        g_respawnPulse = false;
-        g_lineCommitPulse = false;
     } else if (netRole() == NET_CLIENT) {
         predictionClear();
         actionPredictionClear();
@@ -7317,6 +7321,45 @@ static int runLocalCommandSmoke() {
     updatePlayerFromCommand(0, g_playerSessions[0], command, false);
     if (g_player.alive || g_playerSessions[0].respawnFrames != RESPAWN_DELAY_FRAMES - 1)
         return 215;
+
+    /* --- the device panel with the character switched OFF ---------------
+       Reported from play: a spout's facing could not be changed with the
+       player off. The panel drew, the button drew, and nothing happened,
+       because the sandbox path set only the UI half of "which machine is
+       open" and applyDeviceAction reads the other half.
+
+       Checked HERE rather than in tests/, because the bug lives in main.cpp
+       and the harnesses do not compile it -- which is the whole reason this
+       switch exists. It exercises the real action queue, not a double. */
+    g_playerOn = false;
+    devClear();
+    if (!devPlace(g_world, DEV_SPOUT, 800, 800)) return 216;
+    Device* spout = devAt(800, 800);
+    if (!spout) return 217;
+    const int spoutIndex = (int)(spout - g_devices);
+    const u8 before = spout->face;
+
+    setDevicePanel(spoutIndex);
+    if (g_playerSessions[0].openDevice != spoutIndex) return 218;
+
+    if (!sendClientAction(NACT_DEVICE, 0, NDEV_TURN)) return 219;
+    processPlayerActions();
+    if (spout->face == before) return 220;
+
+    /* And the other controls in the same panel, which were inert for exactly
+       the same reason -- the facing was just the one that got noticed.
+
+       DEC rather than INC: a spout's rate defaults to its own vMax of 14, so
+       INC correctly clamps and changes nothing, which would fail this for a
+       reason that has nothing to do with the bug. */
+    const i32 valueBefore = spout->value;
+    if (!sendClientAction(NACT_DEVICE, 0, NDEV_DEC)) return 221;
+    processPlayerActions();
+    if (spout->value == valueBefore) return 222;
+
+    setDevicePanel(-1);
+    if (g_playerSessions[0].openDevice != -1) return 223;
+    g_playerOn = true;
 
     puts("local command loopback smoke passed");
     return 0;
