@@ -443,9 +443,16 @@ struct Player {
        accelerating from a standstill would show a full-speed gait at walking
        pace. Off distance, the legs are tied to the ground by construction.
 
-       airFrames counts how long we have been off the ground, and exists for
-       the walk cycle rather than for the physics -- see the coyote note in
-       animate(). */
+       airFrames counts how long we have been off the ground. It began as a
+       purely cosmetic counter for the walk cycle's coyote time, and it now has
+       a second reader: the CROUCH grace, which needs the same fact for the
+       same reason -- a slope is a staircase and walking down one leaves the
+       ground every step. See the coyote note in animate() for the measurement
+       and the crouch block in update() for the second use.
+
+       It is maintained by update() rather than by animate(), and that matters:
+       animate() returns early while crouching, so counting there froze the
+       counter for exactly the case the crouch grace reads it in. */
     int   facing;
     float walkPhase;
     int   frame;       /* a PlayerFrame, or a PlayerCrouchFrame while crouching */

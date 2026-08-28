@@ -384,7 +384,10 @@ void Player::animate() {
     const float speed = (vx > 0.0f) ? vx : -vx;
 
     if (!onGround) {
-        ++airFrames;
+        /* airFrames is maintained by update(), not here -- see the note beside
+           it there. This function returns early while crouching, so counting
+           in this one froze the counter for exactly the case the crouch grace
+           needed it. */
         /* Rising is never graced -- vy < 0 only happens because you jumped or
            were thrown, and both should read instantly. */
         const bool grace = vy >= 0.0f && vy < GRACE_FALL_V
@@ -396,8 +399,6 @@ void Player::animate() {
         /* Fall through to the walk cycle below, and let walkPhase keep
            advancing: the stride is driven by distance travelled, so a step
            taken across a gap is still a step and the feet stay in time. */
-    } else {
-        airFrames = 0;
     }
     if (speed <= 0.05f) {
         /* Standing still still breathes -- two frames, a second apart. A figure
@@ -533,7 +534,32 @@ void Player::update(const World& w, const PlayerInput& in) {
             for (int x = fx0; x <= fx1 && !onPlatform; ++x)
                 if (g_matPlatform[w.at(x, feetY + 1).mat]) onPlatform = true;
         }
-        const bool want = in.down && onGround && !onPlatform;
+        /* --- grace on a descent -----------------------------------------
+           Terrain is a grid, so a slope is a staircase and walking down one
+           genuinely leaves the ground every step -- the same fact the coyote
+           note at the top of this file measures for the ANIMATION, where a
+           1-in-4 descent is airborne 48% of frames.
+
+           Asking `onGround` fresh every frame therefore dropped the crouch for
+           about half a descent. And a crouch is not a pose, it is a BOX: losing
+           it grows the body six cells upward from fixed feet and regaining it
+           shrinks it back. Measured on a 1-in-4 staircase before this: 100
+           flips in 204 frames -- roughly 29 a second -- with the head snapping
+           six cells in a single frame, while holding down the whole way.
+
+           So the same grace, off the same counter, bounded by the same
+           AIR_GRACE: every slope's airborne stretch fits inside it (6 frames at
+           1-in-2, 4 at 1-in-3, 2 at 1-in-4) and a real fall does not.
+
+           It SUSTAINS a crouch and never starts one -- hence the `crouching &&`.
+           Beginning a crouch in mid-air would be wrong on its own, and it would
+           also quietly re-enter one the moment you dropped through a platform,
+           which is the other job this key does. Rising is never graced, for the
+           same reason the animation does not grace it: vy < 0 means you jumped,
+           and that should read instantly. */
+        const bool grounded = onGround ||
+            (crouching && vy >= 0.0f && airFrames <= AIR_GRACE);
+        const bool want = in.down && grounded && !onPlatform;
         if (want && !crouching) {
             crouching = true;
             y = (float)(feetY - CROUCH_H + 1);
@@ -880,6 +906,22 @@ void Player::update(const World& w, const PlayerInput& in) {
         if (fuel > (float)fly.fuel) fuel = (float)fly.fuel;
     }
     if (fuel > (float)fly.fuel) fuel = (float)fly.fuel;
+
+    /* How long since the feet were on something, counted HERE rather than in
+       animate() where it used to live. Two callers need it now -- the walk
+       cycle's coyote time and the crouch grace -- and it is a fact about the
+       body rather than about the drawing, so the body's update should own it.
+
+       Leaving it in animate() was not merely untidy: that function returns
+       early while crouching, so the counter stopped advancing for precisely
+       the case the crouch grace reads it in, and the grace became a latch that
+       never expired. Measured: still crouched all the way down an open drop.
+
+       Placed immediately before animate() so the value that function sees is
+       the same post-increment count it computed for itself before, and the
+       crouch block earlier in the frame reads the end of the PREVIOUS frame --
+       exactly as stale as the onGround it sits beside. */
+    if (onGround) airFrames = 0; else ++airFrames;
 
     animate();
 }
