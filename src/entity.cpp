@@ -343,6 +343,11 @@ int entSpawn(const World& w, int type, float cx, float cy) {
         e.hp = d.hp;
         e.facing = rngChance(128) ? 1 : -1;
         e.prevX = e.x; e.prevY = e.y;
+        e.gaitX = e.x; e.gaitY = e.y;
+        /* Staggered, so a group that spawns together does not step in unison.
+           entityPixelMotion used to get this from the entity index; the phase
+           carries it now, because the phase is what the legs read. */
+        e.walkPhase = (float)(i * 3 % 16);
         /* A boss arrives WALKING. Left at zero, the charge clock is already
            negative on her first tick, so she opened the fight standing
            motionless through a dash with no heading -- three quarters of a
@@ -1220,6 +1225,13 @@ static void entTickMode(World& w, Player& fallbackPlayer, Inventory& fallbackInv
         if (ENT_DEFS[e.type].indestructible) e.hp = ENT_DEFS[e.type].hp;
         if (e.hp <= 0) { entDie(w, e); continue; }
 
+        /* The gait advances by however far the creature actually got last
+           frame -- see Entity::walkPhase. Read before this frame's movement
+           so every creature animates on the same completed step, rather than
+           on whichever ones happen to be ticked before the draw. */
+        e.walkPhase += fabsf(e.x - e.gaitX) + fabsf(e.y - e.gaitY);
+        e.gaitX = e.x; e.gaitY = e.y;
+
         Player* targetPlayer = &fallbackPlayer;
         Inventory* targetInventory = &fallbackInv;
         if (multiplayer) {
@@ -1624,15 +1636,35 @@ void entSpawnTick(World& w, const Player& p, int camX, int camY, bool lightField
    venom sac. One or two cells is enough at this scale; more turns readable
    pixel art into flicker. `entityIndex` offsets otherwise identical creatures
    so a group does not flap in mechanical unison. */
+/* Which half of the step cycle a walker is in, from ground covered.
+
+   The STRIDE SCALES WITH THE CREATURE, which is the part worth stating: a husk
+   twice the height of a mite has legs twice as long, and should not take twice
+   as many steps to cross the same ground. Timer-driven gaits cannot express
+   that at all -- every creature paces at whatever rate its divisor says,
+   regardless of size or speed -- and it is most of why they read as identical
+   machinery wearing different sprites.
+
+   It also removes special cases rather than adding them. A charging creature
+   covers more ground per frame, so its legs speed up because they are measuring
+   the ground and not the clock; nothing has to notice that it is charging. */
+static inline int gaitStep(const Entity& e) {
+    const float stride = (float)imax(2, ENT_DEFS[e.type].h / 3);
+    return (int)(e.walkPhase / stride) & 1;
+}
+
 static void entityPixelMotion(const Entity& e, int entityIndex, int sx, int sy,
                               int* dx, int* dy) {
     *dx = *dy = 0;
+    /* Still the clock, and deliberately: wings beat while a flier hovers and
+       lungs work while a creature stands, so those are genuinely time-based.
+       Only the LEGS moved to the gait phase. */
     const u32 tick = g_world.frame + (u32)(entityIndex * 17);
     const bool moving = fabsf(e.vx) > 0.04f || fabsf(e.vy) > 0.04f;
 
     switch (e.type) {
     case ENT_MITE: {
-        const int gait = (int)((tick / 5u) & 1u);
+        const int gait = gaitStep(e);
         if (moving && gait) --*dy;                         /* shell rises on a step */
         if (sy >= 10) *dx += (((sx / 2) + gait) & 1) ? 1 : -1;
         break;
@@ -1648,7 +1680,8 @@ static void entityPixelMotion(const Entity& e, int entityIndex, int sx, int sy,
         break;
     }
     case ENT_SLIME: {
-        const int squash = (int)((tick / 9u) & 1u);
+        /* A slime MOVES by squashing, so the squash is ground covered. */
+        const int squash = gaitStep(e);
         if (sy >= 3 && sy <= 6) *dy += squash;
         if (sy >= 9 && sy <= 12) {
             const int side = sx < SPR_W / 2 ? -1 : 1;
@@ -1658,7 +1691,7 @@ static void entityPixelMotion(const Entity& e, int entityIndex, int sx, int sy,
         break;
     }
     case ENT_HUSK: {
-        const int gait = (int)((tick / 7u) & 1u);
+        const int gait = gaitStep(e);
         if (moving) {
             if (sy >= 12) *dx += (sx < SPR_W / 2) == (gait != 0) ? 1 : -1;
             if (sy >= 7 && sy <= 10 && (sx <= 3 || sx >= 10))
@@ -1678,7 +1711,7 @@ static void entityPixelMotion(const Entity& e, int entityIndex, int sx, int sy,
 
            The sy bands are rows of the 14-row CANVAS, not cells of the 30-cell
            box: rows 5-8 are the arms and shoulders, 11-13 the legs. */
-        const int gait = (int)((tick / 6u) & 1u);
+        const int gait = gaitStep(e);
         if (moving) {
             if (sy >= 12) *dx += (sx < SPR_W / 2) == (gait != 0) ? 1 : -1;
             /* Arms counter-swing. Only the outer columns, which are the arms --
@@ -1698,7 +1731,7 @@ static void entityPixelMotion(const Entity& e, int entityIndex, int sx, int sy,
         break;
     }
     case ENT_SPITTER: {
-        const int gait = (int)((tick / 6u) & 1u);
+        const int gait = gaitStep(e);
         if (sy >= 10) *dx += (((sx / 2) + gait) & 1) ? 1 : -1;
         if (sy >= 2 && sy <= 5) {
             /* The sac tightens as the shot comes due, otherwise breathes at a
@@ -1709,7 +1742,9 @@ static void entityPixelMotion(const Entity& e, int entityIndex, int sx, int sy,
         break;
     }
     case ENT_BROOD: {
-        const int gait = (int)((tick / (e.phase ? 4u : 6u)) & 1u);
+        /* No charge special case: a dash covers more ground, so the legs
+           speed up on their own. See gaitStep. */
+        const int gait = gaitStep(e);
         if (sy >= 11) {
             /* Source-space grouping keeps every enlarged block of one authored
                leg together instead of tearing it at a scale boundary. */

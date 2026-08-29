@@ -205,6 +205,30 @@ struct Entity {
     float prevX, prevY;
     int   stuck;
 
+    /* --- gait -------------------------------------------------------------
+       GROUND COVERED, not frames elapsed, and that distinction is the whole
+       reason a creature reads as walking rather than as a sprite with a
+       twitch. The character already works this way -- see the note on
+       Player::walkPhase -- but creatures did not: entityPixelMotion drove
+       every leg and wing from g_world.frame, so a creature shuffled its feet
+       at a fixed rate whether it was sprinting, crawling, or held motionless
+       against a wall by something it could not climb. Feet that keep pacing
+       while the body is stopped is exactly the stiffness this is meant to
+       avoid, and it is what a timer buys you.
+
+       Accumulated from the DISPLACEMENT actually achieved rather than from
+       velocity, because the two disagree in the case that matters: the mover
+       zeroes vx on contact and the chase writes it straight back, so a
+       creature pressed against geometry reports full speed forever while
+       going nowhere.
+
+       gaitX/gaitY are last frame's position, kept separately from
+       prevX/prevY. Those belong to the boss's stuck detector, which resets
+       them on its own schedule -- sharing them would tie how a creature walks
+       to how a different creature notices it is wedged. */
+    float walkPhase;
+    float gaitX, gaitY;
+
     bool  alive() const { return type != ENT_NONE && hp > 0; }
     int   width()  const { return ENT_DEFS[type].w; }
     int   height() const { return ENT_DEFS[type].h; }
