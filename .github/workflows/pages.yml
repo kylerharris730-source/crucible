@@ -1,0 +1,71 @@
+name: Publish web build to Pages
+
+# The page and the Windows release are deliberately NOT coupled. index.html
+# links to /releases/latest/download/, which GitHub resolves to whichever
+# release is newest at the moment someone clicks it -- so cutting a release
+# never requires touching this workflow, and republishing the page never
+# requires uploading another executable.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "web/**"
+      - "build_web.sh"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# A queued run should replace a pending one rather than stack up behind it,
+# but never cancel a deploy that is already partway through.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: latest
+          actions-cache-folder: emsdk-cache
+
+      - name: Build the browser game
+        run: |
+          chmod +x build_web.sh
+          ./build_web.sh
+
+      - name: Confirm the artefacts exist
+        # A Pages deploy that silently ships an index.html with no wasm beside
+        # it looks like a successful publish and is a blank screen, so fail
+        # here instead of there.
+        run: |
+          for f in web/index.html web/crucible.js web/crucible.wasm; do
+            test -s "$f" || { echo "missing or empty: $f" >&2; exit 1; }
+          done
+          ls -lh web/
+
+      - name: Upload the page
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: web
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

@@ -1,6 +1,17 @@
 #define WIN32_LEAN_AND_MEAN
+#ifdef _WIN32
 #include <windows.h>
 #include <mmsystem.h>   /* timeBeginPeriod; excluded by WIN32_LEAN_AND_MEAN */
+#else
+/* The browser build. web/win32.h reimplements the exact slice of Win32 this
+   file uses against a pixel buffer, so everything below this line -- the
+   panels, the wndProc, the frame loop -- is compiled unchanged for both
+   targets. This include is the ONLY concession in main.cpp to there being a
+   second platform, and it needs to stay that way: the moment UI code starts
+   branching on the target, there are two interfaces to maintain instead of
+   one, and the web build begins drifting away from the game. */
+#include "web/win32.h"
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
