@@ -270,8 +270,64 @@
     }, 30000);
   }
 
+  // --- UI scale ---------------------------------------------------------
+  // The game already sizes its own text: UI_SCALE_VALUES is 80..120 percent,
+  // driven by the plus/minus buttons on the pause menu and remembered in
+  // cinderlift.cfg, which uiSettingsLoad() reads at startup.
+  //
+  // So the page does not need a new API into the game, and deliberately does
+  // not add one -- it writes that config file into the virtual filesystem
+  // before the game boots, and the existing startup path picks it up. Nothing
+  // in main.cpp knows the browser exists, which is the property worth keeping.
+  //
+  // This is a STARTING value, not live: uiSettingsLoad runs once, so resizing
+  // the window afterwards does not re-apply it. The pause menu still adjusts
+  // it at any time, and on the web MEMFS is not persistent, so each load
+  // starts from what this decides rather than from a previous session.
+  //
+  // Mirrors WIN_W/WIN_H in main.cpp. Only the PREDICTION uses these -- the
+  // real canvas size is not known until the module has started, and fitCanvas
+  // reads it properly afterwards.
+  const NATIVE_W = 1288, NATIVE_H = 768;
+
+  function intendedUiScalePct() {
+    // ?ui=120 forces a value, which is how this gets tested on the live site
+    // without having to reproduce a particular window size. Anything not in
+    // UI_SCALE_VALUES is snapped to the nearest by uiSettingsLoad anyway.
+    const forced = parseInt(
+      (location.search.match(/[?&]ui=(\d+)/) || [])[1], 10);
+    if (forced >= 50 && forced <= 200) return forced;
+
+    const vw = window.innerWidth, vh = window.innerHeight;
+    if (!vw || !vh) return 100;
+    const header = document.querySelector('header');
+    const footer = document.querySelector('footer');
+    const chrome = (header ? header.offsetHeight : 40) +
+                   (footer ? footer.offsetHeight : 60) + 18;
+    const f = computeFit(Math.max(160, vw - 34), Math.max(120, vh - chrome),
+                         window.devicePixelRatio || 1, NATIVE_W, NATIVE_H);
+    // Only compensate when the canvas is actually being reduced. Bigger text
+    // costs panel room, so it is not worth spending at 1:1 or above.
+    if (f.crisp) return 100;
+    if (f.scale < 0.75) return 120;
+    if (f.scale < 0.90) return 110;
+    return 100;
+  }
+
   var Module = {
     canvas: canvas,
+    preRun: [function () {
+      // Before main(), so the file is already there when uiSettingsLoad opens
+      // it. Failing here must not stop the game starting -- it would only mean
+      // the default 100% is used.
+      try {
+        const pct = intendedUiScalePct();
+        FS.writeFile('cinderlift.cfg', 'ui_scale=' + pct + '\n');
+        window.__uiScaleWritten = pct;
+      } catch (e) {
+        console.warn('could not preset ui_scale:', e);
+      }
+    }],
     setStatus: function (text) {
       if (!text) return;
       var m = /([0-9.]+)\s*\/\s*([0-9.]+)/.exec(text);
