@@ -209,13 +209,92 @@ void circuitRemapMaterials(const u8* remap, int savedMatCount) {
     }
 }
 
-/* A direct pulse stamp is deliberately separate from Cell. It costs 24 MiB for
-   this 4096 x 3072 world, but makes a branch test one cache-friendly read/write
-   instead of an allocation-heavy set lookup on every wire step. The table is
-   cleared only when the 16-bit pulse id wraps (normally after many minutes of
-   continuous clocks), never per frame. At that very rare boundary active fronts
-   are cleared too, rather than allowing an old and newly-issued id to collide. */
-static u16 g_pulseMark[SIM_W * SIM_H];
+/* --- the pulse stamp, allocated per block ----------------------------------
+
+   A direct pulse stamp is deliberately separate from Cell: it makes a branch
+   test one read/write instead of an allocation-heavy set lookup on every wire
+   step. That reasoning is unchanged. What changed is the price.
+
+   It was one flat u16 per world cell, and the comment here said that cost
+   24 MiB "for this 4096 x 3072 world". The world is 9216 deep now -- it grew
+   twice, for pacing -- so the plane had quietly become 72 MB, three times the
+   figure it was justified by, and with g_pulseRecent beside it accounted for
+   81 MB of a 347 MB process. Measured against what it holds: a world can be
+   played for hours with a few hundred wire cells in it, and the plane reserves
+   a slot for every one of thirty-seven million.
+
+   So it is allocated in 32x32 blocks, on demand, and only where a pulse has
+   actually been. The block table is 36,864 pointers -- 144 KB -- and a block
+   is 2 KB, so a circuit-heavy world costs a few hundred KB where it used to
+   cost 72 MB flat.
+
+   Reads do NOT allocate: an absent block reads as zero, which is exactly the
+   unvisited stamp it would have held anyway. Writes allocate, except writes of
+   zero to an absent block, which have nothing to record.
+
+   Access is still O(1) and still branch-light. SIM_W is a power of two, so a
+   linear cell index splits into block and offset with shifts and masks and no
+   division. If anything the locality improves: pulses cluster on the few
+   blocks a circuit occupies, where the flat plane scattered them across 72 MB
+   of address space that was almost entirely zero. */
+static const int SIM_W_SHIFT = 12;
+#if defined(__cplusplus) && __cplusplus >= 201103L
+static_assert((1 << SIM_W_SHIFT) == SIM_W,
+              "SIM_W must stay a power of two, or pulse indexing needs a divide");
+#endif
+
+static const int PULSE_BLOCK_SHIFT = CHUNK_SHIFT;                  /* 32x32   */
+static const int PULSE_BLOCK       = 1 << PULSE_BLOCK_SHIFT;
+static const int PULSE_BLOCK_MASK  = PULSE_BLOCK - 1;
+static const int PULSE_BLOCK_CELLS = PULSE_BLOCK * PULSE_BLOCK;    /* 1024    */
+static const int PULSE_BLOCKS_X    = SIM_W >> PULSE_BLOCK_SHIFT;
+static const int PULSE_BLOCKS_Y    = SIM_H >> PULSE_BLOCK_SHIFT;
+static const int PULSE_BLOCK_COUNT = PULSE_BLOCKS_X * PULSE_BLOCKS_Y;
+
+static u16* g_pulseMarkBlock[PULSE_BLOCK_COUNT];
+static u8*  g_pulseRecentBlock[PULSE_BLOCK_COUNT];
+
+static inline int pulseBlockOf(int cell) {
+    const int x = cell & (SIM_W - 1);
+    const int y = cell >> SIM_W_SHIFT;
+    return (y >> PULSE_BLOCK_SHIFT) * PULSE_BLOCKS_X + (x >> PULSE_BLOCK_SHIFT);
+}
+
+static inline int pulseOffsetOf(int cell) {
+    const int x = cell & (SIM_W - 1);
+    const int y = cell >> SIM_W_SHIFT;
+    return ((y & PULSE_BLOCK_MASK) << PULSE_BLOCK_SHIFT) | (x & PULSE_BLOCK_MASK);
+}
+
+static inline u16 pulseMarkAt(int cell) {
+    const u16* b = g_pulseMarkBlock[pulseBlockOf(cell)];
+    return b ? b[pulseOffsetOf(cell)] : (u16)0;
+}
+
+static inline void pulseMarkSet(int cell, u16 value) {
+    const int bi = pulseBlockOf(cell);
+    u16* b = g_pulseMarkBlock[bi];
+    if (!b) {
+        if (!value) return;         /* zero into an absent block is already true */
+        b = (u16*)calloc(PULSE_BLOCK_CELLS, sizeof(u16));
+        if (!b) return;             /* out of memory: the wire simply does not latch */
+        g_pulseMarkBlock[bi] = b;
+    }
+    b[pulseOffsetOf(cell)] = value;
+}
+
+/* Freed rather than zeroed. A clear happens on world reset and on pulse-id
+   wrap, both rare, and handing the memory back is the point of the exercise --
+   a world that once had a big circuit in it should not keep paying for it. */
+static void pulseBlocksRelease() {
+    for (int i = 0; i < PULSE_BLOCK_COUNT; ++i) {
+        free(g_pulseMarkBlock[i]);
+        free(g_pulseRecentBlock[i]);
+        g_pulseMarkBlock[i] = 0;
+        g_pulseRecentBlock[i] = 0;
+    }
+}
+
 static u16 g_nextPulse = 1;
 
 /* A live pulse can be hundreds of cells away from the trail it left behind.
@@ -228,7 +307,9 @@ static u16 g_nextPulse = 1;
    "not recent". A claim is recent for the frame it was made and the next two;
    after that it remains a same-pulse loop barrier but no longer blocks a
    separate pulse which is visibly behind it. */
-static u8 g_pulseRecent[(SIM_W * SIM_H + 3) / 4];
+/* Blocked for the same reason and on the same grid as g_pulseMark above, so a
+   cell's two structures live in the same block index. Two bits per cell means
+   a quarter the bytes: 256 per block against the mark plane's 2 KB. */
 static const int SPARK_RECENT_SLOTS = 3;
 static const int SPARK_RECENT_MAX = MAX_SPARKS * 5;
 static int g_pulseRecentCells[SPARK_RECENT_SLOTS][SPARK_RECENT_MAX];
@@ -236,12 +317,24 @@ static int g_pulseRecentCount[SPARK_RECENT_SLOTS];
 static int g_pulseRecentSlot = 0;
 
 static inline u8 sparkRecentStamp(int cell) {
-    return (u8)((g_pulseRecent[cell >> 2] >> ((cell & 3) * 2)) & 3u);
+    const u8* b = g_pulseRecentBlock[pulseBlockOf(cell)];
+    if (!b) return 0;
+    const int o = pulseOffsetOf(cell);
+    return (u8)((b[o >> 2] >> ((o & 3) * 2)) & 3u);
 }
 
 static inline void sparkSetRecentStamp(int cell, u8 stamp) {
-    u8& packed = g_pulseRecent[cell >> 2];
-    const int shift = (cell & 3) * 2;
+    const int bi = pulseBlockOf(cell);
+    u8* b = g_pulseRecentBlock[bi];
+    if (!b) {
+        if (!stamp) return;         /* clearing an absent block: already clear */
+        b = (u8*)calloc(PULSE_BLOCK_CELLS / 4, 1);
+        if (!b) return;
+        g_pulseRecentBlock[bi] = b;
+    }
+    const int o = pulseOffsetOf(cell);
+    u8& packed = b[o >> 2];
+    const int shift = (o & 3) * 2;
     packed = (u8)((packed & ~(3u << shift)) | ((u32)stamp << shift));
 }
 
@@ -410,8 +503,7 @@ void sparkClear() {
        leaving them alive across a clear would let a new world be energised by
        the last one's loose ends. */
     shedClear();
-    memset(g_pulseMark, 0, sizeof(g_pulseMark));
-    memset(g_pulseRecent, 0, sizeof(g_pulseRecent));
+    pulseBlocksRelease();
     memset(g_pulseRecentCount, 0, sizeof(g_pulseRecentCount));
     memset(g_pulseFronts, 0, sizeof(g_pulseFronts));
     memset(g_sparkLoad, 0, sizeof(g_sparkLoad));
@@ -555,7 +647,7 @@ static bool sparkStep(World& w, Spark& s) {
 
         if (!conducts(w, nx, ny)) continue;
         const int mark = ny * SIM_W + nx;
-        const u16 claim = g_pulseMark[mark];
+        const u16 claim = pulseMarkAt(mark);
         /* --- occupied wire, by this wave or by another one ------------------
            Two cases that have to be refused for two different reasons, and the
            second one used to be allowed.
@@ -591,8 +683,8 @@ static bool sparkStep(World& w, Spark& s) {
             handedOn = true;
             continue;
         }
-        g_pulseMark[mark] = (u16)(s.pulse
-                              | ((u16)dirIndex(cand[k][0], cand[k][1]) << PULSE_DIR_SHIFT));
+        pulseMarkSet(mark, (u16)(s.pulse
+                              | ((u16)dirIndex(cand[k][0], cand[k][1]) << PULSE_DIR_SHIFT)));
         sparkMarkRecent(mark);
 
         if (!travelled) {
@@ -1350,7 +1442,7 @@ bool sparkAdd(int x, int y, int dx, int dy) {
     if (x < PLAY_X0 || x > PLAY_X1 || y < PLAY_Y0 || y > PLAY_Y1) return false;
     const u16 pulse = nextPulse();
     const int mark = y * SIM_W + x;
-    g_pulseMark[mark] = (u16)(pulse | ((u16)dirIndex(dx, dy) << PULSE_DIR_SHIFT));
+    pulseMarkSet(mark, (u16)(pulse | ((u16)dirIndex(dx, dy) << PULSE_DIR_SHIFT)));
     sparkMarkRecent(mark);
     return sparkAddFront(x, y, dx, dy, pulse);
 }
