@@ -1,6 +1,6 @@
-# Crucible
+# Cinderlift
 
-Crucible is a game prototype about building machines out of real pixel physics
+Cinderlift is a game prototype about building machines out of real pixel physics
 on a planet you are trying to leave. Heat, phase changes, fluids, conductors,
 and materials are the building vocabulary rather than background decoration.
 
@@ -33,11 +33,11 @@ Run:
 build.bat
 ```
 
-Then launch `build\crucible.exe`.
+Then launch `build\cinderlift.exe`.
 
-For the player-facing distribution, build `build\crucible-launcher.exe` with
+For the player-facing distribution, build `build\cinderlift-launcher.exe` with
 `build_launcher.bat`. Players download the launcher once; it installs the latest
-tagged GitHub Release into `%LOCALAPPDATA%\Crucible`, verifies updates before
+tagged GitHub Release into `%LOCALAPPDATA%\Cinderlift`, verifies updates before
 replacing files, and can launch the installed version offline when GitHub is
 unavailable. See [LAUNCHER.md](LAUNCHER.md) for publishing and self-update details.
 
@@ -73,8 +73,8 @@ baseline while leaving click targets comfortably sized.
 
 ## Relationship to powder
 
-Crucible is a fork of
+Cinderlift is a fork of
 [powder](https://github.com/kylerharris730-source/powder), the finished
 falling-sand sandbox that supplied the simulation foundation. The projects now
-diverge: Crucible adds a scrolling world, player systems, machines, automation,
+diverge: Cinderlift adds a scrolling world, player systems, machines, automation,
 and game progression.

@@ -62,7 +62,7 @@ u64  saveTotalBytes();
 
 /* --- the thumbnail ---------------------------------------------------------
    A save slot with a picture of where you were is a different object from a
-   save slot with a filename. Ten identical rows reading "crucible3.sav" ask you
+   save slot with a filename. Ten identical rows reading "cinderlift3.sav" ask you
    to remember which is which; ten pictures answer it before you have finished
    looking at them.
 
@@ -79,7 +79,7 @@ static const int SAVE_THUMB_BYTES = SAVE_THUMB_W * SAVE_THUMB_H * 3;
    time; `rgb` is SAVE_THUMB_BYTES of top-down RGB, all zero when the save
    predates thumbnails. */
 struct SaveSlotInfo {
-    bool used;          /* a readable crucible save is at this path */
+    bool used;          /* a readable cinderlift save is at this path */
     bool readable;      /* ...and this build can actually load it */
     i64  when;          /* unix seconds, 0 if unknown */
     u64  bytes;         /* file size */

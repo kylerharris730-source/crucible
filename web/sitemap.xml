@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- One page, so this is small on purpose. Its job is not to describe a large
+     site but to give Search Console something concrete to submit, which is how
+     a brand-new page gets crawled in days instead of whenever it is stumbled
+     upon. Update the URLs here together with SITE_URL in index.html. -->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://kylerharris730-source.github.io/crucible/</loc>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+  </url>
+</urlset>

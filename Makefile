@@ -9,16 +9,16 @@ else
 # executable to both machines preserves its embedded GUID and still connects.
 BUILD_ID := $(GIT_HEAD)-dirty-$(shell powershell -NoProfile -Command "[guid]::NewGuid().ToString('N')")
 endif
-CXXFLAGS += -DCRUCIBLE_BUILD_ID=\"$(BUILD_ID)\"
+CXXFLAGS += -DCINDERLIFT_BUILD_ID=\"$(BUILD_ID)\"
 # Keep distributed builds self-contained instead of requiring MinGW runtime
-# DLLs to be copied alongside crucible.exe.
+# DLLs to be copied alongside cinderlift.exe.
 LDFLAGS  := -mwindows -static -static-libgcc -static-libstdc++ -lgdi32 -luser32 -lwinmm -lmsimg32 -lws2_32
 
 # Discovered, not listed -- see the note in build.bat. The two scripts drifted
 # apart once already and the cost was a deleted executable.
 SRC := $(wildcard src/*.cpp)
 HDR := $(wildcard src/*.h)
-OUT := build/crucible.exe
+OUT := build/cinderlift.exe
 
 all: $(OUT)
 

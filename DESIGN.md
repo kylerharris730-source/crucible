@@ -1,4 +1,4 @@
-# Crucible — design notes
+# Cinderlift — design notes
 
 A game about **building machines out of real physics**, on a planet you are
 trying to leave.

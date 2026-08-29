@@ -11,7 +11,7 @@
 - Every peer must run the exact same build and protocol.
 
 On an ordinary home LAN, the host's private address is sufficient. The host
-machine may still need to allow Crucible through Windows Firewall. Guest Wi-Fi,
+machine may still need to allow Cinderlift through Windows Firewall. Guest Wi-Fi,
 client isolation, VPN routing, or separate VLANs can prevent two machines on
 the same physical router from reaching each other; discovery cannot repair
 that, which is why manual IP joining is the dependable baseline.
@@ -143,11 +143,11 @@ adding one field to the player silently discards every existing character.
 
 Open Escape on the host and click **Host LAN**. The button shows its private IP
 and the fixed port. On the other computer, open Escape, enter that IPv4 address,
-and click **Join**. Windows Firewall may ask the host to allow Crucible on the
+and click **Join**. Windows Firewall may ask the host to allow Cinderlift on the
 private network.
 
 The command-line equivalents, mainly for repeatable testing, are
-`crucible.exe --host` and `crucible.exe --join 192.168.x.x`.
+`cinderlift.exe --host` and `cinderlift.exe --join 192.168.x.x`.
 
 For iteration on one computer, run `multiplayer_test.bat`, optionally with a
 client count: `multiplayer_test.bat 3` launches a full four-window session.
@@ -158,7 +158,7 @@ real socket, snapshot, prediction, correction, inventory, and rendering paths
 without copying a build to another machine. Note that keyboard input is gated
 on the foreground window: `GetAsyncKeyState` reports the keyboard rather than
 one window, so without that gate every local window would move as one (and an
-unfocused Crucible would walk your character while you typed elsewhere). The automated two-process smoke
+unfocused Cinderlift would walk your character while you typed elsewhere). The automated two-process smoke
 test remains the fast headless check; the launcher is the playable check.
 
 The checked-in two-process smoke test creates a real loopback TCP peer and

@@ -486,7 +486,7 @@ bool savePeek(const char* path, SaveSlotInfo* out) {
         fclose(f); return true;
     }
     if (magic != fourcc("CRUC")) {
-        sprintf(out->note, "not a crucible save");
+        sprintf(out->note, "not a cinderlift save");
         fclose(f); return true;
     }
     if (ver != SAVE_VERSION) {
@@ -542,7 +542,7 @@ bool saveRead(const char* path, World& w) {
         sprintf(g_err, "%s is too short to be a save", path); fclose(f); return false;
     }
     if (magic != fourcc("CRUC")) {
-        sprintf(g_err, "%s is not a crucible save", path); fclose(f); return false;
+        sprintf(g_err, "%s is not a cinderlift save", path); fclose(f); return false;
     }
     /* Refused, not guessed at -- see the note on migration in save.h. */
     if (ver != SAVE_VERSION) {

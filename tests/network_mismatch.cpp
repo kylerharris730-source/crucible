@@ -6,7 +6,7 @@
 #include <string.h>
 #include <windows.h>
 
-/* Compile this source twice with different CRUCIBLE_BUILD_ID values. The host
+/* Compile this source twice with different CINDERLIFT_BUILD_ID values. The host
    launches the other binary and proves the handshake rejects it before READY
    or any world/gameplay packet can be accepted. */
 int main(int argc, char** argv) {
