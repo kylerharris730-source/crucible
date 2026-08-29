@@ -37,6 +37,36 @@ if defined GIT_HEAD (
     )
 )
 
+REM --- version resource ------------------------------------------------------
+REM Windows reads the publisher and product name for its "unknown publisher"
+REM warning out of this. Without it those fields are blank, which is one of the
+REM reasons an unsigned binary gets treated as suspicious -- see res\version.rc.
+REM Numbers come from the newest tag so the metadata tracks releases; an export
+REM with no Git present falls back to 0.0.0 and still builds.
+set VER_TAG=
+for /f %%i in ('git describe --tags --abbrev^=0 2^>nul') do set VER_TAG=%%i
+set VER_MA=0
+set VER_MI=0
+set VER_PA=0
+if defined VER_TAG (
+    set VER_NUM=!VER_TAG:v=!
+    for /f "tokens=1,2,3 delims=." %%a in ("!VER_NUM!") do (
+        set VER_MA=%%a
+        set VER_MI=%%b
+        set VER_PA=%%c
+    )
+)
+if "!VER_MA!"=="" set VER_MA=0
+if "!VER_MI!"=="" set VER_MI=0
+if "!VER_PA!"=="" set VER_PA=0
+windres res\version.rc -o build\version_game.o ^
+    -DVER_MAJOR=!VER_MA! -DVER_MINOR=!VER_MI! -DVER_PATCH=!VER_PA! -DVER_TARGET=1
+if errorlevel 1 (
+    echo.
+    echo VERSION RESOURCE FAILED -- build\cinderlift.exe left as it was
+    exit /b 1
+)
+
 REM Built to a scratch name and moved into place only on success, so a build
 REM that fails leaves the last working game exactly where it was. g++ claims
 REM its output file before it knows whether the link will succeed, so compiling
@@ -49,7 +79,7 @@ REM -static, not only -static-libgcc/-static-libstdc++. The 64-bit MinGW used
 REM by GitHub Actions builds libstdc++ against libwinpthread; leaving that last
 REM runtime dynamic produced executables that worked on the runner and failed
 REM on clean Windows installs with "libwinpthread-1.dll was not found".
-g++ -std=c++11 -O2 -Wall -Wextra -mwindows -static -static-libgcc -static-libstdc++ -DCINDERLIFT_BUILD_ID=\"!BUILD_ID!\" !SRC! ^
+g++ -std=c++11 -O2 -Wall -Wextra -mwindows -static -static-libgcc -static-libstdc++ -DCINDERLIFT_BUILD_ID=\"!BUILD_ID!\" !SRC! build/version_game.o ^
     -o build\cinderlift.new.exe ^
     -lgdi32 -luser32 -lwinmm -lmsimg32 -lws2_32
 

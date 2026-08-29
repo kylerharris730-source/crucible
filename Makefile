@@ -20,11 +20,27 @@ SRC := $(wildcard src/*.cpp)
 HDR := $(wildcard src/*.h)
 OUT := build/cinderlift.exe
 
+# Version resource, kept in step with build.bat rather than left to drift --
+# an executable built here should identify itself to Windows exactly as the
+# released one does, or the SmartScreen behaviour differs between the binary
+# you test and the binary you ship. See res/version.rc.
+VER_TAG := $(shell git describe --tags --abbrev=0 2>/dev/null)
+VER_NUM := $(patsubst v%,%,$(VER_TAG))
+VER_MA  := $(or $(word 1,$(subst ., ,$(VER_NUM))),0)
+VER_MI  := $(or $(word 2,$(subst ., ,$(VER_NUM))),0)
+VER_PA  := $(or $(word 3,$(subst ., ,$(VER_NUM))),0)
+RES     := build/version_game.o
+
 all: $(OUT)
 
-$(OUT): $(SRC) $(HDR)
+$(RES): res/version.rc
 	@if not exist build mkdir build
-	$(CXX) $(CXXFLAGS) $(SRC) -o $(OUT) $(LDFLAGS)
+	windres res/version.rc -o $(RES) \
+	    -DVER_MAJOR=$(VER_MA) -DVER_MINOR=$(VER_MI) -DVER_PATCH=$(VER_PA) -DVER_TARGET=1
+
+$(OUT): $(SRC) $(HDR) $(RES)
+	@if not exist build mkdir build
+	$(CXX) $(CXXFLAGS) $(SRC) $(RES) -o $(OUT) $(LDFLAGS)
 
 run: $(OUT)
 	$(OUT)
