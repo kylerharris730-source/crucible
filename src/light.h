@@ -15,28 +15,32 @@
    deriving it from the world near the camera is both simpler and self-healing.
 
    --- what is reused, and what that cost ---
-   This used to be recomputed in full every frame, which is the cheapest thing
-   to be sure of and was also, measured, ninety percent of the frame -- more
-   than the simulation, the renderer and everything else put together. It is now
-   reused where the world has not moved and patched where it has; see
-   lightUpdate for the three cases and what decides between them.
+   RECOMPUTED IN FULL EVERY FRAME. lightUpdate is a direct call to lightCompute
+   and there is nothing incremental left in it.
 
-   The reason the original said "recompute it every frame" was a real one and it
-   has not gone away: the failure mode of an incremental relight is a shadow
-   that forgets to lift, and that is a bug which survives to release, because it
-   needs one specific thing to have happened in one specific place to show up at
-   all. Two things hold it off. The dirty region comes from the SIMULATION's own
-   chunk rectangles rather than from a second set of marks kept up to date by
-   hand, so it cannot miss a change that the simulation itself did not also miss
-   (see lightAccumulateDirty). And the claim that a patch equals a full solve is
-   checked rather than argued: run the same world twice, once patched and once
-   recomputed, and compare the visible field cell for cell.
+   There was, once, and the history is worth keeping because it explains the
+   shape of what remains. Lighting was measured at ninety percent of a frame --
+   more than the simulation, the renderer and everything else together -- and
+   was rewritten to reuse the field where the world had not moved and patch it
+   where it had, with a dirty region taken from the SIMULATION's own chunk
+   rectangles so it could not miss a change the simulation had not also missed.
+   Moving to quarter resolution then made a full solve cheap enough that the
+   patching was not worth what it cost to be sure of, and it was removed.
 
-   That check has already earned its keep. It caught a patch region that was
-   right for lamps and wrong for the sun -- daylight travels down the buffer in
-   straight rays, so a change high up moves the answer in a wedge hanging below
-   it, not in a ball around it, and the cells outside the region kept their old
-   shading permanently. See the note in lightSolve.
+   Removing it was the right call, because the failure mode of an incremental
+   relight is a shadow that forgets to lift: a bug that survives to release,
+   since it needs one specific thing to have happened in one specific place to
+   appear at all. That is not hypothetical here. The check that a patch equals
+   a full solve once caught a patch region that was right for lamps and wrong
+   for the sun -- daylight travels down the buffer in straight rays, so a change
+   high up moves the answer in a wedge hanging below it, not a ball around it,
+   and the cells outside the region kept their old shading permanently.
+
+   The method outlived the machinery, and anything touching this file should
+   still use it: solve the same world both ways and compare the VISIBLE field
+   sample for sample. tools/lightmargin.cpp does exactly that across day, night
+   and dusk, at the surface and deep underground, and it is how the margin
+   below was set.
 
    --- the margin ---
    Light is computed over a rectangle LARGER than the view, because a source
