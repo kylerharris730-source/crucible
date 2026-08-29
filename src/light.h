@@ -84,15 +84,34 @@
 static const int LIGHT_SHIFT = 2;
 static const int LIGHT_CELL  = 1 << LIGHT_SHIFT;   /* world cells per sample */
 
-/* 60 -> 128, because open media now attenuate half as much (see sampleBlock)
-   and the margin is defined as exactly one source's reach. Leaving it at 60
-   would put a seam wherever a lamp sat between 240 and 500 cells off screen --
-   which is a distance that now matters, and did not before.
+/* 128 -> 64, which is the reach the paragraph above says this is supposed to
+   be, restated in the units it is now counted in.
 
-   It costs area, and area is the whole cost of lighting: the field goes from
-   248x216 to 384x352, or 2.5 times the samples. That is the price of the reach
-   and it is the number to look at first if lighting ever needs to be cheaper. */
-static const int LIGHT_MARGIN = 128;               /* in SAMPLES, not cells */
+   The invariant is "exactly one source's reach". Air is opacity 1 per cell
+   (KIND_EMPTY, initLight) and a sample spans LIGHT_CELL = 4 cells, so a sample
+   step costs 4, and LIGHT_MAX / 4 is 63 samples. The margin was 128 -- twice
+   the reach it claims to be. The doubling looks like it was carried forward
+   from the previous value rather than recomputed: 60 was already close to
+   twice the old 32-sample reach, and when halving the attenuation doubled the
+   reach to 63, the margin doubled to 128 alongside it instead of being set to
+   the new reach.
+
+   Area is the whole cost of lighting, and this is the number that governs it.
+   Measured over seven scenes -- day, night and dusk, at the surface and 1200
+   cells underground, with lamps 40 and 200 cells off screen -- the VISIBLE
+   field is bit-identical at 64 and the solve goes from 5.8 ms to 2.5 ms.
+   Lighting was 77% of a settled frame and is now about 55%.
+
+   Do not take it below 64 for the ordinary build. 48 and 32 also measured
+   identical, but only because no test scene puts a lamp in open air at exactly
+   the distance where it would matter; the invariant is what protects the case
+   nobody thought to build, and below 63 samples there are lamp positions that
+   genuinely cannot reach in. A build that accepts that trade -- see the
+   lightweight notes -- can override it. */
+#ifndef LIGHT_MARGIN
+#define LIGHT_MARGIN LIGHT_MARGIN_DEFAULT
+#endif
+static const int LIGHT_MARGIN_DEFAULT = 64;        /* in SAMPLES, not cells */
 static const int LIGHT_W = VIEW_CELLS_W / LIGHT_CELL + 2 * LIGHT_MARGIN;
 static const int LIGHT_H = VIEW_CELLS_H / LIGHT_CELL + 2 * LIGHT_MARGIN;
 
