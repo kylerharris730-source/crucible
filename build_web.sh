@@ -88,3 +88,10 @@ mkdir -p web
 
 echo "Built web/crucible.js + web/crucible.wasm"
 ls -lh web/crucible.wasm
+echo
+# Said here because opening web/index.html by double-clicking it is the
+# obvious thing to try and it cannot work: a file:// page is not allowed to
+# fetch WebAssembly, so the page renders and then hangs with no error.
+echo "Serve it -- do NOT just open web/index.html, a file:// page cannot load wasm:"
+echo "    python -m http.server 8099 -d web"
+echo "    then open http://localhost:8099"
