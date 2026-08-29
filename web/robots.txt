@@ -8,4 +8,4 @@ Allow: /
 Disallow: /cinderlift.wasm
 Disallow: /cinderlift.js
 
-Sitemap: https://kylerharris730-source.github.io/crucible/sitemap.xml
+Sitemap: https://cinderlift.com/sitemap.xml

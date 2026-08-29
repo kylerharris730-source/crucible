@@ -7,28 +7,37 @@
 <!-- ===========================================================================
      SEO / sharing.
 
-     One thing to change when the domain lands: SITE_URL below appears in the
-     canonical link, the Open Graph url and the JSON-LD. Search engines treat a
-     wrong canonical as an instruction to index some OTHER page instead of this
-     one, so these three must always agree with each other and with wherever
-     the page is actually served from.
-     SITE_URL = https://kylerharris730-source.github.io/crucible/
+     SITE_URL = https://cinderlift.com/
+
+     That address appears in the canonical link, og:url, og:image, twitter:image
+     and the JSON-LD, and all of them must agree with each other AND with where
+     the page is actually served from. A canonical pointing somewhere else is
+     not a hint -- it is an instruction to index that other URL instead of this
+     one, so a stale value here quietly hands your search presence to a page
+     that no longer exists.
+
+     Serving is pinned by web/CNAME, which is what makes cinderlift.com the
+     real home and the github.io address a redirect to it. Change one of these
+     and you must change all of them.
+
+     The Source link further down stays on github.com deliberately: it points
+     at the repository, not at the site.
      =========================================================================== -->
 <title>Cinderlift &mdash; falling-sand physics sandbox</title>
 <meta name="description" content="Cinderlift is a falling-sand sandbox with real heat, pressure, fluids and circuits. Melt iron, run steam, wire machines, and build your way off the planet. Play free in your browser.">
-<link rel="canonical" href="https://kylerharris730-source.github.io/crucible/">
+<link rel="canonical" href="https://cinderlift.com/">
 
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Cinderlift">
 <meta property="og:title" content="Cinderlift — falling-sand physics sandbox">
 <meta property="og:description" content="Melt iron, run steam, wire machines, and build your way off the planet. A falling-sand sandbox with real heat, pressure and circuits. Play free in your browser.">
-<meta property="og:url" content="https://kylerharris730-source.github.io/crucible/">
+<meta property="og:url" content="https://cinderlift.com/">
 <!-- An actual frame out of the running game, not a photograph of the page:
      captured from the WebGL upload buffer at native resolution, so every cell
      is the pixel the simulation produced. Absolute URLs are required here --
      Discord, Slack and Twitter fetch this without a page to resolve against,
      and a relative path silently yields no preview at all. -->
-<meta property="og:image" content="https://kylerharris730-source.github.io/crucible/og-cover.png">
+<meta property="og:image" content="https://cinderlift.com/og-cover.png">
 <meta property="og:image:type" content="image/png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
@@ -36,7 +45,7 @@
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Cinderlift — falling-sand physics sandbox">
 <meta name="twitter:description" content="Melt iron, run steam, wire machines, and build your way off the planet. Play free in your browser.">
-<meta name="twitter:image" content="https://kylerharris730-source.github.io/crucible/og-cover.png">
+<meta name="twitter:image" content="https://cinderlift.com/og-cover.png">
 
 <!-- Tells Google this page IS a game rather than an article about one, which
      is what makes it eligible to be presented as software rather than prose. -->
@@ -45,7 +54,7 @@
   "@context": "https://schema.org",
   "@type": "VideoGame",
   "name": "Cinderlift",
-  "url": "https://kylerharris730-source.github.io/crucible/",
+  "url": "https://cinderlift.com/",
   "description": "A falling-sand sandbox with real heat, pressure, fluids and circuits. Melt iron, run steam, wire machines, and build your way off the planet.",
   "genre": ["Sandbox", "Simulation", "Falling sand"],
   "gamePlatform": ["Web browser", "PC"],
