@@ -88,7 +88,7 @@
   }
   header {
     display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap;
-    padding: 14px 20px; border-bottom: 1px solid var(--edge);
+    padding: 9px 20px; border-bottom: 1px solid var(--edge);
   }
   h1 { margin: 0; font-size: 20px; letter-spacing: 2px; color: var(--accent); font-weight: 600; }
   .tag { color: var(--dim); font-size: 13px; }
@@ -107,22 +107,39 @@
   a.ghost:hover { color: var(--ink); border-color: var(--dim); }
   .ver { font-size: 11px; opacity: .75; font-weight: 400; }
 
+  /* Tight padding on purpose. Every pixel of page chrome is a pixel the
+     canvas cannot have, and the canvas is 768 tall -- on a 900px screen the
+     difference between chrome of 180 and 132 is the difference between a
+     filtered 0.94x and an exact 1:1. */
   #stage {
     display: flex; align-items: center; justify-content: center;
-    padding: 16px; min-height: 60vh;
+    padding: 8px; min-height: 50vh;
   }
   canvas#canvas {
     display: block;
     background: #000;
     border: 1px solid var(--edge);
     max-width: 100%;
-    max-height: calc(100vh - 190px);
-    /* The game renders at a fixed pixel grid and is then scaled to the page.
-       Smoothing that would blur every cell of the simulation into its
-       neighbours, which is precisely the detail the game is about. */
+    outline: none;
+    /* Smooth is the DEFAULT here, and that is the opposite of the usual advice
+       for pixel art, for a reason that only applies when shrinking.
+
+       The canvas is 1288x768 and panel text is drawn with one-device-pixel
+       strokes. Nearest-neighbour does not shrink a 1px stroke when the canvas
+       is displayed below 1:1 -- it DELETES it, because the row or column it
+       lived in is one of the ones dropped. Measured at 0.65x, "Size 6" came
+       out as three disconnected marks and "Overwrite: Off" was unreadable,
+       while the same frame filtered smoothly stayed legible throughout.
+
+       So the mode is chosen by fitCanvas() from the actual scale rather than
+       assumed: crisp when the image is being enlarged, where nearest is right
+       and smoothing would blur the cell grid the game is made of; smooth only
+       when it is being reduced, where nearest destroys detail outright. */
+    image-rendering: auto;
+  }
+  canvas#canvas.crisp {
     image-rendering: pixelated;
     image-rendering: crisp-edges;
-    outline: none;
   }
   canvas#canvas.loading { display: none; }
 
@@ -157,8 +174,8 @@
   #err .why { color: var(--dim); margin-top: 10px; font-size: 12.5px; }
 
   footer {
-    border-top: 1px solid var(--edge); padding: 14px 20px;
-    color: var(--dim); font-size: 12.5px; line-height: 1.7;
+    border-top: 1px solid var(--edge); padding: 9px 20px;
+    color: var(--dim); font-size: 12.5px; line-height: 1.5;
   }
   footer b { color: var(--ink); font-weight: 600; }
   kbd {
@@ -267,6 +284,7 @@
       started = true;
       boot.style.display = 'none';
       canvas.classList.remove('loading');
+      fitCanvas();
       canvas.focus();
     },
     onAbort: function (what) {
@@ -285,6 +303,56 @@
            'If you are running this locally, build it first with <code>./build_web.sh</code>.');
     }
   }, true);
+
+  // --- sizing ---------------------------------------------------------------
+  // Two jobs, and the second is why this exists at all rather than being left
+  // to a CSS max-width.
+  //
+  // Prefer a WHOLE-NUMBER scale. At 1.4x, nearest-neighbour makes some source
+  // pixels two screen pixels wide and others one, so the cell grid comes out
+  // visibly lumpy and text worst of all. Snapping down to 1x keeps every cell
+  // the same size, which is what makes pixel art look deliberate.
+  //
+  // And when even 1:1 does not fit, stop pretending it is a pixel-art upscale:
+  // shrinking with nearest deletes one-pixel strokes rather than shrinking
+  // them, so the class comes off and the browser filters properly. Judged in
+  // DEVICE pixels via devicePixelRatio -- on a 2x display a canvas at 644 CSS
+  // px is still exactly 1:1 in real pixels and should stay crisp.
+  // Kept pure and separate so it can be checked against known viewports
+  // without a browser window to measure -- see the note about 0x0 below.
+  function computeFit(availW, availH, dpr, cw, ch) {
+    const fit = Math.min(availW * dpr / cw, availH * dpr / ch);
+    const scale = fit >= 1 ? Math.floor(fit) : fit;
+    return { scale: scale, crisp: fit >= 1,
+             cssW: cw * scale / dpr, cssH: ch * scale / dpr };
+  }
+  window.__computeFit = computeFit;
+
+  function fitCanvas() {
+    const vw = window.innerWidth, vh = window.innerHeight;
+    // A hidden or not-yet-laid-out tab reports 0x0, and sizing against that
+    // collapses the canvas to a couple of pixels -- which then persists after
+    // the tab becomes visible again, because nothing else recomputes it.
+    // Measured: a backgrounded tab returned innerWidth 0 and the canvas was
+    // set to 2x80. Leave it alone until there is a real viewport.
+    if (!vw || !vh) return;
+
+    const header = document.querySelector('header');
+    const footer = document.querySelector('footer');
+    const chrome = (header ? header.offsetHeight : 0) +
+                   (footer ? footer.offsetHeight : 0) + 18;   // 18 = #stage padding + border
+    const f = computeFit(Math.max(160, vw - 34), Math.max(120, vh - chrome),
+                         window.devicePixelRatio || 1, canvas.width, canvas.height);
+    canvas.style.width  = f.cssW + 'px';
+    canvas.style.height = f.cssH + 'px';
+    canvas.classList.toggle('crisp', f.crisp);
+  }
+
+  window.addEventListener('resize', fitCanvas);
+  // A tab sized while hidden gets a second chance once it can be measured.
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden) fitCanvas();
+  });
 
   // The canvas has to hold focus or the arrow keys and space scroll the page
   // instead of reaching the game.
