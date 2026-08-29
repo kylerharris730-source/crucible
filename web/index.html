@@ -119,7 +119,18 @@
     display: block;
     background: #000;
     border: 1px solid var(--edge);
+    /* height follows width, ALWAYS. This pairing is what keeps the picture in
+       proportion, and dropping it is how it got squished: fitCanvas set width
+       and height as an explicit pair, but max-width could still clamp the
+       width afterwards -- when the container was narrower, or when the chrome
+       measurement was off, or when fitCanvas declined to run at all on a
+       0x0 viewport. The width shrank, the height did not, and the game came
+       out stretched.
+       With height:auto the canvas keeps the ratio of its width/height
+       ATTRIBUTES no matter who ends up deciding the width, so no clamp
+       anywhere can distort it. fitCanvas therefore sets width only. */
     max-width: 100%;
+    height: auto;
     outline: none;
     /* Smooth is the DEFAULT here, and that is the opposite of the usual advice
        for pixel art, for a reason that only applies when shrinking.
@@ -298,13 +309,18 @@
       (location.search.match(/[?&]ui=(\d+)/) || [])[1], 10);
     if (forced >= 50 && forced <= 200) return forced;
 
+    // Viewport only, with a fixed allowance for chrome -- NOT availableBox().
+    // This runs in preRun, before layout has settled: measured there, the
+    // footer had not finished wrapping and reported far taller than its final
+    // 75px, which inflated the chrome, shrank the apparent room and picked
+    // 110% on a window that actually had space for 100%. innerWidth and
+    // innerHeight are correct that early; element geometry is not.
+    // fitCanvas runs after layout and measures properly; this only needs to be
+    // close enough to choose a starting text size.
     const vw = window.innerWidth, vh = window.innerHeight;
     if (!vw || !vh) return 100;
-    const header = document.querySelector('header');
-    const footer = document.querySelector('footer');
-    const chrome = (header ? header.offsetHeight : 40) +
-                   (footer ? footer.offsetHeight : 60) + 18;
-    const f = computeFit(Math.max(160, vw - 34), Math.max(120, vh - chrome),
+    const CHROME_ALLOWANCE = 150;   // header + footer + stage padding, measured
+    const f = computeFit(Math.max(160, vw - 34), Math.max(120, vh - CHROME_ALLOWANCE),
                          window.devicePixelRatio || 1, NATIVE_W, NATIVE_H);
     // Only compensate when the canvas is actually being reduced. Bigger text
     // costs panel room, so it is not worth spending at 1:1 or above.
@@ -384,24 +400,47 @@
   }
   window.__computeFit = computeFit;
 
-  function fitCanvas() {
+  // The space the canvas may occupy, measured rather than estimated -- the
+  // stage's own box for width, the viewport less the real chrome for height.
+  // Shared with intendedUiScalePct so the two cannot disagree about how much
+  // room there is: they did, and the UI scale was picked for a shrunken canvas
+  // while the canvas was actually being enlarged.
+  // Returns null on a hidden or not-yet-laid-out tab, which reports 0x0 --
+  // sizing against that collapsed the canvas to 2x80, and it stayed that way
+  // when the tab came back because nothing recomputed it.
+  function availableBox() {
     const vw = window.innerWidth, vh = window.innerHeight;
-    // A hidden or not-yet-laid-out tab reports 0x0, and sizing against that
-    // collapses the canvas to a couple of pixels -- which then persists after
-    // the tab becomes visible again, because nothing else recomputes it.
-    // Measured: a backgrounded tab returned innerWidth 0 and the canvas was
-    // set to 2x80. Leave it alone until there is a real viewport.
-    if (!vw || !vh) return;
-
+    if (!vw || !vh) return null;
     const header = document.querySelector('header');
     const footer = document.querySelector('footer');
     const chrome = (header ? header.offsetHeight : 0) +
-                   (footer ? footer.offsetHeight : 0) + 18;   // 18 = #stage padding + border
-    const f = computeFit(Math.max(160, vw - 34), Math.max(120, vh - chrome),
-                         window.devicePixelRatio || 1, canvas.width, canvas.height);
-    canvas.style.width  = f.cssW + 'px';
-    canvas.style.height = f.cssH + 'px';
-    canvas.classList.toggle('crisp', f.crisp);
+                   (footer ? footer.offsetHeight : 0) + 18;   // stage padding + border
+    const stageEl = document.getElementById('stage');
+    return {
+      w: Math.max(160, (stageEl ? stageEl.clientWidth : vw) - 18),
+      h: Math.max(120, vh - chrome),
+      dpr: window.devicePixelRatio || 1
+    };
+  }
+
+  function fitCanvas() {
+    const box = availableBox();
+    if (!box) return;
+    const dpr = box.dpr;
+    const f = computeFit(box.w, box.h, dpr, canvas.width, canvas.height);
+    // Width only -- height is CSS auto and follows it. Setting both is what
+    // allowed the two to disagree once anything clamped the width.
+    canvas.style.width = f.cssW + 'px';
+
+    // Classify from what the browser ACTUALLY laid out, not from what was
+    // asked for. max-width, a mis-measured chrome or a scrollbar appearing can
+    // all leave the canvas narrower than requested, and deciding "crisp" from
+    // the request then pins nearest-neighbour onto an image that is really
+    // being reduced -- which is the exact bug this was meant to fix. Measured
+    // here at 1200px wide while the request had been 1288.
+    const shown = canvas.getBoundingClientRect().width;
+    const actual = shown * dpr / canvas.width;
+    canvas.classList.toggle('crisp', actual >= 0.999);
   }
 
   window.addEventListener('resize', fitCanvas);
