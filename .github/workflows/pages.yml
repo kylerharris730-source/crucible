@@ -49,7 +49,7 @@ jobs:
         # it looks like a successful publish and is a blank screen, so fail
         # here instead of there.
         run: |
-          for f in web/index.html web/crucible.js web/crucible.wasm; do
+          for f in web/index.html web/cinderlift.js web/cinderlift.wasm; do
             test -s "$f" || { echo "missing or empty: $f" >&2; exit 1; }
           done
           ls -lh web/

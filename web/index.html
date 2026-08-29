@@ -3,8 +3,48 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Crucible</title>
-<meta name="description" content="A falling-sand sandbox with heat, pressure, circuits and machines. Play in the browser, or download the Windows build.">
+
+<!-- ===========================================================================
+     SEO / sharing.
+
+     One thing to change when the domain lands: SITE_URL below appears in the
+     canonical link, the Open Graph url and the JSON-LD. Search engines treat a
+     wrong canonical as an instruction to index some OTHER page instead of this
+     one, so these three must always agree with each other and with wherever
+     the page is actually served from.
+     SITE_URL = https://kylerharris730-source.github.io/crucible/
+     =========================================================================== -->
+<title>Cinderlift &mdash; falling-sand physics sandbox</title>
+<meta name="description" content="Cinderlift is a falling-sand sandbox with real heat, pressure, fluids and circuits. Melt iron, run steam, wire machines, and build your way off the planet. Play free in your browser.">
+<link rel="canonical" href="https://kylerharris730-source.github.io/crucible/">
+
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Cinderlift">
+<meta property="og:title" content="Cinderlift — falling-sand physics sandbox">
+<meta property="og:description" content="Melt iron, run steam, wire machines, and build your way off the planet. A falling-sand sandbox with real heat, pressure and circuits. Play free in your browser.">
+<meta property="og:url" content="https://kylerharris730-source.github.io/crucible/">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Cinderlift — falling-sand physics sandbox">
+<meta name="twitter:description" content="Melt iron, run steam, wire machines, and build your way off the planet. Play free in your browser.">
+
+<!-- Tells Google this page IS a game rather than an article about one, which
+     is what makes it eligible to be presented as software rather than prose. -->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "VideoGame",
+  "name": "Cinderlift",
+  "url": "https://kylerharris730-source.github.io/crucible/",
+  "description": "A falling-sand sandbox with real heat, pressure, fluids and circuits. Melt iron, run steam, wire machines, and build your way off the planet.",
+  "genre": ["Sandbox", "Simulation", "Falling sand"],
+  "gamePlatform": ["Web browser", "PC"],
+  "applicationCategory": "Game",
+  "operatingSystem": ["Web browser", "Windows"],
+  "playMode": "SinglePlayer",
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+}
+</script>
+
 <style>
   :root {
     --bg:      #0d1014;
@@ -42,6 +82,7 @@
     padding: 7px 10px; border: 1px solid var(--edge); border-radius: 3px;
   }
   a.ghost:hover { color: var(--ink); border-color: var(--dim); }
+  .ver { font-size: 11px; opacity: .75; font-weight: 400; }
 
   #stage {
     display: flex; align-items: center; justify-content: center;
@@ -68,7 +109,7 @@
     margin: 16px auto 0; border-radius: 2px; overflow: hidden; position: relative;
   }
   /* Indeterminate by default. Emscripten only reports byte counts for some
-     assets, so a bar that sat at zero until it got numbers looked broken --
+     assets, so a bar wired to those numbers sat at zero and read as broken --
      which is exactly how the first version of this page failed. It sweeps
      until there is something real to show, then switches to a real fill. */
   #barFill {
@@ -77,10 +118,7 @@
     animation: sweep 1.1s ease-in-out infinite;
   }
   #barFill.determinate { animation: none; left: 0; transition: width .2s; }
-  @keyframes sweep {
-    0%   { left: -35%; }
-    100% { left: 100%; }
-  }
+  @keyframes sweep { 0% { left: -35%; } 100% { left: 100%; } }
   #boot .note { margin-top: 14px; font-size: 12px; color: #6c7683; }
 
   #err {
@@ -109,18 +147,19 @@
 <body>
 
 <header>
-  <h1>CRUCIBLE</h1>
+  <h1>CINDERLIFT</h1>
   <span class="tag">falling sand, heat, pressure, circuits</span>
   <span class="spacer"></span>
   <a class="ghost" href="https://github.com/kylerharris730-source/crucible">Source</a>
   <!-- /releases/latest/download/ always resolves to the newest published
-       release, so this page never needs republishing when one is cut. -->
-  <a class="dl" href="https://github.com/kylerharris730-source/crucible/releases/latest/download/crucible.exe">Download for Windows</a>
+       release, so this page never needs republishing when one is cut. The
+       version label beside it is filled in at runtime; see fetchVersion(). -->
+  <a class="dl" id="dl" href="https://github.com/kylerharris730-source/crucible/releases/latest/download/cinderlift.exe">Download for Windows<span class="ver" id="ver"></span></a>
 </header>
 
 <div id="stage">
   <div id="boot">
-    Loading Crucible&hellip;
+    Loading Cinderlift&hellip;
     <div id="bar"><div id="barFill"></div></div>
     <div class="note">About 1.5&nbsp;MB to download. Desktop browser recommended.</div>
     <div id="err"></div>
@@ -154,12 +193,25 @@
                        (why ? '<div class="why">' + why + '</div>' : '');
   }
 
+  // --- which build the download button is offering -------------------------
+  // The link always resolves to the newest release, but says so only if this
+  // succeeds. Public, unauthenticated, and rate-limited per IP, so it is
+  // written to fail invisibly: the button works identically without it.
+  (function fetchVersion() {
+    fetch('https://api.github.com/repos/kylerharris730-source/crucible/releases/latest')
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (j) {
+        if (j && j.tag_name) document.getElementById('ver').textContent = ' ' + j.tag_name;
+      })
+      .catch(function () { /* leave the button unlabelled */ });
+  })();
+
   // --- opened from the filesystem ------------------------------------------
   // The single most likely way to arrive here confused. Double-clicking the
   // file gives the page a file:// origin, and browsers refuse to let such a
-  // page fetch crucible.wasm -- so the HTML and CSS render perfectly, the
-  // download never starts, and without this check the reader is left watching
-  // a loading bar forever with nothing to go on.
+  // page fetch the wasm -- so the HTML and CSS render perfectly, the download
+  // never starts, and without this check the reader is left watching a loading
+  // bar forever with nothing to go on.
   if (location.protocol === 'file:') {
     fail('This page needs to be served over HTTP',
          'Opening <code>index.html</code> from disk gives it a <code>file://</code> address, and ' +
@@ -167,14 +219,12 @@
          'From the repository root, run:<br><br>' +
          '<code>python -m http.server 8099 -d web</code><br><br>' +
          'then open <code>http://localhost:8099</code>.',
-         'On the published GitHub Pages site this never applies -- that is served over HTTPS.');
+         'On the published site this never applies -- that is served over HTTPS.');
   } else {
-    // A stall with no explanation is the failure this page had; say something
-    // useful rather than spinning indefinitely.
     setTimeout(function () {
       fail('Still loading, which is longer than expected',
            'The game normally starts within a few seconds. Check the browser console for ' +
-           'errors, and confirm <code>crucible.wasm</code> sits next to this page.',
+           'errors, and confirm <code>cinderlift.wasm</code> sits next to this page.',
            'It needs roughly 350 MB of memory for the world, so a phone or a low-memory ' +
            'tab may not be able to start it.');
     }, 30000);
@@ -182,9 +232,6 @@
 
   var Module = {
     canvas: canvas,
-    // Emscripten reports progress as free-form text; the byte counts inside it
-    // are the only part worth showing, so the bar reads them out when they are
-    // there and keeps sweeping when they are not.
     setStatus: function (text) {
       if (!text) return;
       var m = /([0-9.]+)\s*\/\s*([0-9.]+)/.exec(text);
@@ -209,9 +256,9 @@
 
   window.addEventListener('error', function (e) {
     if (e.target && e.target.tagName === 'SCRIPT') {
-      fail('Could not load <code>crucible.js</code>',
+      fail('Could not load <code>cinderlift.js</code>',
            'The page loaded but the game code did not. It should sit beside ' +
-           '<code>index.html</code>, along with <code>crucible.wasm</code>.',
+           '<code>index.html</code>, along with <code>cinderlift.wasm</code>.',
            'If you are running this locally, build it first with <code>./build_web.sh</code>.');
     }
   }, true);
@@ -226,7 +273,7 @@
     }
   });
 </script>
-<script async src="crucible.js"></script>
+<script async src="cinderlift.js"></script>
 
 </body>
 </html>

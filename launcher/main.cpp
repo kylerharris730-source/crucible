@@ -17,7 +17,7 @@
 #endif
 
 static const wchar_t* MANIFEST_URL =
-    L"https://github.com/kylerharris730-source/crucible/releases/latest/download/crucible-manifest.txt";
+    L"https://github.com/kylerharris730-source/crucible/releases/latest/download/cinderlift-manifest.txt";
 static const wchar_t* RELEASE_PREFIX =
     L"https://github.com/kylerharris730-source/crucible/releases/download/";
 
@@ -41,7 +41,7 @@ struct Manifest {
 static std::wstring exePath() {
     wchar_t path[32768];
     DWORD n = GetModuleFileNameW(0, path, 32768);
-    return n ? std::wstring(path, n) : L"crucible-launcher.exe";
+    return n ? std::wstring(path, n) : L"cinderlift-launcher.exe";
 }
 
 static std::wstring parentDir(const std::wstring& path) {
@@ -61,14 +61,14 @@ static bool exists(const std::wstring& path) {
 
 static void migrateAdjacentData(const std::wstring& destination) {
     const std::wstring source = parentDir(exePath());
-    const wchar_t* fixed[] = { L"crucible.sav", L"crucible.cfg" };
+    const wchar_t* fixed[] = { L"cinderlift.sav", L"cinderlift.cfg" };
     for (size_t i = 0; i < sizeof(fixed) / sizeof(fixed[0]); ++i) {
         const std::wstring from = joinPath(source, fixed[i]);
         const std::wstring to = joinPath(destination, fixed[i]);
         if (exists(from) && !exists(to)) CopyFileW(from.c_str(), to.c_str(), TRUE);
     }
     for (int slot = 1; slot <= 10; ++slot) {
-        wchar_t name[32]; _snwprintf(name, 31, L"crucible%d.sav", slot); name[31] = 0;
+        wchar_t name[32]; _snwprintf(name, 31, L"cinderlift%d.sav", slot); name[31] = 0;
         const std::wstring from = joinPath(source, name), to = joinPath(destination, name);
         if (exists(from) && !exists(to)) CopyFileW(from.c_str(), to.c_str(), TRUE);
     }
@@ -101,7 +101,7 @@ static bool download(const std::wstring& url, const std::wstring& output, std::w
     if (url.find(L"https://") != 0) {
         error = L"Release URL is not valid HTTPS"; return false;
     }
-    HINTERNET session = InternetOpenW(L"Crucible Launcher/1.0", INTERNET_OPEN_TYPE_PRECONFIG, 0, 0, 0);
+    HINTERNET session = InternetOpenW(L"Cinderlift Launcher/1.0", INTERNET_OPEN_TYPE_PRECONFIG, 0, 0, 0);
     if (!session) { error = winError(L"Could not start the network client"); return false; }
     DWORD timeout = 30000;
     InternetSetOptionW(session, INTERNET_OPTION_CONNECT_TIMEOUT, &timeout, sizeof(timeout));
@@ -243,8 +243,8 @@ static bool stageSelfUpdate(const Manifest& m, std::wstring& error) {
     }
     if (currentHash == m.launcherHash) return true;
     const std::wstring dir = parentDir(exePath());
-    const std::wstring temp = joinPath(dir, L"crucible-launcher.next.tmp");
-    const std::wstring next = joinPath(dir, L"crucible-launcher.next.exe");
+    const std::wstring temp = joinPath(dir, L"cinderlift-launcher.next.tmp");
+    const std::wstring next = joinPath(dir, L"cinderlift-launcher.next.exe");
     if (!download(m.launcherUrl, temp, error)) return false;
     std::wstring downloaded;
     if (!sha256(temp, downloaded) || downloaded != m.launcherHash) {
@@ -253,19 +253,19 @@ static bool stageSelfUpdate(const Manifest& m, std::wstring& error) {
     if (!MoveFileExW(temp.c_str(), next.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
         DeleteFileW(temp.c_str()); error = winError(L"Could not stage launcher update"); return false;
     }
-    writeText(joinPath(dir, L"crucible-launcher.next.sha256"), m.launcherHash);
+    writeText(joinPath(dir, L"cinderlift-launcher.next.sha256"), m.launcherHash);
     return true;
 }
 
 static DWORD WINAPI updateThread(void*) {
     const std::wstring dir = appDir();
     migrateAdjacentData(dir);
-    const std::wstring game = joinPath(dir, L"crucible.exe");
-    const std::wstring adjacentGame = joinPath(parentDir(exePath()), L"crucible.exe");
+    const std::wstring game = joinPath(dir, L"cinderlift.exe");
+    const std::wstring adjacentGame = joinPath(parentDir(exePath()), L"cinderlift.exe");
     bool importedLocalBuild = false;
     if (!exists(game) && exists(adjacentGame))
         importedLocalBuild = CopyFileW(adjacentGame.c_str(), game.c_str(), TRUE) != 0;
-    const std::wstring manifestPath = joinPath(dir, L"crucible-manifest.tmp");
+    const std::wstring manifestPath = joinPath(dir, L"cinderlift-manifest.tmp");
     postStatus(L"Checking GitHub Releases...", false);
     std::wstring error;
     if (!download(MANIFEST_URL, manifestPath, error)) {
@@ -277,7 +277,7 @@ static DWORD WINAPI updateThread(void*) {
                 : L"No GitHub Release exists yet. Publish the first v* tag to enable downloads.", haveGame);
         } else {
             postStatus(haveGame ? L"Could not check for updates. You can still play offline.\r\n" + error
-                                : L"Could not download Crucible.\r\n" + error, haveGame);
+                                : L"Could not download Cinderlift.\r\n" + error, haveGame);
         }
         InterlockedExchange(&g_busy, 0); return 0;
     }
@@ -291,8 +291,8 @@ static DWORD WINAPI updateThread(void*) {
     std::wstring installedHash;
     const bool current = exists(game) && sha256(game, installedHash) && installedHash == m.gameHash;
     if (!current) {
-        postStatus(L"Downloading Crucible " + m.version + L"...", false);
-        const std::wstring temp = joinPath(dir, L"crucible.download.exe");
+        postStatus(L"Downloading Cinderlift " + m.version + L"...", false);
+        const std::wstring temp = joinPath(dir, L"cinderlift.download.exe");
         if (!download(m.gameUrl, temp, error)) {
             postStatus(L"Game update failed; your previous version was kept.\r\n" + error, exists(game));
             InterlockedExchange(&g_busy, 0); return 0;
@@ -305,16 +305,16 @@ static DWORD WINAPI updateThread(void*) {
         }
         if (!MoveFileExW(temp.c_str(), game.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
             DeleteFileW(temp.c_str());
-            postStatus(L"Could not install the update. Close Crucible and try again.", exists(game));
+            postStatus(L"Could not install the update. Close Cinderlift and try again.", exists(game));
             InterlockedExchange(&g_busy, 0); return 0;
         }
     }
     writeText(joinPath(dir, L"version.txt"), m.version);
     std::wstring selfError;
     stageSelfUpdate(m, selfError);
-    const bool launcherReady = exists(joinPath(parentDir(exePath()), L"crucible-launcher.next.exe"));
-    std::wstring message = current ? L"Crucible " + m.version + L" is up to date."
-                                   : L"Updated to Crucible " + m.version + L".";
+    const bool launcherReady = exists(joinPath(parentDir(exePath()), L"cinderlift-launcher.next.exe"));
+    std::wstring message = current ? L"Cinderlift " + m.version + L" is up to date."
+                                   : L"Updated to Cinderlift " + m.version + L".";
     if (launcherReady) message += L"\r\nLauncher update staged; it will install next time you open it.";
     else if (!selfError.empty()) message += L"\r\nLauncher update check failed: " + selfError;
     postStatus(message, true);
@@ -325,13 +325,13 @@ static void beginUpdate() {
     if (InterlockedCompareExchange(&g_busy, 1, 0) != 0) return;
     EnableWindow(g_play, FALSE); EnableWindow(g_check, FALSE);
     HANDLE t = CreateThread(0, 0, updateThread, 0, 0, 0); if (t) CloseHandle(t);
-    else { InterlockedExchange(&g_busy, 0); postStatus(L"Could not start update check.", exists(joinPath(appDir(), L"crucible.exe"))); }
+    else { InterlockedExchange(&g_busy, 0); postStatus(L"Could not start update check.", exists(joinPath(appDir(), L"cinderlift.exe"))); }
 }
 
 static bool applyStagedUpdate() {
     const std::wstring current = exePath(), dir = parentDir(current);
-    const std::wstring next = joinPath(dir, L"crucible-launcher.next.exe");
-    const std::wstring hashPath = joinPath(dir, L"crucible-launcher.next.sha256");
+    const std::wstring next = joinPath(dir, L"cinderlift-launcher.next.exe");
+    const std::wstring hashPath = joinPath(dir, L"cinderlift-launcher.next.sha256");
     if (!exists(next) || !exists(hashPath)) return false;
     std::wstring expected = readText(hashPath), actual;
     if (!validHash(expected) || !sha256(next, actual) || actual != expected) {
@@ -365,7 +365,7 @@ static void cleanupMode(int argc, wchar_t** argv) {
     HANDLE helper = OpenProcess(SYNCHRONIZE, FALSE, pid);
     if (helper) { WaitForSingleObject(helper, 30000); CloseHandle(helper); }
     DeleteFileW(argv[2]);
-    DeleteFileW(joinPath(parentDir(exePath()), L"crucible-launcher.next.sha256").c_str());
+    DeleteFileW(joinPath(parentDir(exePath()), L"cinderlift-launcher.next.sha256").c_str());
 }
 
 /* Headless release-pipeline check: the same parser and hashing path the UI
@@ -381,9 +381,9 @@ static int verificationMode(int argc, wchar_t** argv) {
 
 static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     if (msg == WM_COMMAND && LOWORD(wp) == ID_PLAY) {
-        const std::wstring dir = appDir(), game = joinPath(dir, L"crucible.exe");
+        const std::wstring dir = appDir(), game = joinPath(dir, L"cinderlift.exe");
         if (launch(game, L"", dir)) DestroyWindow(hwnd);
-        else MessageBoxW(hwnd, L"Crucible could not be started.", L"Crucible Launcher", MB_ICONERROR);
+        else MessageBoxW(hwnd, L"Cinderlift could not be started.", L"Cinderlift Launcher", MB_ICONERROR);
         return 0;
     }
     if (msg == WM_COMMAND && LOWORD(wp) == ID_CHECK) { beginUpdate(); return 0; }
@@ -435,9 +435,9 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int show) {
     g_buttonBrush = CreateSolidBrush(COL_BUTTON);
     g_buttonPressedBrush = CreateSolidBrush(COL_BUTTON_HOT);
     wc.hCursor = LoadCursor(0, IDC_ARROW); wc.hbrBackground = g_bgBrush;
-    wc.lpszClassName = L"CrucibleLauncherWindow";
+    wc.lpszClassName = L"CinderliftLauncherWindow";
     if (!RegisterClassW(&wc)) return 1;
-    HWND hwnd = CreateWindowW(wc.lpszClassName, L"Crucible Launcher",
+    HWND hwnd = CreateWindowW(wc.lpszClassName, L"Cinderlift Launcher",
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
         CW_USEDEFAULT, CW_USEDEFAULT, 520, 245, 0, 0, instance, 0);
     if (!hwnd) return 1;
@@ -445,7 +445,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int show) {
                                   DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Consolas");
     HFONT font = CreateFontW(17, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
                              DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Consolas");
-    g_title = CreateWindowW(L"STATIC", L"CRUCIBLE", WS_CHILD | WS_VISIBLE,
+    g_title = CreateWindowW(L"STATIC", L"CINDERLIFT", WS_CHILD | WS_VISIBLE,
                             24, 20, 450, 42, hwnd, 0, instance, 0);
     g_status = CreateWindowW(L"STATIC", L"Starting...", WS_CHILD | WS_VISIBLE,
                              26, 70, 455, 52, hwnd, 0, instance, 0);

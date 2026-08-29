@@ -12,8 +12,8 @@ $launcherHash = (Get-FileHash -LiteralPath $Launcher -Algorithm SHA256).Hash.ToL
 $base = "https://github.com/$Repository/releases/download/$Tag"
 @(
     "version=$Tag"
-    "game_url=$base/crucible.exe"
+    "game_url=$base/cinderlift.exe"
     "game_sha256=$gameHash"
-    "launcher_url=$base/crucible-launcher.exe"
+    "launcher_url=$base/cinderlift-launcher.exe"
     "launcher_sha256=$launcherHash"
 ) | Set-Content -LiteralPath $Output -Encoding utf8

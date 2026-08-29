@@ -1,4 +1,4 @@
-# Crucible — progression plan
+# Cinderlift — progression plan
 
 How every material and item comes to be made, what gets added to fill the gaps,
 and the enemies that put pressure on it.
@@ -237,8 +237,8 @@ must build a *good* furnace rather than a working one.
 
 ### Tier 4 — deepest *(tungsten, graphene, refractory)*
 
-**NEW — Tungsten.** The highest melting point in the game. You line the crucible
-with it in order to melt everything else. The game is called Crucible; this is
+**NEW — Tungsten.** The highest melting point in the game. You line the cinderlift
+with it in order to melt everything else. The game is called Cinderlift; this is
 the material that finally lets you build a real one, and it should read as the
 payoff it is.
 

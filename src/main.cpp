@@ -84,12 +84,12 @@ static const int UI_SCALE_COUNT = (int)(sizeof(UI_SCALE_VALUES) / sizeof(UI_SCAL
 static int g_uiScaleIndex = 2;
 static int uiScalePct() { return UI_SCALE_VALUES[g_uiScaleIndex]; }
 static int uiScaled(int px) { return imax(1, (px * uiScalePct() + 50) / 100); }
-#ifndef CRUCIBLE_CONFIG_PATH
-#define CRUCIBLE_CONFIG_PATH "crucible.cfg"
+#ifndef CINDERLIFT_CONFIG_PATH
+#define CINDERLIFT_CONFIG_PATH "cinderlift.cfg"
 #endif
 
 static void uiSettingsLoad() {
-    FILE* f = fopen(CRUCIBLE_CONFIG_PATH, "rb");
+    FILE* f = fopen(CINDERLIFT_CONFIG_PATH, "rb");
     if (!f) return;
     char line[96];
     while (fgets(line, sizeof(line), f)) {
@@ -104,7 +104,7 @@ static void uiSettingsLoad() {
 }
 
 static void uiSettingsSave() {
-    FILE* f = fopen(CRUCIBLE_CONFIG_PATH, "wb");
+    FILE* f = fopen(CINDERLIFT_CONFIG_PATH, "wb");
     if (!f) return;
     fprintf(f, "ui_scale=%d\n", uiScalePct());
     fclose(f);
@@ -367,7 +367,7 @@ static RECT    g_hoverRect;
 static const char* g_hoverLabel = 0;
 static int     g_mx = 0, g_my = 0;
 /* GetAsyncKeyState reports the keyboard, not this window. Without a focus gate
-   an unfocused Crucible walks your character while you type somewhere else --
+   an unfocused Cinderlift walks your character while you type somewhere else --
    and four local windows in a loopback test all move as one.
 
    Asked of the system every time rather than tracked through WM_ACTIVATEAPP.
@@ -913,10 +913,31 @@ static void undoClearAll() {
    real session without the two fighting over one file. An agent or a soak test
    that shares the player's save will eventually overwrite a character somebody
    cared about, and "be careful" is not a mechanism. */
-#ifndef CRUCIBLE_SAVE_PATH
-#define CRUCIBLE_SAVE_PATH "crucible.sav"
+#ifndef CINDERLIFT_SAVE_PATH
+#define CINDERLIFT_SAVE_PATH "cinderlift.sav"
 #endif
-static const char* const SAVE_PATH = CRUCIBLE_SAVE_PATH;
+static const char* const SAVE_PATH = CINDERLIFT_SAVE_PATH;
+
+/* The name this game shipped under before it was Cinderlift.
+
+   Saves are found BY FILENAME, so a rename with nothing else done to it makes
+   every world a player already had vanish from the load screen -- still on
+   disk, simply never looked for again. That is indistinguishable from data
+   loss to the person it happens to, and it happens silently on first launch
+   of the new version.
+
+   So a slot resolves to the old name when the old file is there and the new
+   one is not, for reading AND for writing. Writing matters as much as
+   reading: resolve only on load and the next save drops a second file beside
+   the first, leaving the player with two half-worlds in one slot and no way
+   to tell which is which. Resolving both ways means an existing save simply
+   keeps being the file it always was, and only genuinely new slots take the
+   new name. Nothing is moved, copied or rewritten, so there is no migration
+   step that can fail halfway. */
+#ifndef CINDERLIFT_LEGACY_SAVE_PATH
+#define CINDERLIFT_LEGACY_SAVE_PATH "crucible.sav"
+#endif
+static const char* const LEGACY_SAVE_PATH = CINDERLIFT_LEGACY_SAVE_PATH;
 
 static bool g_lineKey  = false;   /* R is down */
 static bool g_lineOn   = false;   /* ...and a drag is in progress */
@@ -1038,18 +1059,43 @@ static RECT g_savePanel, g_saveSlotRect[SAVE_SLOTS], g_saveBack;
    file opens, which is nothing once but is not something to do at 60 Hz. */
 static SaveSlotInfo g_saveSlot[SAVE_SLOTS];
 
-/* "crucible.sav" -> "crucible3.sav". Derived from SAVE_PATH rather than being a
+/* "cinderlift.sav" -> "cinderlift3.sav". Derived from SAVE_PATH rather than being a
    second constant, so a build with its own save path (a diagnostic one, say)
    gets its own ten slots for free and cannot land in the player's. */
-static const char* saveSlotPath(int slot) {
-    static char buf[SAVE_SLOTS][64];
-    if (slot < 0 || slot >= SAVE_SLOTS) return SAVE_PATH;
+static void saveSlotName(char* out, size_t cap, const char* base, int slot) {
     char stem[48];
-    strncpy(stem, SAVE_PATH, sizeof(stem) - 1);
+    strncpy(stem, base, sizeof(stem) - 1);
     stem[sizeof(stem) - 1] = 0;
     char* dot = strrchr(stem, '.');
     if (dot) *dot = 0;
-    sprintf(buf[slot], "%s%d.sav", stem, slot + 1);
+    if (cap > 0) {
+        out[0] = 0;
+        sprintf(out, "%s%d.sav", stem, slot + 1);
+    }
+}
+
+static bool saveFileExists(const char* path) {
+    FILE* f = fopen(path, "rb");
+    if (!f) return false;
+    fclose(f);
+    return true;
+}
+
+static const char* saveSlotPath(int slot) {
+    static char buf[SAVE_SLOTS][64];
+    if (slot < 0 || slot >= SAVE_SLOTS) return SAVE_PATH;
+    saveSlotName(buf[slot], sizeof(buf[slot]), SAVE_PATH, slot);
+    /* An existing world keeps the filename it already has -- see the note on
+       LEGACY_SAVE_PATH. Only a slot with nothing under either name takes the
+       new one, so a player who never had the old build never sees this. */
+    if (!saveFileExists(buf[slot])) {
+        char legacy[64];
+        saveSlotName(legacy, sizeof(legacy), LEGACY_SAVE_PATH, slot);
+        if (saveFileExists(legacy)) {
+            strncpy(buf[slot], legacy, sizeof(buf[slot]) - 1);
+            buf[slot][sizeof(buf[slot]) - 1] = 0;
+        }
+    }
     return buf[slot];
 }
 
@@ -6592,7 +6638,7 @@ static void drawPanel(HDC hdc) {
 
     HGDIOBJ oldFont = SelectObject(hdc, g_font);
     SetBkMode(hdc, TRANSPARENT);
-    drawText(hdc, 10, 9, RGB(240, 240, 246), "CRUCIBLE");
+    drawText(hdc, 10, 9, RGB(240, 240, 246), "CINDERLIFT");
     drawText(hdc, 94, 9, RGB(144, 154, 172),
              g_panelShowsPack ? "pack (click to hold)" : "catalog (wheel)");
 
@@ -7411,7 +7457,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR commandLine, int) {
             g_inv.add((ItemId)MAT_WATER, 200);
             g_inv.add(ITEM_TORCH_DEV, 40);
         }
-        if (savedTestHost && !saveRead("build\\crucible.sav", g_world)) {
+        if (savedTestHost && !saveRead("build\\cinderlift.sav", g_world)) {
             makeWorld();
             float sx, sy; worldSpawnPoint(&sx, &sy); g_player.reset(sx, sy);
         }
@@ -7437,7 +7483,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR commandLine, int) {
     wc.lpfnWndProc   = wndProc;
     wc.hInstance     = hInst;
     wc.hCursor       = LoadCursor(NULL, IDC_ARROW);
-    wc.lpszClassName = "CrucibleWnd";
+    wc.lpszClassName = "CinderliftWnd";
     RegisterClassA(&wc);
 
     DWORD style = WS_OVERLAPPEDWINDOW;
@@ -7447,11 +7493,11 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR commandLine, int) {
     /* Several local clients otherwise share one title, which makes a
        four-window loopback session impossible to tell apart on screen. */
     char windowTitle[64];
-    strcpy(windowTitle, (savedTestHost || emptyTestHost) ? "Crucible - LOCAL HOST" :
-                        joinSwitch ? "Crucible - LOCAL CLIENT" : "Crucible");
+    strcpy(windowTitle, (savedTestHost || emptyTestHost) ? "Cinderlift - LOCAL HOST" :
+                        joinSwitch ? "Cinderlift - LOCAL CLIENT" : "Cinderlift");
     const char* labelSwitch = commandLine ? strstr(commandLine, "--label ") : 0;
     if (labelSwitch) sprintf(windowTitle + strlen(windowTitle), " %d", atoi(labelSwitch + 8));
-    HWND hwnd = CreateWindowA("CrucibleWnd", windowTitle, style,
+    HWND hwnd = CreateWindowA("CinderliftWnd", windowTitle, style,
                               CW_USEDEFAULT, CW_USEDEFAULT,
                               r.right - r.left, r.bottom - r.top,
                               NULL, NULL, hInst, NULL);

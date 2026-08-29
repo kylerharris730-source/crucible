@@ -1,8 +1,8 @@
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 $build = Join-Path $root 'build'
-$game = Join-Path $build 'crucible.exe'
-$launcher = Join-Path $build 'crucible-launcher.exe'
+$game = Join-Path $build 'cinderlift.exe'
+$launcher = Join-Path $build 'cinderlift-launcher.exe'
 $temp = Join-Path $build 'launcher-test-artifacts'
 
 if (-not (Test-Path -LiteralPath $game) -or -not (Test-Path -LiteralPath $launcher)) {

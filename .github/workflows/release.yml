@@ -34,7 +34,7 @@ jobs:
       - name: Reject non-Windows runtime DLL dependencies
         shell: powershell
         run: |
-          $binaries = @('build/crucible.exe', 'build/crucible-launcher.exe')
+          $binaries = @('build/cinderlift.exe', 'build/cinderlift-launcher.exe')
           foreach ($binary in $binaries) {
             $imports = (& objdump -p $binary | Select-String 'DLL Name').Line
             $forbidden = $imports | Select-String -Pattern 'libwinpthread|libgcc|libstdc\+\+' -CaseSensitive:$false
@@ -50,12 +50,31 @@ jobs:
           REPOSITORY: ${{ github.repository }}
         run: |
           New-Item -ItemType Directory -Force release | Out-Null
-          Copy-Item build/crucible.exe release/crucible.exe
-          Copy-Item build/crucible-launcher.exe release/crucible-launcher.exe
+          Copy-Item build/cinderlift.exe release/cinderlift.exe
+          Copy-Item build/cinderlift-launcher.exe release/cinderlift-launcher.exe
           ./scripts/make_release_manifest.ps1 `
             -Tag $env:RELEASE_TAG -Repository $env:REPOSITORY `
-            -Game release/crucible.exe -Launcher release/crucible-launcher.exe `
-            -Output release/crucible-manifest.txt
+            -Game release/cinderlift.exe -Launcher release/cinderlift-launcher.exe `
+            -Output release/cinderlift-manifest.txt
+
+          # The same manifest under the name the game shipped as before the
+          # rename to Cinderlift. This is not tidiness, it is the difference
+          # between an old launcher updating itself and being bricked: every
+          # launcher already installed has
+          #   .../releases/latest/download/crucible-manifest.txt
+          # COMPILED INTO IT, and cannot be told otherwise. Publish only the
+          # new name and those launchers get a 404 forever -- and since the
+          # replacement launcher is delivered through the manifest they can no
+          # longer fetch, they can never recover on their own.
+          #
+          # The copy fixes that without any special case. Its game_url and
+          # launcher_url point at the NEW cinderlift-* assets, so an old
+          # launcher reads the old filename, downloads the new binaries, and
+          # replaces itself with the new launcher -- which then uses the new
+          # manifest name from that point on. One quiet self-healing hop.
+          #
+          # Safe to delete once no installed launcher predates the rename.
+          Copy-Item release/cinderlift-manifest.txt release/crucible-manifest.txt
 
       - name: Publish GitHub Release
         shell: powershell
@@ -63,7 +82,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "${{ github.ref_name }}" `
-            release/crucible.exe `
-            release/crucible-launcher.exe `
+            release/cinderlift.exe `
+            release/cinderlift-launcher.exe `
+            release/cinderlift-manifest.txt `
             release/crucible-manifest.txt `
-            --verify-tag --generate-notes --title "Crucible ${{ github.ref_name }}"
+            --verify-tag --generate-notes --title "Cinderlift ${{ github.ref_name }}"

@@ -112,7 +112,7 @@ static int vkFromSdl(SDL_Keycode k) {
 static void pumpSdl(void) {
     SDL_Event e;
     while (SDL_PollEvent(&e)) {
-#ifdef CRUCIBLE_WEB_INPUT_DEBUG
+#ifdef CINDERLIFT_WEB_INPUT_DEBUG
         printf("[sdl] type=%u key=%d\n", (unsigned)e.type,
                (e.type == SDL_KEYDOWN || e.type == SDL_KEYUP) ? (int)e.key.keysym.sym : 0);
 #endif
@@ -231,7 +231,7 @@ extern "C" HWND CreateWindowA(LPCSTR, LPCSTR title, DWORD style, int, int,
 
     if (SDL_Init(SDL_INIT_VIDEO) != 0) return 0;
 
-    g_sdlWindow = SDL_CreateWindow(title ? title : "Crucible",
+    g_sdlWindow = SDL_CreateWindow(title ? title : "Cinderlift",
                                    SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
                                    w, h, SDL_WINDOW_SHOWN);
     if (!g_sdlWindow) return 0;

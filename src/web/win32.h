@@ -1,5 +1,5 @@
 /* ============================================================================
-   win32.h -- the slice of Win32 that Crucible actually uses.
+   win32.h -- the slice of Win32 that Cinderlift actually uses.
 
    This is not a Windows emulator and must never grow into one. It is the
    EXACT surface main.cpp calls -- 56 functions, 17 window messages, 16 virtual

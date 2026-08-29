@@ -71,7 +71,7 @@ mkdir -p web
 "${EMXX_CMD[@]}" \
     -std=c++11 -O3 \
     -I src \
-    -DCRUCIBLE_BUILD_ID="\"$BUILD_ID\"" \
+    -DCINDERLIFT_BUILD_ID="\"$BUILD_ID\"" \
     ${EXTRA_FLAGS:-} \
     $SRC \
     -s USE_SDL=2 \
@@ -84,10 +84,10 @@ mkdir -p web
     -s EXIT_RUNTIME=0 \
     -s MODULARIZE=0 \
     -s ENVIRONMENT=web \
-    -o web/crucible.js
+    -o web/cinderlift.js
 
-echo "Built web/crucible.js + web/crucible.wasm"
-ls -lh web/crucible.wasm
+echo "Built web/cinderlift.js + web/cinderlift.wasm"
+ls -lh web/cinderlift.wasm
 echo
 # Said here because opening web/index.html by double-clicking it is the
 # obvious thing to try and it cannot work: a file:// page is not allowed to

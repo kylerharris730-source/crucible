@@ -8,8 +8,8 @@ build/
 # beside it is compiler output: the Pages workflow rebuilds both from src/ on
 # every deploy, so committing a 20 MB wasm would only add a large binary to
 # every diff that could disagree with the source it came from.
-web/crucible.js
-web/crucible.wasm
+web/cinderlift.js
+web/cinderlift.wasm
 web/*.wasm.map
 web/*.data
 

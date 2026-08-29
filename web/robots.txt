@@ -1,0 +1,11 @@
+# Cinderlift -- everything here is meant to be found.
+User-agent: *
+Allow: /
+
+# The compiled game is 1.5 MB of WebAssembly with nothing readable in it.
+# Crawlers that fetch it gain no index-able text and cost bandwidth, so they
+# are pointed away from it rather than left to download it on every visit.
+Disallow: /cinderlift.wasm
+Disallow: /cinderlift.js
+
+Sitemap: https://kylerharris730-source.github.io/crucible/sitemap.xml

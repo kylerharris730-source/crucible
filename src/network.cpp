@@ -18,11 +18,11 @@
 #include <string.h>
 #include <math.h>
 
-#ifndef CRUCIBLE_BUILD_ID
-#ifdef CRUCIBLE_TEST_MISMATCH_BUILD
-#define CRUCIBLE_BUILD_ID "intentional-mismatch-test-build"
+#ifndef CINDERLIFT_BUILD_ID
+#ifdef CINDERLIFT_TEST_MISMATCH_BUILD
+#define CINDERLIFT_BUILD_ID "intentional-mismatch-test-build"
 #else
-#define CRUCIBLE_BUILD_ID "development"
+#define CINDERLIFT_BUILD_ID "development"
 #endif
 #endif
 
@@ -295,7 +295,7 @@ static void queuePacket(Peer& peer, u8 type, const std::vector<u8>& payload) {
 static size_t backlog(const Peer& peer) { return peer.send.size() - peer.sendAt; }
 
 static void queueHello(Peer& peer) {
-    Writer w; w.u32v(NET_MAGIC); w.u32v(NET_PROTOCOL); w.string(CRUCIBLE_BUILD_ID);
+    Writer w; w.u32v(NET_MAGIC); w.u32v(NET_PROTOCOL); w.string(CINDERLIFT_BUILD_ID);
     queuePacket(peer, PK_HELLO, w.b); peer.handshake = true;
     statusf("Connected -- checking game build");
 }
@@ -667,7 +667,7 @@ static void handlePacket(Peer& peer, u8 type, const u8* data, size_t len, World&
     Reader r(data, len);
     if (type == PK_HELLO && g_role == NET_HOST) {
         char build[80]; const u32 magic = r.u32v(), protocol = r.u32v(); r.string(build, sizeof(build));
-        if (!r.ok || magic != NET_MAGIC || protocol != NET_PROTOCOL || strcmp(build, CRUCIBLE_BUILD_ID) != 0) {
+        if (!r.ok || magic != NET_MAGIC || protocol != NET_PROTOCOL || strcmp(build, CINDERLIFT_BUILD_ID) != 0) {
             Writer reject; reject.string("Game builds do not match"); queuePacket(peer, PK_REJECT, reject.b); return;
         }
         /* One socket must never be handed a second player slot. Without this a
