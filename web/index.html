@@ -193,6 +193,72 @@
     background: var(--panel); border: 1px solid var(--edge); border-bottom-width: 2px;
     border-radius: 3px; padding: 1px 5px; font-size: 11.5px; color: var(--ink);
   }
+
+  /* --- the strip under the game ------------------------------------------
+     Shares the first screen with the canvas, so it is counted as chrome by
+     fitCanvas and kept to a single line. Everything else lives below. */
+  #controls {
+    border-top: 1px solid var(--edge);
+    padding: 8px 20px; color: var(--dim); font-size: 12.5px; text-align: center;
+  }
+  #controls b { color: var(--ink); font-weight: 600; }
+  a.more { color: var(--ember); text-decoration: none; }
+  a.more:hover { text-decoration: underline; }
+
+  /* --- everything below the fold ------------------------------------------
+     Deliberately NOT counted by fitCanvas. The game keeps the first screen;
+     this is for the reader who scrolled, and for search engines, which had
+     almost no text to index when the page was only a canvas. */
+  main { max-width: 860px; margin: 0 auto; padding: 8px 20px 40px; }
+  main section { padding: 26px 0; border-top: 1px solid var(--edge); }
+  main h2 {
+    font-size: 15px; letter-spacing: 2px; color: var(--accent);
+    margin: 0 0 14px; font-weight: 600;
+  }
+  main h3 { font-size: 13.5px; color: var(--ink); margin: 18px 0 6px; font-weight: 600; }
+  main p, main li { color: var(--dim); font-size: 13.5px; line-height: 1.75; }
+  main p { margin: 0 0 12px; }
+  main ul { margin: 0 0 12px; padding-left: 20px; }
+  main li { margin-bottom: 5px; }
+  main b, main strong { color: var(--ink); font-weight: 600; }
+  main a { color: var(--ember); }
+
+  figure { margin: 0 0 18px; }
+  figure img {
+    width: 100%; height: auto; display: block;
+    border: 1px solid var(--edge); border-radius: 3px;
+    image-rendering: pixelated; image-rendering: crisp-edges;
+    background: #000;
+  }
+  figcaption { color: #6c7683; font-size: 12px; margin-top: 6px; }
+
+  .cta { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 6px; }
+
+  /* --- the download interstitial ------------------------------------------
+     Shown before the Windows download. It must never BLOCK the download --
+     the file is free and a wall in front of it is a worse experience than no
+     ask at all -- so the download starts regardless and this is a request,
+     with a visible way past it. */
+  #veil {
+    display: none; position: fixed; inset: 0; z-index: 50;
+    background: rgba(6, 8, 11, 0.82);
+    align-items: center; justify-content: center; padding: 20px;
+  }
+  #veil.open { display: flex; }
+  #ask {
+    background: var(--panel); border: 1px solid var(--edge); border-radius: 5px;
+    max-width: 460px; padding: 22px 24px; text-align: center;
+  }
+  #ask h2 { margin: 0 0 10px; font-size: 15px; letter-spacing: 2px; color: var(--accent); }
+  #ask p { color: var(--dim); font-size: 13.5px; line-height: 1.7; margin: 0 0 8px; }
+  #ask .started { color: #6c7683; font-size: 12px; margin: 14px 0 16px; }
+  #ask .row { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+  #ask a.ghost, #ask button.ghost {
+    font-family: inherit; cursor: pointer; background: none;
+    color: var(--dim); font-size: 13px;
+    padding: 7px 12px; border: 1px solid var(--edge); border-radius: 3px;
+  }
+  #ask button.ghost:hover { color: var(--ink); border-color: var(--dim); }
 </style>
 </head>
 <body>
@@ -218,14 +284,180 @@
   <canvas id="canvas" class="loading" tabindex="-1" oncontextmenu="event.preventDefault()"></canvas>
 </div>
 
-<footer>
+<div id="controls">
   <b>Click the game to give it the keyboard.</b>
   <kbd>WASD</kbd> move &middot; <kbd>Space</kbd> jump &middot; mouse to dig and place &middot;
-  <kbd>Tab</kbd> inventory &middot; <kbd>Esc</kbd> menu<br>
-  This browser build is <b>single-player only</b> and does <b>not keep saves</b> &mdash; a tab cannot
-  open the direct-IP connection multiplayer uses, and anything you build here is gone when you reload.
+  <kbd>Tab</kbd> inventory &middot; <kbd>Esc</kbd> menu
+  &middot; <a href="#about" class="more">read more &darr;</a>
+</div>
+
+<main>
+
+<section id="about">
+  <h2>WHAT IT IS</h2>
+  <p>
+    Cinderlift is a falling-sand sandbox where the physics is the game. Every cell
+    in the world carries a material, a temperature and a moisture level, and it is
+    simulated rather than scripted &mdash; sand falls, water finds its level, heat
+    conducts through whatever is touching whatever, and things melt when they get
+    hot enough and freeze again when they cool.
+  </p>
+  <p>
+    You crashed on a planet. Everything below you is rock, ore and the caves
+    between them, and the way out is up &mdash; which means digging, smelting,
+    wiring and building your way there.
+  </p>
+  <figure>
+    <img src="shot-game.png" width="1288" height="768" loading="lazy"
+         alt="Cinderlift in play: the material and machine panel on the left, a grassy surface over dark rock, the character standing at the edge of a slope.">
+    <figcaption>The browser build, running. Materials and machines down the left, the world on the right.</figcaption>
+  </figure>
+</section>
+
+<section id="heat">
+  <h2>HEAT IS REAL, AND IT IS THE POINT</h2>
+  <p>
+    Most sandbox games treat fire as a state a tile is in. Here temperature is a
+    number every cell has, conducted between neighbours at a rate the two
+    materials decide, and almost everything interesting is a consequence of that
+    rather than a rule written for the occasion.
+  </p>
+  <ul>
+    <li><b>Metals melt and re-freeze.</b> Iron and copper have melting points; molten metal cools back into the solid it came from.</li>
+    <li><b>Water boils where it touches something hot enough</b>, and the steam goes where steam goes.</li>
+    <li><b>Rubber is the best insulator in the game</b> &mdash; and it melts at exactly water's boiling point, so it works beautifully right up until you ask it to do anything genuinely hot.</li>
+    <li><b>Graphene has no melting point at all.</b> It is what you line a crucible with when nothing else will survive.</li>
+    <li><b>Acid corrodes</b>, and it pools in the second layer where you will be standing.</li>
+  </ul>
+  <figure>
+    <img src="shot-thermal.png" width="1200" height="630" loading="lazy"
+         alt="Water poured onto a pool of molten rock underground, throwing off a cloud of steam that lights the cavern.">
+    <figcaption>Water meeting a lava pool. Not a drawing &mdash; that steam is what the simulation did with it.</figcaption>
+  </figure>
+</section>
+
+<section id="machines">
+  <h2>WIRES, LOGIC AND MACHINES</h2>
+  <p>
+    Copper conducts. A pulse travels along it as an actual moving thing, splits at
+    junctions, fills a thick wire once rather than flooding back down its own
+    trail, and two waves sent at each other meet and stop.
+  </p>
+  <p>
+    On top of that there are sensors and actuators: thermocouples that read
+    temperature, clocks, pulse buttons, block watchers, combinators for logic,
+    placers, miners, spouts and drains. Enough to build a furnace that regulates
+    itself, or a pump that runs when a tank is low, or something considerably
+    more ambitious.
+  </p>
+</section>
+
+<section id="world">
+  <h2>THREE LAYERS DOWN</h2>
+  <p>
+    The world is 4096 cells wide and 9216 deep, generated fresh each time, and cut
+    into layers by strata you cannot dig through until you have earned the tools.
+  </p>
+  <ul>
+    <li><b>Layer 1</b> &mdash; copper, tin, coal, iron. Warm brown rock. Where you learn the game.</li>
+    <li><b>Layer 2</b> &mdash; gold and titanium, and acid pockets. Cold green. The difficulty step.</li>
+    <li><b>Layer 3</b> &mdash; tungsten, and lava hotspots. Hot red. The deep.</li>
+  </ul>
+  <p>
+    Day and night pass overhead, light propagates properly from the sun and from
+    whatever you are carrying, and it gets very dark down there.
+  </p>
+  <figure>
+    <img src="shot-surface.png" width="1200" height="630" loading="lazy"
+         alt="The Cinderlift surface at dusk: a grassy ridge over dark soil under a blue-grey sky.">
+    <figcaption>The surface at dusk. Everything under that line is where the game happens.</figcaption>
+  </figure>
+</section>
+
+<section id="download">
+  <h2>PLAY IT</h2>
+  <p>
+    <b>In your browser, free, right now</b> &mdash; scroll back up. Nothing to install,
+    about 1.5&nbsp;MB, and it runs on any desktop browser.
+  </p>
+  <p>
+    The <b>Windows download</b> is the fuller version: it keeps saves, and it has
+    direct-IP multiplayer, neither of which a browser tab can do. It is the same
+    game and the same code &mdash; the browser build is that code compiled to
+    WebAssembly rather than a cut-down port.
+  </p>
+  <div class="cta">
+    <a class="dl" href="https://github.com/kylerharris730-source/crucible/releases/latest/download/cinderlift.exe">Download for Windows<span class="ver" id="ver2"></span></a>
+    <a class="ghost" href="https://github.com/kylerharris730-source/crucible">Source on GitHub</a>
+  </div>
+</section>
+
+<section id="faq">
+  <h2>QUESTIONS</h2>
+
+  <h3>Does the browser version save my world?</h3>
+  <p>
+    No. A tab has nowhere durable to put it, so anything you build there is gone
+    when you reload. The Windows build saves normally, in ten slots.
+  </p>
+
+  <h3>Why is there no multiplayer in the browser?</h3>
+  <p>
+    Multiplayer connects two machines directly by IP, and a browser tab is not
+    allowed to open that kind of connection. Doing it in a tab would mean running
+    a relay server in the middle, which is a thing that has to be paid for and
+    kept alive forever. The Windows build has multiplayer.
+  </p>
+
+  <h3>Windows says the download is unrecognised.</h3>
+  <p>
+    The executables are not code-signed yet, and Windows warns about anything it
+    has not seen before from a publisher it cannot verify. The launcher is the
+    more suspicious of the two by nature, because updating itself looks exactly
+    like what malware does. Everything is open source &mdash; the
+    <a href="https://github.com/kylerharris730-source/crucible">repository</a> is
+    right there, and every release publishes SHA-256 hashes for both binaries.
+  </p>
+
+  <h3>What are the system requirements?</h3>
+  <p>
+    A desktop browser, and roughly 350&nbsp;MB of memory for the world. Phones
+    generally cannot spare that. It runs comfortably on old laptops otherwise.
+  </p>
+
+  <h3>Is it finished?</h3>
+  <p>
+    No, and it is being worked on steadily. Watch the
+    <a href="https://github.com/kylerharris730-source/crucible/releases">releases</a>
+    if you want to follow along.
+  </p>
+</section>
+
+</main>
+
+<footer>
+  <b>Cinderlift</b> &mdash; a falling-sand sandbox with real heat, pressure and circuits.
+  <a href="https://github.com/kylerharris730-source/crucible">Source</a> &middot;
+  <a href="https://github.com/kylerharris730-source/crucible/releases">Releases</a><br>
+  This browser build is <b>single-player only</b> and does <b>not keep saves</b>.
   The Windows download does both.
 </footer>
+
+<!-- Shown after the download has already started; see askBeforeDownload(). -->
+<div id="veil">
+  <div id="ask">
+    <h2>THANKS FOR PLAYING</h2>
+    <p>
+      Cinderlift is free and always will be. It is made by one person, and if you
+      get some hours out of it, a few pounds toward the next ones goes a long way.
+    </p>
+    <p class="started">Your download has started.</p>
+    <div class="row">
+      <a class="dl" id="askDonate" href="#" target="_blank" rel="noopener">Support development</a>
+      <button class="ghost" id="askClose" type="button">No thanks</button>
+    </div>
+  </div>
+</div>
 
 <script>
   var canvas  = document.getElementById('canvas');
@@ -244,6 +476,41 @@
                        (why ? '<div class="why">' + why + '</div>' : '');
   }
 
+  // --- the download interstitial -------------------------------------------
+  // PUT YOUR DONATION LINK HERE. Ko-fi, GitHub Sponsors, Patreon, anything.
+  // While this is empty the whole interstitial is inert: the download behaves
+  // exactly as it did before, with no modal and no dead "support" button
+  // pointing nowhere. That is deliberate -- a broken ask is worse than none.
+  const DONATE_URL = '';
+
+  (function askBeforeDownload() {
+    const veil = document.getElementById('veil');
+    const donate = document.getElementById('askDonate');
+    const close = document.getElementById('askClose');
+    if (!veil || !DONATE_URL) return;
+    donate.href = DONATE_URL;
+
+    function hide() { veil.classList.remove('open'); }
+    close.addEventListener('click', hide);
+    veil.addEventListener('click', function (e) { if (e.target === veil) hide(); });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && veil.classList.contains('open')) hide();
+    });
+
+    // Every download link on the page, found rather than listed, so a new one
+    // added later is covered without remembering to wire it up.
+    const links = document.querySelectorAll('a[href*="/releases/latest/download/"]');
+    for (let i = 0; i < links.length; ++i) {
+      links[i].addEventListener('click', function () {
+        // NOT preventDefault: the navigation proceeds and the file downloads.
+        // The ask is shown alongside it rather than in front of it -- a wall
+        // between someone and a free download is a worse experience than not
+        // asking, and it is the reason this pattern is usually resented.
+        veil.classList.add('open');
+      });
+    }
+  })();
+
   // --- which build the download button is offering -------------------------
   // The link always resolves to the newest release, but says so only if this
   // succeeds. Public, unauthenticated, and rate-limited per IP, so it is
@@ -252,7 +519,14 @@
     fetch('https://api.github.com/repos/kylerharris730-source/crucible/releases/latest')
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (j) {
-        if (j && j.tag_name) document.getElementById('ver').textContent = ' ' + j.tag_name;
+        if (!j || !j.tag_name) return;
+        /* Both buttons -- the header one and the one in the download
+           section -- so the two can never show different versions. */
+        var labels = ['ver', 'ver2'];
+        for (var li = 0; li < labels.length; ++li) {
+          var el = document.getElementById(labels[li]);
+          if (el) el.textContent = ' ' + j.tag_name;
+        }
       })
       .catch(function () { /* leave the button unlabelled */ });
   })();
@@ -412,9 +686,13 @@
     const vw = window.innerWidth, vh = window.innerHeight;
     if (!vw || !vh) return null;
     const header = document.querySelector('header');
-    const footer = document.querySelector('footer');
+    /* #controls, NOT <footer>. The footer sits at the bottom of a long page
+       now; counting it would shrink the canvas to leave room for content that
+       is several screens away and that nobody has scrolled to. Only what
+       shares the first screen with the game is chrome. */
+    const strip = document.getElementById('controls');
     const chrome = (header ? header.offsetHeight : 0) +
-                   (footer ? footer.offsetHeight : 0) + 18;   // stage padding + border
+                   (strip ? strip.offsetHeight : 0) + 18;   // stage padding + border
     const stageEl = document.getElementById('stage');
     return {
       w: Math.max(160, (stageEl ? stageEl.clientWidth : vw) - 18),

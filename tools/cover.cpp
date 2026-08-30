@@ -117,10 +117,28 @@ static bool writePPM(const char* path, const u32* view) {
 
 struct Variant {
     const char* name;
+    /* Empty means no lettering: a plain screenshot of the world rather than
+       the share image. The page wants both, and they differ only in this. */
+    const char* text;
     u32         worldTime;   /* see dayLight(): t<0.42 day, 0.50..0.92 night */
     u8          mat;
     int         tempC;       /* letter temperature; see stampText */
     int         camDrop;     /* rows below spawn, to show more underground */
+    /* Underground has no sun, so an unlit cavern renders as the black it
+       genuinely is -- correct, and a useless screenshot. A lava pool is what
+       actually lights a deep cavern in play, so the scene gets one rather than
+       the shot getting a brightness cheat. */
+    bool        molten;
+    /* Frames of REAL SIMULATION before the shot is taken.
+       The other scenes are posed: cells placed and rendered immediately. That
+       is honest for a backdrop but it cannot show the thing this game is
+       actually about, because every interesting sight here is a RESULT --
+       steam is water that met something hot, obsidian is lava that met water,
+       and neither exists until the simulation has run. So a scene that wants
+       to show thermodynamics has to be allowed to happen rather than drawn.
+       Needs a live window, or the chunks it touches are asleep and nothing
+       moves however long it is stepped. */
+    int         simSteps;
 };
 
 int main(void) {
@@ -142,13 +160,19 @@ int main(void) {
     const int textY = CROP_Y + 30;
 
     static const Variant variants[] = {
-        { "night-hot",    (u32)(DAY_LENGTH * 0.70f), MAT_LAVA,        190, 0 },
-        { "night-warm",   (u32)(DAY_LENGTH * 0.70f), MAT_LAVA,        140, 0 },
-        { "night-cool",   (u32)(DAY_LENGTH * 0.70f), MAT_LAVA,        110, 0 },
-        { "dusk-warm",    (u32)(DAY_LENGTH * 0.47f), MAT_LAVA,        140, 0 },
-        { "day-warm",     (u32)(DAY_LENGTH * 0.20f), MAT_LAVA,        140, 0 },
-        { "night-iron",   (u32)(DAY_LENGTH * 0.70f), MAT_IRON_MELT,   140, 0 },
-        { "night-copper", (u32)(DAY_LENGTH * 0.70f), MAT_COPPER_MELT, 140, 0 },
+        /* The share image. */
+        { "night-warm",  "CINDERLIFT", (u32)(DAY_LENGTH * 0.70f), MAT_LAVA, 140,    0, false, 0 },
+        /* Screenshots for the page: no lettering, just the world at depths
+           that show what the game is actually about. */
+        { "shot-surface", "", (u32)(DAY_LENGTH * 0.20f), MAT_LAVA, 140,    0, false, 0 },
+        { "shot-dusk",    "", (u32)(DAY_LENGTH * 0.46f), MAT_LAVA, 140,    0, false, 0 },
+        { "shot-under",   "", (u32)(DAY_LENGTH * 0.20f), MAT_LAVA, 140,  520, true, 0 },
+        { "shot-deep",    "", (u32)(DAY_LENGTH * 0.20f), MAT_LAVA, 140, 1250, true, 0 },
+        /* The one that shows the actual game rather than its scenery: water
+           poured onto a lava pool and then LET GO for 240 frames. Whatever is
+           in this image -- steam, a chilled crust, the glow through it -- is
+           what the simulation did, not what was drawn. */
+        { "shot-thermal", "", (u32)(DAY_LENGTH * 0.20f), MAT_LAVA, 140,  520, true, 240 },
     };
     const int N = (int)(sizeof(variants) / sizeof(variants[0]));
 
@@ -162,8 +186,53 @@ int main(void) {
         if (camX > SIM_W - VIEW_CELLS_W) camX = SIM_W - VIEW_CELLS_W;
         if (camY > SIM_H - VIEW_CELLS_H) camY = SIM_H - VIEW_CELLS_H;
 
+        if (v.molten) {
+            /* A pool along the floor of the view, hollowed above so the glow
+               has somewhere to travel. Placed in the world like anything else
+               and lit by the ordinary solver. */
+            /* The hollow runs PAST the crop on every side. Carving it inside
+               the frame put two straight edges and two corners in shot, which
+               read as a box someone dug rather than as a cavern -- the one
+               thing a screenshot of a cave must not look like. Only its
+               contents should be visible, never its boundary. */
+            const int poolY = CROP_Y + CROP_H - 30;
+            for (int y = poolY - 90; y < poolY; ++y)
+                for (int x = CROP_X - 40; x < CROP_X + CROP_W + 40; ++x)
+                    g_coverWorld.setCell(camX + x, camY + y, MAT_EMPTY);
+            for (int y = poolY; y < poolY + 8; ++y)
+                for (int x = CROP_X - 40; x < CROP_X + CROP_W + 40; ++x) {
+                    const int wx = camX + x, wy = camY + y;
+                    g_coverWorld.setCell(wx, wy, MAT_LAVA);
+                    g_coverWorld.temp[(size_t)wy * SIM_W + wx] = (u8)degC(150);
+                }
+        }
+        /* ALWAYS clear, even for a variant that writes nothing. The world is
+           shared across variants, so this band is how a shot avoids inheriting
+           the previous one's lettering -- which is the whole reason clearBand
+           exists, and putting it behind the text check meant every plain
+           screenshot came out with CINDERLIFT still hanging in the sky. */
         clearBand(g_coverWorld, camX, camY, textX - 4, textY - 4, textW + 8, textH + 8);
-        stampText(g_coverWorld, TEXT, camX, camY, textX, textY, SCALE, v.mat, v.tempC);
+        if (v.text && v.text[0])
+            stampText(g_coverWorld, v.text, camX, camY, textX, textY, SCALE, v.mat, v.tempC);
+
+        if (v.simSteps > 0) {
+            /* Water above the pool, with a gap so it arrives as a fall rather
+               than starting already touching -- the contact is the event worth
+               photographing. */
+            const int waterY = CROP_Y + CROP_H - 78;
+            for (int y = waterY; y < waterY + 14; ++y)
+                for (int x = CROP_X + 120; x < CROP_X + CROP_W - 120; ++x) {
+                    const int wx = camX + x, wy = camY + y;
+                    g_coverWorld.setCell(wx, wy, MAT_WATER);
+                }
+            /* Without a live window the chunks are asleep and stepping does
+               nothing at all, however many frames it is given -- the world
+               simulates what is near a player, and here there is no player. */
+            g_coverWorld.setLiveWindow(camX - 64, camY - 64,
+                                       camX + VIEW_CELLS_W + 64,
+                                       camY + VIEW_CELLS_H + 64);
+            for (int f = 0; f < v.simSteps; ++f) g_coverWorld.step();
+        }
 
         g_worldTime = v.worldTime;
         lightClearDynamic();
