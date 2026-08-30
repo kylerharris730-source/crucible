@@ -324,6 +324,18 @@ static RECT g_paletteArea, g_paletteScrollTrack, g_paletteScrollThumb;
 static int  g_packList[INV_SLOTS];   /* pack slot indices, in pack order */
 static int  g_packListCount = 0;
 static RECT g_packListRect[INV_SLOTS];
+/* The pack list may temporarily point `Inventory::selected` at any of the
+   forty carried slots. Keep the player's real hotbar choice separately so a
+   wheel notch or number key can dismiss that override instead of cycling from
+   an unrelated pack index. This value is also what remains ringed on the bar:
+   the list shows what is temporarily in hand, while the bar shows where input
+   will return. */
+static int g_hotbarSelected = 0;
+
+static void selectHotbar(int slot) {
+    g_hotbarSelected = imax(0, imin(HOTBAR_SLOTS - 1, slot));
+    g_inv.selected = g_hotbarSelected;
+}
 /* Whether the strip is currently showing the pack rather than the catalog.
    Derived from the character being on, and stored so the click handler and the
    draw cannot disagree about which list they are looking at. */
@@ -1778,7 +1790,14 @@ static void saveToSlot(int slot) {
         g_saveMsgFrames = 180; return;
     }
     const char* path = saveSlotPath(slot);
-    if (saveWrite(path, g_world, g_thumbLatest)) {
+    /* A panel-picked stack is a transient hand override, not saved character
+       state. Serialize the underlying hotbar choice, then restore the active
+       override so pressing Save does not disturb what the player is doing. */
+    const int temporarySelection = g_inv.selected;
+    g_inv.selected = g_hotbarSelected;
+    const bool wrote = saveWrite(path, g_world, g_thumbLatest);
+    g_inv.selected = temporarySelection;
+    if (wrote) {
         const double mb = (double)saveTotalBytes() / (1024.0 * 1024.0);
         sprintf(g_saveMsg, "Saved slot %d -- %.2f MB", slot + 1, mb);
     } else {
@@ -1797,6 +1816,9 @@ static void loadFromSlot(int slot) {
     undoClearAll();
     const char* path = saveSlotPath(slot);
     if (saveRead(path, g_world)) {
+        /* Saves contain the durable hotbar selection only. Older or malformed
+           files are clamped here before `held()` can index the pack. */
+        selectHotbar(g_inv.selected);
         const double mb = (double)saveTotalBytes() / (1024.0 * 1024.0);
         sprintf(g_saveMsg, "Loaded slot %d -- %.2f MB%s%s", slot + 1, mb,
                 saveError()[0] ? " -- " : "", saveError());
@@ -2767,31 +2789,17 @@ static bool handlePanelClick(int mx, int my) {
     }
     if (g_survival && g_playerOn) {
         for (int i = 0; i < HOTBAR_SLOTS; ++i)
-            if (inRect(g_hotRect[i], mx, my)) { g_inv.selected = i; return true; }
+            if (inRect(g_hotRect[i], mx, my)) { selectHotbar(i); return true; }
     }
     /* --- picking something out of the pack list --------------------------
-       A row in the hotbar already just selects it. A row further back has to
-       come FORWARD, because "held" and "in the hotbar" are the same thing in
-       this game -- so it is swapped into whichever hotbar slot is currently
-       selected.
-
-       A SWAP rather than a move into the first free slot, and that is the whole
-       ergonomic point: whatever was in your hand goes where the new thing came
-       from, so the pack neither grows nor shrinks and nothing is displaced onto
-       the floor. It also means clicking the same two rows alternately toggles
-       between two tools, which is the gesture this list is for. */
+       This list is a quick-use surface, not an inventory-arrangement surface.
+       Point the held index straight at the clicked stack without moving either
+       it or the selected hotbar stack. Wheel/number input calls selectHotbar()
+       and therefore dismisses this temporary override in one gesture. */
     for (int i = 0; i < g_packListCount; ++i) {
         if (!inRect(g_packListRect[i], mx, my)) continue;
         const int slot = g_packList[i];
-        if (slot < HOTBAR_SLOTS) {
-            g_inv.selected = slot;
-        } else {
-            const int want = imax(0, imin(HOTBAR_SLOTS - 1, g_inv.selected));
-            ItemStack tmp = g_inv.slot[want];
-            g_inv.slot[want] = g_inv.slot[slot];
-            g_inv.slot[slot] = tmp;
-            g_inv.selected = want;
-        }
+        g_inv.selected = imax(0, imin(INV_SLOTS - 1, slot));
         layoutPanel();
         return true;
     }
@@ -3120,7 +3128,7 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             changeSize(dir);
         } else {
             /* Up scrolls left along the bar, matching the usual convention. */
-            g_inv.selected = (g_inv.selected - dir + HOTBAR_SLOTS) % HOTBAR_SLOTS;
+            selectHotbar((g_hotbarSelected - dir + HOTBAR_SLOTS) % HOTBAR_SLOTS);
         }
         return 0;
     }
@@ -3158,9 +3166,9 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
            vestigial; a game wants 1-9 on the thing you are carrying. */
         case '1': case '2': case '3': case '4': case '5':
         case '6': case '7': case '8': case '9':
-            g_inv.selected = (int)(wp - '1');
+            selectHotbar((int)(wp - '1'));
             break;
-        case '0': g_inv.selected = 9; break;
+        case '0': selectHotbar(9); break;
         case 'M': g_brushMat = MAT_COPPER;   g_paletteDevice = -1; break;   /* M for metal */
         /* Wire mode and circuit-wire linking have no key. Both are modes that
            change what a click DOES rather than what it places, so hitting one
@@ -3382,7 +3390,7 @@ static PlayerCommand localPlayerCommand() {
     c.sequence = ++sequence;
     c.player = netRole() == NET_CLIENT ? netAssignedPlayer() : LOCAL_PLAYER_ID;
     c.generation = g_playerSessions[0].generation;
-    c.selected = (u8)imax(0, imin(HOTBAR_SLOTS - 1, g_inv.selected));
+    c.selected = (u8)imax(0, imin(INV_SLOTS - 1, g_inv.selected));
     c.brushRadius = (u8)g_brushRadius;
     c.brush = (i16)g_brushMat;
     c.background = g_bgLayer; c.overwrite = g_overwrite;
@@ -3412,7 +3420,7 @@ static PlayerCommand localPlayerCommand() {
 static void predictClientPlayer(const PlayerCommand& command, bool predictUses = false) {
     PlayerSession& session = g_playerSessions[0];
     if (!session.connected) return;
-    session.inventory.selected = imax(0, imin(HOTBAR_SLOTS - 1, (int)command.selected));
+    session.inventory.selected = imax(0, imin(INV_SLOTS - 1, (int)command.selected));
     if (session.body.alive && session.restBed < 0) {
         PlayerInput input;
         input.left = (command.bits & PCMD_LEFT) != 0;
@@ -3444,7 +3452,7 @@ static void predictClientPlayer(const PlayerCommand& command, bool predictUses =
         const Inventory authoritativeInventory = session.inventory;
         applyPlayerUses(session, command);
         session.inventory = authoritativeInventory;
-        session.inventory.selected = imax(0, imin(HOTBAR_SLOTS - 1, (int)command.selected));
+        session.inventory.selected = imax(0, imin(INV_SLOTS - 1, (int)command.selected));
     }
 }
 
@@ -3856,7 +3864,7 @@ static void applyPlayerUses(PlayerSession& session, const PlayerCommand& command
         memcpy(commit.digFilter, session.lineFilter, sizeof(commit.digFilter));
         commit.line = false; commit.lineCommit = false;
         session.lineActive = false; session.previousCommandBits = 0;
-        session.inventory.selected = imax(0, imin(HOTBAR_SLOTS - 1, (int)commit.selected));
+        session.inventory.selected = imax(0, imin(INV_SLOTS - 1, (int)commit.selected));
         applyPlayerUses(session, commit);
         return;
     }
@@ -4330,7 +4338,7 @@ static void updatePlayerFromCommand(int slot, PlayerSession& session, PlayerComm
                                     bool allowMovement) {
     if (!session.connected || session.generation != command.generation) return;
     playerHealingCooldownTick(session);
-    session.inventory.selected = imax(0, imin(HOTBAR_SLOTS - 1, (int)command.selected));
+    session.inventory.selected = imax(0, imin(INV_SLOTS - 1, (int)command.selected));
     if (!session.body.alive) {
         undoFinish(slot, &session.inventory);
         tickDeadPlayer(slot, session);
@@ -5372,7 +5380,7 @@ static void drawHotbar(HDC hdc) {
 
     for (int i = 0; i < HOTBAR_SLOTS; ++i) {
         RECT r = g_hotRect[i];
-        const bool sel = (i == g_inv.selected);
+        const bool sel = (i == g_hotbarSelected);
         const ItemStack& st = g_inv.slot[i];
 
         FillRect(hdc, &r, sel ? g_btnBgSel : g_btnBg);
