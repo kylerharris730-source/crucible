@@ -199,6 +199,28 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
       0, 0, 0.0f, 0.0f, false,
       ITEM_ICHOR, 2, 4, ITEM_NONE, 0, SPR_NONE, 0x6F8062,
       ITEM_EGG_SHAMBLER, false },
+    /* --- the Thresher, layer 2 --------------------------------------------
+       The Shambler is a body that hits you. This is four limbs that do, and
+       the difference is the whole creature: it is 28 cells wide against a body
+       that occupies barely a third of that, so the danger is the SPREAD rather
+       than the silhouette. Walking past one at what looks like a safe distance
+       is the mistake it exists to punish.
+
+       THE BOX IS THE REACH, and that is an approximation worth stating. The
+       collision box is the sprite, so the splayed tentacles are covered -- but
+       so are the two upper corners, where there is nothing but air between the
+       limbs and the bulb. A creature made of limbs wants a per-limb test; this
+       is the cheap version that gets the important half right, since the limbs
+       are low and wide and that is where a player actually meets it.
+
+       Faster than the Shambler and much lighter (52 hp against 96), because a
+       wide hitbox that also soaked damage would be unfightable in a corridor.
+       Lower per-touch damage for the same reason: it lands more often. */
+    { "Thresher", THRESHER_SPR_W, THRESHER_SPR_H, 52, 11, 30,
+      0.44f, 0.075f, false, 2, false,
+      0, 0, 0.0f, 0.0f, false,
+      ITEM_ICHOR, 1, 3, ITEM_NONE, 0, SPR_NONE, 0x9A5F94,
+      ITEM_EGG_THRESHER, false },
 };
 
 /* Not saved with the creatures -- see entity.h. Written by save.cpp as one u32
@@ -972,6 +994,57 @@ static void shamblerTick(const World& w, Entity& e, const Player& p) {
     }
 }
 
+/* --- the Thresher: scuttle and pause ---------------------------------------
+   Deliberately not the Shambler cadence. That one drags and lurches because it
+   is heavy; this is light and has four legs, so it SCUTTLES -- short bursts of
+   real speed with brief stops between them.
+
+   The stops are the tell. A creature that closes at a constant rate is one you
+   can back away from indefinitely at the same rate; one that stops and then
+   bursts makes the player misjudge the gap, which is the only way a walker
+   without a ranged attack ever catches anybody. It is also readable: the pause
+   is a visible wind-up rather than a hidden state.
+
+   Nothing here touches the gait. The legs measure ground covered, so the wave
+   speeds up during a burst and stills during a pause on its own -- which is
+   exactly the property distance-driven animation was added for. */
+static const int THRESHER_BURST = 46;
+static const int THRESHER_PAUSE = 22;
+
+static void thresherTick(const World& w, Entity& e, const Player& p) {
+    const EntityDef& d = ENT_DEFS[e.type];
+
+    /* actTimer cycles burst -> pause -> burst. Counting down through zero into
+       the negatives is how the two halves share one counter without a second
+       flag that could disagree with it. */
+    --e.actTimer;
+    if (e.actTimer < -THRESHER_PAUSE) e.actTimer = THRESHER_BURST;
+    const bool bursting = e.actTimer > 0;
+
+    /* A pause is a stop, not a crawl: the limbs settle and the body holds.
+       Left at a fraction of speed it read as a limp rather than as a creature
+       gathering itself. */
+    const float pace = bursting ? 1.0f : 0.0f;
+
+    bool climb = false;
+    groundChase(e, p, d.speed * pace, d.accel * (bursting ? 1.0f : 0.4f),
+                0.0f, &climb);
+
+    /* Four legs climb what two cannot, so it steps up rather than jumping --
+       a hop on a creature this wide reads as a glitch. Only while bursting,
+       so a paused Thresher does not levitate up a wall. */
+    if (bursting && e.onGround && climb) {
+        const int probeX = e.facing > 0 ? e.right() + 1 : e.left() - 1;
+        if (probeX > PLAY_X0 && probeX < PLAY_X1) {
+            bool low = false;
+            for (int y = e.bottom(); y > e.bottom() - 3 && y > PLAY_Y0; --y)
+                if (playerSolid(w, probeX, y, SOLID_ANY)) { low = true; break; }
+            if (low) e.vy = -1.5f;
+        }
+    }
+}
+
+
 /* --- the bat: why it misses -------------------------------------------------
    It picks a heading, commits to it for a stretch of frames, and cannot turn
    fast enough to fix a bad one. That is the whole trick, and it is worth being
@@ -1363,6 +1436,7 @@ static void entTickMode(World& w, Player& fallbackPlayer, Inventory& fallbackInv
         case ENT_BROOD:   broodTick(w, e, p);   break;
         case ENT_DUMMY:   dummyTick(w, e, p);   break;
         case ENT_SHAMBLER: shamblerTick(w, e, p); break;
+        case ENT_THRESHER: thresherTick(w, e, p); break;
         default: break;
         }
 
@@ -1837,40 +1911,75 @@ static void entityPixelMotion(const Entity& e, int entityIndex, int sx, int sy,
     }
 }
 
+/* --- creatures drawn by a rig ----------------------------------------------
+   The Shambler arrived with this inline, which was right for one creature and
+   wrong for two: the second would have copied thirty lines to change a buffer
+   name. What actually varies between rig creatures is four things -- the frame
+   buffers, their size, and how many walk frames there are -- so that is what
+   this returns, and the drawing below stays in one place.
+
+   Everything else about them is already shared: they consume the same distance
+   clock as every other walker, and they bake into the same flat u32 frames the
+   hand-drawn sprites produce, so nothing downstream knows the difference. */
+struct RigArt {
+    const u32* idle; int idleFrames;
+    const u32* walk; int walkFrames;
+    int w, h;
+};
+
+static bool rigArtFor(u8 type, RigArt* out) {
+    switch (type) {
+    case ENT_SHAMBLER:
+        out->idle = g_shamblerIdle[0]; out->idleFrames = SHAMBLER_IDLE_FRAMES;
+        out->walk = g_shamblerWalk[0]; out->walkFrames = SHAMBLER_WALK_FRAMES;
+        out->w = SHAMBLER_SPR_W; out->h = SHAMBLER_SPR_H;
+        return true;
+    case ENT_THRESHER:
+        out->idle = g_thresherIdle[0]; out->idleFrames = THRESHER_IDLE_FRAMES;
+        out->walk = g_thresherWalk[0]; out->walkFrames = THRESHER_WALK_FRAMES;
+        out->w = THRESHER_SPR_W; out->h = THRESHER_SPR_H;
+        return true;
+    default:
+        return false;
+    }
+}
+
 void entDraw(u32* px, int camX, int camY, bool lit) {
     for (int i = 0; i < MAX_ENTITIES; ++i) {
         const Entity& e = g_entities[i];
         if (!e.alive()) continue;
         const EntityDef& d = ENT_DEFS[e.type];
 
-        /* The Shambler is already baked at its 22x36 collision size. Keeping
-           that path explicit is what proves the rig can serve an enemy without
-           squeezing it through the 14x14 hand-art sheet or adding live posing
-           to this hot loop. The walk consumes the same distance clock as every
-           other walker, but uses all eight authored rig frames rather than the
-           two-pose pixel offsets those sprites can support. */
-        if (e.type == ENT_SHAMBLER) {
+        /* Baked at their own collision size, so a rig creature is blitted
+           1:1 rather than squeezed through the 14x14 hand-art sheet or posed
+           live in this hot loop. The walk consumes the same distance clock as
+           every other walker; what it buys is all eight authored frames rather
+           than the two-pose pixel offsets a decal can support. */
+        RigArt art3;
+        if (rigArtFor(e.type, &art3)) {
             const u32* art = 0;
             const bool moving = fabsf(e.vx) > 0.04f || fabsf(e.vy) > 0.04f;
-            if (!e.onGround) art = e.vy < 0.0f ? g_shamblerJump : g_shamblerFall;
+            if (e.type == ENT_SHAMBLER && !e.onGround)
+                art = e.vy < 0.0f ? g_shamblerJump : g_shamblerFall;
             else if (moving) {
                 const float stride = (float)imax(2, d.h / 3);
                 const int frame = ((int)(e.walkPhase * 4.0f / stride)) &
-                                  (SHAMBLER_WALK_FRAMES - 1);
-                art = g_shamblerWalk[frame];
+                                  (art3.walkFrames - 1);
+                art = art3.walk + (size_t)frame * art3.w * art3.h;
             } else {
-                const int frame = (int)((g_world.frame / 36u + (u32)i) & 1u);
-                art = g_shamblerIdle[frame];
+                const int frame = (int)((g_world.frame / 36u + (u32)i) %
+                                        (u32)art3.idleFrames);
+                art = art3.idle + (size_t)frame * art3.w * art3.h;
             }
 
             const int ox = (int)e.x - camX, oy = (int)e.y - camY;
-            for (int sy = 0; sy < SHAMBLER_SPR_H; ++sy) {
-                for (int sx = 0; sx < SHAMBLER_SPR_W; ++sx) {
+            for (int sy = 0; sy < art3.h; ++sy) {
+                for (int sx = 0; sx < art3.w; ++sx) {
                     const int vx = ox + sx, vy = oy + sy;
                     if (vx < 0 || vx >= VIEW_CELLS_W || vy < 0 || vy >= VIEW_CELLS_H)
                         continue;
-                    u32 out = art[sy * SHAMBLER_SPR_W +
-                                  (e.facing < 0 ? SHAMBLER_SPR_W - 1 - sx : sx)];
+                    u32 out = art[sy * art3.w +
+                                  (e.facing < 0 ? art3.w - 1 - sx : sx)];
                     if (!out) continue;
                     if (lit) out = shadeColor(out, viewShade(vx, vy));
                     if (e.hurtFlash > 0) out = 0xFFFFFF;

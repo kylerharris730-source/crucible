@@ -290,4 +290,19 @@ extern u32 g_shamblerWalk[SHAMBLER_WALK_FRAMES][SHAMBLER_SPR_W * SHAMBLER_SPR_H]
 extern u32 g_shamblerJump[SHAMBLER_SPR_W * SHAMBLER_SPR_H];
 extern u32 g_shamblerFall[SHAMBLER_SPR_W * SHAMBLER_SPR_H];
 
+/* --- the Thresher, layer 2 -------------------------------------------------
+   Wider than it is tall, because four splayed tentacles are the silhouette and
+   the body is a bulb sitting on top of them. The box is the sprite, as with the
+   Shambler, so the width is not decoration: those limbs are what touches you.
+
+   Eight walk frames rather than the two a hand-drawn creature can support,
+   because the gait is a travelling wave and two samples of a wave is a
+   flicker -- see rigTentacleWalk. */
+static const int THRESHER_SPR_W = 28;
+static const int THRESHER_SPR_H = 26;
+static const int THRESHER_IDLE_FRAMES = 2;
+static const int THRESHER_WALK_FRAMES = 8;
+extern u32 g_thresherIdle[THRESHER_IDLE_FRAMES][THRESHER_SPR_W * THRESHER_SPR_H];
+extern u32 g_thresherWalk[THRESHER_WALK_FRAMES][THRESHER_SPR_W * THRESHER_SPR_H];
+
 void initSprites();

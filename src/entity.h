@@ -77,6 +77,10 @@ enum EntityType {
        Appended after the boss and dummy so the Brood Mother's persistent bit
        and every established creature id keep their meaning. */
     ENT_SHAMBLER,        /* large hunched walker: the first enemy drawn by a rig */
+    /* Four tentacles on a bulb, and the limbs are the threat -- see the note
+       on its box in ENT_DEFS. The first creature whose SKELETON is not the
+       humanoid one. */
+    ENT_THRESHER,
     ENT_COUNT
 };
 

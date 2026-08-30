@@ -287,3 +287,188 @@ const Clip RIG_CROUCH = CROUCH;
    order across translation units is not something to bet a character on. */
 struct ClipInit { ClipInit() { buildClips(); } };
 static ClipInit g_clipInit;
+
+/* ===========================================================================
+   The tentacled rig
+   =========================================================================== */
+
+/* Four steps, the same job the suit ladder does: a limb crossing the body has
+   to stay a limb. Far tentacles sit below the body, near ones above it. */
+const u32 RIG_THRESHER[TENT_SHADES] = {
+    0x3E2A46,   /* 0 far tentacle  -- darkest */
+    0x6B4570,   /* 1 body          -- the middle of the ladder */
+    0x9A5F94,   /* 2 near tentacle -- clearly above the body it crosses */
+    0xC98BB8,   /* 3 crown */
+    0xE8C24A,   /* 4 the eye */
+};
+
+void rigTentacled(Bone* b, RigDef* rig, const char* name,
+                  int w, int h, const u32* shade) {
+    const int H = h * ARM_SS, W = w * ARM_SS;
+
+    /* The body is a wide short capsule in the UPPER part of the box, because
+       everything below it is leg. A bulb any lower and the limbs have no room
+       to bend, which is what turns a walk into a shuffle. */
+    const int bodyLen = (H * 20) / 100;
+    /* 17%, not 30%. A capsule end is a DISC of its half-width, so a fat body
+       hangs a cap below its own base -- and the tentacles root at that base.
+       At 30% the cap alone was eight cells deep and swallowed the top half of
+       every limb, which rendered as one blob with a few dark flecks on it. The
+       body has to be narrow enough that the limbs leave it. */
+    const int bodyW   = (W * 17) / 100;
+
+    /* Segments shorten and narrow outward, which is what makes a taper read as
+       a taper rather than as four rectangles in a row. The four together reach
+       60% of the box, so a straightened limb just touches the floor. */
+    const int reach = (H * 60) / 100;
+    const int segLen[TENT_SEGS] = { (reach * 30) / 100, (reach * 27) / 100,
+                                    (reach * 23) / 100, (reach * 20) / 100 };
+    /* Thicker at the root than the old values: a limb thinner than the body it
+       hangs from disappears against it at this scale, and these are supposed to
+       be the readable part of the creature. */
+    const int segW[TENT_SEGS + 1] = { (W * 8) / 100, (W * 7) / 100,
+                                      (W * 6) / 100, (W * 5) / 100, (W * 3) / 100 };
+
+    /* REST 0 POINTS DOWN, 180 points up -- the humanoid sets its spine to 180
+       and its thighs to 0, and this rig has to agree with that or it builds
+       itself upside down. Which it did: body at 0 grew downward, tentacles at
+       180 stood up out of the top, and the creature came out as a bulb wearing
+       antennae. The bulb rises from the waist, so it is 180; the limbs hang, so
+       they are 0. */
+    b[TENT_BODY]  = mk(-1, 180, bodyLen, bodyW, bodyW * 4 / 5, 1, 2, 0);
+    b[TENT_CROWN] = mk(TENT_BODY, 0, (H * 6) / 100,
+                       bodyW * 3 / 5, bodyW * 2 / 5, 3, 2, 255);
+
+    /* Splay: the outer pair stand wider than the inner pair, so the silhouette
+       is a creature standing on four legs rather than two legs drawn twice.
+
+       OFFSETS FROM 180, because rest is measured against the PARENT and the
+       parent here is the body, which points up. A tentacle at rest 0 therefore
+       points the same way the body does -- straight up -- and the creature
+       renders as a tulip: limbs fanning out of a narrow base with the bulb
+       buried underneath. 180 turns them to hang. (The body itself is 180 for
+       the opposite reason: it has no parent, so its rest is absolute, and
+       absolute 0 is down.) */
+    static const int splay[TENT_LEGS] = { -34, -12, 12, 34 };
+    for (int t = 0; t < TENT_LEGS; ++t) {
+        /* Alternating depth: 0 and 2 behind the body, 1 and 3 in front. */
+        const bool nearSide = (t & 1) != 0;
+        const int  sh    = nearSide ? 2 : 0;
+        const int  layer = nearSide ? 3 : 1;
+        for (int s = 0; s < TENT_SEGS; ++s) {
+            const int idx = tentBone(t, s);
+            /* The first segment hangs off the body BASE (at 0). Rooted at the
+               bulb tip instead, a tentacle would sprout from its crown. The
+               rest chain from their parent tip like any limb. */
+            const int parent = s == 0 ? TENT_BODY : idx - 1;
+            const int rest   = s == 0 ? 180 + splay[t] : 0;
+            const int at     = s == 0 ? 0 : 255;
+            b[idx] = mk(parent, rest, segLen[s],
+                        segW[s], segW[s + 1], sh, layer, at);
+        }
+    }
+
+    rig->name  = name;
+    rig->bone  = b;
+    rig->bones = TENT_BONES;
+    rig->shade = shade;
+    rig->w = w; rig->h = h;
+    /* The root is where the body BASE goes -- the waist of the creature rather
+       than its middle. The bulb grows up from here and the tentacles hang
+       down, so this is the one point both halves agree on. */
+    rig->rootX = (i16)(W / 2);
+    rig->rootY = (i16)(H - reach);
+}
+
+/* --- the wave --------------------------------------------------------------
+   Integer sine, scaled by 1024, so this file still needs no float and no
+   math.h. Built once on first use; 360 entries costs nothing and removes every
+   rounding argument from the gait below. */
+static int isin1024(int deg) {
+    static int table[360];
+    static bool built = false;
+    if (!built) {
+        for (int d = 0; d < 360; ++d) {
+            int q = d % 180;
+            const int sign = d < 180 ? 1 : -1;
+            if (q > 90) q = 180 - q;
+            /* q degrees in radians, fixed point at 1/1024. */
+            const long long x = ((long long)q * 17870) / 1024;
+            const long long x3 = x * x / 1024 * x / 1024;
+            const long long x5 = x3 * x / 1024 * x / 1024;
+            long long s = x - x3 / 6 + x5 / 120;
+            if (s > 1024) s = 1024;
+            if (s < 0) s = 0;
+            table[d] = (int)(sign * s);
+        }
+        built = true;
+    }
+    int d = deg % 360;
+    if (d < 0) d += 360;
+    return table[d];
+}
+
+void rigTentacleWalk(PoseKey* keys, int count, int lift) {
+    memset(keys, 0, sizeof(PoseKey) * (size_t)count);
+    for (int k = 0; k < count; ++k) {
+        PoseKey& p = keys[k];
+        int bodyRise = 0;
+        for (int t = 0; t < TENT_LEGS; ++t) {
+            /* Each limb a quarter cycle behind the last, so the creature is
+               always planted on two of them. That phasing is the whole gait:
+               with every limb in step it hops, and with them randomly placed
+               it paddles. */
+            const int phase = (k * 360) / count + (t * 360) / TENT_LEGS;
+            const int swing = isin1024(phase);          /* fore and aft */
+            const int curl  = isin1024(phase + 90);     /* lift on recovery */
+
+            for (int s = 0; s < TENT_SEGS; ++s) {
+                /* Each segment lags the one above it, so the bend travels from
+                   body to tip instead of the limb hinging as one rigid stick.
+                   That travel is what makes it read as a tentacle at all. */
+                const int lag = isin1024(phase + 90 + s * 34);
+                int a = (s == 0) ? (swing * 26) / 1024
+                                 : (lag * lift * (s + 1)) / (1024 * TENT_SEGS);
+                /* A planted limb straightens; only the recovering half curls.
+                   Without this every limb bends the same amount whether it is
+                   carrying weight or not, which is a creature swimming. */
+                if (curl < 0 && s > 0) a /= 3;
+                p.angle[tentBone(t, s)] = (i16)a;
+            }
+            if (curl > 0) bodyRise += curl;
+        }
+        /* The body leans into the stride at twice the limb rate, since two
+           limbs land per cycle. */
+        p.angle[TENT_BODY]  = (i16)((isin1024((k * 720) / count) * 4) / 1024);
+        p.angle[TENT_CROWN] = 0;
+        /* Down is positive Y, so a rise is negative. Deliberately small: the
+           bob suggests weight, and a body travelling visibly up and down reads
+           as bouncing rather than walking. */
+        p.rootDY = (i16)(-(bodyRise * ARM_SS) / (1024 * TENT_LEGS));
+    }
+}
+
+static PoseKey g_tentWalkKeys[8];
+static PoseKey g_tentIdleKeys[2];
+
+static void buildTentClips() {
+    rigTentacleWalk(g_tentWalkKeys, 8, 30);
+    /* Idle is the same wave, shallow and with the limbs left where they stand:
+       a creature made of tentacles that froze completely would read as dead
+       rather than as waiting. */
+    rigTentacleWalk(g_tentIdleKeys, 2, 8);
+    for (int k = 0; k < 2; ++k)
+        for (int t = 0; t < TENT_LEGS; ++t)
+            g_tentIdleKeys[k].angle[tentBone(t, 0)] = 0;
+}
+
+static const Clip TENT_WALK = { "tentwalk", g_tentWalkKeys, 8, 8, true, true };
+static const Clip TENT_IDLE = { "tentidle", g_tentIdleKeys, 2, 2, true, true };
+const Clip RIG_TENT_WALK = TENT_WALK;
+const Clip RIG_TENT_IDLE = TENT_IDLE;
+
+/* Built on first use, for the same reason the humanoid clips are: static
+   initialisation order across translation units is not something to bet a
+   creature on. */
+struct TentClipInit { TentClipInit() { buildTentClips(); } };
+static TentClipInit g_tentClipInit;

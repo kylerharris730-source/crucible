@@ -261,6 +261,7 @@ enum {
        therefore every non-material item id above it. */
     ITEM_ICHOR,
     ITEM_EGG_SHAMBLER,
+    ITEM_EGG_THRESHER,
     /* Appended armour progression. Item ids are serialized directly, so even
        conceptually early Iron Armour belongs here rather than beside Steel. */
     ITEM_IRON_HELMET,

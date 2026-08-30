@@ -74,9 +74,16 @@ int main() {
         fprintf(stderr, "layer-2 spawner produced no creature in prepared rooms\n");
         ++failures;
     }
+    /* Everything the layer-2 spawner produces must BE a layer-2 creature.
+       This used to assert the Shambler specifically, which was the same claim
+       only while it was the only creature down here -- adding the Thresher
+       then made it fail or pass depending on the seed. What the check is
+       actually worth is that layer 1 does not leak into layer 2, and that
+       survives every creature added after this one. */
     for (int i = 0; i < MAX_ENTITIES; ++i)
-        if (g_entities[i].alive() && g_entities[i].type != ENT_SHAMBLER) {
-            fprintf(stderr, "layer-2 spawner selected %s instead of Shambler\n",
+        if (g_entities[i].alive() &&
+            !(ENT_DEFS[g_entities[i].type].layerMask & 2)) {
+            fprintf(stderr, "layer-2 spawner selected %s, which is not a layer-2 creature\n",
                     ENT_DEFS[g_entities[i].type].name);
             ++failures;
         }

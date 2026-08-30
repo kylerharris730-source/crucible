@@ -12,6 +12,8 @@ u32 g_shamblerIdle[SHAMBLER_IDLE_FRAMES][SHAMBLER_SPR_W * SHAMBLER_SPR_H];
 u32 g_shamblerWalk[SHAMBLER_WALK_FRAMES][SHAMBLER_SPR_W * SHAMBLER_SPR_H];
 u32 g_shamblerJump[SHAMBLER_SPR_W * SHAMBLER_SPR_H];
 u32 g_shamblerFall[SHAMBLER_SPR_W * SHAMBLER_SPR_H];
+u32 g_thresherIdle[THRESHER_IDLE_FRAMES][THRESHER_SPR_W * THRESHER_SPR_H];
+u32 g_thresherWalk[THRESHER_WALK_FRAMES][THRESHER_SPR_W * THRESHER_SPR_H];
 
 /* One palette shared by every sprite, so a colour means the same thing
    everywhere: T is always a highlight, S is always steel, and the two handle
@@ -591,6 +593,24 @@ static void buildShamblerFrames() {
     armBake(&rig, &RIG_JUMP, g_shamblerJump);
     armBake(&rig, &RIG_FALL, g_shamblerFall);
 }
+
+/* The Thresher is the first creature whose skeleton is NOT the humanoid one --
+   see rigTentacled. Nothing else here changes: the same armature, the same
+   bake, the same flat u32 frames the hand-drawn sprites produce, so the
+   renderer never learns that a second kind of creature exists.
+
+   Its walk is generated rather than authored (rigTentacleWalk), which is the
+   only way four limbs stay exactly a quarter cycle apart without somebody
+   maintaining thirty-two angles a frame by hand. */
+static void buildThresherFrames() {
+    static Bone bone[TENT_BONES];
+    RigDef rig;
+    rigTentacled(bone, &rig, "thresher",
+                 THRESHER_SPR_W, THRESHER_SPR_H, RIG_THRESHER);
+    armBake(&rig, &RIG_TENT_WALK, g_thresherWalk[0]);
+    armBake(&rig, &RIG_TENT_IDLE, g_thresherIdle[0]);
+}
+
 
 /* The thermocouple: a boxed gauge with a dial face and a needle, and a terminal
    post on each side. The terminals are load-bearing art rather than decoration --
@@ -2011,4 +2031,5 @@ void initSprites() {
 
     buildPlayerFrames();
     buildShamblerFrames();
+    buildThresherFrames();
 }

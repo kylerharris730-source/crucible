@@ -1164,7 +1164,24 @@ static const int CRE_ENTRY_ICON_W = 22;
    Still bounded by that canvas and not by taste: five rows measures 763, and
    four pixels of headroom is not headroom. If a row grows again, this comes
    back down with it. */
-static const int CRE_VIS_ROWS = 4;
+/* Not a fixed count any more -- see creativeVisRows(). A constant here had to
+   be sized for the WORST case (equipment, drone chips and tool bench all
+   present at once), and then everyone got that number: the player with no
+   bench and no drone was shown four rows while having room for seven. Those
+   two blocks are conditional, so the worst case is the rare case.
+
+   The bounds instead. The floor keeps the list usable when everything is on
+   screen at once; the ceiling stops a nearly empty panel from turning into one
+   enormous list, and is what the scroll-page jump is measured against. */
+static const int CRE_MIN_ROWS = 3;
+static const int CRE_MAX_ROWS = 8;
+/* Breathing room top and bottom so the panel never sits flush against the
+   canvas edge. */
+static const int CRE_PANEL_MARGIN = 10;
+/* How many rows the CURRENT panel contents leave room for. Defined after the
+   layout constants it needs; g_creVisRows caches the last answer so the
+   scrollbar and the wheel agree with what was drawn. */
+static int g_creVisRows = 4;
 static const int CRE_MAX_ENTRIES = ITEM_COUNT + 9;
 static int g_creScroll = 0;      /* first visible row */
 static int g_creRowCount = 0;    /* total rows, for clamping and the bar */
@@ -2017,7 +2034,7 @@ static void layoutCreative() {
         g_toolSlotCount = imin(ITEMS[g_inv.slot[g_toolPackSlot].item].toolSlots, TOOL_SLOTS_MAX);
 
     /* --- the palette scrolls ---------------------------------------------
-       A fixed window of CRE_VIS_ROWS rows with the rest scrolled past, so the
+       A window of however many rows fit, with the rest scrolled past, so the
        panel's height no longer depends on how many materials exist. That
        matters more every time one is added: the crops alone put eight new rows
        in here.
@@ -2030,10 +2047,6 @@ static void layoutCreative() {
     const int gap = CRE_ENTRY_GAP, pad = 14;
     const int ps = 50, pgap = 3;
     g_creRowCount = (g_creCount + CRE_COLS - 1) / CRE_COLS;
-    const int visRows = imin(CRE_VIS_ROWS, g_creRowCount);
-    const int maxScroll = imax(0, g_creRowCount - CRE_VIS_ROWS);
-    if (g_creScroll > maxScroll) g_creScroll = maxScroll;
-    if (g_creScroll < 0) g_creScroll = 0;
 
     const int benchH = g_toolSlotCount ? 74 : 0;
     /* Taller than it was, and every one of the extra pixels is text: two lines
@@ -2047,8 +2060,32 @@ static void layoutCreative() {
         if (!g_inv.equip[eq].empty()) { hasDrone = true; break; }
     }
     const int droneModuleH = hasDrone ? 74 : 0;
-    const int paletteH = visRows * (ch + gap);
     const int packH    = signalPicker ? 0 : 22 + INV_ROWS * (ps + pgap) + 10;
+
+    /* --- how many rows fit, rather than how many are allowed ---------------
+       Everything above is conditional: no tool bench is 74px back, no drone
+       another 74, and the signal picker drops the pack and the equipment strip
+       entirely. Deriving the count from what is actually there gives the list
+       every pixel nobody else is using, and gives it back the moment they need
+       it -- a bench appearing takes a row away rather than pushing the panel
+       off the canvas, which is what a fixed count sized for the light case
+       would have done. */
+    const int fixedH = pad + 56 + 10 + packH + equipH + droneModuleH + benchH + 38;
+    const int roomH  = VIEW_H - CRE_PANEL_MARGIN * 2 - fixedH;
+    int visRows = roomH / (ch + gap);
+    if (visRows < CRE_MIN_ROWS) visRows = CRE_MIN_ROWS;
+    if (visRows > CRE_MAX_ROWS) visRows = CRE_MAX_ROWS;
+    if (visRows > g_creRowCount) visRows = g_creRowCount;
+    if (visRows < 1) visRows = 1;
+    /* Cached for the scrollbar and the wheel, which run outside this function
+       and must page by exactly what was drawn. */
+    g_creVisRows = visRows;
+
+    const int maxScroll = imax(0, g_creRowCount - visRows);
+    if (g_creScroll > maxScroll) g_creScroll = maxScroll;
+    if (g_creScroll < 0) g_creScroll = 0;
+
+    const int paletteH = visRows * (ch + gap);
     const int barW     = 10;
     const int w = pad * 2 + CRE_COLS * cw + (CRE_COLS - 1) * gap + barW + 6;
     const int h = pad + 56 + paletteH + 10 + packH + equipH + droneModuleH + benchH + 38;
@@ -2395,8 +2432,8 @@ static bool handleCreativeClick(int mx, int my, bool remove) {
        and dragging a thumb across a modal panel is a second input mode for a
        list the wheel already scrolls. */
     if (inRect(g_creTrack, mx, my)) {
-        if      (my < g_creThumb.top)    g_creScroll -= CRE_VIS_ROWS;
-        else if (my > g_creThumb.bottom) g_creScroll += CRE_VIS_ROWS;
+        if      (my < g_creThumb.top)    g_creScroll -= g_creVisRows;
+        else if (my > g_creThumb.bottom) g_creScroll += g_creVisRows;
         layoutCreative();
         return true;
     }
@@ -6038,7 +6075,7 @@ static void drawCreative(HDC hdc) {
        looks broken exactly once and nobody can reproduce it. */
     {
         FillRect(hdc, &g_creTrack, g_btnBg);
-        if (g_creRowCount > CRE_VIS_ROWS) {
+        if (g_creRowCount > g_creVisRows) {
             FillRect(hdc, &g_creThumb, inRect(g_creTrack, g_mx, g_my)
                                        ? g_btnBgHot : g_btnBgSel);
             FrameRect(hdc, &g_creThumb, g_borderBrush);
