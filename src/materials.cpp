@@ -1386,25 +1386,48 @@ static void initZoneColours() {
         for (int k = 0; k < 16; ++k)
             g_caveLut[z][k] = lerpColor(LAYER_A[z], LAYER_B[z], k * 17);
 
-    /* The sky: cold high air, through daylight blue, into a dusty haze near the
-       ground. Three stops rather than two because a straight two-colour ramp
-       reads as a flat wash, and the bend toward haze is what makes it look like
-       distance rather than paint.
+    /* The sky: space at the very top, deep blue for everything below it.
 
-       A plain linear ramp, not weighted toward either end. The join with the
-       underground is handled where it actually happens -- at the chunk
-       boundary, by backdrop() -- rather than by trying to shape this curve to
-       land on the cave colour at a depth that is different in every column. */
-    /* Keep the same value progression, but carry visibly more blue through
-       the middle and lower sky. The previous horizon stop had only twelve
-       more blue than green and read as grey anywhere except high overhead. */
-    const u32 STOPS[4] = { 0x244778, 0x3D70AA, 0x6B98BD, 0x8EAFC7 };
-    const int nSeg = 3;
-    const int span = SKY_BAND / nSeg;
+       Two facts about this table drive its shape, and neither is obvious from
+       the loop. First, y here is an ABSOLUTE world row, and SKY_BAND is only
+       1400 of the world's 9216 -- so this ramp describes the top fifteenth of
+       the map and nothing else. Second, render.cpp CLAMPS every row past the
+       end of the table to the final entry, and the ground is at SIM_H/3. So
+       the last stop is not a horizon colour that nobody looks at: it is the
+       flat colour of the everyday sky, the one the player sees the whole time
+       they are standing on the surface. It is the single most important
+       number in this function.
+
+       That everyday stop used to be a pale haze, and haze is what made the sky
+       read as washed out at the only altitude most players ever occupy. It is
+       now a deep blue -- close to what used to be reserved for the top of the
+       world -- because the sky being BLUE matters more than the sky suggesting
+       aerial distance across a band the player almost never flies through.
+
+       Above it the ramp keeps going the way it looks like it should: thinner
+       air, darker and less scattered, until it reaches actual space. The stops
+       are positioned rather than evenly spaced, and that is the whole reason
+       this is a table of {y, colour} instead of the plain array it replaced.
+       Black has to be a thin cap at the extreme top. Spread evenly across four
+       segments it would have claimed the top quarter of the band -- roughly
+       350 rows of night sitting over a daylit world, reachable by anything
+       with a jetpack and a bad afternoon. Held to the first ~150 rows it is
+       what it should be: a place you have to deliberately climb to. */
+    struct SkyStop { int y; u32 c; };
+    static const SkyStop STOPS[] = {
+        {            0, 0x04060C },   /* space */
+        {          150, 0x0A1430 },   /* the last of the blue draining out */
+        {          430, 0x18396E },   /* high thin air */
+        {          860, 0x24528C },
+        { SKY_BAND - 1, 0x31699F },   /* the everyday sky -- see above */
+    };
+    const int nStop = (int)(sizeof(STOPS) / sizeof(STOPS[0]));
     for (int y = 0; y < SKY_BAND; ++y) {
-        const int seg = imin(nSeg - 1, y / span);
-        const int t   = imin(255, ((y - seg * span) * 256) / span);
-        g_skyLut[y] = lerpColor(STOPS[seg], STOPS[seg + 1], t);
+        int seg = 0;
+        while (seg < nStop - 2 && y >= STOPS[seg + 1].y) ++seg;
+        const int y0 = STOPS[seg].y, y1 = STOPS[seg + 1].y;
+        const int t = (y1 > y0) ? imin(255, ((y - y0) * 256) / (y1 - y0)) : 255;
+        g_skyLut[y] = lerpColor(STOPS[seg].c, STOPS[seg + 1].c, t);
     }
 }
 
