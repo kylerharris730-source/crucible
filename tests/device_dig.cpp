@@ -36,7 +36,7 @@ static World g_testWorld;
 
 static const int CX = 1400, CY = 5000;
 
-static Device* setup(World& w, Inventory& inv) {
+static Device* setup(World& w, Inventory& inv, u8 type = DEV_SPOUT) {
     w.reset();
     devClear();
     for (int y = CY - 40; y <= CY + 40; ++y)
@@ -44,7 +44,7 @@ static Device* setup(World& w, Inventory& inv) {
             w.setCell(x, y, MAT_EMPTY);
     w.setLiveWindow(CX - 60, CY - 60, CX + 60, CY + 60);
     memset(&inv, 0, sizeof(inv));
-    if (!devPlace(w, DEV_SPOUT, CX + DEV_W / 2, CY + DEV_H / 2)) return 0;
+    if (!devPlace(w, type, CX + DEV_W / 2, CY + DEV_H / 2)) return 0;
     return devAt(CX + DEV_W / 2, CY + DEV_H / 2);
 }
 
@@ -134,6 +134,51 @@ int main() {
         if (!still) {
             fprintf(stderr, "FAIL: the machine was destroyed with nowhere to put "
                             "it -- digging must never be a way to lose one\n");
+            ++failures;
+        }
+    }
+
+    /* --- 4. a pedestal returns the item displayed on it ------------------- */
+    {
+        Device* d = setup(w, inv, DEV_PEDESTAL);
+        if (!d) { fprintf(stderr, "could not place the pedestal\n"); return 2; }
+        pedestalSet(*d, MAT_COAL, 7);
+        digInto(w, inv, d->x + 3, d->y + 3, 1, 8, false, 255, 0);
+
+        const bool gone = devAt(CX + DEV_W / 2, CY + DEV_H / 2) == 0;
+        const int pedestals = held(inv, itemForDeviceType(DEV_PEDESTAL));
+        const int coal = held(inv, (ItemId)MAT_COAL);
+        printf("dug occupied pedestal: removed %s, pedestals held %d, "
+               "coal held %d\n", gone ? "yes" : "NO", pedestals, coal);
+        if (!gone || pedestals != 1 || coal != 7) {
+            fprintf(stderr, "FAIL: occupied pedestal did not return itself and "
+                            "all 7 displayed items\n");
+            ++failures;
+        }
+    }
+
+    /* --- 5. pickup is atomic when only the pedestal itself would fit ------- */
+    {
+        Device* d = setup(w, inv, DEV_PEDESTAL);
+        if (!d) { fprintf(stderr, "could not place the pedestal\n"); return 2; }
+        pedestalSet(*d, MAT_COAL, 1);
+        for (int i = 0; i < INV_SLOTS; ++i) {
+            inv.slot[i].item = (ItemId)MAT_STONE;
+            inv.slot[i].count = (u16)ITEMS[MAT_STONE].maxStack;
+        }
+        /* One opening can hold the pedestal, but there is no second opening
+           for its coal.  Neither item may be transferred unless both fit. */
+        inv.slot[0].item = ITEM_NONE;
+        inv.slot[0].count = 0;
+        digInto(w, inv, d->x + 3, d->y + 3, 1, 8, false, 255, 0);
+
+        Device* still = devAt(CX + DEV_W / 2, CY + DEV_H / 2);
+        printf("nearly full pack: occupied pedestal still there %s\n",
+               still ? "yes" : "NO");
+        if (!still || held(inv, itemForDeviceType(DEV_PEDESTAL)) != 0 ||
+            pedestalItem(*still) != MAT_COAL || pedestalCount(*still) != 1) {
+            fprintf(stderr, "FAIL: partial pickup changed or destroyed the "
+                            "occupied pedestal\n");
             ++failures;
         }
     }

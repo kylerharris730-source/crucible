@@ -2015,7 +2015,21 @@ int digInto(World& w, Inventory& inv, int cx, int cy, int r, int maxCells,
             /* No item means no way to hand it back, so it is not diggable at
                all -- better an immovable machine than one that evaporates. */
             if (back == ITEM_NONE) continue;
-            if (inv.add(back, 1) != 0) continue;
+            /* A pedestal owns the item standing on it.  Removing the device
+               without transferring that item made a very ordinary mining
+               action a delete button.  Stage the complete pickup in a copy so
+               this remains all-or-nothing: if either stack cannot fit, the
+               real pack and the pedestal are both left untouched. */
+            Inventory pickedUp = inv;
+            if (pickedUp.add(back, 1) != 0) continue;
+            if (dev->type == DEV_PEDESTAL) {
+                const ItemId displayed = (ItemId)pedestalItem(*dev);
+                const int displayedCount = pedestalCount(*dev);
+                if (displayed != ITEM_NONE && displayedCount > 0 &&
+                    pickedUp.add(displayed, displayedCount) != 0)
+                    continue;
+            }
+            inv = pickedUp;
             devRemove(w, dev);
             ++dug;
             continue;
