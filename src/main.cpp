@@ -1798,6 +1798,9 @@ static void saveToSlot(int slot) {
     const bool wrote = saveWrite(path, g_world, g_thumbLatest);
     g_inv.selected = temporarySelection;
     if (wrote) {
+        /* The bytes are in the filesystem; on the web that is not yet the
+           same as being kept. See savePersist(). */
+        savePersist();
         const double mb = (double)saveTotalBytes() / (1024.0 * 1024.0);
         sprintf(g_saveMsg, "Saved slot %d -- %.2f MB", slot + 1, mb);
     } else {

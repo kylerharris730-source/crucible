@@ -9,12 +9,33 @@
 #include "tree.h"
 #include "worldgen.h"
 #include "multiplayer.h"
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
 
 static char g_err[256] = "";
 const char* saveError() { return g_err; }
+
+/* See the note in save.h. Deliberately fire-and-forget: FS.syncfs is
+   asynchronous, and there is nothing useful for the game to do while it
+   settles -- the bytes are already in the filesystem the game reads back, so a
+   load in this same session works whether or not IndexedDB has caught up yet.
+
+   The page supplies the function so that the retry and the reporting live with
+   the rest of the page's error handling rather than being duplicated here; the
+   direct syncfs is the fallback for a build loaded without it. */
+void savePersist() {
+#ifdef __EMSCRIPTEN__
+    EM_ASM({
+        if (typeof cinderliftPersistSaves === 'function') { cinderliftPersistSaves(); return; }
+        if (typeof FS !== 'undefined' && FS.syncfs)
+            FS.syncfs(false, function (e) { if (e) console.error('save persist failed', e); });
+    });
+#endif
+}
 
 /* ==========================================================================
    Section bookkeeping

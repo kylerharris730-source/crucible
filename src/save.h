@@ -110,6 +110,21 @@ bool saveRead(const char* path, World& w);
 
 const char* saveError();
 
+/* Push the written bytes somewhere they will survive the process.
+
+   On Windows this does nothing, because fclose() already did it: the file is
+   on a disk. In the browser it is not. Emscripten's default filesystem is
+   MEMFS, which is a JavaScript object -- saveWrite() succeeds, the save screen
+   lists the slot with its size and thumbnail, and every byte of it disappears
+   when the tab closes. That failure is worse than saving being unavailable,
+   because the game tells the player their world is safe.
+
+   The browser build therefore mounts IDBFS over the save directory, and IDBFS
+   only reaches IndexedDB when it is explicitly told to. This is that
+   instruction, and it has to be called after a successful write or the mount
+   buys nothing. */
+void savePersist();
+
 /* The per-cell colour speckle, derived from the cell index rather than stored
    -- see the note in save.cpp for why, and for what happens when the thing
    deriving it is not actually a hash. Exposed so a test can measure it. */

@@ -604,9 +604,80 @@
     return 100;
   }
 
+  // --- saved worlds ---------------------------------------------------------
+  // Emscripten's default filesystem is MEMFS: a JavaScript object that is
+  // discarded with the page. Saving to it works in every visible way -- the
+  // slot fills in, the thumbnail and byte count are right -- and the world is
+  // gone on reload. Telling a player their world is safe and then losing it is
+  // worse than not offering saves, so the save directory is mounted on IDBFS,
+  // which is backed by IndexedDB and survives the tab.
+  //
+  // IDBFS is not transparent. It keeps its own in-memory copy and only touches
+  // IndexedDB when syncfs is called: once with `true` at startup to populate
+  // the filesystem from the database, and once with `false` after each write
+  // to push the other way. Miss the second and the mount changes nothing.
+  var SAVE_DIR = '/saves';
+  var persistPending = false, persistAgain = false;
+
+  // Called from C++ after a successful write -- see savePersist() in save.cpp.
+  // Collapsed rather than queued: syncfs walks the whole mount, so two
+  // overlapping runs would do the same work twice, and a write that lands
+  // during a run would be missed by it. `persistAgain` is that case -- one
+  // more pass afterwards, which is enough because the second pass sees the
+  // final state of the file either way.
+  window.cinderliftPersistSaves = function () {
+    if (persistPending) { persistAgain = true; return; }
+    persistPending = true;
+    try {
+      Module.FS.syncfs(false, function (err) {
+        persistPending = false;
+        if (err) console.error('could not persist saved worlds:', err);
+        if (persistAgain) { persistAgain = false; window.cinderliftPersistSaves(); }
+      });
+    } catch (e) {
+      persistPending = false;
+      console.error('could not persist saved worlds:', e);
+    }
+  };
+
+  // A last flush on the way out. syncfs is asynchronous and the browser will
+  // not wait, so this is genuinely best-effort -- it is the save that happened
+  // seconds before closing that it can rescue, not the one mid-flight. The
+  // real guarantee is the flush on each write above; this only narrows the
+  // window. pagehide rather than unload, because unload does not fire on
+  // mobile Safari.
+  window.addEventListener('pagehide', function () {
+    if (window.__cinderliftSavesReady) { try { Module.FS.syncfs(false, function () {}); } catch (e) {} }
+  });
+
+  // Mounted in preRun so the directory is populated before main() runs and
+  // saveSlotsRefresh() looks for files in it. The run dependency is the part
+  // that matters: syncfs is asynchronous, and without holding the start the
+  // game reaches its save screen first and shows ten empty slots to a player
+  // who has ten worlds.
+  function mountSavedWorlds() {
+    try {
+      Module.FS.mkdir(SAVE_DIR);
+      Module.FS.mount(Module.IDBFS, {}, SAVE_DIR);
+    } catch (e) {
+      console.error('saved worlds unavailable, this session will not persist:', e);
+      return;
+    }
+    Module.addRunDependency('cinderlift-saves');
+    Module.FS.syncfs(true, function (err) {
+      // A failure here is not fatal and must not block the game: it means the
+      // existing worlds could not be read, not that a new one cannot be
+      // played. Private-browsing modes and blocked site data land here.
+      if (err) console.error('could not read saved worlds:', err);
+      window.__cinderliftSavesReady = !err;
+      Module.removeRunDependency('cinderlift-saves');
+    });
+  }
+
   var Module = {
     canvas: canvas,
     preRun: [function () {
+      mountSavedWorlds();
       // Before main(), so the file is already there when uiSettingsLoad opens
       // it. Failing here must not stop the game starting -- it would only mean
       // the default 100% is used.

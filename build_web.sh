@@ -64,6 +64,19 @@ mkdir -p web
 # code size and some speed; the alternative was restructuring the game's frame
 # loop and maintaining two of them.
 #
+#
+# -l idbfs.js and the save-path defines are what make saving mean anything
+# here. Emscripten's default filesystem is MEMFS -- a JavaScript object that
+# dies with the tab -- so without them the save screen works perfectly and
+# loses every world on reload, which is worse than not offering saves at all.
+# IDBFS is backed by IndexedDB, and index.html mounts it over /saves; the
+# game is pointed there by overriding the save path rather than by any
+# web-specific branch inside the game, which is the same trick that keeps
+# this port a shim rather than a fork.
+#
+# The runtime methods are exported because index.html's preRun runs in the
+# PAGE scope, not the module scope, so it reaches them through Module.* --
+# and -O3 would otherwise drop names that nothing in the C++ refers to.
 # INITIAL_MEMORY is sized for the world planes, which are static globals:
 # cells is 4 bytes x 4096 x 9216 = 151 MB, with temp and bg another 37.7 MB
 # each. That is ~226 MB before anything else, so the default 16 MB heap cannot
@@ -72,9 +85,13 @@ mkdir -p web
     -std=c++11 -O3 \
     -I src \
     -DCINDERLIFT_BUILD_ID="\"$BUILD_ID\"" \
+    -DCINDERLIFT_SAVE_PATH="\"/saves/cinderlift.sav\"" \
+    -DCINDERLIFT_LEGACY_SAVE_PATH="\"/saves/crucible.sav\"" \
     ${EXTRA_FLAGS:-} \
     $SRC \
     -s USE_SDL=2 \
+    -l idbfs.js \
+    -s EXPORTED_RUNTIME_METHODS=FS,IDBFS,addRunDependency,removeRunDependency \
     -s ASYNCIFY=1 \
     -s ASYNCIFY_STACK_SIZE=65536 \
     -s INITIAL_MEMORY=671088640 \
