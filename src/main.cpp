@@ -1330,13 +1330,61 @@ static const int EQ_GROUP_GAP  = 16;
    One function so the layout and the drawing cannot disagree about where a box
    is -- which they did, silently, the first time the drone bays were positioned
    from their enum index while everything else used its screen position. */
-static int eqPosX(int pos) {
+/* --- the equipped slots take two rows ---------------------------------------
+   WORN and TRINKETS on the first, DRONES and the bin on the second.
+
+   Twelve slots in a line came to 628 pixels, and the panel holding them was
+   605. The panel's width is computed from the PALETTE grid and nothing else,
+   so it had no idea the row existed. That arrangement fit for a while purely
+   by luck -- at the old palette size the panel came out 728 wide against a 720
+   requirement, eight pixels of margin propping up something nothing checked.
+   Narrowing the palette took the panel to 605 and pushed the last drone bay
+   and the bin straight off the right-hand edge.
+
+   Folding at a GROUP boundary rather than after some slot count is what makes
+   the break read as deliberate rather than as a wrap: the row already carried
+   three headings, so the second row begins exactly where a heading already
+   announced that something different starts.
+
+   The panel is now sized around these rows as well as the palette -- see
+   layoutCreative -- so neither narrowing the palette again nor adding a fifth
+   bay can put a slot out of frame without the panel growing to meet it. */
+static const int EQ_ROWS = 2;
+static const int EQ_GROUP_ROW[3] = { 0, 0, 1 };
+/* A heading sits 17 above its slots and a slot is 46 tall; the rest is the gap
+   that keeps the second heading off the first row's squares. */
+static const int EQ_ROW_PITCH = 76;
+
+static int eqGroupOf(int pos) {
     int group = 0;
     while (group < 3 && pos >= EQ_GROUP_AT[group + 1]) ++group;
-    return pos * EQ_SLOT_PITCH + group * EQ_GROUP_GAP;
+    return group;
 }
-/* Total width of the row, for placing the bin after it. */
-static int eqRowWidth() { return eqPosX(EQ_COUNT - 1) + 46; }
+/* Screen position of the first slot on a row: x is measured from there, not
+   from the start of the whole sequence. */
+static int eqRowFirstPos(int row) {
+    for (int g = 0; g < 3; ++g) if (EQ_GROUP_ROW[g] == row) return EQ_GROUP_AT[g];
+    return 0;
+}
+static int eqPosX(int pos) {
+    const int group = eqGroupOf(pos), row = EQ_GROUP_ROW[group];
+    int first = 0;
+    while (EQ_GROUP_ROW[first] != row) ++first;
+    return (pos - eqRowFirstPos(row)) * EQ_SLOT_PITCH
+         + (group - first) * EQ_GROUP_GAP;
+}
+static int eqPosY(int pos) { return EQ_GROUP_ROW[eqGroupOf(pos)] * EQ_ROW_PITCH; }
+/* Width of ONE row, for placing the bin after the last group on it and for
+   sizing the panel around whichever row is widest. */
+static int eqRowWidth(int row) {
+    int last = -1;
+    for (int pos = 0; pos < EQ_COUNT; ++pos)
+        if (EQ_GROUP_ROW[eqGroupOf(pos)] == row) last = pos;
+    return last < 0 ? 0 : eqPosX(last) + 46;
+}
+/* The row the bin shares, and the space it needs after that row's last slot. */
+static const int EQ_BIN_GAP = 26;
+static int eqBinRow() { return EQ_GROUP_ROW[2]; }
 
 static RECT g_eqRect[EQ_COUNT];
 static RECT g_droneModuleRect[MAX_DRONES][Inventory::DRONE_MODULE_SLOTS_MAX];
@@ -2077,7 +2125,7 @@ static void layoutCreative() {
     /* Taller than it was, and every one of the extra pixels is text: two lines
        of resolved stats above the row instead of one that ran off the end of
        the panel, and a line of group headings between them and the squares. */
-    const int equipH = signalPicker ? 0 : 108;
+    const int equipH = signalPicker ? 0 : 108 + (EQ_ROWS - 1) * EQ_ROW_PITCH;
     bool hasDrone = false;
     if (!signalPicker) for (int i = 0; i < MAX_DRONES; ++i) {
         const int eq = i == 0 ? EQ_LIGHT_DRONE : i == 1 ? EQ_DRONE_A :
@@ -2112,7 +2160,21 @@ static void layoutCreative() {
 
     const int paletteH = visRows * (ch + gap);
     const int barW     = 10;
-    const int w = pad * 2 + CRE_COLS * cw + (CRE_COLS - 1) * gap + barW + 6;
+    const int paletteW = pad * 2 + CRE_COLS * cw + (CRE_COLS - 1) * gap + barW + 6;
+    /* The palette used to decide this alone, which is how the equipment row
+       came to hang off the side of the panel containing it. Ask the rows how
+       much they need as well and take the larger: a layout that cannot state
+       its own width will eventually be given the wrong one. */
+    int equipW = 0;
+    if (!signalPicker) {
+        for (int row = 0; row < EQ_ROWS; ++row) {
+            int need = eqRowWidth(row);
+            if (row == eqBinRow()) need += EQ_BIN_GAP + 46;
+            if (need > equipW) equipW = need;
+        }
+        equipW += pad * 2;
+    }
+    const int w = imax(paletteW, equipW);
     const int h = pad + 56 + paletteH + 10 + packH + equipH + droneModuleH + benchH + 38;
     const int cx = PANEL_W + VIEW_W / 2, cy = VIEW_H / 2;
     const int x0 = cx - w / 2, y0 = cy - h / 2;
@@ -2170,14 +2232,16 @@ static void layoutCreative() {
         for (int i = 0; i < Inventory::DRONE_MODULE_SLOTS_MAX; ++i) SetRectEmpty(&g_droneModuleRect[d][i]);
     if (!signalPicker) for (int pos = 0; pos < EQ_COUNT; ++pos) {
         const int bx = x0 + pad + eqPosX(pos);
-        SetRect(&g_eqRect[EQ_ORDER[pos]], bx, eqY, bx + 46, eqY + 46);
+        const int by = eqY + eqPosY(pos);
+        SetRect(&g_eqRect[EQ_ORDER[pos]], bx, by, bx + 46, by + 46);
     }
     /* Well clear of the last group, so it reads as separate from the things you
        are wearing rather than as another equipment slot. */
     if (signalPicker) SetRectEmpty(&g_trashRect);
     else {
-        const int binX = x0 + pad + eqRowWidth() + 26;
-        SetRect(&g_trashRect, binX, eqY, binX + 46, eqY + 46);
+        const int binX = x0 + pad + eqRowWidth(eqBinRow()) + EQ_BIN_GAP;
+        const int binY = eqY + eqBinRow() * EQ_ROW_PITCH;
+        SetRect(&g_trashRect, binX, binY, binX + 46, binY + 46);
     }
 
     const int droneY = eqY + equipH - 40;
@@ -6216,7 +6280,11 @@ static void drawCreative(HDC hdc) {
         for (int g = 0; g < 3; ++g) {
             RECT hr = g_crePanel;
             hr.left = g_eqRect[EQ_ORDER[EQ_GROUP_AT[g]]].left;
-            hr.top  = g_eqRect[EQ_FEET].top - 17;
+            /* Its own group's first slot, not EQ_FEET's. Reading the top off a
+               fixed slot was invisible while every heading shared a row and
+               would have stranded DRONES above the wrong one the moment they
+               stopped sharing it. */
+            hr.top  = g_eqRect[EQ_ORDER[EQ_GROUP_AT[g]]].top - 17;
             SetTextColor(hdc, RGB(126, 134, 150));
             DrawTextA(hdc, EQ_GROUP_NAME[g], -1, &hr, DT_LEFT | DT_TOP | DT_SINGLELINE);
         }
