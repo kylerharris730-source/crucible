@@ -85,27 +85,42 @@ int treeCount() {
 
 void treesClear() { memset(g_trees, 0, sizeof(g_trees)); }
 
-/* Wet enough to grow in. Half of dirt's capacity -- damp ground rather than
-   merely "has ever seen water", so a seed dropped on a dry hillside sits there
-   and waits, which is the mechanic the player is meant to notice: water your
-   crop.
+/* Ground a seed takes root in: dirt or grass, and nothing else asked of it.
 
-   Grass counts as well as dirt. Turf is where a seed would land in practice,
-   and a rule that refused it would read as broken rather than as strict. */
-static bool wetSoil(const World& w, int x, int y) {
+   THE MOISTURE REQUIREMENT IS GONE, and since it was deliberate it is worth
+   recording why it went. The rule was half of dirt's capacity -- damp ground
+   rather than merely "has ever seen water" -- and the intent was a mechanic
+   the player notices: water your crop.
+
+   In play it was not a mechanic, it was a seed that did nothing. A dry seed
+   looks exactly like a seed that is about to grow: no message, no wilting, no
+   visible difference in the cell it is sitting on. So the lesson a player
+   actually takes from it is that seeds are unreliable, not that soil needs
+   water. A rule that cannot be seen and is never stated teaches nothing.
+
+   Wood sits downstream of this, which is what made it bite: trees are the wood
+   supply, seeds are how you make trees, and the seed was gated behind an
+   invisible condition. If watering returns it needs to be visible first --
+   damp dirt that looks damp, or a seed that visibly waits.
+
+   Grass counts as well as dirt, as it always did. Turf is where a seed lands
+   in practice, and a rule that refused it would read as broken rather than as
+   strict. */
+static bool rootableSoil(const World& w, int x, int y) {
     if (x < PLAY_X0 || x > PLAY_X1 || y < PLAY_Y0 || y > PLAY_Y1) return false;
     const Cell& c = w.at(x, y);
-    if (c.mat != MAT_DIRT && c.mat != MAT_GRASS) return false;
-    return (int)c.moisture * 2 >= (int)MATS[c.mat].capacity;
+    return c.mat == MAT_DIRT || c.mat == MAT_GRASS;
 }
 
 bool treeCanRoot(const World& w, int x, int y) {
     if (x < PLAY_X0 || x > PLAY_X1 || y < PLAY_Y0 || y > PLAY_Y1 - 4) return false;
     if (treeSpeciesOfSeed(w.at(x, y).mat) < 0) return false;
-    /* Resting ON the soil, not buried in it: the cell below must be wet ground
-       and the cell above must be open, or a seed swallowed by a landslide
-       sprouts a tree through six metres of rock. */
-    if (!wetSoil(w, x, y + 1)) return false;
+    /* Resting ON the soil, not buried in it: the cell below must be ground and
+       the cell above must be open, or a seed swallowed by a landslide sprouts a
+       tree through six metres of rock. This half of the rule stays -- it is
+       about where the seed IS, which the player can see, unlike how wet the
+       dirt underneath happened to be. */
+    if (!rootableSoil(w, x, y + 1)) return false;
     return w.at(x, y - 1).mat == MAT_EMPTY;
 }
 

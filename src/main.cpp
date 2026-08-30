@@ -2678,9 +2678,25 @@ static void changeZoom(int d) {
 
    Added rather than assigned, and only when absent, so using the Clear button
    on a world you have been playing does not quietly duplicate them. */
+/* Wood is the third, and it is a BLUNT fix rather than a designed one, which
+   is worth stating so nobody mistakes it for a considered number. Wood gates
+   the workbench, the torch and most of the early ladder, and gathering it was
+   simply tedious -- so a thousand of it removes the tedium without anybody
+   having to decide yet what the real economy should be.
+
+   The actual fix went in beside it: seeds no longer need wet soil (see
+   rootableSoil in tree.cpp), so planting a forest works the first time you try
+   it rather than failing invisibly. If that turns out to be enough, this
+   number should come back down hard -- a starting stack this large also
+   deletes the first hour of scarcity, which is a real cost and not obviously
+   one worth paying twice. */
+static const int STARTING_WOOD = 1000;
+
 static void giveStartingKit() {
     if (g_inv.countOf(ITEM_BOLTER) == 0) g_inv.add(ITEM_BOLTER, 1);
     if (g_inv.countOf(ITEM_FLINT)  == 0) g_inv.add(ITEM_FLINT, 1);
+    if (g_inv.countOf((ItemId)MAT_WOOD) == 0)
+        g_inv.add((ItemId)MAT_WOOD, STARTING_WOOD);
 }
 
 /* Builds the world. See worldgen.cpp -- plains to the left, a mountain to the
