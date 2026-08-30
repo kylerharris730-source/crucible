@@ -28,7 +28,7 @@
 
 static const u32 NET_MAGIC = 0x54454E43u; /* CNET on little endian */
 static const u32 NET_PROTOCOL = 13;
-static const u32 NET_STATE_SCHEMA = 15;   /* pickups gained a delay and a tool instance */
+static const u32 NET_STATE_SCHEMA = 16;   /* + the swing, so other players' blades are visible */
 static const u32 NET_MAX_PACKET = 256u * 1024u * 1024u;
 
 enum PacketType {
@@ -357,6 +357,10 @@ static void sendState() {
         blob.i32f(s.healCooldown);
         blob.i32f(s.openDevice);
         for (int d = 0; d < MAX_DRONES; ++d) codecDrone(blob, s.drones[d]);
+        /* The stroke, so everyone can see the blade that is doing the
+           damage. Only what DRAWING needs: swingCool is the rhythm gate and
+           stays the authority's business, since nobody renders a cooldown. */
+        blob.i32f(s.swingFrame); blob.f32f(s.swingDirX); blob.f32f(s.swingDirY);
     }
     codecOverlay(blob);
     Writer packed;
@@ -599,6 +603,10 @@ static void applyState(Reader& r) {
         blob.i32f(s.healCooldown);
         blob.i32f(s.openDevice);
         for (int d = 0; d < MAX_DRONES; ++d) codecDrone(blob, s.drones[d]);
+        /* The stroke, so everyone can see the blade that is doing the
+           damage. Only what DRAWING needs: swingCool is the rhythm gate and
+           stays the authority's business, since nobody renders a cooldown. */
+        blob.i32f(s.swingFrame); blob.f32f(s.swingDirX); blob.f32f(s.swingDirY);
         if (!blob.ok) { r.ok = false; return; }
         s.connected = true; s.local = slot == 0; s.networkId = wire; s.generation = generation;
         if (slot == 0 && hadPredictedLocal && predictedLocal.generation == generation) {
@@ -621,6 +629,12 @@ static void applyState(Reader& r) {
             s.lineFilterOn = predictedLocal.lineFilterOn;
             memcpy(s.lineFilter, predictedLocal.lineFilter, sizeof(s.lineFilter));
             s.previousCommandBits = predictedLocal.previousCommandBits;
+            /* Your OWN swing is animated locally so it does not lag a round
+               trip behind the button. Taking the host's copy back would
+               restart the stroke you are already watching. */
+            s.swingFrame = predictedLocal.swingFrame;
+            s.swingDirX = predictedLocal.swingDirX;
+            s.swingDirY = predictedLocal.swingDirY;
             s.garlicCooldown = predictedLocal.garlicCooldown;
             s.healCooldown = imax(s.healCooldown, predictedLocal.healCooldown);
         }

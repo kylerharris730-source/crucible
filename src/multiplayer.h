@@ -91,11 +91,11 @@ struct PlayerSession {
        a swing is not worth that. It is also nobody else's business -- the host
        resolves the damage, and a client has no decision to make about it.
 
-       The consequence to know: another player's swing is NOT replicated, so in
-       a four-player game you see their creatures take damage without seeing the
-       blade that did it. The same is already true of every held tool (see
-       drawHeldTool, which draws session zero's), so this is the existing
-       limitation rather than a new one.
+       swingFrame and swingDirX/Y ARE replicated -- see sendState. They were
+       not, and the symptom was that other players fought with invisible
+       weapons: you saw their creatures take damage with no blade doing it.
+       What is still local is swingCool, because a cooldown is a decision the
+       authority makes and nobody draws one.
 
        `swingFrame` counts DOWN through the stroke, so zero means idle and the
        animation reads its progress from how far it has left to go. `swingCool`

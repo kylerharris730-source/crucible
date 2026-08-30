@@ -5689,17 +5689,17 @@ static void drawMeleeSegment(u32* px, bool lit, ItemId item,
     }
 }
 
-static void drawMeleeSwing(u32* px, bool lit) {
-    PlayerSession& session = g_playerSessions[0];
+static void drawMeleeSwing(u32* px, const Player& body, const Inventory& inv,
+                           const PlayerSession& session, bool lit) {
     if (session.swingFrame <= 0) return;
-    const ItemStack& h = g_inv.held();
+    const ItemStack& h = inv.held();
     if (h.empty() || ITEMS[h.item].kind != ITEMK_MELEE) return;
     const ItemDef& def = ITEMS[h.item];
 
-    const int total = meleeFramesFor(g_inv, def);
+    const int total = meleeFramesFor(inv, def);
     const float phase = (float)(total - session.swingFrame) / (float)total;
     float hx, hy, tx, ty;
-    meleeBlade(g_player, def, meleeReachFor(g_inv, def),
+    meleeBlade(body, def, meleeReachFor(inv, def),
                session.swingDirX, session.swingDirY,
                phase, &hx, &hy, &tx, &ty);
 
@@ -5708,28 +5708,46 @@ static void drawMeleeSwing(u32* px, bool lit) {
                      tx - (float)g_camX, ty - (float)g_camY);
 }
 
-static void drawHeldTool(u32* px, const Aim& aim, bool lit) {
+/* Whoever is holding it, wherever they are.
+
+   This used to read g_inv, g_player and session zero directly, so it could
+   only ever draw the local character -- every other player in the game was
+   empty-handed, and a sword swinging at you from an apparently unarmed
+   figure is the version of that people notice. The body is passed in rather
+   than looked up because a client draws remote players from an interpolated
+   visual copy, and the blade has to be attached to the SAME body as the
+   sprite or it detaches and swings on its own a few cells away.
+
+   `aimX/aimY` is a world point to face at rest. The local player has a
+   cursor; a remote one has only the facing that is replicated with the
+   body, which is enough for a carry pose. The SWING does not use it at all
+   -- a stroke commits its direction when it starts, and that direction is
+   replicated, so other people's swings point exactly where they were
+   aimed. */
+static void drawHeldTool(u32* px, const Player& body, const Inventory& inv,
+                         const PlayerSession& session,
+                         float aimX, float aimY, bool lit) {
     /* A melee weapon at rest is drawn the same way a multitool is -- pointing
        where you are aiming -- so the character is visibly holding something
        between strokes rather than producing a sword out of nothing each time
        the button goes down. The swing itself takes over the moment one starts. */
     {
-        const ItemStack& m = g_inv.held();
+        const ItemStack& m = inv.held();
         if (!m.empty() && ITEMS[m.item].kind == ITEMK_MELEE) {
-            if (g_playerSessions[0].swingFrame > 0) { drawMeleeSwing(px, lit); return; }
+            if (session.swingFrame > 0) { drawMeleeSwing(px, body, inv, session, lit); return; }
             const ItemDef& def = ITEMS[m.item];
-            const float pcx = g_player.centreX(), pcy = g_player.centreY();
-            float ax = (float)aim.x - pcx, ay = (float)aim.y - pcy;
+            const float pcx = body.centreX(), pcy = body.centreY();
+            float ax = aimX - pcx, ay = aimY - pcy;
             const float ad = sqrtf(ax * ax + ay * ay);
             if (ad > 0.001f) { ax /= ad; ay /= ad; }
-            else { ax = (float)(g_player.facing >= 0 ? 1 : -1); ay = 0.0f; }
+            else { ax = (float)(body.facing >= 0 ? 1 : -1); ay = 0.0f; }
             /* A sword is rigid: its resting segment must be exactly as long as
                the visible swing segment, or starting an attack looks like the
                blade telescopes outward. meleeBlade places a swing hilt two
                cells from the player and its tip at meleeReach, hence reach-2.
                Spears retain a withdrawn carry pose because extension is the
                readable motion of a stab. */
-            const float meleeReach = meleeReachFor(g_inv, def);
+            const float meleeReach = meleeReachFor(inv, def);
             const float rest = def.meleeStyle == MELEE_SWING
                              ? meleeReach - 2.0f
                              : meleeReach * 0.55f;
@@ -5741,11 +5759,11 @@ static void drawHeldTool(u32* px, const Aim& aim, bool lit) {
         }
     }
 
-    const ItemStack& h = g_inv.held();
+    const ItemStack& h = inv.held();
     if (h.empty() || ITEMS[h.item].kind != ITEMK_TOOL) return;
 
-    const float pcx = g_player.centreX(), pcy = g_player.centreY();
-    float dx = (float)aim.x - pcx, dy = (float)aim.y - pcy;
+    const float pcx = body.centreX(), pcy = body.centreY();
+    float dx = aimX - pcx, dy = aimY - pcy;
     float d = sqrtf(dx * dx + dy * dy);
     if (d < 0.001f) { dx = 1.0f; dy = 0.0f; d = 1.0f; }
     dx /= d; dy /= d;
@@ -7408,13 +7426,32 @@ static void clientRender(HWND hwnd) {
     devDraw(g_world, g_pixels, g_camX, g_camY, g_lightOn);
     if (g_playerOn) {
         g_player.draw(g_pixels, g_camX, g_camY, g_lightOn);
-        if (g_survival) drawHeldTool(g_pixels, currentAim(), g_lightOn);
+        if (g_survival) {
+            const Aim aim = currentAim();
+            drawHeldTool(g_pixels, g_player, g_inv, g_playerSessions[0],
+                         (float)aim.x, (float)aim.y, g_lightOn);
+        }
     }
-    for (int slot = 1; slot < MAX_PLAYERS; ++slot)
-        if (g_playerSessions[slot].connected)
-            (netRole() == NET_CLIENT && g_remoteVisualValid[slot]
-                ? g_remoteVisual[slot] : g_playerSessions[slot].body)
-                .draw(g_pixels, g_camX, g_camY, g_lightOn);
+    for (int slot = 1; slot < MAX_PLAYERS; ++slot) {
+        PlayerSession& other = g_playerSessions[slot];
+        if (!other.connected) continue;
+        /* Bound once and reused for the weapon, because a client draws a
+           remote player from an interpolated visual copy: reading the body
+           twice would hang the blade off the replicated position while the
+           figure is drawn at the smoothed one, and the sword would swing on
+           its own a few cells from its owner. */
+        const Player& body = (netRole() == NET_CLIENT && g_remoteVisualValid[slot])
+                           ? g_remoteVisual[slot] : other.body;
+        body.draw(g_pixels, g_camX, g_camY, g_lightOn);
+        /* No cursor to read, so a resting weapon points the way they face.
+           A swing ignores this and uses the direction the stroke committed
+           to, which is replicated -- so the attack you have to read and
+           dodge is drawn exactly where its owner aimed it. */
+        if (g_survival)
+            drawHeldTool(g_pixels, body, other.inventory, other,
+                         body.centreX() + (body.facing >= 0 ? 32.0f : -32.0f),
+                         body.centreY(), g_lightOn);
+    }
     /* Before sparks and shots so that something being hit is drawn UNDER
        the projectile hitting it, and after the player so a creature in
        front of you cannot hide the character you are steering. */

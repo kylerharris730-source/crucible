@@ -43,6 +43,13 @@ void codecInventory(Blob& b, Inventory& v) {
     for (int i = 0; i < INV_SLOTS; ++i) codecItemStack(b, v.slot[i]);
     for (int i = 0; i < EQ_COUNT; ++i) codecItemStack(b, v.equip[i]);
     b.intf(v.selected);
+    /* Clamped on the way IN, because this is where untrusted data becomes a
+       subscript. Inventory::held() is a bare slot[selected] with no check of
+       its own, and it is now called for every REMOTE player once a frame to
+       draw what they are holding -- so a malformed or hostile packet setting
+       this out of range would be read off the end of the array sixty times a
+       second. The local path could never do it: selectHotbar() clamps. */
+    if (!b.storing()) v.selected = imax(0, imin(INV_SLOTS - 1, v.selected));
     if (!b.countf(DRONE_BAY_COUNT) || !b.countf(Inventory::DRONE_MODULE_SLOTS_MAX)) return;
     for (int d = 0; d < DRONE_BAY_COUNT; ++d)
         for (int i = 0; i < Inventory::DRONE_MODULE_SLOTS_MAX; ++i)
