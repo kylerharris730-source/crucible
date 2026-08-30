@@ -1027,7 +1027,102 @@ int  g_lightWorkPct = 100;
    world origin. */
 static inline int lightAlign(int v) { return (v >> LIGHT_SHIFT) << LIGHT_SHIFT; }
 
-void lightInvalidate() { }
+/* ==========================================================================
+   Temporal smoothing
+   ========================================================================== */
+
+/* Steam is why this exists.
+
+   Solving from nothing every frame is what keeps the field honest, and it is
+   also what makes the shading a direct function of where every gas cell
+   happened to be on THIS frame. Steam and spray move every frame and are
+   opaque enough to matter, so a plume of them under the sun turns the ground
+   below into a strobe. Every individual frame is correct; the sequence of
+   correct frames is unwatchable.
+
+   The answer is not a cleverer solve but to stop believing any single frame of
+   it outright. Each sample walks a fraction of the way from where it was to
+   where this frame says it should be, so a value that OSCILLATES averages out
+   while a value that MOVES still arrives.
+
+   This is in lightUpdate rather than lightCompute deliberately. lightCompute
+   promises a field computed from nothing for the world it is handed, and the
+   harnesses in tools/ rely on exactly that to compare two solves sample for
+   sample -- a function whose answer depended on what it was asked previously
+   would destroy the property that verifies this file. lightUpdate is the
+   frame-loop entry point, and a frame loop is the only caller for which
+   "last frame" means anything at all. */
+static u8   g_lightPrev[LIGHT_W * LIGHT_H];
+static int  g_lightPrevAnchorX = 0, g_lightPrevAnchorY = 0;
+static bool g_lightPrevValid = false;
+
+/* An eighth of the way per frame, not a half.
+
+   The whole point is to be slow enough that a two-frame oscillation is
+   flattened -- at an eighth, a value alternating every frame keeps about 7% of
+   its swing, where a half would keep a third of it and still read as a strobe.
+
+   What that costs is lag, and the reason it is affordable is that nothing in
+   this game legitimately changes light quickly. The sun moves over minutes. A
+   torch being placed becomes a fade-in over a few frames instead of a pop,
+   which is arguably the better of the two looks. Newly revealed area does not
+   lag at all, because it has no history to be dragged back toward.
+
+   Raise it to smooth harder, lower it to follow faster; it is the only knob. */
+static const int LIGHT_SMOOTH_SHIFT = 3;
+
+static void lightSmooth() {
+    if (!g_lightPrevValid) {
+        memcpy(g_lightPrev, g_light, sizeof(g_lightPrev));
+        g_lightPrevAnchorX = g_lightAnchorX;
+        g_lightPrevAnchorY = g_lightAnchorY;
+        g_lightPrevValid = true;
+        return;
+    }
+
+    /* Both anchors are multiples of LIGHT_CELL, so the two sample grids line up
+       exactly and the offset between them is a whole number of SAMPLES. That is
+       what makes this a lookup rather than a resample, and it is the same
+       pinning that stops the sample grid crawling under the terrain as the
+       camera moves -- see the note on g_lightAnchorX in light.h. */
+    const int dx = (g_lightAnchorX - g_lightPrevAnchorX) >> LIGHT_SHIFT;
+    const int dy = (g_lightAnchorY - g_lightPrevAnchorY) >> LIGHT_SHIFT;
+
+    for (int sy = 0; sy < LIGHT_H; ++sy) {
+        const int py = sy + dy;
+        /* Off the old field: this strip was not lit last frame, so there is
+           nothing to average with and this frame stands as it is. */
+        if (py < 0 || py >= LIGHT_H) continue;
+        u8* row = g_light + (size_t)sy * LIGHT_W;
+        const u8* prow = g_lightPrev + (size_t)py * LIGHT_W;
+        for (int sx = 0; sx < LIGHT_W; ++sx) {
+            const int px = sx + dx;
+            if (px < 0 || px >= LIGHT_W) continue;
+            const int was = prow[px], now = row[sx];
+            const int d = now - was;
+            if (!d) continue;
+            /* Integer division alone would stall: a difference under eight
+               truncates to a step of zero and the sample would sit one or two
+               short of the truth forever, which is a permanent error rather
+               than a lag. The unit step is what guarantees it converges. */
+            int step = d / (1 << LIGHT_SMOOTH_SHIFT);
+            if (!step) step = (d > 0) ? 1 : -1;
+            row[sx] = (u8)(was + step);
+        }
+    }
+
+    memcpy(g_lightPrev, g_light, sizeof(g_lightPrev));
+    g_lightPrevAnchorX = g_lightAnchorX;
+    g_lightPrevAnchorY = g_lightAnchorY;
+}
+
+/* Drop the smoothing history too. A world that was REPLACED shares nothing
+   with the one before it, so averaging across the change would drag the new
+   scene toward the old one for a few frames -- a ghost of the previous world
+   lying over the new one, which is precisely the artefact this function exists
+   to prevent for the field itself. */
+void lightInvalidate() { g_lightPrevValid = false; }
+
 
 void lightCompute(const World& w, int camX, int camY) {
     g_lightViewX = camX;
@@ -1041,4 +1136,5 @@ void lightCompute(const World& w, int camX, int camY) {
 
 void lightUpdate(const World& w, int camX, int camY) {
     lightCompute(w, camX, camY);
+    lightSmooth();
 }
