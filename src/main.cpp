@@ -954,6 +954,10 @@ static const char* const LEGACY_SAVE_PATH = CINDERLIFT_LEGACY_SAVE_PATH;
 static bool g_lineKey  = false;   /* R is down */
 static bool g_lineOn   = false;   /* ...and a drag is in progress */
 static bool g_lineDrew = false;   /* this hold of R drew something */
+/* Q is two verbs the same way R is: held it is a size dial, tapped it throws.
+   This records whether the current hold actually sized anything, so letting go
+   after changing the brush does not also hurl the stack you were drawing with. */
+static bool g_sizedThisHold = false;
 static int  g_lineX = 0, g_lineY = 0;
 static bool g_lineCommitPulse = false;
 static u8   g_lineCommitBits = 0;
@@ -1451,11 +1455,28 @@ static void circuitWireClick();
 static bool sendClientAction(u8 type, u8 container = 0, u8 a = 0, u8 b = 0, u8 flags = 0,
                              i32 x = 0, i32 y = 0);
 static void applyPlayerAction(const NetAction& action);
+static void throwHeld(bool fromCursor);
 static void applyPlayerUses(PlayerSession& session, const PlayerCommand& command);
 static void fireToolFor(Player& player, Inventory& inventory, const Aim& aim);
 static bool throwGlowflareFor(Player& player, Inventory& inventory, const Aim& aim);
 static void placeDeviceStrokeFor(Inventory& inventory, int& previousX, int& previousY,
                                  u8 type, bool consume, const Aim& aim, int undoSlot = -1);
+
+/* Throw the held stack, or the cursor's, onto the floor.
+
+   Ctrl or Shift sends the whole stack, matching the modifier every game uses
+   for "all of it" -- one press otherwise throws a single item, so handing
+   someone two planks does not cost you the pile.
+
+   Routed through sendClientAction like every other player gesture, which is
+   what makes it work between machines at all: the authority spawns the pickup
+   and it reaches the other player in the overlay that already carries loot. */
+static void throwHeld(bool fromCursor) {
+    const bool whole = (GetKeyState(VK_CONTROL) & 0x8000) ||
+                       (GetKeyState(VK_SHIFT) & 0x8000);
+    u8 flags = (u8)((whole ? 1 : 0) | (fromCursor ? 2 : 0));
+    sendClientAction(NACT_DROP, 0, (u8)(g_player.facing >= 0 ? 1 : 0), 0, flags);
+}
 
 /* Lay down the line and end the drag. g_pmx/g_pmy still hold the press point,
    which is the whole trick -- applyBrush interpolates from there to the current
@@ -1774,6 +1795,7 @@ static const KeyHint KEY_HINTS[] = {
     { "right-click",   "open a machine, or a door" },
     { "wheel",         "pick a hotbar slot" },
     { "Q + wheel",     "brush size" },
+    { "tap Q",         "throw the held stack (Ctrl: all of it)" },
     { "C",             "crafting" },
     { "F5 / F9",       "save / load" },
     { "F11",           "toggle fullscreen" },
@@ -3193,6 +3215,8 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         const bool hotbarUp = g_survival && g_playerOn;
         if (!hotbarUp || keyHeld('Q')) {
             changeSize(dir);
+            /* This hold has done its job, so releasing Q must not also throw. */
+            g_sizedThisHold = true;
         } else {
             /* Up scrolls left along the bar, matching the usual convention. */
             selectHotbar((g_hotbarSelected - dir + HOTBAR_SLOTS) % HOTBAR_SLOTS);
@@ -3221,6 +3245,12 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (wp == VK_ESCAPE) {
                 if (g_chestOpen >= 0) closeChest();
                 else { g_creativeOpen = false; g_filterDevice = -1; g_digFilterPicking = false; g_signalPickerDevice = -1; g_signalPickerField = CIR_PICK_NONE; g_creSearchFocus = false; dragStow(); }
+            } else if (wp == 'Q') {
+                /* The reason this key is handled inside the block that
+                   otherwise swallows the keyboard: throwing something away is
+                   an inventory gesture, and the stack you want to be rid of is
+                   usually the one already on the cursor. */
+                if ((lp & (1L << 30)) == 0) throwHeld(true);
             } else if (wp == VK_TAB && g_creativeOpen) {
                 g_creativeOpen = false; g_filterDevice = -1; g_digFilterPicking = false; g_signalPickerDevice = -1; g_signalPickerField = CIR_PICK_NONE; g_creSearchFocus = false; dragStow();
             }
@@ -3293,6 +3323,10 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case 'R':
             g_lineKey = true;
             break;
+        /* Q is handled on the way UP -- see WM_KEYUP. Held, it is the brush
+           size dial it has always been; only a tap that sized nothing throws. */
+        case 'Q':
+            break;
         case 'O': g_overwrite = !g_overwrite; break;
         case 'L': g_bgLayer   = !g_bgLayer;   break;   /* L for layer */
         case 'V': cycleView();                break;
@@ -3351,6 +3385,19 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
 
     case WM_KEYUP:
+        if (wp == 'Q') {
+            /* Tapped, not held-and-sized: throw. Same shape as R below, and
+               for the same reason -- one key carrying a modifier verb and a
+               tap verb has to be able to tell which one just happened.
+
+               Q rather than some free key because it is the throw key in the
+               game every player has already played, and the sizing dial it
+               shares with is a drawing action nobody is performing at the
+               moment they hand something over. */
+            if (!g_sizedThisHold && !g_menuOpen && !g_creativeOpen) throwHeld(false);
+            g_sizedThisHold = false;
+            return 0;
+        }
         if (wp == 'R') {
             /* A completed line suppresses the tap verb. Survival sends the
                teleport through authority; character-off creative moves its
@@ -4329,6 +4376,31 @@ static void applyPlayerAction(const NetAction& action) {
                                    action.a, action.b & 1);
             session.circuitWireFrom = -1; session.circuitWirePort = 0;
         }
+    } else if (action.type == NACT_DROP) {
+        /* Both sources go through here so the rules -- what a throw costs, how
+           far it goes, whether it is even allowed -- exist once. The cursor is
+           the inventory-screen case and the hotbar slot the in-play one; they
+           differ only in which stack is being reached for. */
+        ItemStack& from = (action.flags & 2)
+            ? session.cursor
+            : session.inventory.slot[imax(0, imin(HOTBAR_SLOTS - 1, session.inventory.selected))];
+        if (from.empty()) return;
+        /* A tool carries upgrades in a pooled instance and cannot be split, so
+           it always leaves whole however the key was pressed. */
+        const int want = (action.flags & 1) || from.inst ? (int)from.count : 1;
+        const int n = imin(want, (int)from.count);
+        Player& body = session.body;
+        const float face = (action.a & 1) ? 1.0f : -1.0f;
+        /* Out of the hands rather than the feet, and clear of the player's own
+           box so it does not start inside the wall they are standing against. */
+        const float ox = body.centreX() + face * (float)(PLAYER_W / 2 + 1);
+        const float oy = body.centreY() - 2.0f;
+        if (!pickupThrow(from.item, n, from.inst, ox, oy, face * 2.1f, -1.5f)) return;
+        /* Only now is it gone from the pack. A full pickup pool must not eat
+           the stack -- the throw simply does not happen. */
+        from.count -= (u32)n;
+        if (!from.count) { from.item = ITEM_NONE; from.inst = 0; }
+        else if (from.inst) from.inst = 0;
     } else if (action.type == NACT_STOW_CURSOR) {
         for (int i = 0; i < INV_SLOTS && !session.cursor.empty(); ++i) {
             ItemStack& stack = session.inventory.slot[i];

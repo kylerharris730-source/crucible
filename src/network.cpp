@@ -28,7 +28,7 @@
 
 static const u32 NET_MAGIC = 0x54454E43u; /* CNET on little endian */
 static const u32 NET_PROTOCOL = 13;
-static const u32 NET_STATE_SCHEMA = 14;
+static const u32 NET_STATE_SCHEMA = 15;   /* pickups gained a delay and a tool instance */
 static const u32 NET_MAX_PACKET = 256u * 1024u * 1024u;
 
 enum PacketType {

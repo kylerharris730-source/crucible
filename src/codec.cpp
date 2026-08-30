@@ -64,6 +64,7 @@ void codecEntity(Blob& b, Entity& e) {
 void codecPickup(Blob& b, Pickup& p) {
     b.itemf(p.item); b.i16f(p.count);
     b.f32f(p.x); b.f32f(p.y); b.f32f(p.vx); b.f32f(p.vy);
+    b.i16f(p.delay); b.u16f(p.inst);
     b.boolf(p.used);
 }
 

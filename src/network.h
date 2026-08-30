@@ -49,7 +49,11 @@ enum NetActionType {
     NACT_CIRCUIT_TERMINAL,
     NACT_STOW_CURSOR,
     NACT_CREATIVE_ITEM,
-    NACT_UNDO
+    NACT_UNDO,
+    /* Throw a stack onto the floor. flags bit 0 = the whole stack rather than
+       one, bit 1 = take it from the cursor rather than the held hotbar slot.
+       a = the facing to throw along, as 0 for left and 1 for right. */
+    NACT_DROP
 };
 
 enum NetDeviceOperation {

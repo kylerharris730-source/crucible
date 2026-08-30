@@ -307,6 +307,7 @@ static bool pickupSpawn(ItemId item, int count, float x, float y) {
         Pickup& p = g_pickups[i];
         if (p.used) continue;
         p.used = true; p.item = item; p.count = (i16)count;
+        p.delay = 0; p.inst = 0;
         p.x = x; p.y = y;
         p.vx = ((float)(int)(rngNext() % 101u) - 50.0f) / 100.0f;
         p.vy = -1.2f - (float)(rngNext() % 40u) / 100.0f;
@@ -315,6 +316,20 @@ static bool pickupSpawn(ItemId item, int count, float x, float y) {
     return false;
 }
 
+/* Thrown rather than scattered: the caller chooses the arc, and the stack is
+   briefly uncollectable so it actually leaves the thrower. See Pickup::delay. */
+bool pickupThrow(ItemId item, int count, u16 inst, float x, float y,
+                 float vx, float vy) {
+    for (int i = 0; i < MAX_PICKUPS; ++i) {
+        Pickup& p = g_pickups[i];
+        if (p.used) continue;
+        p.used = true; p.item = item; p.count = (i16)count; p.inst = inst;
+        p.x = x; p.y = y; p.vx = vx; p.vy = vy;
+        p.delay = (i16)PICKUP_THROW_DELAY;
+        return true;
+    }
+    return false;
+}
 /* --- being drawn in --------------------------------------------------------
    A collection radius alone is not a magnet. Past about double the bare figure,
    "items are collected from further away" stops being a bonus you can feel and
@@ -348,11 +363,37 @@ static void pickupMagnet(Pickup& p, const Player& body, const Inventory& inv) {
     p.vx *= 0.86f; p.vy *= 0.86f;
 }
 
+/* Into the pack, keeping any tool instance with it.
+
+   Inventory::add merges by item id and knows nothing about instances, so an
+   instanced stack cannot go through it -- two upgraded drills are not four
+   drills, and merging them would leak one instance and duplicate the other.
+   It therefore needs a slot of its own, and is left on the floor when there
+   is not one rather than being quietly destroyed. */
+static void pickupCollect(Pickup& p, Inventory& inv) {
+    if (!p.inst) {
+        p.count = (i16)inv.add(p.item, p.count);
+        if (!p.count) p.used = false;
+        return;
+    }
+    for (int i = 0; i < INV_SLOTS; ++i) {
+        if (!inv.slot[i].empty()) continue;
+        inv.slot[i].item = p.item;
+        inv.slot[i].count = (u32)p.count;
+        inv.slot[i].inst = p.inst;
+        p.used = false;
+        return;
+    }
+}
+
 static void pickupTickMode(World& w, const Player& fallbackPlayer, Inventory& fallbackInv,
                            bool multiplayer) {
     for (int i = 0; i < MAX_PICKUPS; ++i) {
         Pickup& p = g_pickups[i];
         if (!p.used) continue;
+        /* Still in the air on purpose. It falls and slides as usual -- it is
+           only the magnet and the collection test that wait. */
+        if (p.delay > 0) --p.delay;
 
         /* Nothing is collected without someone alive to collect it. That covers
            the obvious case of a corpse hoovering up its own drops, and the less
@@ -363,21 +404,23 @@ static void pickupTickMode(World& w, const Player& fallbackPlayer, Inventory& fa
             for (int slot = 0; slot < MAX_PLAYERS && p.used; ++slot) {
                 PlayerSession& session = g_playerSessions[slot];
                 if (!session.connected || !session.body.alive) continue;
+                if (p.delay > 0) continue;
                 pickupMagnet(p, session.body, session.inventory);
                 const float dx = session.body.centreX() - p.x;
                 const float dy = session.body.centreY() - p.y;
                 if (dx * dx + dy * dy > PICKUP_BASE_RADIUS * PICKUP_BASE_RADIUS) continue;
-                p.count = (i16)session.inventory.add(p.item, p.count);
-                if (!p.count) p.used = false;
+                pickupCollect(p, session.inventory);
             }
             if (!p.used) continue;
         } else {
-            if (fallbackPlayer.alive) pickupMagnet(p, fallbackPlayer, fallbackInv);
-            const float dx = fallbackPlayer.centreX() - p.x;
-            const float dy = fallbackPlayer.centreY() - p.y;
-            if (fallbackPlayer.alive && dx * dx + dy * dy <= PICKUP_BASE_RADIUS * PICKUP_BASE_RADIUS) {
-                p.count = (i16)fallbackInv.add(p.item, p.count);
-                if (!p.count) { p.used = false; continue; }
+            if (fallbackPlayer.alive && p.delay <= 0) {
+                pickupMagnet(p, fallbackPlayer, fallbackInv);
+                const float dx = fallbackPlayer.centreX() - p.x;
+                const float dy = fallbackPlayer.centreY() - p.y;
+                if (dx * dx + dy * dy <= PICKUP_BASE_RADIUS * PICKUP_BASE_RADIUS) {
+                    pickupCollect(p, fallbackInv);
+                    if (!p.used) continue;
+                }
             }
         }
 
@@ -486,20 +529,35 @@ static void entDie(World& w, Entity& e) {
            be truncated to a u8 material id. World substances retain their
            physical-cell behavior; components such as Ichor and the Forge Core
            remain typed inventory objects on the floor. */
-        if (d.dropItem == (ItemId)MAT_CHITIN) {
+        /* A dropped SOLID is a collectible; a dropped LIQUID is a puddle.
+
+           The distinction used to be a list with Chitin on it, and the Cinder
+           Moth showed why that does not hold: its coal was written into the
+           world as CELLS, so every dead moth left one or two solid blocks
+           wherever it happened to die. On open ground that is a field of
+           knee-high lumps the player catches on constantly -- loot behaving
+           as terrain.
+
+           Asking the material what it IS settles all of them at once. The Drip
+           Slime's acid stays a cell because a puddle of acid is a hazard it
+           left behind rather than a prize, and pouring is the whole point of
+           it; coal and chitin are objects and become objects. */
+        const bool material = d.dropItem < (ItemId)MAT_COUNT;
+        const bool puddle = material && MATS[d.dropItem].kind == KIND_LIQUID;
+        if (!puddle) {
             if (pickupSpawn(d.dropItem, n, (float)cx, (float)cy)) {
                 e.type = ENT_NONE;
                 return;
             }
-            /* A full overlay pool may fall back to a real Chitin cell: it has
-               a MatId and therefore remains valid falling-sand matter. */
-        } else if (d.dropItem >= MAT_COUNT) {
-            /* Components have no legal cell representation. A saturated
-               pickup pool may cost the drop, but must never reinterpret its
-               low byte as a material and index the simulation tables with it. */
-            pickupSpawn(d.dropItem, n, (float)cx, (float)cy);
-            e.type = ENT_NONE;
-            return;
+            /* The pool is full. A material can still fall back to a real cell,
+               since it has a MatId and is valid falling-sand matter. A
+               component cannot: reinterpreting its low byte as a material
+               would index the simulation tables with nonsense, so the drop is
+               lost instead. */
+            if (!material) {
+                e.type = ENT_NONE;
+                return;
+            }
         }
         for (int r = 0; r <= 6 && n > 0; ++r) {
             for (int dy = -r; dy <= r && n > 0; ++dy) {

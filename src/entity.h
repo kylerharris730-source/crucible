@@ -264,9 +264,33 @@ struct Pickup {
     ItemId item;
     i16    count;
     float  x, y, vx, vy;
+    /* Frames before anyone may collect this. A thrown item is inside the
+       thrower's own collection radius at the instant it leaves their hand, so
+       without a delay the magnet pulls it straight back and throwing appears
+       to do nothing at all. It counts for EVERY player rather than just the
+       thrower: a shared delay is one number, where ownership would be a
+       player id that has to survive that player disconnecting. */
+    i16    delay;
+    /* The tool instance this stack carries, 0 for everything else. Without it
+       a dropped drill arrives as a factory-fresh one and its upgrades are
+       silently gone -- and handing a tool to someone is exactly what people
+       want throwing FOR. */
+    u16    inst;
     bool   used;
 };
 extern Pickup g_pickups[MAX_PICKUPS];
+
+/* Frames a thrown stack spends uncollectable. About a second: long enough to
+   leave the thrower's magnet, short enough that handing something over does
+   not feel like waiting. */
+static const int PICKUP_THROW_DELAY = 60;
+
+/* Put a stack on the floor with a deliberate arc, as a player throwing it.
+   Separate from the drop path because that one scatters loot from a corpse and
+   this one is aimed. Returns false only when the pool is full, in which case
+   the caller must keep the items rather than destroying them. */
+bool pickupThrow(ItemId item, int count, u16 inst, float x, float y,
+                 float vx, float vy);
 
 /* Every creature removed. Called on world generation and on load -- see the
    note above about entities being transient. */
