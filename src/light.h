@@ -276,6 +276,26 @@ void lightInvalidate();
    just reads as a soft shadow. */
 u8 lightAt(int vx, int vy);
 
+/* Brightness at a WORLD cell, including the MARGIN around the view.
+
+   lightAt and lightRow both speak in view coordinates and cover only what
+   is on screen -- lightRow in particular hands back a row of exactly
+   VIEW_CELLS_W bytes. That is right for drawing and wrong for anything
+   asking about the padded rectangle, which is most of the field: the
+   spawner picks candidate sites from the margin BY DESIGN, so every point
+   it wants to know about is off screen, and indexing a view row with an
+   off-screen coordinate reads past the end of it.
+
+   This samples the buffer where the buffer actually is. Nearest sample
+   rather than interpolated: callers asking whether somewhere is dark do not
+   need a smooth answer, and the field is smooth to begin with.
+
+   Returns 0 outside the computed rectangle -- there is no measurement
+   there, and reporting darkness is the answer that does not invent light
+   that was never solved for. */
+u8 lightAtWorld(int wx, int wy);
+
+
 /* The whole of view row vy, smoothed up to one value per cell, so the render
    loop can walk it with the same linear stride it walks everything else. The
    row is built once and cached; calling it for the row being drawn costs one

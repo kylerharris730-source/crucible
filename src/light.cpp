@@ -80,6 +80,13 @@ u8 lightAt(int vx, int vy) {
 /* One view row, smoothed up once and handed to the renderer as a plain array so
    its inner loop stays a linear byte walk. Two horizontal lerps per row and one
    vertical blend per cell, rather than a full bilinear per pixel. */
+u8 lightAtWorld(int wx, int wy) {
+    const int sx = (wx - g_lightAnchorX) >> LIGHT_SHIFT;
+    const int sy = (wy - g_lightAnchorY) >> LIGHT_SHIFT;
+    if (sx < 0 || sx >= LIGHT_W || sy < 0 || sy >= LIGHT_H) return 0;
+    return g_light[sy * LIGHT_W + sx];
+}
+
 const u8* lightRow(int vy) {
     static u8 row[VIEW_CELLS_W];
     static int cached = -1, cachedX = -1, cachedY = -1;

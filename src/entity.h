@@ -350,6 +350,12 @@ int  pickupCount();
    creature may appear lives here; see entity.cpp. */
 void entSpawnTick(World& w, const Player& p, int camX, int camY, bool lightFieldValid = true);
 
+/* Whether the next entSpawnTick will actually try to place something rather
+   than only tick its cooldown down. Asked so the caller can afford to solve a
+   light field for the player being spawned around -- see the call site -- on
+   the one frame in eighty where the answer will be used. */
+bool entSpawnReady();
+
 /* Creatures alive at once. Small on purpose: these are meant to be a hazard you
    meet in a tunnel, not a horde. Enough that a dark cavern feels occupied and
    few enough that the contact-damage rules never turn into an unavoidable

@@ -1973,6 +1973,8 @@ static int entSpawnedCount() {
     return n;
 }
 
+bool entSpawnReady() { return g_spawnCool <= 0; }
+
 void entSpawnTick(World& w, const Player& p, int camX, int camY, bool lightFieldValid) {
     if (g_spawnCool > 0) { --g_spawnCool; return; }
     int connected = 0;
@@ -2014,7 +2016,14 @@ void entSpawnTick(World& w, const Player& p, int camX, int camY, bool lightField
         const u8 zone = w.zoneAt(x, y);
         const bool surface = (zone == ZONE_SKY);
         if (surface && !isNight()) continue;
-        if (lightFieldValid && g_lightOn && lightRow(ly)[lx] > SPAWN_DARK) continue;
+        /* Sampled in WORLD space. This used to read lightRow(ly)[lx], and every
+           candidate reaching this line is off screen by construction -- the
+           loop above rejects the ones that are not. A view row is VIEW_CELLS_W
+           bytes long, so an off-screen lx indexed past the end of it and the
+           darkness test was reading whatever sat next to that array. It let
+           creatures appear in lit rooms, which is the one thing this check
+           exists to prevent. */
+        if (lightFieldValid && g_lightOn && lightAtWorld(x, y) > SPAWN_DARK) continue;
 
         /* --- yours? -------------------------------------------------------
            Player-placed background makes a place safe. Checked over the whole

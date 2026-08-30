@@ -7351,7 +7351,29 @@ static void serverTick(const LARGE_INTEGER& perfFrequency) {
                     spawnTurn = (slot + 1) % MAX_PLAYERS;
                     const int spawnCamX = (int)session.body.centreX() - viewCellsW() / 2;
                     const int spawnCamY = (int)session.body.centreY() - viewCellsH() / 2;
-                    entSpawnTick(g_world, session.body, spawnCamX, spawnCamY, slot == 0);
+                    /* Solve the light where the creature would actually appear.
+
+                       This used to pass `slot == 0`, so only the host's own
+                       surroundings were ever tested for darkness and every
+                       OTHER player fell through to the no-light-field path --
+                       which consults the zone alone and therefore answers
+                       "dark" inside a torch-lit base. With one player that is
+                       unreachable. With three it is two of them, and it is why
+                       creatures were turning up in the light.
+
+                       The field is a camera-sized rectangle, so answering for
+                       somebody else means solving it where they are. That costs
+                       about two milliseconds, and is spent only on the frames
+                       the spawner will really place something -- one in eighty.
+                       Clobbering the field here is safe because rendering
+                       recomputes it for the local camera further down this same
+                       frame, and nothing between the two reads it. */
+                    const bool solveLight = g_lightOn && entSpawnReady();
+                    if (solveLight) {
+                        lightClearDynamic();
+                        lightCompute(g_world, spawnCamX, spawnCamY);
+                    }
+                    entSpawnTick(g_world, session.body, spawnCamX, spawnCamY, solveLight);
                     break;
                 }
             }
