@@ -728,7 +728,7 @@ void initItems() {
     ITEMS[ITEM_TITANIUM_SUIT].armour     = 9;
 
     ITEMS[ITEM_FORGE_CORE].name     = "Forge Core";
-    ITEMS[ITEM_FORGE_CORE].kind     = ITEMK_MATERIAL;   /* carried, never placed */
+    ITEMS[ITEM_FORGE_CORE].kind     = ITEMK_COMPONENT;  /* carried, never placed */
     ITEMS[ITEM_FORGE_CORE].maxStack = 16;
     ITEMS[ITEM_FORGE_CORE].colour   = 0xE07A32;
     ITEMS[ITEM_FORGE_CORE].sprite   = SPR_FORGE_CORE;
@@ -824,6 +824,110 @@ void initItems() {
     ITEMS[ITEM_DRONE_GREAVES].armourSet = ARMOUR_SET_DRONE;
     ITEMS[ITEM_DRONE_GREAVES].sprite    = SPR_ARMOUR_DRONE_GREAVES;
 
+    /* Iron is the first honest armour: cheap, modest and free of a set bonus.
+       It exists so the class sets are a specialization after Ichor rather than
+       the first moment the equipment slots do anything. */
+    ITEMS[ITEM_IRON_HELMET].name       = "Iron Helmet";
+    ITEMS[ITEM_IRON_HELMET].kind       = ITEMK_WORN;
+    ITEMS[ITEM_IRON_HELMET].equipSlot  = EQ_HEAD;
+    ITEMS[ITEM_IRON_HELMET].maxStack   = 1;
+    ITEMS[ITEM_IRON_HELMET].colour     = 0xA8ADB6;
+    ITEMS[ITEM_IRON_HELMET].armour     = 1;
+    ITEMS[ITEM_IRON_HELMET].heatResist = 5;
+    ITEMS[ITEM_IRON_HELMET].coldResist = 5;
+    ITEMS[ITEM_IRON_HELMET].sprite     = SPR_ARMOUR_IRON_HELM;
+
+    ITEMS[ITEM_IRON_CUIRASS].name       = "Iron Cuirass";
+    ITEMS[ITEM_IRON_CUIRASS].kind       = ITEMK_WORN;
+    ITEMS[ITEM_IRON_CUIRASS].equipSlot  = EQ_BODY;
+    ITEMS[ITEM_IRON_CUIRASS].maxStack   = 1;
+    ITEMS[ITEM_IRON_CUIRASS].colour     = 0xA8ADB6;
+    ITEMS[ITEM_IRON_CUIRASS].armour     = 2;
+    ITEMS[ITEM_IRON_CUIRASS].heatResist = 10;
+    ITEMS[ITEM_IRON_CUIRASS].coldResist = 10;
+    ITEMS[ITEM_IRON_CUIRASS].sprite     = SPR_ARMOUR_IRON_CUIRASS;
+
+    ITEMS[ITEM_IRON_GREAVES].name       = "Iron Greaves";
+    ITEMS[ITEM_IRON_GREAVES].kind       = ITEMK_WORN;
+    ITEMS[ITEM_IRON_GREAVES].equipSlot  = EQ_FEET;
+    ITEMS[ITEM_IRON_GREAVES].maxStack   = 1;
+    ITEMS[ITEM_IRON_GREAVES].colour     = 0xA8ADB6;
+    ITEMS[ITEM_IRON_GREAVES].armour     = 1;
+    ITEMS[ITEM_IRON_GREAVES].heatResist = 5;
+    ITEMS[ITEM_IRON_GREAVES].coldResist = 5;
+    ITEMS[ITEM_IRON_GREAVES].sprite     = SPR_ARMOUR_IRON_GREAVES;
+
+    /* Ranger Armour trades plate for weapon handling. Its bonuses are applied
+       only to player-fired projectiles; drones remain the Drone set's lane and
+       blades remain the Vanguard's. */
+    ITEMS[ITEM_RANGER_VISOR].name       = "Ranger Visor";
+    ITEMS[ITEM_RANGER_VISOR].kind       = ITEMK_WORN;
+    ITEMS[ITEM_RANGER_VISOR].equipSlot  = EQ_HEAD;
+    ITEMS[ITEM_RANGER_VISOR].maxStack   = 1;
+    ITEMS[ITEM_RANGER_VISOR].colour     = 0x9DA76A;
+    ITEMS[ITEM_RANGER_VISOR].armour     = 2;
+    ITEMS[ITEM_RANGER_VISOR].heatResist = 15;
+    ITEMS[ITEM_RANGER_VISOR].coldResist = 15;
+    ITEMS[ITEM_RANGER_VISOR].armourSet  = ARMOUR_SET_RANGED;
+    ITEMS[ITEM_RANGER_VISOR].sprite     = SPR_ARMOUR_RANGER_VISOR;
+
+    ITEMS[ITEM_RANGER_COAT].name       = "Ranger Coat";
+    ITEMS[ITEM_RANGER_COAT].kind       = ITEMK_WORN;
+    ITEMS[ITEM_RANGER_COAT].equipSlot  = EQ_BODY;
+    ITEMS[ITEM_RANGER_COAT].maxStack   = 1;
+    ITEMS[ITEM_RANGER_COAT].colour     = 0x9DA76A;
+    ITEMS[ITEM_RANGER_COAT].armour     = 3;
+    ITEMS[ITEM_RANGER_COAT].heatResist = 25;
+    ITEMS[ITEM_RANGER_COAT].coldResist = 25;
+    ITEMS[ITEM_RANGER_COAT].armourSet  = ARMOUR_SET_RANGED;
+    ITEMS[ITEM_RANGER_COAT].sprite     = SPR_ARMOUR_RANGER_COAT;
+
+    ITEMS[ITEM_RANGER_GREAVES].name       = "Ranger Greaves";
+    ITEMS[ITEM_RANGER_GREAVES].kind       = ITEMK_WORN;
+    ITEMS[ITEM_RANGER_GREAVES].equipSlot  = EQ_FEET;
+    ITEMS[ITEM_RANGER_GREAVES].maxStack   = 1;
+    ITEMS[ITEM_RANGER_GREAVES].colour     = 0x9DA76A;
+    ITEMS[ITEM_RANGER_GREAVES].armour     = 1;
+    ITEMS[ITEM_RANGER_GREAVES].heatResist = 10;
+    ITEMS[ITEM_RANGER_GREAVES].coldResist = 10;
+    ITEMS[ITEM_RANGER_GREAVES].armourSet  = ARMOUR_SET_RANGED;
+    ITEMS[ITEM_RANGER_GREAVES].sprite     = SPR_ARMOUR_RANGER_GREAVES;
+
+    /* Vanguard Armour is the close-range answer: enough plate and insulation
+       to survive contact, then set bonuses that reward staying in blade range. */
+    ITEMS[ITEM_VANGUARD_HELM].name       = "Vanguard Helm";
+    ITEMS[ITEM_VANGUARD_HELM].kind       = ITEMK_WORN;
+    ITEMS[ITEM_VANGUARD_HELM].equipSlot  = EQ_HEAD;
+    ITEMS[ITEM_VANGUARD_HELM].maxStack   = 1;
+    ITEMS[ITEM_VANGUARD_HELM].colour     = 0xA85A65;
+    ITEMS[ITEM_VANGUARD_HELM].armour     = 4;
+    ITEMS[ITEM_VANGUARD_HELM].heatResist = 40;
+    ITEMS[ITEM_VANGUARD_HELM].coldResist = 40;
+    ITEMS[ITEM_VANGUARD_HELM].armourSet  = ARMOUR_SET_MELEE;
+    ITEMS[ITEM_VANGUARD_HELM].sprite     = SPR_ARMOUR_VANGUARD_HELM;
+
+    ITEMS[ITEM_VANGUARD_PLATE].name       = "Vanguard Plate";
+    ITEMS[ITEM_VANGUARD_PLATE].kind       = ITEMK_WORN;
+    ITEMS[ITEM_VANGUARD_PLATE].equipSlot  = EQ_BODY;
+    ITEMS[ITEM_VANGUARD_PLATE].maxStack   = 1;
+    ITEMS[ITEM_VANGUARD_PLATE].colour     = 0xA85A65;
+    ITEMS[ITEM_VANGUARD_PLATE].armour     = 7;
+    ITEMS[ITEM_VANGUARD_PLATE].heatResist = 60;
+    ITEMS[ITEM_VANGUARD_PLATE].coldResist = 60;
+    ITEMS[ITEM_VANGUARD_PLATE].armourSet  = ARMOUR_SET_MELEE;
+    ITEMS[ITEM_VANGUARD_PLATE].sprite     = SPR_ARMOUR_VANGUARD_PLATE;
+
+    ITEMS[ITEM_VANGUARD_GREAVES].name       = "Vanguard Greaves";
+    ITEMS[ITEM_VANGUARD_GREAVES].kind       = ITEMK_WORN;
+    ITEMS[ITEM_VANGUARD_GREAVES].equipSlot  = EQ_FEET;
+    ITEMS[ITEM_VANGUARD_GREAVES].maxStack   = 1;
+    ITEMS[ITEM_VANGUARD_GREAVES].colour     = 0xA85A65;
+    ITEMS[ITEM_VANGUARD_GREAVES].armour     = 3;
+    ITEMS[ITEM_VANGUARD_GREAVES].heatResist = 30;
+    ITEMS[ITEM_VANGUARD_GREAVES].coldResist = 30;
+    ITEMS[ITEM_VANGUARD_GREAVES].armourSet  = ARMOUR_SET_MELEE;
+    ITEMS[ITEM_VANGUARD_GREAVES].sprite     = SPR_ARMOUR_VANGUARD_GREAVES;
+
     ITEMS[ITEM_DRONE_BEACON].name      = "Drone Beacon";
     ITEMS[ITEM_DRONE_BEACON].kind      = ITEMK_ACCESSORY;
     ITEMS[ITEM_DRONE_BEACON].equipSlot = EQ_TRINKET_A;
@@ -910,23 +1014,38 @@ void initItems() {
         u8 swordSpr, spearSpr;
         float knock;
     };
+    /* --- swords came down about 15% -------------------------------------
+       Reported from play as hitting too hard, and the table already said why.
+       A sword sweeps an arc, so the note above is right that "its real output
+       against three mites in a corridor is three times the number in that
+       column" -- and on top of that multiplier it also carried roughly a 25%
+       per-hit premium over the spear of the same metal. Two advantages stacked
+       on the weapon that was already the default pick.
+
+       So the premium came off, not the arc: 7/10/14/15/20/26/34 became
+       6/9/12/13/17/22/29. Swords still lead every tier except copper, where
+       the two now tie at 6 and are separated by what they ARE -- the sword's
+       sweep against the spear's extra seven cells of reach -- rather than by a
+       number. Spears, cooldowns and reaches are all untouched, so the shape of
+       the ladder and the gold-is-fast, tungsten-is-heavy character of it are
+       exactly as they were. */
     static const MeleeTier MELEE[] = {
         /*                                     ---- sword ----   ---- spear ---- */
-        { ITEM_SWORD_COPPER,   ITEM_SPEAR_COPPER,   "Copper",     7, 33, 32,   6, 22, 39, 0xC87A32, SPR_SWORD_COPPER,   SPR_SPEAR_COPPER,   0.9f },
-        { ITEM_SWORD_BRONZE,   ITEM_SPEAR_BRONZE,   "Bronze",    10, 33, 35,   8, 22, 41, 0xCE9B4E, SPR_SWORD_BRONZE,   SPR_SPEAR_BRONZE,   1.0f },
-        { ITEM_SWORD_IRON,     ITEM_SPEAR_IRON,     "Iron",      14, 33, 35,  11, 22, 44, 0xA8ADB6, SPR_SWORD_IRON,     SPR_SPEAR_IRON,     1.1f },
+        { ITEM_SWORD_COPPER,   ITEM_SPEAR_COPPER,   "Copper",     6, 33, 32,   6, 22, 39, 0xC87A32, SPR_SWORD_COPPER,   SPR_SPEAR_COPPER,   0.9f },
+        { ITEM_SWORD_BRONZE,   ITEM_SPEAR_BRONZE,   "Bronze",     9, 33, 35,   8, 22, 41, 0xCE9B4E, SPR_SWORD_BRONZE,   SPR_SPEAR_BRONZE,   1.0f },
+        { ITEM_SWORD_IRON,     ITEM_SPEAR_IRON,     "Iron",      12, 33, 35,  11, 22, 44, 0xA8ADB6, SPR_SWORD_IRON,     SPR_SPEAR_IRON,     1.1f },
         /* Gold: the fast tier. Its reach is the SHORTEST of anything past
            copper, which is the other half of paying for the speed -- a quick
            weapon that also kept you at range would have no downside at all. */
-        { ITEM_SWORD_GOLD,     ITEM_SPEAR_GOLD,     "Gold",      15, 24, 32,  12, 16, 39, 0xE8C233, SPR_SWORD_GOLD,     SPR_SPEAR_GOLD,     0.8f },
-        { ITEM_SWORD_STEEL,    ITEM_SPEAR_STEEL,    "Steel",     20, 33, 38,  16, 22, 48, 0x8E97A6, SPR_SWORD_STEEL,    SPR_SPEAR_STEEL,    1.3f },
-        { ITEM_SWORD_TITANIUM, ITEM_SPEAR_TITANIUM, "Titanium",  26, 33, 40,  21, 22, 51, 0xD2DAE4, SPR_SWORD_TITANIUM, SPR_SPEAR_TITANIUM, 1.4f },
+        { ITEM_SWORD_GOLD,     ITEM_SPEAR_GOLD,     "Gold",      13, 24, 32,  12, 16, 39, 0xE8C233, SPR_SWORD_GOLD,     SPR_SPEAR_GOLD,     0.8f },
+        { ITEM_SWORD_STEEL,    ITEM_SPEAR_STEEL,    "Steel",     17, 33, 38,  16, 22, 48, 0x8E97A6, SPR_SWORD_STEEL,    SPR_SPEAR_STEEL,    1.3f },
+        { ITEM_SWORD_TITANIUM, ITEM_SPEAR_TITANIUM, "Titanium",  22, 33, 40,  21, 22, 51, 0xD2DAE4, SPR_SWORD_TITANIUM, SPR_SPEAR_TITANIUM, 1.4f },
         /* Tungsten is the heaviest thing on the ladder and swings slowest of
            the top three, which is what stops the last tier being strictly
            better than everything at everything. It hits hardest and shoves
            furthest; titanium remains the one you pick if you want to keep
            moving. */
-        { ITEM_SWORD_TUNGSTEN, ITEM_SPEAR_TUNGSTEN, "Tungsten",  34, 35, 44,  27, 24, 56, 0x6F7A86, SPR_SWORD_TUNGSTEN, SPR_SPEAR_TUNGSTEN, 1.8f },
+        { ITEM_SWORD_TUNGSTEN, ITEM_SPEAR_TUNGSTEN, "Tungsten",  29, 35, 44,  27, 24, 56, 0x6F7A86, SPR_SWORD_TUNGSTEN, SPR_SPEAR_TUNGSTEN, 1.8f },
     };
 
     /* Shared across the whole ladder rather than being per-tier columns,
@@ -1202,6 +1321,17 @@ void initItems() {
     ITEMS[ITEM_FLINT].colour   = 0xB8B4A6;
     ITEMS[ITEM_FLINT].sprite   = SPR_FLINT;
 
+    /* Layer-two creature matter. It stays a non-placeable component rather
+       than pretending to be a world material: adding a MatId would move
+       MAT_COUNT and renumber every established tool in existing saves. */
+    ITEMS[ITEM_ICHOR].name        = "Ichor";
+    ITEMS[ITEM_ICHOR].kind        = ITEMK_COMPONENT;
+    ITEMS[ITEM_ICHOR].maxStack    = MATERIAL_STACK;
+    ITEMS[ITEM_ICHOR].colour      = 0x8F4358;
+    ITEMS[ITEM_ICHOR].sprite      = SPR_ICHOR;
+    ITEMS[ITEM_ICHOR].description =
+        "Dense living residue from layer-two creatures. Used in advanced fabrication.";
+
     /* Spawn eggs, one per creature, built straight off the creature table --
        so a creature added tomorrow gets an egg with no edit here at all, and
        the egg cannot disagree with it about name or colour.
@@ -1260,7 +1390,7 @@ void initItems() {
     ITEMS[ITEM_TITANIUM_SUIT].sprite     = SPR_ARMOUR_SUIT_TITANIUM;
 
     ITEMS[ITEM_FORGE_CORE].name     = "Forge Core";
-    ITEMS[ITEM_FORGE_CORE].kind     = ITEMK_MATERIAL;   /* carried, never placed */
+    ITEMS[ITEM_FORGE_CORE].kind     = ITEMK_COMPONENT;  /* carried, never placed */
     ITEMS[ITEM_FORGE_CORE].maxStack = 16;
     ITEMS[ITEM_FORGE_CORE].colour   = 0xE07A32;
 
@@ -1335,6 +1465,20 @@ void initItems() {
         "Drone Armour. 2 pieces: +1 combat-drone bay. 3 pieces: +50% drone damage.";
     ITEMS[ITEM_DRONE_GREAVES].description =
         "Drone Armour. 2 pieces: +1 combat-drone bay. 3 pieces: +50% drone damage.";
+    ITEMS[ITEM_IRON_HELMET].description =
+        "Basic iron head protection. It has no set bonus.";
+    ITEMS[ITEM_IRON_CUIRASS].description =
+        "Basic iron body armour. It has no set bonus.";
+    ITEMS[ITEM_IRON_GREAVES].description =
+        "Basic iron leg protection. It has no set bonus.";
+    ITEMS[ITEM_RANGER_VISOR].description =
+        "Ranger Armour. 2 pieces: +10% ranged damage and +15% range. 3 pieces: +20% damage and +30% range.";
+    ITEMS[ITEM_RANGER_COAT].description = ITEMS[ITEM_RANGER_VISOR].description;
+    ITEMS[ITEM_RANGER_GREAVES].description = ITEMS[ITEM_RANGER_VISOR].description;
+    ITEMS[ITEM_VANGUARD_HELM].description =
+        "Vanguard Armour. 2 pieces: +20% melee damage. 3 pieces: +20% reach and +15% swing speed.";
+    ITEMS[ITEM_VANGUARD_PLATE].description = ITEMS[ITEM_VANGUARD_HELM].description;
+    ITEMS[ITEM_VANGUARD_GREAVES].description = ITEMS[ITEM_VANGUARD_HELM].description;
     ITEMS[ITEM_DRONE_BEACON].description =
         "Unlocks one additional combat-drone bay. Duplicate Beacons do not stack.";
     ITEMS[ITEM_OVERCLOCK_CHIP].description = "Install in an attack drone to reduce the delay between shots.";
@@ -1602,6 +1746,28 @@ bool Inventory::droneBayUnlocked(int eqSlot) const {
 
 int Inventory::droneDamagePct() const {
     return armourSetPieces(ARMOUR_SET_DRONE) >= 3 ? 50 : 0;
+}
+
+int Inventory::rangedDamagePct() const {
+    const int pieces = armourSetPieces(ARMOUR_SET_RANGED);
+    return pieces >= 3 ? 20 : pieces >= 2 ? 10 : 0;
+}
+
+int Inventory::rangedRangePct() const {
+    const int pieces = armourSetPieces(ARMOUR_SET_RANGED);
+    return pieces >= 3 ? 30 : pieces >= 2 ? 15 : 0;
+}
+
+int Inventory::meleeDamagePct() const {
+    return armourSetPieces(ARMOUR_SET_MELEE) >= 2 ? 20 : 0;
+}
+
+int Inventory::meleeReachPct() const {
+    return armourSetPieces(ARMOUR_SET_MELEE) >= 3 ? 20 : 0;
+}
+
+int Inventory::meleeSpeedPct() const {
+    return armourSetPieces(ARMOUR_SET_MELEE) >= 3 ? 15 : 0;
 }
 
 bool equipFits(ItemId item, int eqSlot) {

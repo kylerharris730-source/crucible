@@ -73,6 +73,10 @@ enum EntityType {
        by EntityType, so inserting anything above ENT_BROOD would move which bit
        means "you beat the Brood Mother" in every existing save. */
     ENT_DUMMY,
+    /* --- layer 2 ---------------------------------------------------------
+       Appended after the boss and dummy so the Brood Mother's persistent bit
+       and every established creature id keep their meaning. */
+    ENT_SHAMBLER,        /* large hunched walker: the first enemy drawn by a rig */
     ENT_COUNT
 };
 

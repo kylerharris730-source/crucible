@@ -96,8 +96,20 @@ static const int GAS_PRESSURE_EXPANSION_BURST = 5;
    It applies only through genuinely EMPTY cells. A gas still climbs through
    another gas or a liquid one cell at a time, by the ordinary tryMove below --
    a bubble that teleported four cells up a water column would outrun the
-   displacement rules that make bubbles behave. */
+   displacement rules that make bubbles behave.
+
+   Fire and Plasma are deliberately excluded. This run was introduced to make
+   Steam escape boilers promptly, but putting it on the shared gas path also
+   made flames and plasma leap four cells on nearly every frame because their
+   jitter is much lower than Steam's. They keep the original one-cell climb:
+   visibly buoyant, without outrunning the steam plume that carries heat. */
 static const int GAS_RISE_RUN = 4;
+static const int COMBUSTION_RISE_RUN = 1;
+
+static inline int gasRiseRun(u8 mat) {
+    return (mat == MAT_FIRE || mat == MAT_PLASMA)
+         ? COMBUSTION_RISE_RUN : GAS_RISE_RUN;
+}
 static const int FLUID_CONVECTION_REACH       = 3;
 static const int WAX_CONVECTION_REACH         = 1;
 static const int FLUID_CONVECTION_DELTA       = 2;
@@ -1851,13 +1863,15 @@ void World::updateGas(int x, int y) {
     }
 
     /* The buoyant climb. Scans up through clear air first and takes the whole
-       run in one move; see GAS_RISE_RUN. Empty cells only, so this can never
-       shortcut a swap with a liquid or a denser gas -- those still go one cell
-       at a time through the tryMove below, which is what keeps the displacement
-       rules that make a bubble behave in charge of a bubble. */
+       material-specific run in one move; see gasRiseRun. Empty cells only, so
+       this can never shortcut a swap with a liquid or a denser gas -- those
+       still go one cell at a time through the tryMove below, which is what
+       keeps the displacement rules that make a bubble behave in charge of a
+       bubble. */
     {
+        const int riseRun = gasRiseRun(c.mat);
         int top = y;
-        for (int s = 1; s <= GAS_RISE_RUN; ++s) {
+        for (int s = 1; s <= riseRun; ++s) {
             const int ny = y - s;
             if (ny < PLAY_Y0) break;
             if (cells[ny * SIM_W + x].mat != MAT_EMPTY || blocksCell(x, ny)) break;

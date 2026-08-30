@@ -245,14 +245,39 @@ const Recipe RECIPES[] = {
       ITEM_PICKUP_DRONE, 1, "Pickup Drone", STATION_ANVIL },
     { { { (ItemId)MAT_IRON, 5 }, { (ItemId)MAT_GLASS, 2 }, { ITEM_NONE, 0 } },
       ITEM_SHIELD_DRONE, 1, "Shield Drone", STATION_ANVIL },
-    /* Placeholder early recipes. These can later become layer-2 drops without
-       changing the set mechanics or invalidating crafted pieces in saves. */
-    { { { (ItemId)MAT_IRON, 4 }, { (ItemId)MAT_COPPER, 2 }, { ITEM_NONE, 0 } },
-      ITEM_DRONE_VISOR, 1, "Drone Visor", STATION_ANVIL },
-    { { { (ItemId)MAT_IRON, 6 }, { (ItemId)MAT_COPPER, 3 }, { ITEM_NONE, 0 } },
-      ITEM_DRONE_HARNESS, 1, "Drone Harness", STATION_ANVIL },
-    { { { (ItemId)MAT_IRON, 4 }, { (ItemId)MAT_RUBBER, 2 }, { ITEM_NONE, 0 } },
-      ITEM_DRONE_GREAVES, 1, "Drone Greaves", STATION_ANVIL },
+    /* --- armour progression ----------------------------------------------
+       Plain iron is the early baseline: useful defense, no build identity.
+       Ichor is what opens specialization. The three later families deliberately
+       pull from different metals already learned in layers one and two, so a
+       class set is a reason to keep the old ore network running rather than a
+       recipe paid entirely in the newest drop. */
+    { { { (ItemId)MAT_IRON, 4 }, { ITEM_NONE, 0 }, { ITEM_NONE, 0 } },
+      ITEM_IRON_HELMET, 1, "Iron Helmet", STATION_ANVIL },
+    { { { (ItemId)MAT_IRON, 8 }, { (ItemId)MAT_RUBBER, 2 }, { ITEM_NONE, 0 } },
+      ITEM_IRON_CUIRASS, 1, "Iron Cuirass", STATION_ANVIL },
+    { { { (ItemId)MAT_IRON, 4 }, { (ItemId)MAT_RUBBER, 1 }, { ITEM_NONE, 0 } },
+      ITEM_IRON_GREAVES, 1, "Iron Greaves", STATION_ANVIL },
+
+    { { { ITEM_ICHOR, 3 }, { (ItemId)MAT_IRON, 4 }, { (ItemId)MAT_GOLD, 2 } },
+      ITEM_DRONE_VISOR, 1, "Drone Visor", STATION_ASSEMBLY },
+    { { { ITEM_ICHOR, 6 }, { (ItemId)MAT_IRON, 7 }, { (ItemId)MAT_BRONZE, 4 } },
+      ITEM_DRONE_HARNESS, 1, "Drone Harness", STATION_ASSEMBLY },
+    { { { ITEM_ICHOR, 4 }, { (ItemId)MAT_IRON, 4 }, { (ItemId)MAT_COPPER, 3 } },
+      ITEM_DRONE_GREAVES, 1, "Drone Greaves", STATION_ASSEMBLY },
+
+    { { { ITEM_ICHOR, 3 }, { (ItemId)MAT_BRONZE, 4 }, { (ItemId)MAT_GLASS, 2 } },
+      ITEM_RANGER_VISOR, 1, "Ranger Visor", STATION_ASSEMBLY },
+    { { { ITEM_ICHOR, 6 }, { (ItemId)MAT_BRONZE, 7 }, { (ItemId)MAT_GOLD, 3 } },
+      ITEM_RANGER_COAT, 1, "Ranger Coat", STATION_ASSEMBLY },
+    { { { ITEM_ICHOR, 4 }, { (ItemId)MAT_BRONZE, 4 }, { (ItemId)MAT_RUBBER, 2 } },
+      ITEM_RANGER_GREAVES, 1, "Ranger Greaves", STATION_ASSEMBLY },
+
+    { { { ITEM_ICHOR, 3 }, { (ItemId)MAT_IRON, 6 }, { (ItemId)MAT_BRONZE, 3 } },
+      ITEM_VANGUARD_HELM, 1, "Vanguard Helm", STATION_ASSEMBLY },
+    { { { ITEM_ICHOR, 7 }, { (ItemId)MAT_IRON, 10 }, { (ItemId)MAT_STEEL, 5 } },
+      ITEM_VANGUARD_PLATE, 1, "Vanguard Plate", STATION_ASSEMBLY },
+    { { { ITEM_ICHOR, 4 }, { (ItemId)MAT_IRON, 5 }, { (ItemId)MAT_BRONZE, 3 } },
+      ITEM_VANGUARD_GREAVES, 1, "Vanguard Greaves", STATION_ASSEMBLY },
     { { { (ItemId)MAT_COPPER, 4 }, { (ItemId)MAT_GLASS, 2 }, { ITEM_NONE, 0 } },
       ITEM_DRONE_BEACON, 1, "Drone Beacon", STATION_ANVIL },
     /* The weapon chassis, and every one of them costs CHITIN on top of metal.

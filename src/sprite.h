@@ -200,6 +200,19 @@ enum SpriteId {
     SPR_ARMOUR_DRONE_HARNESS,
     SPR_ARMOUR_DRONE_GREAVES,
     SPR_ACC_DRONE_BEACON,
+    /* Save-stable item art appended with the items that use it. The Shambler
+       itself is larger than the shared 14x14 creature canvas and therefore
+       has dedicated rig buffers below rather than a SpriteId. */
+    SPR_ICHOR,
+    SPR_ARMOUR_IRON_HELM,
+    SPR_ARMOUR_IRON_CUIRASS,
+    SPR_ARMOUR_IRON_GREAVES,
+    SPR_ARMOUR_RANGER_VISOR,
+    SPR_ARMOUR_RANGER_COAT,
+    SPR_ARMOUR_RANGER_GREAVES,
+    SPR_ARMOUR_VANGUARD_HELM,
+    SPR_ARMOUR_VANGUARD_PLATE,
+    SPR_ARMOUR_VANGUARD_GREAVES,
 
     SPR_COUNT
 };
@@ -263,5 +276,18 @@ static const int CSPR_W = PLAYER_W;
 static const int CSPR_H = CROUCH_H;
 enum PlayerCrouchFrame { PCF_CROUCH = 0, PCF_COUNT };
 extern u32 g_playerCrouchSpr[PCF_COUNT][CSPR_W * CSPR_H];
+
+/* --- the Shambler ---------------------------------------------------------
+   A genuinely rigged enemy, baked at its collision size rather than painted
+   into the 14x14 creature sheet and enlarged. These are ordinary pixel buffers
+   after startup; the entity renderer pays only a frame lookup. */
+static const int SHAMBLER_SPR_W = 22;
+static const int SHAMBLER_SPR_H = 36;
+static const int SHAMBLER_IDLE_FRAMES = 2;
+static const int SHAMBLER_WALK_FRAMES = 8;
+extern u32 g_shamblerIdle[SHAMBLER_IDLE_FRAMES][SHAMBLER_SPR_W * SHAMBLER_SPR_H];
+extern u32 g_shamblerWalk[SHAMBLER_WALK_FRAMES][SHAMBLER_SPR_W * SHAMBLER_SPR_H];
+extern u32 g_shamblerJump[SHAMBLER_SPR_W * SHAMBLER_SPR_H];
+extern u32 g_shamblerFall[SHAMBLER_SPR_W * SHAMBLER_SPR_H];
 
 void initSprites();

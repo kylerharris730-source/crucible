@@ -182,6 +182,23 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
        would still tick down, still show damage numbers climbing toward an end,
        and would eventually get there if you left something burning it. */
     { "Crash Dummy", PLAYER_W, PLAYER_H, 100, 0, 60, 0.62f, 0.09f, false, 0, false, 0, 0, 0.0f, 0.0f, false, ITEM_NONE, 0, 0, ITEM_NONE, 0, SPR_DUMMY, 0xE8C233, ITEM_EGG_DUMMY, true },
+
+    /* --- the Shambler, layer 2 --------------------------------------------
+       The first ordinary enemy below the first seal and the first creature
+       rendered by the armature rather than a hand-authored 14x14 decal. Big,
+       slow and direct: its novelty is readable BODY LANGUAGE, not a hidden AI
+       rule. Long arms, a permanent hunch and a full eight-frame walk make its
+       weight legible before the contact damage arrives.
+
+       layerMask 2 is bit 1, which is caveLayerOf(ZONE_LAYER2). No surface
+       spawn: seeing one is the unmistakable announcement that the player has
+       entered the second tier. Ichor is a pickup component rather than a world
+       cell; see entDie for why that distinction is save-safe. */
+    { "Shambler", SHAMBLER_SPR_W, SHAMBLER_SPR_H, 96, 16, 38,
+      0.32f, 0.045f, false, 2, false,
+      0, 0, 0.0f, 0.0f, false,
+      ITEM_ICHOR, 2, 4, ITEM_NONE, 0, SPR_NONE, 0x6F8062,
+      ITEM_EGG_SHAMBLER, false },
 };
 
 /* Not saved with the creatures -- see entity.h. Written by save.cpp as one u32
@@ -399,11 +416,23 @@ static void entDie(World& w, Entity& e) {
     if (d.dropItem != ITEM_NONE && d.dropMax > 0) {
         int n = d.dropMin + (int)(rngNext() % (u32)(d.dropMax - d.dropMin + 1));
         const int cx = (int)e.centreX(), cy = (int)e.centreY();
-        /* Chitin is a collectible, not falling-sand debris. It therefore
-           cannot get caught on a torch, and comes to the player like a classic
-           game drop once they are nearby. Other drops retain their existing
-           physical-cell behavior (especially the Forge Core). */
-        if (d.dropItem == (ItemId)MAT_CHITIN && pickupSpawn(d.dropItem, n, (float)cx, (float)cy)) {
+        /* Chitin and every non-material component are collectibles, not
+           falling-sand debris. They therefore cannot get caught on a torch or
+           be truncated to a u8 material id. World substances retain their
+           physical-cell behavior; components such as Ichor and the Forge Core
+           remain typed inventory objects on the floor. */
+        if (d.dropItem == (ItemId)MAT_CHITIN) {
+            if (pickupSpawn(d.dropItem, n, (float)cx, (float)cy)) {
+                e.type = ENT_NONE;
+                return;
+            }
+            /* A full overlay pool may fall back to a real Chitin cell: it has
+               a MatId and therefore remains valid falling-sand matter. */
+        } else if (d.dropItem >= MAT_COUNT) {
+            /* Components have no legal cell representation. A saturated
+               pickup pool may cost the drop, but must never reinterpret its
+               low byte as a material and index the simulation tables with it. */
+            pickupSpawn(d.dropItem, n, (float)cx, (float)cy);
             e.type = ENT_NONE;
             return;
         }
@@ -898,6 +927,51 @@ static void huskTick(Entity& e, const Player& p) {
         e.vy = -2.2f;
 }
 
+/* --- the Shambler: drag, lurch, recover -----------------------------------
+   Sharing huskTick made the large creature behave like an enlarged Husk: a
+   perfectly even walk and a hop every time the navigation field pointed up.
+   For a 36-cell body, a route can point up for a long stretch before the body
+   reaches the actual obstruction, so it spent more time jumping than walking.
+
+   Its cadence has a long dragging half and a short acceleration into the next
+   step. Because walkPhase is accumulated from real displacement, the authored
+   walk slows during the drag and catches up during the lurch instead of feet
+   cycling under a uniformly sliding body. */
+static const int SHAMBLER_JUMP_COOLDOWN = 150;
+
+static void shamblerTick(const World& w, Entity& e, const Player& p) {
+    const EntityDef& d = ENT_DEFS[e.type];
+
+    e.animPhase += 0.11f;
+    const float wave = sinf(e.animPhase);
+    const float lurch = wave > 0.0f ? wave : 0.0f;
+    const float pace = 0.55f + 0.65f * lurch;
+
+    bool climb = false;
+    groundChase(e, p, d.speed * pace,
+                d.accel * (0.80f + 0.50f * lurch), 0.0f, &climb);
+
+    if (e.actTimer > 0) --e.actTimer;
+
+    /* Jump at the wall, not merely because some later part of the route rises.
+       The cooldown is longer than a complete jump, so landing cannot
+       immediately launch the next hop while the same route remains uphill. */
+    const int probeX = e.facing > 0 ? e.right() + 1 : e.left() - 1;
+    bool blockedAhead = false;
+    if (probeX > PLAY_X0 && probeX < PLAY_X1)
+        for (int y = e.top(); y <= e.bottom(); ++y)
+            if (playerSolid(w, probeX, y, SOLID_ANY)) {
+                blockedAhead = true;
+                break;
+            }
+
+    if (e.onGround && e.actTimer == 0 && blockedAhead &&
+        (climb || p.centreY() < e.centreY())) {
+        e.vy = -2.2f;
+        e.actTimer = SHAMBLER_JUMP_COOLDOWN;
+    }
+}
+
 /* --- the bat: why it misses -------------------------------------------------
    It picks a heading, commits to it for a stretch of frames, and cannot turn
    fast enough to fix a bad one. That is the whole trick, and it is worth being
@@ -1288,6 +1362,7 @@ static void entTickMode(World& w, Player& fallbackPlayer, Inventory& fallbackInv
         case ENT_SPITTER: spitterTick(w, e, p); break;
         case ENT_BROOD:   broodTick(w, e, p);   break;
         case ENT_DUMMY:   dummyTick(w, e, p);   break;
+        case ENT_SHAMBLER: shamblerTick(w, e, p); break;
         default: break;
         }
 
@@ -1767,6 +1842,44 @@ void entDraw(u32* px, int camX, int camY, bool lit) {
         const Entity& e = g_entities[i];
         if (!e.alive()) continue;
         const EntityDef& d = ENT_DEFS[e.type];
+
+        /* The Shambler is already baked at its 22x36 collision size. Keeping
+           that path explicit is what proves the rig can serve an enemy without
+           squeezing it through the 14x14 hand-art sheet or adding live posing
+           to this hot loop. The walk consumes the same distance clock as every
+           other walker, but uses all eight authored rig frames rather than the
+           two-pose pixel offsets those sprites can support. */
+        if (e.type == ENT_SHAMBLER) {
+            const u32* art = 0;
+            const bool moving = fabsf(e.vx) > 0.04f || fabsf(e.vy) > 0.04f;
+            if (!e.onGround) art = e.vy < 0.0f ? g_shamblerJump : g_shamblerFall;
+            else if (moving) {
+                const float stride = (float)imax(2, d.h / 3);
+                const int frame = ((int)(e.walkPhase * 4.0f / stride)) &
+                                  (SHAMBLER_WALK_FRAMES - 1);
+                art = g_shamblerWalk[frame];
+            } else {
+                const int frame = (int)((g_world.frame / 36u + (u32)i) & 1u);
+                art = g_shamblerIdle[frame];
+            }
+
+            const int ox = (int)e.x - camX, oy = (int)e.y - camY;
+            for (int sy = 0; sy < SHAMBLER_SPR_H; ++sy) {
+                for (int sx = 0; sx < SHAMBLER_SPR_W; ++sx) {
+                    const int vx = ox + sx, vy = oy + sy;
+                    if (vx < 0 || vx >= VIEW_CELLS_W || vy < 0 || vy >= VIEW_CELLS_H)
+                        continue;
+                    u32 out = art[sy * SHAMBLER_SPR_W +
+                                  (e.facing < 0 ? SHAMBLER_SPR_W - 1 - sx : sx)];
+                    if (!out) continue;
+                    if (lit) out = shadeColor(out, viewShade(vx, vy));
+                    if (e.hurtFlash > 0) out = 0xFFFFFF;
+                    px[vy * VIEW_CELLS_W + vx] = out;
+                }
+            }
+            continue;
+        }
+
         if (d.sprite == SPR_NONE) continue;
         const u32* art = g_sprite[d.sprite];
 

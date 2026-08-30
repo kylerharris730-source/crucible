@@ -8,6 +8,10 @@
 #include <string.h>
 
 u32 g_sprite[SPR_COUNT][SPR_W * SPR_H];
+u32 g_shamblerIdle[SHAMBLER_IDLE_FRAMES][SHAMBLER_SPR_W * SHAMBLER_SPR_H];
+u32 g_shamblerWalk[SHAMBLER_WALK_FRAMES][SHAMBLER_SPR_W * SHAMBLER_SPR_H];
+u32 g_shamblerJump[SHAMBLER_SPR_W * SHAMBLER_SPR_H];
+u32 g_shamblerFall[SHAMBLER_SPR_W * SHAMBLER_SPR_H];
 
 /* One palette shared by every sprite, so a colour means the same thing
    everywhere: T is always a highlight, S is always steel, and the two handle
@@ -535,6 +539,57 @@ static void buildPlayerFrames() {
             }
     memcpy(g_playerCrouchSpr[PCF_CROUCH], full + (size_t)cut * PSPR_W,
            sizeof(u32) * PSPR_W * CSPR_H);
+}
+
+/* --- the Shambler: the first enemy on the armature -----------------------
+   It uses the same humanoid builder and clips as the character, then changes
+   ANATOMY rather than repainting a player: the torso pitches forward, arms
+   lengthen, legs shorten, and the pack bone becomes the hump that owns its
+   silhouette. Because these are rest proportions, every inherited pose keeps
+   the hunch -- walk, idle and airborne -- without a second animation system.
+
+   The palette is an explicit value ladder just like RIG_SUIT. Layer two is
+   cold green; the eye is the only warm/high-value mark, so facing remains
+   readable at the edge of the light rather than relying on a mirrored outline. */
+static void buildShamblerFrames() {
+    static const u32 SHADE[RIG_SHADES] = {
+        0x3B463A,  /* far limb */
+        0x596553,  /* torso */
+        0x7A876B,  /* near limb */
+        0xA0AA83,  /* head */
+        0x293229,  /* far hand/foot */
+        0x435043,  /* near hand/foot */
+        0xE4D65D,  /* eye ridge */
+        0x354137,  /* hump */
+        0x6B3D47,  /* ichor-dark waist */
+    };
+    static Bone bone[RB_COUNT];
+    RigDef rig;
+    rigHumanoid(bone, &rig, "shambler", SHAMBLER_SPR_W, SHAMBLER_SPR_H, SHADE);
+
+    /* Facing-right is positive X. Taking twenty degrees out of the spine's
+       upward rest pitches its shoulders forward; the neck gives most of that
+       angle back so the head still watches the corridor instead of the floor. */
+    bone[RB_SPINE].rest -= 20;
+    bone[RB_NECK].rest  += 15;
+    bone[RB_HEAD].rest  += 5;
+
+    /* Gorilla-like reach and a low centre of mass. Long arms are both the
+       silhouette and the reason its inherited counter-swing looks heavy. */
+    bone[RB_FAR_UPPER].len  = (i16)(bone[RB_FAR_UPPER].len  * 5 / 4);
+    bone[RB_NEAR_UPPER].len = (i16)(bone[RB_NEAR_UPPER].len * 5 / 4);
+    bone[RB_FAR_FORE].len   = (i16)(bone[RB_FAR_FORE].len   * 5 / 4);
+    bone[RB_NEAR_FORE].len  = (i16)(bone[RB_NEAR_FORE].len  * 5 / 4);
+    bone[RB_FAR_THIGH].len  = (i16)(bone[RB_FAR_THIGH].len  * 9 / 10);
+    bone[RB_NEAR_THIGH].len = (i16)(bone[RB_NEAR_THIGH].len * 9 / 10);
+    bone[RB_PACK].len       = (i16)(bone[RB_PACK].len * 6 / 5);
+    bone[RB_PACK].wBase     = (u8)(bone[RB_PACK].wBase * 3 / 2);
+    bone[RB_PACK].wTip      = (u8)(bone[RB_PACK].wTip  * 3 / 2);
+
+    armBake(&rig, &RIG_IDLE, g_shamblerIdle[0]);
+    armBake(&rig, &RIG_WALK, g_shamblerWalk[0]);
+    armBake(&rig, &RIG_JUMP, g_shamblerJump);
+    armBake(&rig, &RIG_FALL, g_shamblerFall);
 }
 
 /* The thermocouple: a boxed gauge with a dial face and a needle, and a terminal
@@ -1775,6 +1830,26 @@ static const char* ART_DUMMY[SPR_H] = {
     "...;;;..;;;...",
 };
 
+/* Ichor is carried tissue, not a placeable world material, so it needs an icon
+   rather than a material swatch. A broad torn mass tapering into one heavy drip
+   reads differently from the round egg shell beside it in the creative list. */
+static const char* ART_ICHOR[SPR_H] = {
+    "......MM......",
+    ".....MMMM.....",
+    "....MMMMMM....",
+    "...MMMMMMMM...",
+    "..MMMMMMMMMM..",
+    "..MMMMMMMMMM..",
+    "...MMMMMMMM...",
+    "...MMmMMmMM...",
+    "....MmmmmM....",
+    "....MMMMMM....",
+    ".....MMMM.....",
+    ".....MMMM.....",
+    "......MM......",
+    "..............",
+};
+
 void initSprites() {
     memset(g_sprite, 0, sizeof(g_sprite));
     expand(SPR_MITE,      ART_MITE);
@@ -1783,6 +1858,7 @@ void initSprites() {
     expand(SPR_SPITTER,   ART_SPITTER);
     expand(SPR_BROOD,     ART_BROOD);
     expand(SPR_DUMMY,     ART_DUMMY);
+    expandMetal(SPR_ICHOR, ART_ICHOR, 0x8F4358, 0x572A3A);
     expand(SPR_MOTH,      ART_MOTH);
     expand(SPR_SLIME,     ART_SLIME);
     expand(SPR_TOOL1,     ART_TOOL1);
@@ -1795,6 +1871,18 @@ void initSprites() {
     expandMetal(SPR_ARMOUR_DRONE_VISOR,   ART_ARMOUR_HELM,    0x6FAFBE, 0x3D6C78);
     expandMetal(SPR_ARMOUR_DRONE_HARNESS, ART_ARMOUR_SUIT,    0x6FAFBE, 0x3D6C78);
     expandMetal(SPR_ARMOUR_DRONE_GREAVES, ART_ARMOUR_GREAVES, 0x6FAFBE, 0x3D6C78);
+    /* The three progression families use one readable armour grammar, with a
+       full-palette change rather than a tiny trim pixel: iron is neutral,
+       Ranger bronze-green, and Vanguard ichor-red. */
+    expandMetal(SPR_ARMOUR_IRON_HELM,       ART_ARMOUR_HELM,    0xA8ADB6, 0x555B64);
+    expandMetal(SPR_ARMOUR_IRON_CUIRASS,    ART_ARMOUR_SUIT,    0xA8ADB6, 0x555B64);
+    expandMetal(SPR_ARMOUR_IRON_GREAVES,    ART_ARMOUR_GREAVES, 0xA8ADB6, 0x555B64);
+    expandMetal(SPR_ARMOUR_RANGER_VISOR,    ART_ARMOUR_HELM,    0x9DA76A, 0x4D633F);
+    expandMetal(SPR_ARMOUR_RANGER_COAT,     ART_ARMOUR_SUIT,    0x9DA76A, 0x4D633F);
+    expandMetal(SPR_ARMOUR_RANGER_GREAVES,  ART_ARMOUR_GREAVES, 0x9DA76A, 0x4D633F);
+    expandMetal(SPR_ARMOUR_VANGUARD_HELM,   ART_ARMOUR_HELM,    0xA85A65, 0x59313B);
+    expandMetal(SPR_ARMOUR_VANGUARD_PLATE,  ART_ARMOUR_SUIT,    0xA85A65, 0x59313B);
+    expandMetal(SPR_ARMOUR_VANGUARD_GREAVES,ART_ARMOUR_GREAVES, 0xA85A65, 0x59313B);
     expand(SPR_ACC_DRONE_BEACON, ART_DRONE_BEACON);
     expand(SPR_MINE1,     ART_MINE1);
     expand(SPR_MINE2,     ART_MINE2);
@@ -1922,4 +2010,5 @@ void initSprites() {
     for (int digit = 1; digit <= 9; ++digit) makeSignalSprite(SPR_SIGNAL1 + digit - 1, digit);
 
     buildPlayerFrames();
+    buildShamblerFrames();
 }

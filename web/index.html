@@ -732,7 +732,7 @@
   canvas.addEventListener('mousedown', function () { canvas.focus(); });
   window.addEventListener('keydown', function (e) {
     if (document.activeElement === canvas &&
-        [' ', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Tab'].indexOf(e.key) >= 0) {
+        [' ', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Tab', 'Backspace'].indexOf(e.key) >= 0) {
       e.preventDefault();
     }
   });

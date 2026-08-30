@@ -166,6 +166,13 @@ static void pumpSdl(void) {
             const LPARAM lp = e.key.repeat ? (LPARAM)(1L << 30) : 0;
             g_keyDown[vk] = true;
             postMessage(WM_KEYDOWN, (WPARAM)vk, lp);
+            /* Backspace is a text-editing character on Win32: TranslateMessage
+               turns its keydown into WM_CHAR('\b'). SDL_TEXTINPUT deliberately
+               reports inserted text only, so browsers never send Backspace
+               through that event and our no-op TranslateMessage cannot create
+               it later. Synthesize precisely the missing character here;
+               repeats remain repeats because SDL repeats the keydown. */
+            if (vk == VK_BACK) postMessage(WM_CHAR, (WPARAM)'\b', lp);
             break;
         }
 
@@ -178,8 +185,8 @@ static void pumpSdl(void) {
         }
 
         case SDL_TEXTINPUT:
-            /* Only the join-IP field consumes WM_CHAR, and it wants digits and
-               dots, so one message per ASCII byte is the whole requirement. */
+            /* Search and join-IP fields both consume ASCII WM_CHAR messages.
+               Editing keys are not text input; Backspace is bridged above. */
             for (const char* p = e.text.text; *p; ++p)
                 if ((unsigned char)*p < 128) postMessage(WM_CHAR, (WPARAM)(unsigned char)*p, 0);
             break;

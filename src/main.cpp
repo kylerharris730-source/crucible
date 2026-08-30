@@ -1124,6 +1124,26 @@ static bool g_joinIpFocus = false;
    item is getting rid of it again. */
 static bool g_creativeOpen = false;
 static const int CRE_COLS = 4;
+/* These rows carry full names, so the icon is a quick visual index rather than
+   the only way to identify an item. Keep them materially smaller than the
+   icon-only pack/equipment squares, which still need the larger art. */
+/* Sized DOWNWARD, not inward. The row is a name with an icon beside it, so
+   height and icon are the slack -- the icon is a visual index and 22px indexes
+   as well as 32 -- while width is the one dimension that cannot be spent,
+   because it is what holds the name. An owned row also reserves 42px on the
+   right for its count, so at 148 wide with a 32 icon the label had only 64px
+   and was already ellipsising. Trimming the icon harder than the row means the
+   label ends up with MORE room than before, at a smaller overall size.
+
+   The height buys the real win: at 26 a fourth row fits in the same panel.
+   Worst case -- equipment, drone chips and tool bench all present -- measures
+   734px against the 768 canvas, where three 34px rows measured 729. So a third
+   more of the list is visible for five pixels. Five rows would be 763 and is
+   not taken: four pixels of headroom is not headroom. */
+static const int CRE_ENTRY_W = 140;
+static const int CRE_ENTRY_H = 26;
+static const int CRE_ENTRY_GAP = 3;
+static const int CRE_ENTRY_ICON_W = 22;
 /* How many rows of the palette are on screen at once, and where the window
    starts. The list is 83 entries and growing; at four columns that is 21 rows,
    and a panel tall enough for all of them ran off the top and bottom of the
@@ -1135,10 +1155,16 @@ static const int CRE_COLS = 4;
    swatch is a flat colour, so Stone, Wall, Slag and Ceramic were four grey
    squares and the only way to tell them apart was to point at each one. A list
    you can read is worth more than a list that fits. */
-/* Larger 38px item art makes each result row substantially taller. Three rows
-   keep the worst-case inventory (equipment, drone chips, and tool bench all
-   present) inside the 768px logical canvas; the scrollbar handles breadth. */
-static const int CRE_VIS_ROWS = 3;
+/* FOUR now, and it is the row height that paid for it rather than the budget
+   changing. Three was right when a row was 34px tall with 32px art; at 26 the
+   worst-case inventory -- equipment, drone chips and tool bench all present --
+   measures 734px against the same 768px canvas, where three taller rows
+   measured 729. A third more of the list for five pixels.
+
+   Still bounded by that canvas and not by taste: five rows measures 763, and
+   four pixels of headroom is not headroom. If a row grows again, this comes
+   back down with it. */
+static const int CRE_VIS_ROWS = 4;
 static const int CRE_MAX_ENTRIES = ITEM_COUNT + 9;
 static int g_creScroll = 0;      /* first visible row */
 static int g_creRowCount = 0;    /* total rows, for clamping and the bar */
@@ -2000,7 +2026,8 @@ static void layoutCreative() {
        skipped when drawing. inRect() then fails on them for free, so a click
        cannot land on a row that is scrolled out of sight -- which is the bug
        this shape avoids rather than the bug it would otherwise have. */
-    const int cw = 168, ch = 46, gap = 4, pad = 14;
+    const int cw = CRE_ENTRY_W, ch = CRE_ENTRY_H;
+    const int gap = CRE_ENTRY_GAP, pad = 14;
     const int ps = 50, pgap = 3;
     g_creRowCount = (g_creCount + CRE_COLS - 1) / CRE_COLS;
     const int visRows = imin(CRE_VIS_ROWS, g_creRowCount);
@@ -3587,6 +3614,7 @@ static void interactFor(PlayerSession& session, const Aim& aim) {
    downstream -- the hit test, the drawing -- only wants to know where the metal
    is. What differs is how the two ends MOVE. */
 static void meleeBlade(const Player& body, const ItemDef& def,
+                       float reach,
                        float dirX, float dirY, float phase,
                        float* hx, float* hy, float* tx, float* ty) {
     const float cx = body.centreX(), cy = body.centreY();
@@ -3611,8 +3639,8 @@ static void meleeBlade(const Player& body, const ItemDef& def,
            rather than growing out of the character's middle -- the same two
            cells drawHeldTool offsets by, and for the same reason. */
         *hx = cx + ca * 2.0f; *hy = cy + sa * 2.0f;
-        *tx = cx + ca * (float)def.meleeReach;
-        *ty = cy + sa * (float)def.meleeReach;
+        *tx = cx + ca * reach;
+        *ty = cy + sa * reach;
         return;
     }
 
@@ -3621,11 +3649,32 @@ static void meleeBlade(const Player& body, const ItemDef& def,
        is what stops the thrust looking like the spear teleporting to full
        extension and back. */
     const float out = sinf(phase * 3.14159265f);
-    const float lead = 2.0f + ((float)def.meleeReach - 2.0f) * out;
-    *hx = cx + dirX * (lead - (float)def.meleeReach * 0.55f);
-    *hy = cy + dirY * (lead - (float)def.meleeReach * 0.55f);
+    const float lead = 2.0f + (reach - 2.0f) * out;
+    *hx = cx + dirX * (lead - reach * 0.55f);
+    *hy = cy + dirY * (lead - reach * 0.55f);
     *tx = cx + dirX * lead;
     *ty = cy + dirY * lead;
+}
+
+static float meleeReachFor(const Inventory& inv, const ItemDef& def) {
+    return (float)def.meleeReach * (1.0f + (float)inv.meleeReachPct() / 100.0f);
+}
+
+static int meleeFramesFor(const Inventory& inv, const ItemDef& def) {
+    const int pct = inv.meleeSpeedPct();
+    return imax(1, (int)def.meleeFrames - (int)def.meleeFrames * pct / 100);
+}
+
+static int meleeCooldownFor(const Inventory& inv, const ItemDef& def) {
+    const int pct = inv.meleeSpeedPct();
+    return imax(1, (int)def.meleeCooldown - (int)def.meleeCooldown * pct / 100);
+}
+
+static int meleeDamageFor(const Inventory& inv, int base) {
+    const int accessory = accessoryShotDamage(inv, base);
+    const int pct = inv.meleeDamagePct();
+    return pct > 0 ? imax(accessory + 1, accessory + accessory * pct / 100)
+                   : accessory;
 }
 
 /* Begin a stroke, if the weapon is ready. Returns false when it is still on
@@ -3652,8 +3701,9 @@ static bool meleeStart(PlayerSession& session, const ItemDef& def, const Aim& ai
         dx = (float)(session.body.facing >= 0 ? 1 : -1); dy = 0.0f;
     }
     session.swingDirX = dx; session.swingDirY = dy;
-    session.swingFrame = imax(1, (int)def.meleeFrames);
-    session.swingCool  = imax((int)def.meleeCooldown, (int)def.meleeFrames);
+    session.swingFrame = meleeFramesFor(session.inventory, def);
+    session.swingCool  = imax(meleeCooldownFor(session.inventory, def),
+                              session.swingFrame);
     memset(session.swingHit, 0, sizeof(session.swingHit));
     return true;
 }
@@ -3674,7 +3724,7 @@ static void meleeTickFor(PlayerSession& session) {
     }
     const ItemDef& def = ITEMS[held.item];
 
-    const int total = imax(1, (int)def.meleeFrames);
+    const int total = meleeFramesFor(session.inventory, def);
     /* swingFrame counts down, so progress is what is left subtracted from the
        whole. Sampled at the END of this frame's motion rather than the start,
        so the first thing that happens after a click is the blade being
@@ -3682,7 +3732,8 @@ static void meleeTickFor(PlayerSession& session) {
     const float phase = (float)(total - session.swingFrame) / (float)total;
 
     float hx, hy, tx, ty;
-    meleeBlade(session.body, def, session.swingDirX, session.swingDirY,
+    meleeBlade(session.body, def, meleeReachFor(session.inventory, def),
+               session.swingDirX, session.swingDirY,
                phase, &hx, &hy, &tx, &ty);
 
     /* Damage is the AUTHORITY's to resolve. A client runs the animation so its
@@ -3691,7 +3742,7 @@ static void meleeTickFor(PlayerSession& session) {
        then coming back when the next snapshot disagreed. */
     if (netRole() != NET_CLIENT)
         entHitSegment(hx, hy, tx, ty, session.body.centreX(), session.body.centreY(),
-                      accessoryShotDamage(session.inventory, ITEMS[held.item].damage),
+                      meleeDamageFor(session.inventory, ITEMS[held.item].damage),
                       def.meleeKnock, session.swingHit);
 
     --session.swingFrame;
@@ -4346,8 +4397,14 @@ static void fireToolFor(Player& player, Inventory& inventory, const Aim& aim) {
        the tool and its modules, and folding the wearer's jewellery into that
        answer would mean the bench panel had to state a number that changes when
        you take a ring off. */
-    const int   shotDamage = accessoryShotDamage(inventory, s.damage);
+    int shotDamage = accessoryShotDamage(inventory, s.damage);
+    const int rangedDamagePct = inventory.rangedDamagePct();
+    if (rangedDamagePct > 0)
+        shotDamage = imax(shotDamage + 1,
+                          shotDamage + shotDamage * rangedDamagePct / 100);
     const float shotSpeed  = accessoryShotSpeed(inventory, s.speed);
+    const int rangedRangePct = inventory.rangedRangePct();
+    const int shotLife = s.life + s.life * rangedRangePct / 100;
 
     const float pcx = player.centreX(), pcy = player.centreY();
     float dx = (float)aim.x - pcx, dy = (float)aim.y - pcy;
@@ -4381,7 +4438,7 @@ static void fireToolFor(Player& player, Inventory& inventory, const Aim& aim) {
     for (int slot = 0; slot < MAX_PLAYERS; ++slot)
         if (&g_playerSessions[slot].inventory == &inventory) { owner = (u8)slot; break; }
     const bool fired = projSpawn(pcx + dx * MUZZLE, pcy + dy * MUZZLE, vx, vy,
-                                 s.power, s.pierce, s.life, s.colour, s.blast,
+                                 s.power, s.pierce, shotLife, s.colour, s.blast,
                                  payload, shotDamage, false, s.gravity, s.effect,
                                  s.bounces, s.homing, owner);
     if (!fired) return;
@@ -4396,7 +4453,7 @@ static void fireToolFor(Player& player, Inventory& inventory, const Aim& aim) {
            fanned just enough that both projectiles remain individually visible. */
         const float fanX = -vy * 0.10f, fanY = vx * 0.10f;
         projSpawn(pcx + dx * MUZZLE, pcy + dy * MUZZLE,
-                  vx + fanX, vy + fanY, s.power, s.pierce, s.life, 0xD8A4FF,
+                  vx + fanX, vy + fanY, s.power, s.pierce, shotLife, 0xD8A4FF,
                   s.blast, payload, shotDamage, false, s.gravity, s.effect,
                   s.bounces, s.homing, owner);
     }
@@ -5439,10 +5496,11 @@ static void drawMeleeSwing(u32* px, bool lit) {
     if (h.empty() || ITEMS[h.item].kind != ITEMK_MELEE) return;
     const ItemDef& def = ITEMS[h.item];
 
-    const int total = imax(1, (int)def.meleeFrames);
+    const int total = meleeFramesFor(g_inv, def);
     const float phase = (float)(total - session.swingFrame) / (float)total;
     float hx, hy, tx, ty;
-    meleeBlade(g_player, def, session.swingDirX, session.swingDirY,
+    meleeBlade(g_player, def, meleeReachFor(g_inv, def),
+               session.swingDirX, session.swingDirY,
                phase, &hx, &hy, &tx, &ty);
 
     drawMeleeSegment(px, lit, h.item,
@@ -5471,9 +5529,10 @@ static void drawHeldTool(u32* px, const Aim& aim, bool lit) {
                cells from the player and its tip at meleeReach, hence reach-2.
                Spears retain a withdrawn carry pose because extension is the
                readable motion of a stab. */
+            const float meleeReach = meleeReachFor(g_inv, def);
             const float rest = def.meleeStyle == MELEE_SWING
-                             ? (float)def.meleeReach - 2.0f
-                             : (float)def.meleeReach * 0.55f;
+                             ? meleeReach - 2.0f
+                             : meleeReach * 0.55f;
             const float x0 = pcx + ax * 2.0f - (float)g_camX;
             const float y0 = pcy - 1.0f + ay * 2.0f - (float)g_camY;
             drawMeleeSegment(px, lit, m.item, x0, y0,
@@ -5918,7 +5977,7 @@ static void drawCreative(HDC hdc) {
     DrawTextA(hdc, signalPicker ? "SELECT CIRCUIT SIGNAL  --  search or choose"
                    : g_filterDevice >= 0 ? "SELECT DRAIN FILTER  --  click a material, or clear for all"
                    : g_digFilterPicking ? digFilterTitle()
-                   : "CREATIVE  --  click a swatch to fill the cursor; click a slot to drop it, right-click for half", -1, &title,
+                   : "CREATIVE  --  click an item to hold it; right-click to remove it", -1, &title,
               DT_LEFT | DT_TOP | DT_SINGLELINE);
 
     FillRect(hdc, &g_creSearchBox, g_btnBg);
@@ -5936,13 +5995,13 @@ static void drawCreative(HDC hdc) {
         if (IsRectEmpty(&r)) continue;
         const int have = signalPicker ? 0 : g_inv.countOf((ItemId)it);
 
-        /* Every entry reserves a full-size icon well. This is laid out here
-           rather than through drawButton's compact 16px swatch path: growing
-           only the picture without moving the label made the two overlap. */
+        /* The name carries exact identity here, so this is a compact icon well
+           rather than the full icon-only square used by the pack and hotbar. */
         const bool rowHot = inRect(r, g_mx, g_my);
         FillRect(hdc, &r, have > 0 ? g_btnBgSel : (rowHot ? g_btnBgHot : g_btnBg));
         FrameRect(hdc, &r, have > 0 ? g_accentBrush : g_borderBrush);
-        RECT ir = { r.left + 3, r.top + 2, r.left + 47, r.bottom - 2 };
+        RECT ir = { r.left + 3, r.top + 2,
+                    r.left + 3 + CRE_ENTRY_ICON_W, r.bottom - 2 };
         FillRect(hdc, &ir, g_panelBg);
         if (signalPicker) drawCircuitSignalIcon(hdc, ir, it);
         else              drawItemIcon(hdc, ir, (ItemId)it);
@@ -6070,6 +6129,12 @@ static void drawCreative(HDC hdc) {
         if (g_inv.damagePct())    n += sprintf(s + n, "%sdamage +%d%%", n ? ", " : "", g_inv.damagePct());
         if (g_inv.cooldownPct())  n += sprintf(s + n, "%sfire rate +%d%%", n ? ", " : "", g_inv.cooldownPct());
         if (g_inv.shotSpeedPct()) n += sprintf(s + n, "%sshot speed +%d%%", n ? ", " : "", g_inv.shotSpeedPct());
+        if (g_inv.rangedDamagePct()) n += sprintf(s + n, "%sranged damage +%d%%", n ? ", " : "", g_inv.rangedDamagePct());
+        if (g_inv.rangedRangePct()) n += sprintf(s + n, "%srange +%d%%", n ? ", " : "", g_inv.rangedRangePct());
+        if (g_inv.meleeDamagePct()) n += sprintf(s + n, "%smelee damage +%d%%", n ? ", " : "", g_inv.meleeDamagePct());
+        if (g_inv.meleeReachPct()) n += sprintf(s + n, "%smelee reach +%d%%", n ? ", " : "", g_inv.meleeReachPct());
+        if (g_inv.meleeSpeedPct()) n += sprintf(s + n, "%sswing speed +%d%%", n ? ", " : "", g_inv.meleeSpeedPct());
+        if (g_inv.droneDamagePct()) n += sprintf(s + n, "%sdrone damage +%d%%", n ? ", " : "", g_inv.droneDamagePct());
         if (g_inv.pickupRadius()) n += sprintf(s + n, "%spickup +%d cells", n ? ", " : "", g_inv.pickupRadius());
         if (g_inv.lightGlow())    n += sprintf(s + n, "%sglow", n ? ", " : "");
         if (n) {

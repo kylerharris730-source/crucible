@@ -254,12 +254,32 @@ enum {
        existing save into a different one. Which egg makes which creature is
        stated outright by EntityDef::eggItem, so nothing needs them adjacent. */
     ITEM_EGG_DUMMY,
+    /* Layer-2 loot and its testing egg. Appended because item ids are written
+       directly into saves; putting either beside the older conceptual group
+       would silently reinterpret an established stack. Ichor is an ITEM, not
+       a MatId, for the same reason: adding a material would move MAT_COUNT and
+       therefore every non-material item id above it. */
+    ITEM_ICHOR,
+    ITEM_EGG_SHAMBLER,
+    /* Appended armour progression. Item ids are serialized directly, so even
+       conceptually early Iron Armour belongs here rather than beside Steel. */
+    ITEM_IRON_HELMET,
+    ITEM_IRON_CUIRASS,
+    ITEM_IRON_GREAVES,
+    ITEM_RANGER_VISOR,
+    ITEM_RANGER_COAT,
+    ITEM_RANGER_GREAVES,
+    ITEM_VANGUARD_HELM,
+    ITEM_VANGUARD_PLATE,
+    ITEM_VANGUARD_GREAVES,
     ITEM_COUNT
 };
 
 enum ArmourSet {
     ARMOUR_SET_NONE = 0,
-    ARMOUR_SET_DRONE
+    ARMOUR_SET_DRONE,
+    ARMOUR_SET_RANGED,
+    ARMOUR_SET_MELEE
 };
 
 enum ItemKind {
@@ -355,7 +375,10 @@ enum ItemKind {
        would be a mining tool with a worse shape, and it would make the whole
        mining ladder optional. Melee has no `power` field at all rather than a
        zero one, so the question cannot be asked. */
-    ITEMK_MELEE
+    ITEMK_MELEE,
+    /* A carried crafting ingredient that is not a world cell. It has no use
+       action of its own; recipes consume it by ItemId like any other input. */
+    ITEMK_COMPONENT
 };
 
 /* How a melee weapon moves, which is the whole difference between the two
@@ -872,6 +895,13 @@ struct Inventory {
     bool droneBayUnlocked(int eqSlot) const;
     int  armourSetPieces(u8 set) const;
     int  droneDamagePct() const;
+    /* Ichor-tier class set bonuses. Returned as percentages so the provisional
+       balance stays centralized here rather than copied across combat code. */
+    int  rangedDamagePct() const;
+    int  rangedRangePct() const;
+    int  meleeDamagePct() const;
+    int  meleeReachPct() const;
+    int  meleeSpeedPct() const;
 
     ItemStack& held() { return slot[selected]; }
     const ItemStack& held() const { return slot[selected]; }
