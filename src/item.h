@@ -262,6 +262,9 @@ enum {
     ITEM_ICHOR,
     ITEM_EGG_SHAMBLER,
     ITEM_EGG_THRESHER,
+    ITEM_EGG_CULVERIN,
+    ITEM_EGG_WISP,
+    ITEM_EGG_STOOPER,
     /* Appended armour progression. Item ids are serialized directly, so even
        conceptually early Iron Armour belongs here rather than beside Steel. */
     ITEM_IRON_HELMET,

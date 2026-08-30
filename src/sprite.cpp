@@ -146,6 +146,22 @@ static u32 paletteOf(char c) {
     case '8': return 0x8A5A3A;     /* spitter: carapace */
     case '9': return 0xA87A52;     /* spitter: lit plates */
     case 'I': return 0xD8E098;     /* spitter: the venom sac */
+
+    /* --- layer 2 -------------------------------------------------------
+       Built from the characters that were actually FREE. The first attempt
+       reached for the obvious symbols -- '+', '<', '*' and friends -- and
+       every one of them was already a colour: '<' is the dummy's joints, and
+       the compiler caught it as a duplicate case. Only six characters were
+       unused in the whole palette, so two of these deliberately REUSE an
+       existing colour rather than inventing a near-duplicate of it: the
+       Culverin's shade is the husk's dark green and the Stooper's body is the
+       bat's near-black, both of which are already exactly the value wanted. */
+    case '/': return 0x5E7A4E;     /* culverin: plate */
+    case '_': return 0x86A86A;     /* culverin: lit plate */
+    case '`': return 0xD8F0A0;     /* culverin: the muzzle, and its charge */
+    case '|': return 0xC98BB8;     /* wisp: core */
+    case '}': return 0x6B4570;     /* wisp: halo */
+    case ',': return 0x2E3A2A;     /* stooper: membrane */
     /* Brood mother: her young are warm browns and she is RED, because a boss
        should be recognisable as itself from across a cavern before any of the
        detail resolves. */
@@ -977,6 +993,73 @@ static const char* ART_SPITTER[SPR_H] = {
     ".8888888888...",
     "..8.8.8.8.8...",
     "..8.8.8.8.8...",
+    "..............",
+    "..............",
+};
+
+/* --- the Culverin, layer 2 -------------------------------------------------
+   Squat and heavily plated, with the barrel riding high and forward so the
+   thing that shoots you is the thing you see first. The spitter carries its
+   sac on its back as a warning; this carries a muzzle, and the muzzle rises
+   as the reload completes -- see entityPixelMotion, where that is the tell for
+   an incoming volley. */
+static const char* ART_CULVERIN[SPR_H] = {
+    "..............",
+    "..............",
+    ".....___/.....",
+    "....__///`....",
+    "...__////``...",
+    "..////////....",
+    ".._///////_...",
+    ".//x//////__..",
+    ".//////////_..",
+    ".r////////r...",
+    "..r.r..r.r....",
+    "..r.r..r.r....",
+    "..............",
+    "..............",
+};
+
+/* --- the Wisp, layer 2 -----------------------------------------------------
+   A core inside a halo, and almost nothing else. It has no wings on purpose:
+   the bat and the moth both beat, so a third flier that also beat would read
+   as a third bat. This one DRIFTS, and a shape with no visible means of
+   propulsion is what sells that. */
+static const char* ART_WISP[SPR_H] = {
+    "..............",
+    ".....}}}......",
+    "...}}|||}}....",
+    "..}}|||||}}...",
+    ".}}|||||||}}..",
+    ".}||||x||||}..",
+    ".}|||||||||}..",
+    ".}}|||||||}}..",
+    "..}}|||||}}...",
+    "...}}|||}}....",
+    ".....}}}......",
+    "......}.......",
+    "..............",
+    "..............",
+};
+
+/* --- the Stooper, layer 2 --------------------------------------------------
+   Wings held BACK rather than spread, because this one is not a flapper: it
+   climbs, holds, and then falls on you. A swept silhouette reads as speed even
+   while it is hovering, which is the warning that it is about to stop
+   hovering. */
+static const char* ART_STOOPER[SPR_H] = {
+    "..............",
+    ".,............",
+    ".,,...........",
+    ".,,,......,...",
+    "..,,,....,,...",
+    "..,,,,..,,,...",
+    "...,,,,7,,,...",
+    "....,,7x7,....",
+    ".....7777.....",
+    "......77......",
+    "......7.......",
+    "..............",
     "..............",
     "..............",
 };
@@ -1875,6 +1958,9 @@ void initSprites() {
     expand(SPR_MITE,      ART_MITE);
     expand(SPR_HUSK,      ART_HUSK);
     expand(SPR_BAT,       ART_BAT);
+    expand(SPR_CULVERIN,  ART_CULVERIN);
+    expand(SPR_WISP,      ART_WISP);
+    expand(SPR_STOOPER,   ART_STOOPER);
     expand(SPR_SPITTER,   ART_SPITTER);
     expand(SPR_BROOD,     ART_BROOD);
     expand(SPR_DUMMY,     ART_DUMMY);

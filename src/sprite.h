@@ -97,6 +97,11 @@ enum SpriteId {
     SPR_HUSK,
     SPR_BAT,
     SPR_SPITTER,
+    /* Layer 2. Appended after the layer-1 creatures so every established
+       sprite id keeps its meaning. */
+    SPR_CULVERIN,
+    SPR_WISP,
+    SPR_STOOPER,
     /* The boss. Drawn from the same 14x14 canvas as everything else and then
        SCALED UP by its collision box -- see entDraw -- rather than given a
        larger grid of its own. Fourteen pixels of shape blown up to 34 cells

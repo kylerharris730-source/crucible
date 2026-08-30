@@ -217,10 +217,53 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
        wide hitbox that also soaked damage would be unfightable in a corridor.
        Lower per-touch damage for the same reason: it lands more often. */
     { "Thresher", THRESHER_SPR_W, THRESHER_SPR_H, 52, 11, 30,
-      0.44f, 0.075f, false, 2, false,
+      0.66f, 0.095f, false, 2, false,
       0, 0, 0.0f, 0.0f, false,
       ITEM_ICHOR, 1, 3, ITEM_NONE, 0, SPR_NONE, 0x9A5F94,
       ITEM_EGG_THRESHER, false },
+    /* --- the Culverin, layer 2 ---------------------------------------------
+       Layer 2 answer to the Spitter, and deliberately not a stronger one. The
+       Spitter drips shots at a steady interval, so the counterplay is to keep
+       moving and accept the occasional hit. This fires a VOLLEY and then
+       reloads for two seconds, which inverts that: standing in the open is
+       briefly free and then suddenly very expensive, and the reload is the
+       window you are supposed to close the distance in.
+
+       Slow and armoured, because a volley shooter that could also reposition
+       would have no losing position at all. It holds its ground and makes you
+       come to it. */
+    { "Culverin", 12, 11, 70, 9, 34,
+      0.16f, 0.03f, false, 2, false,
+      12, 8, 4.4f, 108.0f, false,
+      ITEM_ICHOR, 1, 3, ITEM_NONE, 0, SPR_CULVERIN, 0x86A86A,
+      ITEM_EGG_CULVERIN, false },
+    /* --- the Wisp, layer 2 --------------------------------------------------
+       The relentless one. Slow enough to outrun on open ground, and completely
+       indifferent to terrain -- no line of sight, no pathfinding, no giving
+       up. Where the Bat is fast and misses, this never misses and never
+       arrives quickly, so it turns a fight somewhere else into a fight on a
+       clock. Two of them in a dead end is the real threat.
+
+       Low health to match: it is a pressure creature, not a wall. */
+    { "Wisp", 10, 10, 26, 8, 44,
+      0.26f, 0.012f, true, 2, false,
+      0, 0, 0.0f, 0.0f, false,
+      ITEM_ICHOR, 1, 2, ITEM_NONE, 0, SPR_WISP, 0xC98BB8,
+      ITEM_EGG_WISP, false },
+    /* --- the Stooper, layer 2 -----------------------------------------------
+       Climbs above you, holds, and then falls. The Bat is fast and steers
+       badly, so it is dangerous by accident; this is dangerous on purpose and
+       only in a straight line, which means the counterplay is to move
+       sideways at the moment it commits rather than to keep running.
+
+       Its speed is the DIVE speed, and it only reaches it while diving -- see
+       stooperTick, where the climb and the hold are deliberately slower than
+       anything else in the air. */
+    { "Stooper", 12, 10, 34, 14, 40,
+      0.95f, 0.05f, true, 2, false,
+      0, 0, 0.0f, 0.0f, false,
+      ITEM_ICHOR, 1, 2, ITEM_NONE, 0, SPR_STOOPER, 0x5A7048,
+      ITEM_EGG_STOOPER, false },
 };
 
 /* Not saved with the creatures -- see entity.h. Written by save.cpp as one u32
@@ -1044,6 +1087,126 @@ static void thresherTick(const World& w, Entity& e, const Player& p) {
     }
 }
 
+/* --- the Culverin: volley, then reload -------------------------------------
+   Shares spitterTick's aiming wholesale -- the ballistic solve is the hard
+   part and there is no second version of it worth having. What differs is the
+   RHYTHM, and that lives in one counter.
+
+   e.phase holds shots left in the volley. While it is non-zero the creature
+   fires every shotEvery frames, which is short; when it empties, shotTimer is
+   set to the long reload instead and the volley refills. So the same two
+   fields express "three quick shots then a long pause" without a state
+   machine, and a save that never stores either of them cannot desynchronise. */
+/* Declared ahead of use: the Culverin is defined beside the other layer-2
+   creatures but borrows the Spitter aiming, which is written further down
+   beside the layer-1 ones. Moving either would separate a creature from its
+   neighbours to satisfy the compiler, which is the wrong thing to optimise. */
+static void spitterTick(World& w, Entity& e, const Player& p);
+
+static const int CULVERIN_VOLLEY = 3;
+static const int CULVERIN_RELOAD = 120;
+
+static void culverinTick(World& w, Entity& e, const Player& p) {
+    /* Its aim is the Spitter's, so the reload has to be applied AFTER the shot
+       is taken rather than instead of it -- shotTimer is what spitterTick sets
+       on firing, so this watches for that and overwrites it when the volley
+       runs dry. */
+    const int before = e.shotTimer;
+    spitterTick(w, e, p);
+    const bool fired = e.shotTimer > before;
+    if (!fired) return;
+
+    if (e.phase == 0) e.phase = CULVERIN_VOLLEY;   /* first shot of a volley */
+    --e.phase;
+    if (e.phase == 0) e.shotTimer = CULVERIN_RELOAD;
+}
+
+/* --- the Wisp: it simply comes ---------------------------------------------
+   No line of sight, no navigation, no aim jitter, no giving up. Every other
+   flier in the game is interesting because of how it FAILS to reach you -- the
+   bat overshoots, the moth is distracted by heat. This one has no failure mode
+   and is slow instead, which is a different kind of pressure: you cannot lose
+   it, you can only outpace it, and only while you have somewhere to go.
+
+   Deliberately no terrain handling. It is a flier, so walls do not stop it
+   accelerating toward you; what they do is make it arrive late. */
+static void wispTick(const World& w, Entity& e, const Player& p) {
+    (void)w;
+    const EntityDef& d = ENT_DEFS[e.type];
+    float ax = p.centreX() - e.centreX(), ay = p.centreY() - e.centreY();
+    const float len = sqrtf(ax * ax + ay * ay);
+    if (len > 0.01f) { ax /= len; ay /= len; }
+    e.vx += ax * d.accel;
+    e.vy += ay * d.accel;
+
+    /* A slow breathing drift across the approach line, so a straight-line
+       chaser does not read as a projectile. Much slower than the bat's
+       flutter, because the whole point is that this thing is unhurried. */
+    e.animPhase += 0.05f;
+    e.vx += cosf(e.animPhase) * 0.010f;
+    e.vy += sinf(e.animPhase * 0.7f) * 0.010f;
+
+    const float sp = sqrtf(e.vx * e.vx + e.vy * e.vy);
+    if (sp > d.speed) { e.vx = e.vx / sp * d.speed; e.vy = e.vy / sp * d.speed; }
+    if (e.vx > 0.05f) e.facing = 1; else if (e.vx < -0.05f) e.facing = -1;
+}
+
+/* --- the Stooper: climb, hold, fall ----------------------------------------
+   Three states on one counter, and the hold is the important one. A dive with
+   no pause before it is just a fast chaser; the pause is what makes the attack
+   READABLE, and a readable attack is what makes dodging it a decision rather
+   than a reflex.
+
+   actTimer counts down through the hold and on into the dive, so both halves
+   share a counter the same way the Thresher's burst and pause do. Positive is
+   climbing or holding, negative is committed. */
+static const int STOOPER_HOLD  = 34;
+static const int STOOPER_DIVE  = 40;
+static const int STOOPER_ABOVE = 46;   /* cells it wants between it and you */
+
+static void stooperTick(const World& w, Entity& e, const Player& p) {
+    (void)w;
+    const EntityDef& d = ENT_DEFS[e.type];
+    --e.actTimer;
+    if (e.actTimer < -STOOPER_DIVE) e.actTimer = STOOPER_HOLD;
+    const bool diving = e.actTimer < 0;
+
+    if (diving) {
+        /* Committed: the heading was taken at the moment of commitment and is
+           not revised. Steering mid-dive would make it unavoidable, which is
+           the failure the bat's overshoot exists to avoid in the other
+           direction. */
+        e.vx += e.aimX * d.accel * 3.0f;
+        e.vy += e.aimY * d.accel * 3.0f;
+        const float sp = sqrtf(e.vx * e.vx + e.vy * e.vy);
+        if (sp > d.speed) { e.vx = e.vx / sp * d.speed; e.vy = e.vy / sp * d.speed; }
+    } else {
+        /* Climb to station above the player and wait there. Slow, so the
+           silhouette hanging overhead is a warning with time to read it. */
+        const float tx = p.centreX();
+        const float ty = p.centreY() - (float)STOOPER_ABOVE;
+        float ax = tx - e.centreX(), ay = ty - e.centreY();
+        const float len = sqrtf(ax * ax + ay * ay);
+        if (len > 0.01f) { ax /= len; ay /= len; }
+        e.vx += ax * d.accel;
+        e.vy += ay * d.accel;
+        const float slow = d.speed * 0.28f;
+        const float sp = sqrtf(e.vx * e.vx + e.vy * e.vy);
+        if (sp > slow) { e.vx = e.vx / sp * slow; e.vy = e.vy / sp * slow; }
+
+        /* Aim is taken on the LAST frame of the hold, so the dive goes where
+           the player was when it committed rather than tracking them into it. */
+        if (e.actTimer == 0) {
+            float dx = p.centreX() - e.centreX(), dy = p.centreY() - e.centreY();
+            const float dl = sqrtf(dx * dx + dy * dy);
+            e.aimX = dl > 0.01f ? dx / dl : 0.0f;
+            e.aimY = dl > 0.01f ? dy / dl : 1.0f;
+        }
+    }
+    if (e.vx > 0.05f) e.facing = 1; else if (e.vx < -0.05f) e.facing = -1;
+}
+
+
 
 /* --- the bat: why it misses -------------------------------------------------
    It picks a heading, commits to it for a stretch of frames, and cannot turn
@@ -1437,6 +1600,9 @@ static void entTickMode(World& w, Player& fallbackPlayer, Inventory& fallbackInv
         case ENT_DUMMY:   dummyTick(w, e, p);   break;
         case ENT_SHAMBLER: shamblerTick(w, e, p); break;
         case ENT_THRESHER: thresherTick(w, e, p); break;
+        case ENT_CULVERIN: culverinTick(w, e, p); break;
+        case ENT_WISP:     wispTick(w, e, p); break;
+        case ENT_STOOPER:  stooperTick(w, e, p); break;
         default: break;
         }
 
@@ -1849,6 +2015,47 @@ static void entityPixelMotion(const Entity& e, int entityIndex, int sx, int sy,
         } else if (sy >= 5 && sy <= 10) {
             *dy += (int)((tick / 24u) & 1u);               /* slow idle weight shift */
         }
+        break;
+    }
+    case ENT_CULVERIN: {
+        /* Legs on the gait clock like every other walker, even though it
+           barely moves -- when it does reposition it should not slide. */
+        const int gait = gaitStep(e);
+        if (sy >= 10) *dx += (((sx / 2) + gait) & 1) ? 1 : -1;
+        /* THE MUZZLE IS THE TELL. It rises as the reload completes, so the
+           frame before a volley looks different from the two seconds of
+           reloading before it -- which is the whole counterplay. shotTimer
+           counts DOWN to the shot, so a small value is an imminent one. */
+        const bool primed = e.shotTimer < 14;
+        if (sy <= 5 && sx >= 7) *dy -= primed ? 1 : 0;
+        if (sy <= 4) *dx += (int)((tick / 20u) & 1u);      /* barrel settle */
+        break;
+    }
+    case ENT_WISP: {
+        /* A halo that breathes and a core that does not, so the creature reads
+           as something suspended inside something else. No wings: this one
+           drifts, and giving it a beat would make it the third bat. */
+        const int pulse = (int)((tick / 11u) & 3u);
+        static const int ring[4] = { 0, 1, 0, -1 };
+        const int cx = sx - 6, cy = sy - 5;
+        const bool halo = cx * cx + cy * cy > 9;
+        if (halo) {
+            *dx += cx > 0 ? ring[pulse] : -ring[pulse];
+            *dy += cy > 0 ? ring[pulse] : -ring[pulse];
+        } else if (sy >= 4 && sy <= 6) {
+            *dy += (int)((tick / 23u) & 1u);               /* the core, slower */
+        }
+        break;
+    }
+    case ENT_STOOPER: {
+        /* Wings sweep BACK as it commits and spread while it holds, so the
+           silhouette announces the dive a moment before the dive. actTimer is
+           negative while committed -- see stooperTick. */
+        const bool committed = e.actTimer < 0;
+        static const int beat[4] = { 0, -1, 0, 1 };
+        const int flap = committed ? 0 : beat[(tick / 5u) & 3u];
+        if (sx <= 6 && sy <= 7) { *dy += flap; *dx += committed ? 1 : 0; }
+        if (committed && sy >= 7) *dy += 1;                /* tucked and falling */
         break;
     }
     case ENT_DUMMY: {

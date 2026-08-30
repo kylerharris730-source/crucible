@@ -71,5 +71,14 @@ int main(void) {
                THRESHER_IDLE_FRAMES, THRESHER_SPR_W, THRESHER_SPR_H);
     writeStrip("build/rig-shambler-walk.ppm", g_shamblerWalk[0],
                SHAMBLER_WALK_FRAMES, SHAMBLER_SPR_W, SHAMBLER_SPR_H);
+
+    /* The hand-drawn creatures too. Same reason: character art is typed in as
+       a grid of letters, and a letter in the wrong column is invisible in the
+       source and obvious the moment it is drawn. */
+    static u32 sheet[4][SPR_W * SPR_H];
+    const int ids[4] = { SPR_CULVERIN, SPR_WISP, SPR_STOOPER, SPR_SPITTER };
+    for (int k = 0; k < 4; ++k)
+        memcpy(sheet[k], g_sprite[ids[k]], sizeof(sheet[k]));
+    writeStrip("build/spr-layer2.ppm", sheet[0], 4, SPR_W, SPR_H);
     return 0;
 }

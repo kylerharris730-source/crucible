@@ -31,7 +31,7 @@ int main() {
        a species and forgetting a row here zero-fills it, so both samples come
        from frame 0 and the creature is reported as not animating when the real
        fault is in this table -- checked below rather than left as a puzzle. */
-    const int later[ENT_COUNT] = { 0, 5, 6, 9, 7, 4, 6, 6, 6, 8, 6 };
+    const int later[ENT_COUNT] = { 0, 5, 6, 9, 7, 4, 6, 6, 6, 8, 6, 21, 12, 6 };
 
     for (int type = ENT_NONE + 1; type < ENT_COUNT; ++type) {
         if (later[type] == 0) {

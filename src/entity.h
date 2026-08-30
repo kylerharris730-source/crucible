@@ -81,6 +81,12 @@ enum EntityType {
        on its box in ENT_DEFS. The first creature whose SKELETON is not the
        humanoid one. */
     ENT_THRESHER,
+    /* Layer 2 continued: the archetypes layer 1 has, done differently. A
+       volley shooter against the Spitter drip, and two fliers that fail to
+       reach you in ways the Bat and the Moth do not. */
+    ENT_CULVERIN,
+    ENT_WISP,
+    ENT_STOOPER,
     ENT_COUNT
 };
 
