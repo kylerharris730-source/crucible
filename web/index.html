@@ -381,8 +381,9 @@
     about 1.5&nbsp;MB, and it runs on any desktop browser.
   </p>
   <p>
-    The <b>Windows download</b> is the fuller version: it keeps saves, and it has
-    direct-IP multiplayer, neither of which a browser tab can do. It is the same
+    Both versions <b>keep ten save slots</b>. The <b>Windows download</b> is still
+    the fuller one: it has direct-IP multiplayer, which a browser tab cannot do,
+    and its saves are ordinary files you can move between machines. It is the same
     game and the same code &mdash; the browser build is that code compiled to
     WebAssembly rather than a cut-down port.
   </p>
@@ -397,8 +398,16 @@
 
   <h3>Does the browser version save my world?</h3>
   <p>
-    No. A tab has nowhere durable to put it, so anything you build there is gone
-    when you reload. The Windows build saves normally, in ten slots.
+    Yes &mdash; the same ten slots as the Windows build, kept in your browser's own
+    storage, so they survive closing the tab and restarting your computer.
+  </p>
+  <p>
+    Two things worth knowing, because they are the ways it can bite you. The saves
+    live in <b>this browser on this device</b>: they will not follow you to another
+    computer, or even to a different browser on the same one. And because they are
+    site data, <b>clearing your browsing data will delete them</b>, as will playing
+    in a private window. If a world matters to you, the Windows build keeps its
+    saves as ordinary files instead.
   </p>
 
   <h3>Why is there no multiplayer in the browser?</h3>
@@ -439,8 +448,8 @@
   <b>Cinderlift</b> &mdash; a falling-sand sandbox with real heat, pressure and circuits.
   <a href="https://github.com/kylerharris730-source/crucible">Source</a> &middot;
   <a href="https://github.com/kylerharris730-source/crucible/releases">Releases</a><br>
-  This browser build is <b>single-player only</b> and does <b>not keep saves</b>.
-  The Windows download does both.
+  This browser build is <b>single-player only</b>; its ten save slots live in this
+  browser's storage. The Windows download adds multiplayer and saves to files.
 </footer>
 
 <!-- Shown after the download has already started; see askBeforeDownload(). -->
