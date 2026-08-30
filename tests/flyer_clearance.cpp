@@ -52,6 +52,36 @@ static bool crosses(EntityType type, bool far) {
     return false;
 }
 
+/* A full-width shelf with one opening exactly as wide as the real 9-cell
+   collision body. The player is above-left and the creature starts below-
+   right, so the direct line hits rock and it has to travel sideways to the
+   gate before climbing. The old 12-cell rounded navigation body erased this
+   route even though moveAxis could pass through it. */
+static bool narrowGate(EntityType type) {
+    World& w = g_testWorld;
+    w.reset();
+    fill(w, PLAY_X0, 500, PLAY_X1, 540, MAT_STONE);
+    fill(w, 998, 500, 1006, 540, MAT_EMPTY); /* exactly nine cells wide */
+    w.setLiveWindow(760, 300, 1420, 720);
+
+    Player& p = g_player;
+    p.reset(1002.0f, 450.0f);
+    p.alive = true; p.hp = PLAYER_HP_MAX;
+
+    entReset();
+    const int slot = entSpawn(w, type, 1150.0f, 600.0f);
+    if (slot < 0) return false;
+    for (int frame = 0; frame < 3600; ++frame) {
+        p.reset(1002.0f, 450.0f);
+        p.alive = true; p.hp = PLAYER_HP_MAX;
+        entTick(w, p, g_inv);
+        const Entity& e = g_entities[slot];
+        if (e.type == ENT_NONE) return false;
+        if (e.centreY() < 490.0f) return true;
+    }
+    return false;
+}
+
 int main() {
     initMaterials();
     initItems();
@@ -61,10 +91,14 @@ int main() {
     const bool moth = crosses(ENT_MOTH, false);
     const bool farBat = crosses(ENT_BAT, true);
     const bool farMoth = crosses(ENT_MOTH, true);
+    const bool gateBat = narrowGate(ENT_BAT);
+    const bool gateMoth = narrowGate(ENT_MOTH);
     printf("body-sized detour: bat %s, moth %s; far bat %s, far moth %s\n",
            bat ? "passed" : "STUCK", moth ? "passed" : "STUCK",
            farBat ? "passed" : "STUCK", farMoth ? "passed" : "STUCK");
-    if (!bat || !moth || !farBat || !farMoth) return 1;
+    printf("exact-width gate: bat %s, moth %s\n",
+           gateBat ? "passed" : "STUCK", gateMoth ? "passed" : "STUCK");
+    if (!bat || !moth || !farBat || !farMoth || !gateBat || !gateMoth) return 1;
     puts("PASS");
     return 0;
 }

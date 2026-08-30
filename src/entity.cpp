@@ -697,12 +697,95 @@ static bool flyerLineClear(const World& w, const Entity& e, float tx, float ty) 
     return true;
 }
 
+/* Read the shared field, then bridge the small gap between its coarse nodes
+   and the creature's continuous position. A flyer pressed against an uneven
+   cave wall can sit in a perfectly legal 9x7 box whose containing 4x4 nav node
+   is not a legal representative point. Returning "no route" there used to
+   hand control back to the straight-line chase, which is exactly the command
+   that keeps it pressed into that wall forever.
+
+   The short probes below look for an open point that rejoins the flow field.
+   If the field itself says this is its target while the player is still hidden
+   (usually the wrong side of a thin ledge), keep a consistent tangent using
+   facing rather than stopping. That wall-following fallback is deliberately
+   local; the shared breadth-first field still chooses the actual long route. */
+static bool flyerRouteHeading(const World& w, const Entity& e,
+                              float targetX, float targetY,
+                              float* outX, float* outY) {
+    int rx = 0, ry = 0;
+    if (navFlyHeading((int)e.centreX(), e.bottom(), &rx, &ry) && (rx || ry)) {
+        *outX = (float)rx; *outY = (float)ry;
+        if (rx && ry) { *outX *= 0.70710678f; *outY *= 0.70710678f; }
+        return true;
+    }
+
+    static const float DX[16] = {
+         1.0000f,  0.9239f,  0.7071f,  0.3827f,
+         0.0000f, -0.3827f, -0.7071f, -0.9239f,
+        -1.0000f, -0.9239f, -0.7071f, -0.3827f,
+         0.0000f,  0.3827f,  0.7071f,  0.9239f
+    };
+    static const float DY[16] = {
+         0.0000f,  0.3827f,  0.7071f,  0.9239f,
+         1.0000f,  0.9239f,  0.7071f,  0.3827f,
+         0.0000f, -0.3827f, -0.7071f, -0.9239f,
+        -1.0000f, -0.9239f, -0.7071f, -0.3827f
+    };
+    const float cx = e.centreX(), cy = e.centreY();
+    float tx = targetX - cx, ty = targetY - cy;
+    const float tl = sqrtf(tx * tx + ty * ty);
+    if (tl > 0.01f) { tx /= tl; ty /= tl; }
+
+    const int hereDist = navDistAt((int)cx, e.bottom(), NAV_FLY);
+    int best = -1, bestField = 0x7FFFFFFF;
+    float bestScore = -1e30f;
+    const float look = 28.0f;
+    for (int k = 0; k < 16; ++k) {
+        const float px = cx + DX[k] * look, py = cy + DY[k] * look;
+        if (!flyerLineClear(w, e, px, py)) continue;
+        const int pd = navDistAt((int)px,
+            (int)(py + e.height() * 0.5f), NAV_FLY);
+
+        /* A reachable probe is the best recovery when our exact position fell
+           between coarse nodes. Once already at distance zero while still
+           blocked, however, that zero is a false closest-approach seed; ignore
+           field distance and skirt the wall instead of orbiting the bad seed. */
+        if (hereDist != 0 && pd >= 0) {
+            if (pd < bestField) { bestField = pd; best = k; }
+            continue;
+        }
+        if (bestField != 0x7FFFFFFF) continue;
+
+        const float toward = DX[k] * tx + DY[k] * ty;
+        const float tangent = DX[k] * (-ty * (float)e.facing) +
+                              DY[k] * ( tx * (float)e.facing);
+        float momentum = 0.0f;
+        const float vl = sqrtf(e.vx * e.vx + e.vy * e.vy);
+        if (vl > 0.05f) momentum = (DX[k] * e.vx + DY[k] * e.vy) / vl;
+        const float score = toward * 0.35f + tangent * 0.75f + momentum * 0.25f;
+        if (score > bestScore) { bestScore = score; best = k; }
+    }
+    if (best < 0) return false;
+    *outX = DX[best]; *outY = DY[best];
+    return true;
+}
+
 static void mothTick(World& w, Entity& e, const Player& p) {
     const EntityDef& d = ENT_DEFS[e.type];
 
     /* The stalk owns the poise and the dash; everything below is the drift,
        which for a moth means steering up the heat gradient. */
-    if (stalkTick(e, p, MOTH_STALK)) return;
+    const bool playerVisible = flyerLineClear(w, e, p.centreX(), p.centreY());
+    if (playerVisible) {
+        if (stalkTick(e, p, MOTH_STALK)) return;
+    } else {
+        /* A committed straight dash is intentionally bad at turning, but it
+           must not repeatedly choose a heading through rock. Route until the
+           moth actually has a body-clear attack line, then resume its normal
+           stop-and-lunge rhythm. */
+        e.actTimer = MOTH_STALK.drift + MOTH_STALK.poise;
+        e.telegraph = 0;
+    }
 
     /* Sample the temperature field on a ring and steer up the gradient. Eight
        directions at three distances is 24 reads, which against a cap of ten
@@ -748,11 +831,8 @@ static void mothTick(World& w, Entity& e, const Player& p) {
        space. Only an obstructed full-body line consults the clearance field,
        so a too-small tube becomes a route around it (or a stop at its mouth). */
     if (!flyerLineClear(w, e, targetX, targetY)) {
-        int rx = 0, ry = 0;
-        if (navFlyHeading((int)e.centreX(), e.bottom(), &rx, &ry)) {
-            wantX = (float)rx; wantY = (float)ry;
-            if (rx && ry) { wantX *= 0.70710678f; wantY *= 0.70710678f; }
-            if (!rx && !ry) { e.vx *= 0.82f; e.vy *= 0.82f; }
+        if (!flyerRouteHeading(w, e, targetX, targetY, &wantX, &wantY)) {
+            e.vx *= 0.82f; e.vy *= 0.82f;
         }
     }
     /* A wingbeat bob, so it does not travel as if on rails. Cosmetic, and it
@@ -1221,12 +1301,12 @@ static void batTick(const World& w, Entity& e, const Player& p) {
     const EntityDef& d = ENT_DEFS[e.type];
     if (--e.aimHold <= 0) {
         if (!flyerLineClear(w, e, p.centreX(), p.centreY())) {
-            int rx = 0, ry = 0;
-            if (navFlyHeading((int)e.centreX(), e.bottom(), &rx, &ry)) {
+            float rx = 0.0f, ry = 0.0f;
+            if (flyerRouteHeading(w, e, p.centreX(), p.centreY(), &rx, &ry)) {
                 /* Short commitments while negotiating terrain. Once the
                    player is visible, the original long dodgeable line resumes. */
-                e.aimX = e.centreX() + (float)rx * 64.0f;
-                e.aimY = e.centreY() + (float)ry * 64.0f;
+                e.aimX = e.centreX() + rx * 64.0f;
+                e.aimY = e.centreY() + ry * 64.0f;
                 e.aimHold = 8;
             } else {
                 e.aimX = p.centreX(); e.aimY = p.centreY(); e.aimHold = 12;

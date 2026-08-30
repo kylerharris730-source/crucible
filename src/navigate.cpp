@@ -28,6 +28,14 @@ static const int NAV_CLIMB  = 3;
 static const int NAV_LEVEL  = 2;
 static const int NAV_HEIGHT[NAV_CLASSES] = { 3, 6, 2 }; /* 12, 24, 8 cells */
 static const int NAV_WIDTH [NAV_CLASSES] = { 3, 3, 3 }; /* 12 cells wide */
+/* Both ordinary fliers are exactly this size. Their old fit class rounded the
+   box up to whole 4x4 nodes (12x8), which silently erased perfectly usable
+   openings and made the flow field report no route where the collision mover
+   could plainly pass. Flying nodes use the real collision box below; walkers
+   retain the deliberately conservative whole-node classes because their
+   routes also have to reason about floors, steps and headroom. */
+static const int NAV_FLY_BODY_W = 9;
+static const int NAV_FLY_BODY_H = 7;
 
 static const u16 NAV_FAR = 0xFFFF;
 
@@ -97,6 +105,13 @@ static bool blockOpen(const World& w, int wx, int wy) {
     return true;
 }
 
+static bool partialOpen(const World& w, int wx, int wy, int bw, int bh) {
+    for (int y = 0; y < bh; ++y)
+        for (int x = 0; x < bw; ++x)
+            if (playerSolid(w, wx + x, wy + y, SOLID_ANY)) return false;
+    return true;
+}
+
 static void readTerrain(const World& w) {
     for (int ny = 0; ny < NAV_H; ++ny) {
         const int wy = g_navY0 + (ny << NAV_SHIFT);
@@ -142,6 +157,37 @@ static void readTerrain(const World& w) {
         const int left = W / 2, right = W - left - 1;
         for (int ny = 0; ny < NAV_H; ++ny)
             for (int nx = 0; nx < NAV_W; ++nx) {
+                if (cls == NAV_FLY) {
+                    /* A fly node is the centre of its four-cell-wide column
+                       and the bottom of its four-cell-high row. Check the real
+                       9x7 body at that representative point instead of all
+                       twelve by eight cells touched by the coarse nodes. Most
+                       rock nodes fail in their first few samples, so this is
+                       far cheaper than making the entire field twice as fine. */
+                    const int i = ny * NAV_W + nx;
+                    if (!g_open[i]) { g_fit[cls][i] = 0; continue; }
+                    const int coreX0 = g_navX0 + (nx << NAV_SHIFT);
+                    const int coreY0 = g_navY0 + (ny << NAV_SHIFT);
+                    bool fit = nx > 0 && nx + 1 < NAV_W && ny > 0;
+                    /* The current 4x4 block was already tested by readTerrain.
+                       The body reaches into five neighbouring blocks. An open
+                       neighbour proves its portion in one cached byte; only a
+                       neighbour containing some rock needs its small edge
+                       sampled exactly. Spacious cave therefore stays entirely
+                       cached, and precision is paid for only along walls. */
+                    if (fit && !g_open[i - 1])
+                        fit = partialOpen(w, coreX0 - 2, coreY0, 2, 4);
+                    if (fit && !g_open[i + 1])
+                        fit = partialOpen(w, coreX0 + 4, coreY0, 3, 4);
+                    if (fit && !g_open[i - NAV_W])
+                        fit = partialOpen(w, coreX0, coreY0 - 3, 4, 3);
+                    if (fit && !g_open[i - NAV_W - 1])
+                        fit = partialOpen(w, coreX0 - 2, coreY0 - 3, 2, 3);
+                    if (fit && !g_open[i - NAV_W + 1])
+                        fit = partialOpen(w, coreX0 + 4, coreY0 - 3, 3, 3);
+                    g_fit[cls][i] = fit ? 1 : 0;
+                    continue;
+                }
                 bool fit = ny >= H - 1 && nx >= left && nx + right < NAV_W;
                 for (int xx = nx - left; fit && xx <= nx + right; ++xx)
                     if (g_head[ny * NAV_W + xx] < H) fit = false;
@@ -246,7 +292,15 @@ void navUpdate(const World& w, const float* seedX, const float* seedY, int seeds
         int idx[16], n = 0;
         for (int s = 0; s < seeds && n < 16; ++s) {
             const int tx = ((int)seedX[s] - g_navX0) >> NAV_SHIFT;
-            const int ty = ((int)seedY[s] - g_navY0) >> NAV_SHIFT;
+            /* seedY is a player's FOOT because that is the meaningful target
+               for walkers. A flyer's foot belongs around the player's centre,
+               not down in the floor under them. The old shared target often
+               selected the nearest fit box on the far side of a thin floor;
+               the field then led bats to the rock directly below the player
+               and truthfully announced that they had arrived. */
+            const int targetY = (int)seedY[s] -
+                (c == NAV_FLY ? (PLAYER_H - NAV_FLY_BODY_H) / 2 : 0);
+            const int ty = (targetY - g_navY0) >> NAV_SHIFT;
             int best = -1, bestD2 = 0x7FFFFFFF;
             /* Usually the exact node or the one above wins. If the player is
                inside a tube the class cannot enter, choose the closest place
