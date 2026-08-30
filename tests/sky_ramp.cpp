@@ -36,9 +36,11 @@ int main() {
        every row past the table to this entry, and the ground is far below the
        band, so this one entry is the whole daytime sky in normal play. */
     const u32 day = g_skyLut[SKY_BAND - 1];
-    check(B(day) > 120, "the everyday sky is a strong blue");
-    check(B(day) - R(day) > 80, "the everyday sky is blue, not grey");
-    check(B(day) > G(day) + 40, "blue leads green in the everyday sky");
+    check(B(day) > 120, "the everyday sky retains a blue cast");
+    check(B(day) - R(day) > 45, "the everyday sky is blue-grey, not neutral grey");
+    check(B(day) > G(day) + 15, "blue still leads green in the everyday sky");
+    check(B(day) < G(day) + 35, "the everyday sky stays muted rather than blue");
+    check(B(day) < R(day) + 75, "the everyday sky retains substantial grey haze");
 
     /* Space. Dark enough to read as black against the world, not merely dim. */
     const u32 top = g_skyLut[0];

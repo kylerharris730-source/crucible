@@ -16,7 +16,7 @@
    Build like the other harnesses, all of src except main.cpp:
 
      g++ -std=c++11 -O2 -Isrc tools/profile.cpp <src/*.cpp except main> \
-         -o build/profile.exe -lgdi32 -luser32 -lwinmm -lmsimg32 -lws2_32
+         -o artifacts/profile.exe -lgdi32 -luser32 -lwinmm -lmsimg32 -lws2_32
    ========================================================================== */
 #include "world.h"
 #include "materials.h"

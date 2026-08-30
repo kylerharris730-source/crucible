@@ -5,7 +5,7 @@ bytes, which needs no image library on the C++ side. PNG needs zlib and a
 handful of chunks, which Python already has -- so the conversion lives here
 rather than pulling an encoder into the game's build.
 
-    python scripts/ppm_to_png.py build/cover-night-lava.ppm web/og-cover.png
+    python scripts/ppm_to_png.py artifacts/visual/cover-night-warm.ppm web/og-cover.png
 """
 import struct
 import sys

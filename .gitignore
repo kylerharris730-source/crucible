@@ -1,8 +1,13 @@
 # Build output
 build/
+# Generated screenshots, profiling captures and local release verification.
+# These are useful working artifacts, but reproducible and often very large.
+artifacts/
 *.exe
 *.o
 *.obj
+__pycache__/
+*.pyc
 
 # Browser build output. web/index.html IS tracked -- it is the page. What sits
 # beside it is compiler output: the Pages workflow rebuilds both from src/ on

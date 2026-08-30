@@ -1386,7 +1386,7 @@ static void initZoneColours() {
         for (int k = 0; k < 16; ++k)
             g_caveLut[z][k] = lerpColor(LAYER_A[z], LAYER_B[z], k * 17);
 
-    /* The sky: space at the very top, deep blue for everything below it.
+    /* The sky: space at the very top, blue-grey daylight below it.
 
        Two facts about this table drive its shape, and neither is obvious from
        the loop. First, y here is an ABSOLUTE world row, and SKY_BAND is only
@@ -1400,9 +1400,11 @@ static void initZoneColours() {
 
        That everyday stop used to be a pale haze, and haze is what made the sky
        read as washed out at the only altitude most players ever occupy. It is
-       now a deep blue -- close to what used to be reserved for the top of the
-       world -- because the sky being BLUE matters more than the sky suggesting
-       aerial distance across a band the player almost never flies through.
+       now a blue-grey rather than either neutral haze or saturated blue.
+       Pushing the lower stops as saturated as the high atmosphere made the
+       entire outdoor backdrop read as one painted sheet. The surface colour
+       keeps blue in the lead, but red and green are close enough behind it to
+       make the distance feel hazy again.
 
        Above it the ramp keeps going the way it looks like it should: thinner
        air, darker and less scattered, until it reaches actual space. The stops
@@ -1418,8 +1420,8 @@ static void initZoneColours() {
         {            0, 0x04060C },   /* space */
         {          150, 0x0A1430 },   /* the last of the blue draining out */
         {          430, 0x18396E },   /* high thin air */
-        {          860, 0x24528C },
-        { SKY_BAND - 1, 0x31699F },   /* the everyday sky -- see above */
+        {          860, 0x486982 },
+        { SKY_BAND - 1, 0x5E7F99 },   /* the everyday sky -- see above */
     };
     const int nStop = (int)(sizeof(STOPS) / sizeof(STOPS[0]));
     for (int y = 0; y < SKY_BAND; ++y) {

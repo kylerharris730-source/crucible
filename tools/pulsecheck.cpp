@@ -25,7 +25,7 @@
    except main.cpp AND device.cpp:
 
      g++ -std=c++11 -O2 -Isrc tools/pulsecheck.cpp <src except main, device> \
-         -o build/pulsecheck.exe -lgdi32 -luser32 -lwinmm -lmsimg32 -lws2_32
+         -o artifacts/pulsecheck.exe -lgdi32 -luser32 -lwinmm -lmsimg32 -lws2_32
    ========================================================================== */
 #include "device.cpp"
 

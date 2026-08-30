@@ -12,7 +12,7 @@
    frame 0 without a jump.
 
    Build like the other harnesses, then:
-     ./build/rigshot.exe && python scripts/ppm_to_png.py build/rig-thresher.ppm out.png
+     ./artifacts/rigshot.exe && python scripts/ppm_to_png.py artifacts/visual/rig-thresher-walk.ppm out.png
    ========================================================================== */
 #include "world.h"
 #include "materials.h"
@@ -26,6 +26,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <direct.h>
 
 static const int ZOOM = 6;
 /* A flat mid grey behind everything: these sprites are transparent where they
@@ -61,15 +62,17 @@ static bool writeStrip(const char* path, const u32* frames, int count,
 }
 
 int main(void) {
+    _mkdir("artifacts");
+    _mkdir("artifacts\\visual");
     initMaterials();
     initItems();
     initSprites();
 
-    writeStrip("build/rig-thresher-walk.ppm", g_thresherWalk[0],
+    writeStrip("artifacts/visual/rig-thresher-walk.ppm", g_thresherWalk[0],
                THRESHER_WALK_FRAMES, THRESHER_SPR_W, THRESHER_SPR_H);
-    writeStrip("build/rig-thresher-idle.ppm", g_thresherIdle[0],
+    writeStrip("artifacts/visual/rig-thresher-idle.ppm", g_thresherIdle[0],
                THRESHER_IDLE_FRAMES, THRESHER_SPR_W, THRESHER_SPR_H);
-    writeStrip("build/rig-shambler-walk.ppm", g_shamblerWalk[0],
+    writeStrip("artifacts/visual/rig-shambler-walk.ppm", g_shamblerWalk[0],
                SHAMBLER_WALK_FRAMES, SHAMBLER_SPR_W, SHAMBLER_SPR_H);
 
     /* The hand-drawn creatures too. Same reason: character art is typed in as
@@ -79,6 +82,6 @@ int main(void) {
     const int ids[4] = { SPR_CULVERIN, SPR_WISP, SPR_STOOPER, SPR_SPITTER };
     for (int k = 0; k < 4; ++k)
         memcpy(sheet[k], g_sprite[ids[k]], sizeof(sheet[k]));
-    writeStrip("build/spr-layer2.ppm", sheet[0], 4, SPR_W, SPR_H);
+    writeStrip("artifacts/visual/spr-layer2.ppm", sheet[0], 4, SPR_W, SPR_H);
     return 0;
 }

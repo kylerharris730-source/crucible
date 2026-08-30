@@ -1,6 +1,7 @@
 @echo off
 setlocal enabledelayedexpansion
 if not exist build mkdir build
+if not exist build\obj mkdir build\obj
 
 REM --- version resource ------------------------------------------------------
 REM This one matters more than the game's. The launcher is what was reported
@@ -25,7 +26,7 @@ if defined VER_TAG (
 if "!VER_MA!"=="" set VER_MA=0
 if "!VER_MI!"=="" set VER_MI=0
 if "!VER_PA!"=="" set VER_PA=0
-windres res\version.rc -o build/version_launcher.o ^
+windres res\version.rc -o build/obj/version_launcher.o ^
     -DVER_MAJOR=!VER_MA! -DVER_MINOR=!VER_MI! -DVER_PATCH=!VER_PA! -DVER_TARGET=2
 if errorlevel 1 (
     echo VERSION RESOURCE FAILED -- existing launcher left untouched
@@ -37,7 +38,7 @@ REM full static runtime linking: GitHub's 64-bit MinGW otherwise leaves a hidden
 REM libwinpthread-1.dll dependency even with static-libgcc/static-libstdc++.
 REM That dependency exists on the CI runner but not on an ordinary Windows PC.
 g++ -std=c++11 -O2 -Wall -Wextra -mwindows -static -static-libgcc -static-libstdc++ ^
-    launcher\main.cpp build/version_launcher.o -o build\cinderlift-launcher.new.exe ^
+    launcher\main.cpp build/obj/version_launcher.o -o build\cinderlift-launcher.new.exe ^
     -lwininet -ladvapi32 -lshell32 -lgdi32 -luser32
 if errorlevel 1 (
     del /q build\cinderlift-launcher.new.exe 2>nul

@@ -29,12 +29,13 @@ VER_NUM := $(patsubst v%,%,$(VER_TAG))
 VER_MA  := $(or $(word 1,$(subst ., ,$(VER_NUM))),0)
 VER_MI  := $(or $(word 2,$(subst ., ,$(VER_NUM))),0)
 VER_PA  := $(or $(word 3,$(subst ., ,$(VER_NUM))),0)
-RES     := build/version_game.o
+OBJDIR  := build/obj
+RES     := $(OBJDIR)/version_game.o
 
 all: $(OUT)
 
 $(RES): res/version.rc
-	@if not exist build mkdir build
+	@if not exist $(OBJDIR) mkdir $(OBJDIR)
 	windres res/version.rc -o $(RES) \
 	    -DVER_MAJOR=$(VER_MA) -DVER_MINOR=$(VER_MI) -DVER_PATCH=$(VER_PA) -DVER_TARGET=1
 
@@ -46,6 +47,12 @@ run: $(OUT)
 	$(OUT)
 
 clean:
-	@if exist build rmdir /s /q build
+	@if exist $(OUT) del /q $(OUT)
+	@if exist build\cinderlift.new.exe del /q build\cinderlift.new.exe
+	@if exist $(OBJDIR) rmdir /s /q $(OBJDIR)
+
+# Saves deliberately live beside a directly launched development executable.
+# Never recursively remove build here: `make clean` must clean compiler output,
+# not erase the user's worlds or the separately built launcher.
 
 .PHONY: all run clean

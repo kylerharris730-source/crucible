@@ -16,7 +16,7 @@
    Build (all of src except main.cpp, exactly like the test harnesses):
 
      g++ -std=c++11 -O2 -Isrc tools/cover.cpp <src/*.cpp except main> \
-         -o build/cover.exe -lgdi32 -luser32 -lwinmm -lmsimg32 -lws2_32
+         -o artifacts/cover.exe -lgdi32 -luser32 -lwinmm -lmsimg32 -lws2_32
 
    Writes PPM, which is a header and raw bytes -- no PNG encoder, no image
    library, and scripts/ppm_to_png.py turns them into the real thing.
@@ -33,6 +33,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <direct.h>
 #include <string.h>
 
 static World g_coverWorld;
@@ -142,6 +143,8 @@ struct Variant {
 };
 
 int main(void) {
+    _mkdir("artifacts");
+    _mkdir("artifacts\\visual");
     initMaterials();
     initItems();
     g_coverWorld.reset();
@@ -241,7 +244,7 @@ int main(void) {
         renderView(g_coverWorld, g_view, VIEW_NORMAL, camX, camY, true);
 
         char path[128];
-        sprintf(path, "build/cover-%s.ppm", v.name);
+        sprintf(path, "artifacts/visual/cover-%s.ppm", v.name);
         if (writePPM(path, g_view))
             printf("  %-11s daylight=%3d  cam=%d,%d  -> %s\n",
                    v.name, dayLight(), camX, camY, path);

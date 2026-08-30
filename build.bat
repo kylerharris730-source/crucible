@@ -1,6 +1,7 @@
 @echo off
 setlocal enabledelayedexpansion
 if not exist build mkdir build
+if not exist build\obj mkdir build\obj
 
 REM Every .cpp in src, discovered rather than listed.
 REM
@@ -59,7 +60,7 @@ if defined VER_TAG (
 if "!VER_MA!"=="" set VER_MA=0
 if "!VER_MI!"=="" set VER_MI=0
 if "!VER_PA!"=="" set VER_PA=0
-windres res\version.rc -o build\version_game.o ^
+windres res\version.rc -o build\obj\version_game.o ^
     -DVER_MAJOR=!VER_MA! -DVER_MINOR=!VER_MI! -DVER_PATCH=!VER_PA! -DVER_TARGET=1
 if errorlevel 1 (
     echo.
@@ -79,7 +80,7 @@ REM -static, not only -static-libgcc/-static-libstdc++. The 64-bit MinGW used
 REM by GitHub Actions builds libstdc++ against libwinpthread; leaving that last
 REM runtime dynamic produced executables that worked on the runner and failed
 REM on clean Windows installs with "libwinpthread-1.dll was not found".
-g++ -std=c++11 -O2 -Wall -Wextra -mwindows -static -static-libgcc -static-libstdc++ -DCINDERLIFT_BUILD_ID=\"!BUILD_ID!\" !SRC! build/version_game.o ^
+g++ -std=c++11 -O2 -Wall -Wextra -mwindows -static -static-libgcc -static-libstdc++ -DCINDERLIFT_BUILD_ID=\"!BUILD_ID!\" !SRC! build/obj/version_game.o ^
     -o build\cinderlift.new.exe ^
     -lgdi32 -luser32 -lwinmm -lmsimg32 -lws2_32
 
