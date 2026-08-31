@@ -32,9 +32,10 @@
      why that is left alone. So this is normally an absolute workers.dev URL.
 
      Empty means no broker has been set up, and everything falls through to
-     players pasting codes by hand. That is the shipped default: the game must
-     not depend on a service that may never be deployed. */
-  var BASE = '';
+     players pasting codes by hand -- which stays true whatever is written
+     here, because an unreachable broker is treated exactly like an absent
+     one. Setting this is an optimisation, never a dependency. */
+  var BASE = 'https://cinderlift-signal.kylerharris730.workers.dev';
 
   /* How long a host waits for their friend before giving up. Ten minutes
      matches the room's life on the server; a host who has walked away is
