@@ -633,12 +633,26 @@ int projUpdate(World& w) {
 
             const u8 m = w.at(cx, cy).mat;
             if (m == MAT_EMPTY) continue;
-            /* A torch is mounted scenery, not cover. It is deliberately
-               passable to people already; making a bullet spend itself on its
-               one-cell flame turned a carefully lit tunnel into accidental
-               target practice. Keep blast damage physical, but ordinary shots
-               neither break nor stop on a torch. */
-            if (m == MAT_TORCH) continue;
+            /* What you can walk through, a shot flies through.
+
+               This was a special case for the torch: mounted scenery, not
+               cover, and making a bullet spend itself on its one-cell flame
+               turned a carefully lit tunnel into accidental target practice.
+               The same argument covers a wheat field exactly, and a field is
+               where it actually bites -- crops are planted in the open, in
+               quantity, at chest height, so a stalk of flax was reliably
+               eating shots aimed at something behind it.
+
+               g_matPassable already draws this line and had the torch on it,
+               so the rule is not new, only applied where it always belonged.
+               It brings leaves, saplings, rope, an open door and a platform
+               with it, and each of those reads correctly for the same reason:
+               none of them is something you would expect to stop a bolt.
+
+               Neither breaks nor stops, so a mining shot does not mow a field
+               on its way past either -- crops are harvested, not shot. Blast
+               damage stays physical; it does not come through here. */
+            if (g_matPassable[m]) continue;
 
             const int strength = g_matStrength[m];
             if (strength == STR_NOTHING) continue;   /* gases: fly straight through */
