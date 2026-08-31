@@ -29,8 +29,7 @@ games per day than this will see.
 
 ## Deploying
 
-You need a Cloudflare account with `cinderlift.com` already on it, which it is
-for DNS.
+You need a Cloudflare account with the domain on it, which you have for DNS.
 
 ```bash
 cd signal
@@ -40,28 +39,50 @@ wrangler login                 # once
 wrangler d1 create cinderlift-signal
 ```
 
-That prints a `database_id`. Put it in `wrangler.toml`, replacing
-`REPLACE_WITH_YOUR_DATABASE_ID`, then:
+That prints a `database_id` — put it in `wrangler.toml`. Then create the table
+and deploy:
 
 ```bash
 wrangler d1 execute cinderlift-signal --remote --file=schema.sql
 wrangler deploy
 ```
 
-Check it answers:
+### Where it gets served from
+
+The obvious choice — a path like `cinderlift.com/signal/*` — **does not work
+here**, and it fails silently, so it is worth understanding before you try it.
+
+A worker route only fires if Cloudflare is *proxying* the domain (the orange
+cloud). `cinderlift.com` is DNS-only, which is the normal way to point a domain
+at GitHub Pages: Pages answers directly and Cloudflare never sees the request.
+A route on a domain Cloudflare never sees cannot run. The deploy succeeds, the
+route is listed, and every request still lands on GitHub Pages.
+
+You could turn the proxy on. That also puts *every* request for the whole site
+through a path it has never been served over, in exchange for a nicer URL on one
+endpoint — and if SSL/TLS mode is Flexible rather than Full, a proxied Pages site
+redirect-loops. Not worth it for this.
+
+So the worker gets **its own hostname**. Register a workers.dev subdomain once:
+
+    https://dash.cloudflare.com/<your-account-id>/workers/onboarding
+
+Then `wrangler deploy` prints a URL like
+`https://cinderlift-signal.<subdomain>.workers.dev`. Put that in `BASE` at the
+top of `web/roomcode.js`, rebuild the site, and the game will start using it.
+
+Cross-origin is fine: the calls are GETs and `text/plain` POSTs, which are
+"simple requests" and do not even trigger a preflight.
+
+### Checking it
 
 ```bash
-curl https://cinderlift.com/signal/room/PROBE
+curl https://<your-worker-url>/room/PROBE
 ```
 
-`{"error":"no such code"}` is correct — it means the worker is alive and has no
-room by that name. Anything HTML means the route is not hooked up and the game
-will keep using the paste path.
-
-## If you change where it lives
-
-`wrangler.toml`'s route and `BASE` in `web/roomcode.js` are the only two places
-that know the address. Change both together.
+`{"error":"no such code"}` is correct — the worker is alive and has no room by
+that name. HTML means you are still hitting Pages and the game will quietly keep
+using the paste path.
 
 ## What it stores, and for how long
 

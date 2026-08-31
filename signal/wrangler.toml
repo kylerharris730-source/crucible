@@ -1,21 +1,45 @@
-# Deploy with:  npx wrangler deploy
+# Deploy with:  wrangler deploy
 #
-# The client finds this through web/signal.js. If you mount it somewhere other
-# than the route below, change SIGNAL_BASE there to match -- that is the only
-# coupling between the two.
+# ---------------------------------------------------------------------------
+# WHERE THIS IS SERVED FROM -- pick one, and match BASE in web/roomcode.js.
+#
+# The tidy option, a path on the game's own domain, needs Cloudflare to be
+# PROXYING cinderlift.com -- the orange cloud. It is not, and that is normal:
+# a GitHub Pages custom domain is usually left DNS-only so Pages answers
+# directly. A worker route on a domain Cloudflare never sees cannot fire, which
+# is exactly what happened on the first deploy here.
+#
+# Turning the proxy on would fix it and would also route every request for the
+# whole site through a path it has never been served over, in exchange for a
+# nicer URL on one endpoint. It can fail quietly too: a proxied Pages site with
+# SSL/TLS mode set to Flexible rather than Full will redirect-loop.
+#
+# So the default below is the separate hostname, which touches nothing that is
+# currently working. It costs cross-origin requests, and the worker already
+# answers those correctly -- the calls are GETs and text/plain POSTs, which are
+# "simple requests" and do not even trigger a preflight.
+# ---------------------------------------------------------------------------
 name = "cinderlift-signal"
 main = "worker.js"
 compatibility_date = "2025-01-01"
 
-# Serving from the game's own domain avoids a CORS preflight on every join and
-# keeps one name to remember. GitHub Pages keeps serving everything else; only
-# this path goes to the worker.
-routes = [
-  { pattern = "cinderlift.com/signal/*", zone_name = "cinderlift.com" }
-]
+# OPTION A (default): its own hostname. Register the subdomain once at
+#   https://dash.cloudflare.com/<account>/workers/onboarding
+# then `wrangler deploy` prints the URL. Put that URL in web/roomcode.js.
+workers_dev = true
+
+# OPTION B: a path on the game's domain. Requires the orange cloud on
+# cinderlift.com AND SSL/TLS mode Full. If you switch to this, set BASE in
+# web/roomcode.js back to '/signal'.
+# workers_dev = false
+# routes = [
+#   { pattern = "cinderlift.com/signal/*", zone_name = "cinderlift.com" }
+# ]
 
 [[d1_databases]]
 binding = "DB"
 database_name = "cinderlift-signal"
-# Filled in by: npx wrangler d1 create cinderlift-signal
-database_id = "REPLACE_WITH_YOUR_DATABASE_ID"
+# From: wrangler d1 create cinderlift-signal  (or `wrangler d1 list` later).
+# This is an identifier, not a secret: it names a database that only this
+# worker, bound by the account it is deployed under, can reach.
+database_id = "2c9ab469-4b96-4cc8-9c10-9ed3562e9ba0"

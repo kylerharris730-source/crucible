@@ -24,10 +24,17 @@
 (function () {
   'use strict';
 
-  /* Same origin as the page, so no preflight and no second name to remember.
-     Change this and signal/wrangler.toml's route together -- they are the only
-     two places that know where the broker lives. */
-  var BASE = '/signal';
+  /* Where the broker lives. This and signal/wrangler.toml are the only two
+     places that know, and they must agree.
+
+     A same-origin '/signal' would be tidier and needs Cloudflare to be proxying
+     cinderlift.com, which it is not -- see the long note in wrangler.toml for
+     why that is left alone. So this is normally an absolute workers.dev URL.
+
+     Empty means no broker has been set up, and everything falls through to
+     players pasting codes by hand. That is the shipped default: the game must
+     not depend on a service that may never be deployed. */
+  var BASE = '';
 
   /* How long a host waits for their friend before giving up. Ten minutes
      matches the room's life on the server; a host who has walked away is
@@ -61,6 +68,7 @@
     /* Has a broker been deployed at all? Answered by trying, because a config
        flag would be one more thing to get out of step with reality. */
     available: async function () {
+      if (!BASE) return false;
       try {
         var res = await fetch(url('/room/PROBE'), { method: 'GET' });
         /* 404 is the RIGHT answer here: it means a worker replied and has no
