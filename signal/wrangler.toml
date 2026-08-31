@@ -1,0 +1,21 @@
+# Deploy with:  npx wrangler deploy
+#
+# The client finds this through web/signal.js. If you mount it somewhere other
+# than the route below, change SIGNAL_BASE there to match -- that is the only
+# coupling between the two.
+name = "cinderlift-signal"
+main = "worker.js"
+compatibility_date = "2025-01-01"
+
+# Serving from the game's own domain avoids a CORS preflight on every join and
+# keeps one name to remember. GitHub Pages keeps serving everything else; only
+# this path goes to the worker.
+routes = [
+  { pattern = "cinderlift.com/signal/*", zone_name = "cinderlift.com" }
+]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "cinderlift-signal"
+# Filled in by: npx wrangler d1 create cinderlift-signal
+database_id = "REPLACE_WITH_YOUR_DATABASE_ID"
