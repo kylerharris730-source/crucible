@@ -495,7 +495,7 @@ int sparkCount() {
 /* Defined further down with the rest of the mote code; declared here because
    sparkStep nominates one and sparkClear disposes of them, and both come
    first. */
-static void shedAdd(int x, int y, int dx, int dy);
+static bool shedAdd(int x, int y, int dx, int dy);
 
 void sparkClear() {
     for (int i = 0; i < MAX_SPARKS; ++i) g_sparks[i].used = false;
@@ -842,7 +842,7 @@ int shedCount() {
 
 /* Dropped out of the open end at (x, y), heading the way the front was going.
    Silently discarded when the pool is full; see MAX_SHED. */
-static void shedAdd(int x, int y, int dx, int dy) {
+static bool shedAdd(int x, int y, int dx, int dy) {
     for (int i = 0; i < MAX_SHED; ++i) {
         ShedSpark& s = g_shed[i];
         if (s.used) continue;
@@ -856,8 +856,33 @@ static void shedAdd(int x, int y, int dx, int dy) {
         s.vy = (float)dy * 0.45f;
         s.life = SHED_LIFE;
         s.used = true;
-        return;
+        return true;
     }
+    return false;
+}
+
+bool shedPlace(int x, int y) {
+    if (x < PLAY_X0 || x > PLAY_X1 || y < PLAY_Y0 || y > PLAY_Y1) return false;
+    /* A placed mote has no wire-end momentum. Its existing random sideways
+       drift and gravity take over immediately, exactly as for a naturally shed
+       one after the initial kick has gone. */
+    return shedAdd(x, y, 0, 0);
+}
+
+bool shedTakeNear(int x, int y, int radius) {
+    int best = -1;
+    float bestD2 = (float)(radius * radius) + 1.0f;
+    for (int i = 0; i < MAX_SHED; ++i) {
+        const ShedSpark& s = g_shed[i];
+        if (!s.used) continue;
+        const float dx = s.x - ((float)x + 0.5f);
+        const float dy = s.y - ((float)y + 0.5f);
+        const float d2 = dx * dx + dy * dy;
+        if (d2 <= (float)(radius * radius) && d2 < bestD2) { best = i; bestD2 = d2; }
+    }
+    if (best < 0) return false;
+    g_shed[best].used = false;
+    return true;
 }
 
 /* Fall, and energise whatever conductor we land in.

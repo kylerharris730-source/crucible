@@ -148,6 +148,7 @@ static WINDOWPLACEMENT g_windowedPlacement = {};
    placing a material. */
 static const int TOOL_HEAT = MAT_COUNT;
 static const int TOOL_COOL = MAT_COUNT + 1;
+static const int TOOL_SPARK = MAT_COUNT + 2;
 static const int HEAT_STEP = 12;   /* degrees per frame under the brush */
 
 /* --- the palette ---------------------------------------------------------
@@ -262,6 +263,7 @@ static const BrushDef BRUSHES[] = {
     { MAT_COOLER,"Cooler"},
     { TOOL_HEAT, "Heat"  },
     { TOOL_COOL, "Cool"  },
+    { TOOL_SPARK,"Spark" },
     { MAT_EMPTY, "Erase" },
 };
 static const int N_BRUSH = (int)(sizeof(BRUSHES) / sizeof(BRUSHES[0]));
@@ -3921,6 +3923,16 @@ static void meleeTickFor(PlayerSession& session) {
     --session.swingFrame;
 }
 
+static bool captureLooseSparkFor(Inventory& inv, int x, int y) {
+    /* Prove the item fits before removing the signal from the world. Capturing
+       with a full pack must never turn an electrical pulse into silent loss. */
+    Inventory withSpark = inv;
+    if (withSpark.add(ITEM_SPARK, 1) != 0) return false;
+    if (!shedTakeNear(x, y, 3)) return false;
+    inv = withSpark;
+    return true;
+}
+
 static void applyPlayerUses(PlayerSession& session, const PlayerCommand& command) {
     const int undoSlot = (int)(&session - g_playerSessions);
     const bool recordUndo = netRole() != NET_CLIENT;
@@ -4055,6 +4067,12 @@ static void applyPlayerUses(PlayerSession& session, const PlayerCommand& command
                ITEMS[held.item].kind == ITEMK_IGNITE) {
         g_world.ignite(aim.x, aim.y, IGNITE_RADIUS);
     } else if (left && !right && !command.background && !held.empty() &&
+               ITEMS[held.item].kind == ITEMK_SPARK) {
+        if ((pressed & PCMD_USE_LEFT) && shedPlace(aim.x, aim.y)) {
+            const ItemId item = held.item;
+            inv.take(item, 1);
+        }
+    } else if (left && !right && !command.background && !held.empty() &&
                ITEMS[held.item].kind == ITEMK_EGG) {
         if (pressed & PCMD_USE_LEFT) {
             const int type = ITEMS[held.item].summons;
@@ -4062,6 +4080,10 @@ static void applyPlayerUses(PlayerSession& session, const PlayerCommand& command
             if (type && entSpawn(g_world, type, (float)aim.x, (float)aim.y) >= 0)
                 inv.take(item, 1);
         }
+    } else if (right && !command.background && (pressed & PCMD_USE_RIGHT) &&
+               captureLooseSparkFor(inv, aim.x, aim.y)) {
+        /* Deliberate capture wins over mining for this click. Standing beside
+           a working circuit never vacuums its signals out automatically. */
     } else if (command.background) {
         const ToolSpec tool = miningSpec(inv);
         if (recordUndo) {
@@ -4829,6 +4851,16 @@ static void applyBrush() {
         return;
     }
 
+    if (g_survival && g_playerOn && g_lmb && !g_rmb && !g_bgLayer
+        && !g_inv.held().empty() && ITEMS[g_inv.held().item].kind == ITEMK_SPARK) {
+        if (!g_useLatch) {
+            const ItemId item = g_inv.held().item;
+            if (shedPlace(aim.x, aim.y)) g_inv.take(item, 1);
+            g_useLatch = true;
+        }
+        return;
+    }
+
     /* Spawn eggs. Like a seed in that they consume the item and place nothing,
        and unlike everything else on this path in that what they create is not
        in the grid at all -- so they get their own branch rather than being
@@ -4863,6 +4895,11 @@ static void applyBrush() {
     }
 
     if (g_survival && g_playerOn && g_rmb) {
+        if (!g_useLatch && captureLooseSparkFor(g_inv, aim.x, aim.y)) {
+            g_useLatch = true;
+            g_pmx = aim.x; g_pmy = aim.y;
+            return;
+        }
         const ToolSpec d = digSpec();
         if (g_digCool <= 0) {
             digInto(g_world, g_inv, aim.x, aim.y, digRadius(), d.cellsPerBite,
@@ -4899,7 +4936,7 @@ static void applyBrush() {
     int steps = imax(abs(x1 - x0), abs(y1 - y0));
 
     const int sel = g_rmb ? (int)MAT_EMPTY : g_brushMat;
-    const bool undoable = sel != TOOL_HEAT && sel != TOOL_COOL;
+    const bool undoable = sel != TOOL_HEAT && sel != TOOL_COOL && sel != TOOL_SPARK;
     if (undoable) undoBegin(LOCAL_PLAYER_ID, 0);
     for (int s = 0; s <= steps; ++s) {
         int px = steps ? x0 + (x1 - x0) * s / steps : x1;
@@ -4920,6 +4957,7 @@ static void applyBrush() {
             if (undoable) undoCaptureDisc(LOCAL_PLAYER_ID, px, py, g_brushRadius);
             if (sel == TOOL_HEAT)      g_world.heat(px, py, g_brushRadius,  HEAT_STEP);
             else if (sel == TOOL_COOL) g_world.heat(px, py, g_brushRadius, -HEAT_STEP);
+            else if (sel == TOOL_SPARK) shedPlace(px, py);
             else if (g_bgLayer)        g_world.paintBg(px, py, g_brushRadius, (u8)sel);
             else                       g_world.paint(px, py, g_brushRadius, (u8)sel, g_overwrite);
         }
@@ -7921,6 +7959,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR commandLine, int) {
         COLORREF cr;
         if      (b == TOOL_HEAT) cr = RGB(226, 96, 40);
         else if (b == TOOL_COOL) cr = RGB(80, 152, 226);
+        else if (b == TOOL_SPARK) cr = RGB(255, 216, 112);
         else if (b == MAT_EMPTY) cr = RGB(38, 40, 48);
         else {
             u32 c = g_colorLut[(b << 8) | 0x08];

@@ -331,6 +331,26 @@ static const char* ART_MOD_TELEPORT[SPR_H] = {
     "..............", "..............",
 };
 
+/* A bright, asymmetric electrical fork rather than a generic star. The bent
+   main stroke reads as motion at inventory scale while the short side branch
+   identifies it with the branching pulse seen travelling through wire. */
+static const char* ART_SPARK[SPR_H] = {
+    "..............",
+    ".........ff...",
+    "........fff...",
+    ".......fe.....",
+    "......fe......",
+    "....ffffff....",
+    ".....ffff.....",
+    "......fe......",
+    ".....fe.......",
+    "....fee.......",
+    "...ee.........",
+    "..............",
+    "..............",
+    "..............",
+};
+
 
 /* --- the mining ladder -----------------------------------------------------
    A stubby bore pointing down-right: body at the top-left, a dark bit at the
@@ -2001,6 +2021,7 @@ void initSprites() {
     expand(SPR_MOD_HOMING, ART_MOD_HOMING);
     expand(SPR_MOD_TELEPORT, ART_MOD_TELEPORT);
     expand(SPR_WARP_WAND, ART_WARP_WAND);
+    expand(SPR_SPARK, ART_SPARK);
     expandMetal(SPR_ARMOUR_DRONE_VISOR,   ART_ARMOUR_HELM,    0x6FAFBE, 0x3D6C78);
     expandMetal(SPR_ARMOUR_DRONE_HARNESS, ART_ARMOUR_SUIT,    0x6FAFBE, 0x3D6C78);
     expandMetal(SPR_ARMOUR_DRONE_GREAVES, ART_ARMOUR_GREAVES, 0x6FAFBE, 0x3D6C78);

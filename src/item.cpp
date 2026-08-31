@@ -368,6 +368,12 @@ void initItems() {
     ITEMS[ITEM_WARP_WAND].shotEffect     = PROJ_EFFECT_TELEPORT;
     ITEMS[ITEM_WARP_WAND].sprite         = SPR_WARP_WAND;
 
+    ITEMS[ITEM_SPARK].name        = "Spark";
+    ITEMS[ITEM_SPARK].kind        = ITEMK_SPARK;
+    ITEMS[ITEM_SPARK].maxStack    = 999;
+    ITEMS[ITEM_SPARK].colour      = 0xFFD870;
+    ITEMS[ITEM_SPARK].sprite      = SPR_SPARK;
+
     /* --- the mining ladder --------------------------------------------
        Four tiers between bare hands and "clear whatever you want".
 
@@ -1544,6 +1550,8 @@ void initItems() {
         "Teleports you to wherever the bolt stops -- on impact, or where it "
         "runs out of flight. Holds one charge and takes three seconds to "
         "refill.";
+    ITEMS[ITEM_SPARK].description =
+        "A loose electrical mote. It drifts downward and starts a pulse when it touches a conductor; right-click one to capture it.";
     ITEMS[ITEM_BREAD].description =
         "Eat to restore health. All consumable healing shares one cooldown.";
     ITEMS[ITEM_FLINT].description = "Use on a nearby flammable material to ignite it.";

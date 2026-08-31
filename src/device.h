@@ -353,6 +353,10 @@ extern ShedSpark g_shed[MAX_SHED];
 
 int  shedCount();
 void shedClear();
+/* Put down or capture the loose, falling mote shed by an open wire end. This is
+   deliberately distinct from sparkAdd(), which creates current inside wire. */
+bool shedPlace(int x, int y);
+bool shedTakeNear(int x, int y, int radius);
 void shedDraw(u32* px, int camX, int camY);
 
 /* How far a spout pointed up will shove its own output to make room -- the

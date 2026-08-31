@@ -282,6 +282,8 @@ enum {
        MATERIAL. Inserting anything mid-enum renumbers everything after it
        and quietly turns saved swords into saved boots. */
     ITEM_WARP_WAND,
+    /* Captured circuit pulse. Appended because item ids are serialized. */
+    ITEM_SPARK,
     ITEM_COUNT
 };
 
@@ -388,7 +390,9 @@ enum ItemKind {
     ITEMK_MELEE,
     /* A carried crafting ingredient that is not a world cell. It has no use
        action of its own; recipes consume it by ItemId like any other input. */
-    ITEMK_COMPONENT
+    ITEMK_COMPONENT,
+    /* A stackable electrical pulse: consumed to energise a conductor. */
+    ITEMK_SPARK
 };
 
 /* How a melee weapon moves, which is the whole difference between the two
