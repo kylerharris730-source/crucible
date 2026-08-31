@@ -70,6 +70,17 @@
     if (el) return;
     el = document.createElement('div');
     el.id = 'mp';
+    /* SDL listens for keyboard events on <body> so the canvas keeps working
+       after any click around the game.  That also means events from these real
+       HTML inputs bubble into SDL, whose Emscripten handler prevents their
+       default action; the field is focused but the browser never inserts a
+       character.  Stop only the overlay's keyboard events before they reach
+       body.  Do not preventDefault: text editing, paste, shortcuts and Enter
+       still belong to the input itself.  Keyup is included so SDL can never
+       see one half of a press made in the panel. */
+    ['keydown', 'keyup', 'keypress'].forEach(function (type) {
+      el.addEventListener(type, function (e) { e.stopPropagation(); });
+    });
     document.body.appendChild(el);
     menu();
   }
