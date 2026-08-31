@@ -482,7 +482,25 @@ int projUpdate(World& w) {
            anything and several seconds after the click, is an explosion nobody
            can connect to an action they took. Blasts happen where you hit
            something. */
-        if (--p.life <= 0) { p.alive = false; continue; }
+        if (--p.life <= 0) {
+            p.alive = false;
+            /* A teleport shot is the exception, and deliberately so. Every
+               other payload needs a surface: an explosion or a puddle of
+               acid has to happen somewhere it can be seen to happen, and
+               inventing a landing cell out of the aim direction would put
+               it nowhere in particular.
+
+               Arriving does not need a surface. The bolt got where it got,
+               that place is open air by definition -- it stopped because it
+               ran out of flight, not because something was in the way -- and
+               a body will fit there far more readily than beside a wall. The
+               old rule made a shot that fell a cell short of the rock cost
+               you the charge and leave you standing where you were, which
+               reads as the wand misfiring rather than as a miss. */
+            if (p.effect == PROJ_EFFECT_TELEPORT)
+                teleportProjectileOwner(w, p, (int)p.x, (int)p.y);
+            continue;
+        }
 
         if (!p.hostile && p.homing > 0.0f) {
             int target = -1;

@@ -116,10 +116,13 @@ int main() {
     check(movedX > startX + 20.0f, "the shot took the player most of the way to the wall");
     check(movedX < (float)(PX + 70), "and stopped short of the rock rather than inside it");
 
-    /* The range limit is a real one, and missing costs you the charge. A wall
-       beyond speed*life is never reached, the shot expires in mid air, and an
-       expired shot has no landing cell to put anybody in. This is what makes a
-       cheap wand a tunnel tool rather than a free repositioning button. */
+    /* Overshooting is not a misfire. A wall beyond speed*life is never reached
+       and the bolt expires in mid air -- and it delivers there, because that
+       spot is open by definition and a body fits in it more easily than beside
+       rock. The range is a ceiling on how far one hop takes you, not a
+       condition on whether the hop happens; a shot dying a cell short of the
+       wall used to cost the charge and leave you standing still, which reads
+       as the wand breaking rather than as a miss. */
     for (int y = PY - 60; y <= PY + 60; ++y)
         for (int x = PX + 50; x <= PX + 70; ++x)
             g_world.setCell(x, y, MAT_EMPTY);
@@ -136,7 +139,38 @@ int main() {
               ws.power, ws.pierce, ws.life, ws.colour, 0, MAT_EMPTY,
               ws.damage, false, 0.0f, ws.effect, 0, 0.0f, 0);
     for (int f = 0; f < 400; ++f) projUpdate(g_world);
-    check(me.body.centreX() == farStart, "a shot that reaches nothing moves nobody");
+    const float overshot = me.body.centreX();
+    const float reach = ws.speed * (float)ws.life;
+    printf("overshoot: from x=%.0f to x=%.0f (reach %.0f, wall at %d)\n",
+           farStart, overshot, reach, FAR);
+    check(overshot > farStart + reach * 0.5f,
+          "a shot that reaches nothing still carries you most of its range");
+    check(overshot < (float)FAR,
+          "but no further than the bolt actually got");
+
+    /* --- dying just short of a wall still gets you there ------------------- */
+    /* The case that prompted this: a bolt that expires a cell or two before the
+       rock. It is the same expiry rule as above, but the landing has to cope
+       with arriving right against a surface rather than in open space, which is
+       where a body is hardest to fit. */
+    for (int y = PY - 60; y <= PY + 15; ++y)
+        for (int x = FAR; x <= FAR + 20; ++x)
+            g_world.setCell(x, y, MAT_EMPTY);
+    const int SHORT_WALL = PX + 4 + (int)reach + 2;   /* two cells past its last */
+    for (int y = PY - 60; y <= PY + 15; ++y)
+        for (int x = SHORT_WALL; x <= SHORT_WALL + 20; ++x)
+            g_world.setCell(x, y, MAT_STONE);
+    me.body.reset((float)PX, (float)PY);
+    projClear();
+    projSpawn((float)(PX + 4), (float)PY, ws.speed, 0.0f,
+              ws.power, ws.pierce, ws.life, ws.colour, 0, MAT_EMPTY,
+              ws.damage, false, 0.0f, ws.effect, 0, 0.0f, 0);
+    for (int f = 0; f < 400; ++f) projUpdate(g_world);
+    const float nearWall = me.body.centreX();
+    printf("expired two cells short of rock at %d: landed at %.0f\n", SHORT_WALL, nearWall);
+    check(nearWall > (float)(SHORT_WALL - 20),
+          "expiring just short of a wall still puts you up against it");
+    check(nearWall < (float)SHORT_WALL, "and not inside it");
 
     /* --- a wall puts you level with the mark, not back down the corridor --- */
     /* The case the backward-only search got wrong. A corridor too short for a

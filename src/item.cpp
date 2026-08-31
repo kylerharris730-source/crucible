@@ -339,12 +339,12 @@ void initItems() {
        you to wait, and two mechanisms saying it would just be one of them
        being ignored.
 
-       Short range, and short in the way that matters. A shot that runs out
-       of life in mid air does not teleport at all -- the effect needs an
-       impact to have a landing cell (see projectile.cpp) -- so 52 frames at
-       2.6 cells each is about a hundred and thirty cells of usable reach and
-       a wasted charge if you fire it at open sky. Still short enough that
-       the cheap one is happier underground than out in the open.
+       Range is what the shot's lifetime buys: 52 frames at 2.6 cells is
+       about a hundred and thirty cells. Firing further than that is not a
+       wasted charge -- the bolt delivers wherever it stops, including
+       simply running out of flight -- it just takes you as far as it got
+       rather than to the thing you were aiming at. So the honest
+       description is a fixed hop with a ceiling, not a grapple.
 
        No damage, and a beam so it does not arc into the floor at this
        speed. Pierce 1 so it stops at the first thing it meets, which is
@@ -1541,9 +1541,9 @@ void initItems() {
 
     ITEMS[ITEM_BOLTER].description = "A simple starter weapon. Damages creatures but cannot break terrain.";
     ITEMS[ITEM_WARP_WAND].description =
-        "Teleports you to where the bolt stops. Holds one charge and takes "
-        "three seconds to refill. Short range, and a shot that hits nothing "
-        "is a charge wasted.";
+        "Teleports you to wherever the bolt stops -- on impact, or where it "
+        "runs out of flight. Holds one charge and takes three seconds to "
+        "refill.";
     ITEMS[ITEM_BREAD].description =
         "Eat to restore health. All consumable healing shares one cooldown.";
     ITEMS[ITEM_FLINT].description = "Use on a nearby flammable material to ignite it.";
