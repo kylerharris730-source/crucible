@@ -394,6 +394,12 @@ const Recipe RECIPES[] = {
       ITEM_SPEAR_TUNGSTEN, 1, "Tungsten Spear", STATION_FORGE },
     { { { (ItemId)MAT_VOID, 3 }, { (ItemId)MAT_TUNGSTEN, 2 }, { (ItemId)MAT_GOLD, 2 } },
       ITEM_MOD_TELEPORT, 1, "Teleport Module", STATION_FORGE },
+    /* The cheap end of the same idea. Iron for the shaft and gold for the
+       part that does the work -- the gold is what ties it to the module
+       above, so the endgame version reads as the same craft done properly
+       rather than as an unrelated item that happens to share a colour. */
+    { { { (ItemId)MAT_IRON, 12 }, { (ItemId)MAT_GOLD, 4 }, { ITEM_NONE, 0 } },
+      ITEM_WARP_WAND, 1, "Warp Wand", STATION_FORGE },
 
     /* --- the chemistry bench -----------------------------------------------
        Glass work: optics, a bulb, and the two materials this whole plan

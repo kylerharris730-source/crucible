@@ -298,6 +298,32 @@ static const char* ART_MOD_HOMING[SPR_H] = {
     "..............", "..............",
 };
 
+/* --- the warp wand ---------------------------------------------------------
+   A rod held on the diagonal with the split-space colour burning at the tip.
+
+   Deliberately built from the TELEPORT MODULE's palette rather than new
+   entries: '^' is the module's spatial-split magenta and reusing it is what
+   makes a player who has seen one recognise the other as the same effect at
+   a different price. The shaft borrows the steel and the dark bit from the
+   mining ladder for the same reason -- it should read as forged, because it
+   is what iron buys. */
+static const char* ART_WARP_WAND[SPR_H] = {
+    "..............",
+    "..........^...",
+    ".........^^^..",
+    "........^^^^^.",
+    ".........^^^..",
+    "..........^...",
+    ".........2....",
+    "........2.....",
+    ".......2......",
+    "......2.......",
+    ".....k........",
+    "....k.........",
+    "...k..........",
+    "..............",
+};
+
 static const char* ART_MOD_TELEPORT[SPR_H] = {
     "..............", ".RRRRRRRRRRRR.", ".RBBBBBBBBBBR.", ".RB^^BBBB^^BR.",
     ".RB^^^BB^^^BR.", ".RBB^^BB^^BBR.", ".RBBB^BB^BBBR.", ".RBBB^BB^BBBR.",
@@ -1974,6 +2000,7 @@ void initSprites() {
     expand(SPR_MOD_BOUNCE, ART_MOD_BOUNCE);
     expand(SPR_MOD_HOMING, ART_MOD_HOMING);
     expand(SPR_MOD_TELEPORT, ART_MOD_TELEPORT);
+    expand(SPR_WARP_WAND, ART_WARP_WAND);
     expandMetal(SPR_ARMOUR_DRONE_VISOR,   ART_ARMOUR_HELM,    0x6FAFBE, 0x3D6C78);
     expandMetal(SPR_ARMOUR_DRONE_HARNESS, ART_ARMOUR_SUIT,    0x6FAFBE, 0x3D6C78);
     expandMetal(SPR_ARMOUR_DRONE_GREAVES, ART_ARMOUR_GREAVES, 0x6FAFBE, 0x3D6C78);

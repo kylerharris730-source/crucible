@@ -276,6 +276,12 @@ enum {
     ITEM_VANGUARD_HELM,
     ITEM_VANGUARD_PLATE,
     ITEM_VANGUARD_GREAVES,
+    /* Appended, not filed beside the other weapons, and that is forced
+       rather than lazy: item ids are written into saves as numbers, and the
+       loader's remap only understands the shift caused by adding a
+       MATERIAL. Inserting anything mid-enum renumbers everything after it
+       and quietly turns saved swords into saved boots. */
+    ITEM_WARP_WAND,
     ITEM_COUNT
 };
 

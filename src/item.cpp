@@ -327,6 +327,47 @@ void initItems() {
     ITEMS[ITEM_MOD_TELEPORT].shotEffect = PROJ_EFFECT_TELEPORT;
     ITEMS[ITEM_MOD_TELEPORT].sprite     = SPR_MOD_TELEPORT;
 
+    /* --- the warp wand ------------------------------------------------
+       Teleportation at iron prices: the module's trick, made slow and
+       rationed instead of instant and plentiful.
+
+       What costs you is the BATTERY, not the cooldown. Capacity and cost are
+       the same number, so the wand holds exactly one jump and then has to
+       fill back up at one unit a frame -- three seconds where you cannot go
+       anywhere, which is the whole character of the thing. baseDelay is
+       shorter than that on purpose: the empty bar is what should be telling
+       you to wait, and two mechanisms saying it would just be one of them
+       being ignored.
+
+       Short range, and short in the way that matters. A shot that runs out
+       of life in mid air does not teleport at all -- the effect needs an
+       impact to have a landing cell (see projectile.cpp) -- so 26 frames at
+       2.6 cells each is about seventy cells of usable reach and a wasted
+       charge if you fire it at open sky. That is the honest weakness of a
+       cheap one: it is a tunnel tool, and it is unreliable outdoors.
+
+       No damage, and a beam so it does not arc into the floor at this
+       speed. Pierce 1 so it stops at the first thing it meets, which is
+       where you want to arrive. */
+    ITEMS[ITEM_WARP_WAND].name           = "Warp Wand";
+    ITEMS[ITEM_WARP_WAND].kind           = ITEMK_TOOL;
+    ITEMS[ITEM_WARP_WAND].maxStack       = 1;
+    ITEMS[ITEM_WARP_WAND].colour         = 0xFF72D8;
+    ITEMS[ITEM_WARP_WAND].toolSlots      = 0;
+    ITEMS[ITEM_WARP_WAND].baseDelay      = 150;
+    ITEMS[ITEM_WARP_WAND].power          = 0;
+    ITEMS[ITEM_WARP_WAND].damage         = 0;
+    ITEMS[ITEM_WARP_WAND].pierce         = 1;
+    ITEMS[ITEM_WARP_WAND].energyCapacity = 180;
+    ITEMS[ITEM_WARP_WAND].energyRecharge = 1;
+    ITEMS[ITEM_WARP_WAND].energyCost     = 180;
+    ITEMS[ITEM_WARP_WAND].shotColour     = 0xFF72D8;
+    ITEMS[ITEM_WARP_WAND].shotSpeed      = 2.6f;
+    ITEMS[ITEM_WARP_WAND].shotBeam       = 1;
+    ITEMS[ITEM_WARP_WAND].shotLife       = 26;
+    ITEMS[ITEM_WARP_WAND].shotEffect     = PROJ_EFFECT_TELEPORT;
+    ITEMS[ITEM_WARP_WAND].sprite         = SPR_WARP_WAND;
+
     /* --- the mining ladder --------------------------------------------
        Four tiers between bare hands and "clear whatever you want".
 
@@ -1499,6 +1540,10 @@ void initItems() {
     ITEMS[ITEM_CHRONOMETER].description = "Reduces the delay between weapon shots.";
 
     ITEMS[ITEM_BOLTER].description = "A simple starter weapon. Damages creatures but cannot break terrain.";
+    ITEMS[ITEM_WARP_WAND].description =
+        "Teleports you to where the bolt stops. Holds one charge and takes "
+        "three seconds to refill. Short range, and a shot that hits nothing "
+        "is a charge wasted.";
     ITEMS[ITEM_BREAD].description =
         "Eat to restore health. All consumable healing shares one cooldown.";
     ITEMS[ITEM_FLINT].description = "Use on a nearby flammable material to ignite it.";
@@ -1913,13 +1958,29 @@ ToolShot toolResolve(const ItemStack& st) {
        stops working the moment one fails to be allocated, and it would fail the
        way this function's own comment describes: silently, as a stick. Nothing
        below this point is read here. */
-    if (tool.toolSlots == 0 && tool.damage > 0) {
+    /* `damage > 0` alone would have been the test, and it was, until a
+       slotless tool wanted to do something other than hurt: a wand whose
+       whole payload is an EFFECT has no damage by definition, and under the
+       old condition it fell through to the module loop, found no modules,
+       and reported itself unfireable -- a stick, in the words above. What
+       makes a slotless tool a weapon is having anything at all to deliver. */
+    if (tool.toolSlots == 0 && (tool.damage > 0 || tool.shotEffect != PROJ_EFFECT_NONE)) {
         s.canFire = true;
         s.power   = tool.power;
         s.damage  = tool.damage;
         s.pierce  = tool.pierce;
         s.blast   = tool.blast;
         s.colour  = tool.shotColour;
+        /* The rest of the shot, which this branch used to leave at its
+           defaults. Harmless while the only slotless tool was a plain bolt
+           that wanted every one of them; now that one carries an effect and
+           a price, silently dropping these would have fired a free,
+           full-range shot that did nothing on arrival. */
+        s.effect     = tool.shotEffect;
+        s.energyCost = tool.energyCost;
+        s.life       = tool.shotLife ? tool.shotLife : 90;
+        s.bounces    = tool.shotBounces;
+        s.homing     = tool.shotHoming;
         resolveFlight(tool, s);
         return s;
     }

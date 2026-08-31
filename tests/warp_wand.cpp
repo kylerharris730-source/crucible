@@ -1,0 +1,144 @@
+#include "world.h"
+#include "materials.h"
+#include "item.h"
+#include "sprite.h"
+#include "entity.h"
+#include "player.h"
+#include "projectile.h"
+#include "multiplayer.h"
+#include <stdio.h>
+#include <string.h>
+
+/* The wand fires, costs a full battery to do it, and puts you where it landed.
+
+   Most of this is about toolResolve's SLOTLESS branch, which is the path a tool
+   with no module sockets takes. It used to answer only for a plain bolt, and it
+   quietly dropped every shot field a bolt did not care about -- the effect, the
+   energy cost, the lifetime. A wand going down that path would have fired a
+   free, full-range shot that did nothing on arrival, which is a difficult
+   failure to see: the thing shoots, it just never teleports and never runs out.
+
+   So the Bolt Caster is checked here too. It is the other user of that branch,
+   and widening the gate that lets a wand through is exactly the kind of change
+   that takes the starter weapon with it.
+
+   Compile with all source files except main.cpp. */
+
+static int failures = 0;
+
+static void check(bool ok, const char* what) {
+    if (!ok) { fprintf(stderr, "FAIL: %s\n", what); ++failures; }
+}
+
+static ItemStack makeTool(ItemId item) {
+    ItemStack s;
+    s.item = item;
+    s.count = 1;
+    s.inst = toolInstNew(item);
+    return s;
+}
+
+int main() {
+    initMaterials();
+    initItems();
+    initSprites();
+    g_world.reset();
+
+    /* --- the wand resolves as a firing tool ------------------------------- */
+    ItemStack wand = makeTool(ITEM_WARP_WAND);
+    check(wand.inst != 0, "the wand gets a tool instance");
+    const ToolShot ws = toolResolve(wand);
+    check(ws.canFire, "a wand with no damage still counts as fireable");
+    check(ws.effect == PROJ_EFFECT_TELEPORT, "it carries the teleport effect");
+    check(ws.energyCost == ITEMS[ITEM_WARP_WAND].energyCost, "and its energy cost");
+    check(ws.life == ITEMS[ITEM_WARP_WAND].shotLife, "and its short lifetime");
+    check(ws.damage == 0, "it does no damage");
+
+    /* --- the starter weapon is untouched ---------------------------------- */
+    ItemStack bolter = makeTool(ITEM_BOLTER);
+    const ToolShot bs = toolResolve(bolter);
+    check(bs.canFire, "the Bolt Caster still fires");
+    check(bs.damage == ITEMS[ITEM_BOLTER].damage, "with its damage intact");
+    check(bs.effect == PROJ_EFFECT_NONE, "and no effect attached to it");
+    check(bs.energyCost == 0, "and no energy cost, so it never runs dry");
+
+    /* --- one charge, and then a wait -------------------------------------- */
+    check(toolShotEnergyAvailable(wand, ws), "a fresh wand has the charge for a shot");
+    toolCommitShot(wand, ws, ITEMS[ITEM_WARP_WAND].baseDelay);
+    check(!toolShotEnergyAvailable(wand, ws), "and none at all for a second one");
+
+    /* It fills at energyRecharge per frame, so the wait is a real one rather
+       than a cooldown that happens to be spelled differently. */
+    const int need = ITEMS[ITEM_WARP_WAND].energyCapacity /
+                     imax(1, (int)ITEMS[ITEM_WARP_WAND].energyRecharge);
+    for (int f = 0; f < need - 2; ++f) toolInstTick();
+    check(!toolShotEnergyAvailable(wand, ws), "still empty most of the way through");
+    for (int f = 0; f < 8; ++f) toolInstTick();
+    check(toolShotEnergyAvailable(wand, ws), "and ready once it has refilled");
+
+    /* --- and it actually moves you ---------------------------------------- */
+    /* The effect lives on the projectile, so this fires one the way the tool
+       would and checks the body arrived. A session has to be connected because
+       the shot relocates its OWNER, which is a player slot rather than a
+       Player* -- see teleportProjectileOwner. */
+    const int PX = 900, PY = 900;
+    for (int y = PY - 60; y <= PY + 60; ++y)
+        for (int x = PX - 20; x <= PX + 200; ++x)
+            g_world.setCell(x, y, MAT_EMPTY);
+    for (int y = PY - 60; y <= PY + 60; ++y)
+        for (int x = PX + 50; x <= PX + 70; ++x)
+            g_world.setCell(x, y, MAT_STONE);          /* a wall to arrive at */
+    /* PLAYER_H is 30, so a body centred on the shot's line reaches 15 cells
+       below it. A floor any higher means the backward search for somewhere
+       the whole player FITS fails at every step and nobody moves. */
+    for (int y = PY + 16; y <= PY + 40; ++y)
+        for (int x = PX - 20; x <= PX + 200; ++x)
+            g_world.setCell(x, y, MAT_STONE);          /* a floor to stand on */
+    g_world.setLiveWindow(PX - 200, PY - 200, PX + 400, PY + 200);
+
+    playerSessionsReset();
+    PlayerSession& me = g_playerSessions[0];
+    me.connected = true;
+    me.body.reset((float)PX, (float)PY);
+    me.body.alive = true;
+    const float startX = me.body.centreX();
+
+    projClear();
+    check(projSpawn((float)(PX + 4), (float)PY, ws.speed, 0.0f,
+                    ws.power, ws.pierce, ws.life, ws.colour, 0, MAT_EMPTY,
+                    ws.damage, false, 0.0f, ws.effect, 0, 0.0f, 0),
+          "the wand's shot spawns");
+    for (int f = 0; f < 240; ++f) projUpdate(g_world);
+
+    const float movedX = me.body.centreX();
+    printf("player went from x=%.0f to x=%.0f (wall at %d, wand reaches %d)\n",
+           startX, movedX, PX + 50, (int)(ws.speed * (float)ws.life));
+    check(movedX > startX + 20.0f, "the shot took the player most of the way to the wall");
+    check(movedX < (float)(PX + 70), "and stopped short of the rock rather than inside it");
+
+    /* The range limit is a real one, and missing costs you the charge. A wall
+       beyond speed*life is never reached, the shot expires in mid air, and an
+       expired shot has no landing cell to put anybody in. This is what makes a
+       cheap wand a tunnel tool rather than a free repositioning button. */
+    for (int y = PY - 60; y <= PY + 60; ++y)
+        for (int x = PX + 50; x <= PX + 70; ++x)
+            g_world.setCell(x, y, MAT_EMPTY);
+    for (int y = PY - 60; y <= PY + 15; ++y)
+        for (int x = PX + 150; x <= PX + 170; ++x)
+            g_world.setCell(x, y, MAT_STONE);
+    me.body.reset((float)PX, (float)PY);
+    const float farStart = me.body.centreX();
+    projClear();
+    projSpawn((float)(PX + 4), (float)PY, ws.speed, 0.0f,
+              ws.power, ws.pierce, ws.life, ws.colour, 0, MAT_EMPTY,
+              ws.damage, false, 0.0f, ws.effect, 0, 0.0f, 0);
+    for (int f = 0; f < 240; ++f) projUpdate(g_world);
+    check(me.body.centreX() == farStart, "a shot that reaches nothing moves nobody");
+
+    if (failures) {
+        fprintf(stderr, "%d warp wand check(s) failed\n", failures);
+        return 1;
+    }
+    puts("the wand fires once, spends its battery, and lands you at the wall");
+    return 0;
+}
