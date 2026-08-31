@@ -5799,6 +5799,46 @@ static void drawHeldTool(u32* px, const Player& body, const Inventory& inv,
     }
 }
 
+/* Stable by authoritative player id, not by this machine's local session slot:
+   a guest stores itself in slot zero but keeps the id the host assigned, so
+   every screen agrees that the same person is the same colour and number. */
+static u32 playerIdentityColour(PlayerId id) {
+    static const u32 COLOUR[MAX_PLAYERS] = {
+        0xF0B44C,  /* 1: amber */
+        0x55BFE6,  /* 2: cyan  */
+        0xD878D5,  /* 3: orchid */
+        0x72CC70   /* 4: green */
+    };
+    return COLOUR[id < MAX_PLAYERS ? id : 0];
+}
+
+static void drawPlayerIdentity(u32* px, const Player& body, PlayerId id) {
+    if (!body.alive) return;
+    /* Three by five digits inside a one-cell dark border. At the game's 2x
+       presentation this is a 10x14 screen-pixel badge: readable without being
+       a nameplate that hides the cave above the player. */
+    static const u8 DIGIT[MAX_PLAYERS][5] = {
+        { 2, 6, 2, 2, 7 },  /* 1 */
+        { 6, 1, 7, 4, 7 },  /* 2 */
+        { 6, 1, 7, 1, 6 },  /* 3 */
+        { 5, 5, 7, 1, 1 }   /* 4 */
+    };
+    const int index = id < MAX_PLAYERS ? (int)id : 0;
+    const int x0 = (int)body.centreX() - g_camX - 2;
+    const int y0 = body.top() - g_camY - 8;
+    for (int y = 0; y < 7; ++y) for (int x = 0; x < 5; ++x) {
+        const int vx = x0 + x, vy = y0 + y;
+        if (vx < 0 || vx >= VIEW_CELLS_W || vy < 0 || vy >= VIEW_CELLS_H) continue;
+        /* The interior stays dark even where the digit has no pixel, so rock,
+           steam and daylight cannot turn a sparse glyph into visual noise. */
+        u32 colour = 0x11151D;
+        if (x >= 1 && x <= 3 && y >= 1 && y <= 5 &&
+            (DIGIT[index][y - 1] & (1u << (3 - x))))
+            colour = playerIdentityColour(id);
+        px[vy * VIEW_CELLS_W + vx] = colour;
+    }
+}
+
 /* Celestials are a backdrop overlay, not cells: they never collide, shadow, or
    move with the terrain. Their path is tied to the same saved clock that drives
    skylight, so dawn cannot show a moon while the lighting says noon. */
@@ -7444,8 +7484,11 @@ static void clientRender(HWND hwnd) {
        character, so walking in front of one puts you in front of it. */
     circuitDraw(g_pixels, g_camX, g_camY, g_lightOn, g_circuitWireFrom, g_circuitWireFromPort);
     devDraw(g_world, g_pixels, g_camX, g_camY, g_lightOn);
+    const bool showPlayerIdentity = netRole() != NET_OFF;
     if (g_playerOn) {
-        g_player.draw(g_pixels, g_camX, g_camY, g_lightOn);
+        const u32 accent = showPlayerIdentity
+                         ? playerIdentityColour(g_playerSessions[0].networkId) : 0;
+        g_player.draw(g_pixels, g_camX, g_camY, g_lightOn, accent);
         if (g_survival) {
             const Aim aim = currentAim();
             drawHeldTool(g_pixels, g_player, g_inv, g_playerSessions[0],
@@ -7462,7 +7505,8 @@ static void clientRender(HWND hwnd) {
            its own a few cells from its owner. */
         const Player& body = (netRole() == NET_CLIENT && g_remoteVisualValid[slot])
                            ? g_remoteVisual[slot] : other.body;
-        body.draw(g_pixels, g_camX, g_camY, g_lightOn);
+        body.draw(g_pixels, g_camX, g_camY, g_lightOn,
+                  playerIdentityColour(other.networkId));
         /* No cursor to read, so a resting weapon points the way they face.
            A swing ignores this and uses the direction the stroke committed
            to, which is replicated -- so the attack you have to read and
@@ -7482,6 +7526,20 @@ static void clientRender(HWND hwnd) {
        over it rather than under. */
     shedDraw(g_pixels, g_camX, g_camY);
     projDraw(g_pixels, g_camX, g_camY);
+    /* A UI identity marker, so draw it after creatures, drones and shots. The
+       suit tint remains subject to cave lighting; the number deliberately does
+       not, or the place where identification matters most would erase it. */
+    if (showPlayerIdentity) {
+        if (g_playerOn)
+            drawPlayerIdentity(g_pixels, g_player, g_playerSessions[0].networkId);
+        for (int slot = 1; slot < MAX_PLAYERS; ++slot) {
+            const PlayerSession& other = g_playerSessions[slot];
+            if (!other.connected) continue;
+            const Player& body = (netRole() == NET_CLIENT && g_remoteVisualValid[slot])
+                               ? g_remoteVisual[slot] : other.body;
+            drawPlayerIdentity(g_pixels, body, other.networkId);
+        }
+    }
     /* The map, over the world and the machines and under every panel. Last
        of the PIXEL-BUFFER passes and before StretchDIBits, which is the
        part that matters: these write into g_pixels, and once the blit has

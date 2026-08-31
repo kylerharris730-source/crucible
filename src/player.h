@@ -559,7 +559,10 @@ struct Player {
        for the same reason: the light buffer is one global with a fixed geometry,
        so there is nothing to choose between and nothing to get out of step.
        Off by default so headless harnesses keep drawing a visible character. */
-    void draw(u32* px, int camX, int camY, bool lit = false) const;
+    /* `identityColour` tints the suit fabric in multiplayer. Zero preserves
+       the ordinary single-player art byte-for-byte. */
+    void draw(u32* px, int camX, int camY, bool lit = false,
+              u32 identityColour = 0) const;
 
     /* Publish the collision box to the world so material cannot move into it.
        Called once a frame from the host; the world knows nothing about players,

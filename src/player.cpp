@@ -2,6 +2,7 @@
 #include "device.h"
 #include "sprite.h"   /* the posed frames; player.h no longer pulls it in, since
                         sprite.h now needs PLAYER_W to size its canvas */
+#include "rig.h"      /* RIG_SUIT: identify exactly which pixels are suit fabric */
 #include "light.h"    /* VIEW_CELLS_W/H, and shading the figure by the field */
 #include <math.h>
 
@@ -961,7 +962,22 @@ void Player::occupy(World& w, int occupantSlot) const {
     lastX1[occupantSlot] = x1; lastY1[occupantSlot] = y1;
 }
 
-void Player::draw(u32* px, int camX, int camY, bool lit) const {
+static u32 identityTint(u32 colour, u32 identity) {
+    /* Colourise rather than flat-overwrite. Multiplying the identity hue by
+       the source value keeps the rig's far-limb/torso/near-limb/helmet ladder,
+       which is what makes crossed arms and legs remain separate shapes. */
+    const int r = (int)((colour >> 16) & 0xFF);
+    const int g = (int)((colour >> 8) & 0xFF);
+    const int b = (int)(colour & 0xFF);
+    const int value = imax(r, imax(g, b));
+    const u32 toned = (u32)((((identity >> 16) & 0xFF) * value / 255) << 16) |
+                      (u32)((((identity >> 8) & 0xFF) * value / 255) << 8) |
+                      (u32)(((identity & 0xFF) * value / 255));
+    return lerpColor(colour, toned, 170);
+}
+
+void Player::draw(u32* px, int camX, int camY, bool lit,
+                  u32 identityColour) const {
     if (!alive) return;
 
     /* Two independent canvases, not one canvas with the crouch frame
@@ -992,7 +1008,18 @@ void Player::draw(u32* px, int camX, int camY, bool lit) const {
                difference between walking out of a cave mouth lighting you from
                the feet up and the whole sprite stepping through a brightness
                threshold at once. */
-            u32 out = lit ? shadeColor(c, viewShade(wx, wy)) : c;
+            u32 marked = c;
+            if (identityColour) {
+                bool fabric = false;
+                for (int i = 0; i <= 3; ++i)
+                    if (c == RIG_SUIT[i]) { fabric = true; break; }
+                if (fabric) marked = identityTint(c, identityColour);
+                /* The belt is already the suit's accent stripe, so make it the
+                   strongest identity cue rather than washing orange into every
+                   player's otherwise distinct colour. */
+                else if (c == RIG_SUIT[8]) marked = identityColour;
+            }
+            u32 out = lit ? shadeColor(marked, viewShade(wx, wy)) : marked;
             /* The damage flash, applied AFTER shading so it reads in an unlit
                cave -- which is where most of the damage in this game is going
                to happen. Blended rather than a flat overwrite so the silhouette
