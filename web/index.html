@@ -63,7 +63,7 @@
   "gamePlatform": ["Web browser", "PC"],
   "applicationCategory": "Game",
   "operatingSystem": ["Web browser", "Windows"],
-  "playMode": "SinglePlayer",
+  "playMode": ["SinglePlayer", "CoOp"],
   "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
 }
 </script>
@@ -382,8 +382,8 @@
   </p>
   <p>
     Both versions <b>keep ten save slots</b> and both <b>play with a friend</b>.
-    They connect differently: the browser pairs two players directly by swapping
-    a short code, and the <b>Windows download</b> connects by IP address, which is
+    They connect differently: in the browser one of you shares a five-character
+    code, and the <b>Windows download</b> connects by IP address, which is
     steadier on awkward networks. Windows also keeps its saves as ordinary files
     you can move between machines. It is the same game and the same code &mdash;
     the browser build is that code compiled to WebAssembly rather than a cut-down
@@ -414,17 +414,23 @@
 
   <h3>How does multiplayer work in the browser?</h3>
   <p>
-    Press <b>Multiplayer</b> under the game. One of you hosts and gets a code;
-    send it to the other however you are already talking, and they send a code
-    back. Paste that in and you are connected.
+    Press <b>Multiplayer</b> under the game and pick <b>Host</b>. You get a code
+    like <code>RZ7ZT</code>. Read it to your friend; they press Multiplayer,
+    pick Join, and type it in. That is the whole thing.
   </p>
   <p>
-    Two codes rather than one because there is <b>no server</b> anywhere in this.
-    The two browsers talk straight to each other, so there is nothing in the
-    middle to pay for, keep running, or read your traffic. The cost of that is
-    the copying and pasting, and that some strict networks will not allow a
-    direct connection at all &mdash; there is no relay to fall back on. If it will
-    not connect, the Windows build can host by IP instead.
+    Once you are connected, the two browsers talk <b>straight to each other</b>.
+    Nothing sits in the middle of your game &mdash; there is no server carrying it,
+    which is why this costs nothing to run and why nobody else can read it. The
+    code is handled by a tiny service that introduces the two of you and then
+    plays no further part; if it is ever down, the panel falls back to swapping
+    two longer codes by hand, which needs nothing at all.
+  </p>
+  <p>
+    Two things can go wrong. You both need the <b>same version</b> &mdash; refresh
+    the page if one of you has had it open a while. And some strict networks will
+    not allow a direct connection at all; there is no relay to fall back on, so if
+    it will not connect, the Windows build can host by IP instead.
   </p>
 
   <h3>Windows says the download is unrecognised.</h3>
@@ -457,7 +463,7 @@
   <b>Cinderlift</b> &mdash; a falling-sand sandbox with real heat, pressure and circuits.
   <a href="https://github.com/kylerharris730-source/crucible">Source</a> &middot;
   <a href="https://github.com/kylerharris730-source/crucible/releases">Releases</a><br>
-  This browser build plays with a friend by swapping codes, and its ten save slots
+  This browser build plays with a friend by sharing a short code, and its ten save slots
   live in this browser's storage. The Windows download connects by IP and saves to
   files.
 </footer>
