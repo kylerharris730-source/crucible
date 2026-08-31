@@ -22,6 +22,9 @@
   'use strict';
 
   var el = null, poll = 0;
+  /* Lives beyond the overlay. Closing the panel must not close the room after
+     player one joins; the other two guests still use the same code. */
+  var hostSession = null;
 
   function call(name, sig, args) {
     try { return Module.ccall(name, sig[0], sig.slice(1), args || []); }
@@ -92,11 +95,11 @@
 
   function menu() {
     shell('MULTIPLAYER',
-      'Two players, connected directly to each other. There is no server in ' +
-      'the middle of your game.',
+      'Up to four players, connected directly to the host. There is no server ' +
+      'in the middle of your game.',
       '<button class="go" id="mph">Host a game</button>' +
       '<button id="mpj">Join a game</button>' +
-      '<div class="warn">Both of you need the same version of the game. ' +
+      '<div class="warn">Every player needs the same version of the game. ' +
       'Some strict networks will not allow a direct connection at all, and ' +
       'there is no relay to fall back on &mdash; if it will not connect, the ' +
       'Windows build can host by IP instead.</div>');
@@ -137,9 +140,10 @@
 
   function hostPaste() {
     call('webMpHost', ['null']);
+    var slot = 0;
     shell('HOSTING',
-      'Send step 1 to your friend. They send you a code back; paste it into step 2.',
-      '<div class="step"><b>1 &mdash; your code</b>' +
+      'Connect up to three friends, one reply at a time.',
+      '<div class="step"><b id="mpslot">Guest 1 of 3 &mdash; your code</b>' +
       '<textarea id="mpo" readonly placeholder="building the code, a moment..."></textarea>' +
       '<button id="mpc">copy</button></div>' +
       '<div class="step"><b>2 &mdash; their reply</b>' +
@@ -149,12 +153,18 @@
     document.getElementById('mpc').onclick = copyBtnFor('mpo');
     document.getElementById('mpk').onclick = function () {
       var v = document.getElementById('mpa').value.trim();
-      if (v) CinderNet.beginAccept(v);
+      if (!v || slot >= 3) return;
+      CinderNet.beginAccept(slot, v);
+      slot++;
+      document.getElementById('mpa').value = '';
+      document.getElementById('mpo').value = slot < 3 ? CinderNet.hostCode(slot) : '';
+      document.getElementById('mpslot').textContent = slot < 3 ?
+        ('Guest ' + (slot + 1) + ' of 3 — your code') : 'All three guest replies accepted';
     };
     watch(function () {
       var t = document.getElementById('mpo');
-      if (t && !t.value) t.value = CinderNet.hostCode();
-    });
+      if (t && !t.value && slot < 3) t.value = CinderNet.hostCode(slot);
+    }, false);
   }
 
   function guestPaste() {
@@ -186,41 +196,59 @@
      Same transport, same two descriptions; the broker just carries them so
      nobody has to. It holds them for minutes and never sees the game. */
   function host() {
+    if (hostSession && hostSession.active) { showHostSession(); return; }
     call('webMpHost', ['null']);
     shell('HOSTING',
-      'Give your friend this code. Nothing else to do.',
+      'Give this same code to as many as three friends. Nothing else to do.',
       '<div class="code" id="mpcode">&middot; &middot; &middot;</div>' +
       '<div class="stat" id="mps">making a code...</div>');
     altLink('or exchange codes by hand instead', hostPaste);
 
-    var dead = false;
-    var stop = function () { dead = true; };
-    var previous = close;
-    close = function () { stop(); previous(); close = previous; };
-
     (async function () {
       try {
-        var offer = '';
-        for (var i = 0; i < 150 && !offer && !dead; i++) {
-          offer = CinderNet.hostCode();
-          if (!offer) await new Promise(function (r) { setTimeout(r, 100); });
+        var offers = [];
+        for (var i = 0; i < 150 && offers.length < 3; i++) {
+          offers = CinderNet.hostCodes().filter(Boolean);
+          if (offers.length < 3) await new Promise(function (r) { setTimeout(r, 100); });
         }
-        if (dead) return;
-        if (!offer) throw new Error('could not build a host code');
-        var code = await CinderSignal.open(offer);
-        if (dead) return;
+        if (offers.length !== 3) throw new Error('could not build all three host connections');
+        var code = await CinderSignal.open(CinderNet.hostCodes());
+        hostSession = { code:code, active:true, accepted:0, error:'' };
         var box = document.getElementById('mpcode');
         if (box) box.textContent = code;
-        setStatus('waiting for your friend to join');
-        var answer = await CinderSignal.waitForAnswer(code, function () { return dead; });
-        if (dead) return;
-        if (!answer) { setStatus('nobody joined -- the code has expired'); return; }
-        CinderNet.beginAccept(answer);
-        watch(function () {});
+        setStatus('0/3 guests joined — room stays open in the background');
+        watch(function () { return refreshHostStatus(); }, false);
+        while (hostSession.active && hostSession.accepted < 3) {
+          var reply = await CinderSignal.waitForAnswer(code, function () { return !hostSession.active; });
+          if (!reply) { hostSession.active=false; hostSession.error='room code expired'; break; }
+          CinderNet.beginAccept(reply.slot, reply.answer);
+          hostSession.accepted++;
+          refreshHostStatus();
+        }
       } catch (e) {
-        if (!dead) fallback(e.message, hostPaste);
+        if (hostSession) { hostSession.error=e.message; hostSession.active=false; refreshHostStatus(); }
+        else fallback(e.message, hostPaste);
       }
     })();
+  }
+
+  function showHostSession() {
+    shell('HOSTING', 'The room keeps accepting guests after this panel closes.',
+      '<div class="code" id="mpcode">' + hostSession.code + '</div>' +
+      '<div class="stat" id="mps"></div>');
+    refreshHostStatus();
+    watch(function () { return refreshHostStatus(); }, false);
+  }
+
+  function refreshHostStatus() {
+    if (!hostSession) return;
+    var peers = call('webMpPeerCount', ['number']);
+    var text = peers + '/3 guests connected';
+    if (peers < 3 && hostSession.active) text += ' — room stays open in the background';
+    else if (peers >= 3) text += ' — game full';
+    if (hostSession.error) text = hostSession.error;
+    setStatus(text);
+    return text;
   }
 
   function guest() {
@@ -241,8 +269,8 @@
       setStatus('looking for that game...');
       (async function () {
         try {
-          var offer = await CinderSignal.fetchOffer(code);
-          call('webMpJoin', ['null', 'string'], [offer]);
+          var reservation = await CinderSignal.fetchOffer(code);
+          call('webMpJoin', ['null', 'string'], [reservation.offer]);
           setStatus('connecting...');
           var answer = '';
           for (var i = 0; i < 150 && !answer; i++) {
@@ -250,7 +278,7 @@
             if (!answer) await new Promise(function (r) { setTimeout(r, 100); });
           }
           if (!answer) throw new Error('could not build a join code');
-          await CinderSignal.postAnswer(code, answer);
+          await CinderSignal.postAnswer(code, reservation, answer);
           watch(function () {});
         } catch (e) {
           setStatus(e.message);
@@ -278,17 +306,19 @@
      disagree -- an open channel with a handshake still in flight is normal for
      a moment -- so both are shown rather than one being guessed from the
      other. */
-  function watch(step) {
+  function watch(step, closeWhenReady) {
+    if (closeWhenReady === undefined) closeWhenReady = true;
     if (poll) clearInterval(poll);
     poll = setInterval(function () {
-      step();
+      var custom = step();
       var s = document.getElementById('mps');
       if (!s) return;
       var fault = CinderNet.fault();
       var link = CinderNet.state();
       var game = call('webMpStatus', ['string']) || '';
-      s.textContent = fault ? ('Problem: ' + fault) : (link + ' — ' + game);
-      if (call('webMpReady', ['number'])) {
+      s.textContent = fault ? ('Problem: ' + fault) :
+        (custom !== undefined ? custom : (link + ' — ' + game));
+      if (closeWhenReady && call('webMpReady', ['number'])) {
         s.textContent = 'Connected. Closing this panel.';
         setTimeout(close, 900);
       }

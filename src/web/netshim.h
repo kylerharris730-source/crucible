@@ -15,9 +15,9 @@
    So the transport is swapped underneath and the protocol is untouched.
 
    --- what a socket means here ------------------------------------------------
-   Nothing, really. There is one connection in a tab: you are either the host
-   with one guest, or the guest. `SOCKET` is a token that says "this peer slot
-   is in use", and the only values it takes are 0 and 1. There is no listening
+   Nothing, really. A guest uses token 1; a host uses tokens 1 through 3 for
+   its independent data channels. `SOCKET` is the one-based browser link index.
+   There is no listening
    socket, no accept queue, and no address -- WebRTC connects two peers that
    have exchanged descriptions, and the description is what the player pastes.
 
@@ -41,23 +41,23 @@ void webNetBeginHost();
 void webNetBeginJoin(const char* code);
 
 /* Host: consume the guest's reply and finish the connection. */
-void webNetBeginAccept(const char* code);
+void webNetBeginAccept(int slot, const char* code);
 
 /* Empty until ready. Both are the text the player copies. */
-const char* webNetHostCode();
+const char* webNetHostCode(int slot);
 const char* webNetJoinCode();
 
 /* Whatever went wrong, for the player rather than the log. Empty when fine. */
 const char* webNetFault();
 
 /* Is the data channel carrying bytes yet? */
-bool webNetOpen();
+bool webNetOpen(SOCKET socket);
 /* Has it given up? Without TURN this is a real outcome, not an error path. */
-bool webNetFailed();
+bool webNetFailed(SOCKET socket);
 
-void webNetClose();
+void webNetClose(SOCKET socket);
 
 /* >0 bytes read, 0 for nothing waiting. Never blocks. */
-int  webNetRecv(u8* buf, int cap);
+int  webNetRecv(SOCKET socket, u8* buf, int cap);
 /* >0 bytes taken, 0 if the channel is not open. Never blocks. */
-int  webNetSend(const u8* buf, int n);
+int  webNetSend(SOCKET socket, const u8* buf, int n);

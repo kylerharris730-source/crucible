@@ -1,8 +1,8 @@
 # The signalling broker
 
-A mailbox that lets two players find each other. It carries about two kilobytes,
-once, at the moment they connect — then it is finished. **It never sees a byte of
-the game.**
+A mailbox that lets three guests find one host. It carries three small WebRTC
+descriptions at room creation and one answer per guest — then it is finished.
+**It never sees a byte of the game.**
 
 The game works without it. If this is not deployed, the Multiplayer panel falls
 back to players pasting two codes to each other by hand, which needs nothing to
@@ -12,10 +12,10 @@ exist at all. That is the floor; this is a convenience on top of it.
 
 WebRTC needs two descriptions exchanged before a connection can start, and there
 is no channel between the players yet to exchange them over. Without a broker,
-the players do it themselves — the host copies a 800-character code to a friend,
-who copies one back. It works, and it is tedious.
+the players do it themselves — the host exchanges a pair of long codes with
+each guest. It works, and it is tedious.
 
-With this, that becomes: **host gets `JXSZT`, friend types `JXSZT`.**
+With this, that becomes: **host gets `JXSZT`; up to three friends type `JXSZT`.**
 
 It also allows candidates to be exchanged as they are discovered rather than all
 at once, which makes connections more reliable, not only shorter to set up.
@@ -86,10 +86,11 @@ using the paste path.
 
 ## What it stores, and for how long
 
-One row per room: a five-character code, the two descriptions, and an expiry.
-Rooms live **ten minutes** and are swept whenever the next one is created, so the
-steady state of the database is close to empty. A delivered answer deletes its
-room immediately.
+One row per room: a five-character code, three offers, three short-lived seat
+claims, answers, and an expiry. Rooms live **ten minutes** and are swept whenever
+the next one is created, so the steady state remains close to empty. Each answer
+is removed as the host receives it; the room remains until all seats are claimed
+or its expiry so later guests can keep using the same code.
 
 A WebRTC description contains IP addresses — that is what makes a direct
 connection possible — so this briefly holds something mildly personal. The short

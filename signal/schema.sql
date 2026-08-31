@@ -3,8 +3,8 @@
 -- is eventually consistent across the edge.
 CREATE TABLE IF NOT EXISTS rooms (
   code    TEXT PRIMARY KEY,   -- five characters, no ambiguous glyphs
-  offer   TEXT NOT NULL,      -- the host's description
-  answer  TEXT,               -- the guest's, once they have made one
+  offer   TEXT NOT NULL,      -- JSON: the host's three WebRTC descriptions
+  answer  TEXT,               -- JSON: atomic seat claims and pending answers
   expires INTEGER NOT NULL    -- epoch ms; swept on the next write
 );
 

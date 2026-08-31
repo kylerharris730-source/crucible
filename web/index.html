@@ -381,8 +381,8 @@
     about 1.5&nbsp;MB, and it runs on any desktop browser.
   </p>
   <p>
-    Both versions <b>keep ten save slots</b> and both <b>play with a friend</b>.
-    They connect differently: in the browser one of you shares a five-character
+    Both versions <b>keep ten save slots</b> and both support <b>four-player multiplayer</b>.
+    They connect differently: in the browser the host shares one five-character
     code, and the <b>Windows download</b> connects by IP address, which is
     steadier on awkward networks. Windows also keeps its saves as ordinary files
     you can move between machines. It is the same game and the same code &mdash;
@@ -415,20 +415,20 @@
   <h3>How does multiplayer work in the browser?</h3>
   <p>
     Press <b>Multiplayer</b> under the game and pick <b>Host</b>. You get a code
-    like <code>RZ7ZT</code>. Read it to your friend; they press Multiplayer,
-    pick Join, and type it in. That is the whole thing.
+    like <code>RZ7ZT</code>. Share it with up to three friends; they each press
+    Multiplayer, pick Join, and type in the same code. That is the whole thing.
   </p>
   <p>
-    Once you are connected, the two browsers talk <b>straight to each other</b>.
+    Once connected, every guest browser talks <b>straight to the host</b>.
     Nothing sits in the middle of your game &mdash; there is no server carrying it,
     which is why this costs nothing to run and why nobody else can read it. The
-    code is handled by a tiny service that introduces the two of you and then
-    plays no further part; if it is ever down, the panel falls back to swapping
-    two longer codes by hand, which needs nothing at all.
+    code is handled by a tiny service that introduces each guest to the host and
+    then plays no further part; if it is ever down, the panel falls back to
+    exchanging longer codes with each guest by hand, which needs nothing at all.
   </p>
   <p>
-    Two things can go wrong. You both need the <b>same version</b> &mdash; refresh
-    the page if one of you has had it open a while. And some strict networks will
+    Two things can go wrong. Everyone needs the <b>same version</b> &mdash; refresh
+    the page if anyone has had it open a while. And some strict networks will
     not allow a direct connection at all; there is no relay to fall back on, so if
     it will not connect, the Windows build can host by IP instead.
   </p>
@@ -463,7 +463,7 @@
   <b>Cinderlift</b> &mdash; a falling-sand sandbox with real heat, pressure and circuits.
   <a href="https://github.com/kylerharris730-source/crucible">Source</a> &middot;
   <a href="https://github.com/kylerharris730-source/crucible/releases">Releases</a><br>
-  This browser build plays with a friend by sharing a short code, and its ten save slots
+  This browser build supports four players sharing one short room code, and its ten save slots
   live in this browser's storage. The Windows download connects by IP and saves to
   files.
 </footer>

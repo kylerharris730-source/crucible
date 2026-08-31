@@ -10,12 +10,13 @@
    800 characters in testing; 8 KB is room for a description with far more
    candidates in it than a home connection produces, and a truncated code would
    fail in a way nobody could diagnose from the message. */
-static char g_hostCode[8192];
+static char g_hostCode[3][8192];
 static char g_joinCode[8192];
 static char g_fault[256];
 
 void webNetBeginHost() {
-    g_hostCode[0] = 0; g_fault[0] = 0;
+    for (int i = 0; i < 3; ++i) g_hostCode[i][0] = 0;
+    g_fault[0] = 0;
     EM_ASM({ if (window.CinderNet) window.CinderNet.beginHost(); });
 }
 
@@ -26,19 +27,20 @@ void webNetBeginJoin(const char* code) {
     }, code);
 }
 
-void webNetBeginAccept(const char* code) {
+void webNetBeginAccept(int slot, const char* code) {
     g_fault[0] = 0;
     EM_ASM({
-        if (window.CinderNet) window.CinderNet.beginAccept(UTF8ToString($0));
-    }, code);
+        if (window.CinderNet) window.CinderNet.beginAccept($0, UTF8ToString($1));
+    }, slot, code);
 }
 
-const char* webNetHostCode() {
+const char* webNetHostCode(int slot) {
+    if (slot < 0 || slot >= 3) return "";
     EM_ASM({
-        var s = window.CinderNet ? window.CinderNet.hostCode() : '';
+        var s = window.CinderNet ? window.CinderNet.hostCode($2) : '';
         stringToUTF8(s || '', $0, $1);
-    }, g_hostCode, (int)sizeof(g_hostCode));
-    return g_hostCode;
+    }, g_hostCode[slot], (int)sizeof(g_hostCode[slot]), slot);
+    return g_hostCode[slot];
 }
 
 const char* webNetJoinCode() {
@@ -57,41 +59,41 @@ const char* webNetFault() {
     return g_fault;
 }
 
-bool webNetOpen() {
-    return EM_ASM_INT({ return (window.CinderNet && window.CinderNet.isOpen()) ? 1 : 0; }) != 0;
+bool webNetOpen(SOCKET socket) {
+    return EM_ASM_INT({ return (window.CinderNet && window.CinderNet.isOpen($0 - 1)) ? 1 : 0; }, socket) != 0;
 }
 
-bool webNetFailed() {
+bool webNetFailed(SOCKET socket) {
     return EM_ASM_INT({
-        return (window.CinderNet && window.CinderNet.state() === 'failed') ? 1 : 0;
-    }) != 0;
+        return (window.CinderNet && window.CinderNet.state($0 - 1) === 'failed') ? 1 : 0;
+    }, socket) != 0;
 }
 
-void webNetClose() {
-    EM_ASM({ if (window.CinderNet) window.CinderNet.close(); });
+void webNetClose(SOCKET socket) {
+    EM_ASM({ if (window.CinderNet) window.CinderNet.close($0 - 1); }, socket);
 }
 
-int webNetRecv(u8* buf, int cap) {
+int webNetRecv(SOCKET socket, u8* buf, int cap) {
     /* The JS side owns the queue and copies into our heap. Passing the pointer
        through as an integer is how emscripten hands wasm memory to JS: the
        HEAPU8 view is the same bytes. */
     return EM_ASM_INT({
-        if (!window.CinderNet || !window.CinderNet.pending()) return 0;
-        var view = HEAPU8.subarray($0, $0 + $1);
-        return window.CinderNet.read(view, $1);
-    }, buf, cap);
+        if (!window.CinderNet || !window.CinderNet.pending($0 - 1)) return 0;
+        var view = HEAPU8.subarray($1, $1 + $2);
+        return window.CinderNet.read(view, $2, $0 - 1);
+    }, socket, buf, cap);
 }
 
-int webNetSend(const u8* buf, int n) {
+int webNetSend(SOCKET socket, const u8* buf, int n) {
     return EM_ASM_INT({
-        if (!window.CinderNet || !window.CinderNet.isOpen()) return 0;
+        if (!window.CinderNet || !window.CinderNet.isOpen($0 - 1)) return 0;
         /* Copied out of the heap before handing it over: the data channel may
            queue this, and wasm memory can move under it if the heap grows. A
            subarray would then be a view onto the wrong bytes -- the kind of
            corruption that looks like a protocol bug for a week. */
-        var bytes = HEAPU8.slice($0, $0 + $1);
-        return window.CinderNet.send(bytes) ? $1 : 0;
-    }, buf, n);
+        var bytes = HEAPU8.slice($1, $1 + $2);
+        return window.CinderNet.send(bytes, $0 - 1) ? $2 : 0;
+    }, socket, buf, n);
 }
 
 /* --- what the page calls ----------------------------------------------------
@@ -130,6 +132,10 @@ EMSCRIPTEN_KEEPALIVE int webMpRole(void) {
 
 EMSCRIPTEN_KEEPALIVE int webMpReady(void) {
     return netReady() ? 1 : 0;
+}
+
+EMSCRIPTEN_KEEPALIVE int webMpPeerCount(void) {
+    return netPeerCount();
 }
 
 }

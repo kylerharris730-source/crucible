@@ -171,7 +171,7 @@ static void statusf(const char* fmt, const char* arg = 0) {
 static bool startup() { g_wsa = true; return true; }
 static bool nonblocking(SOCKET) { return true; }
 static void preferLowLatency(SOCKET) {}
-static void closeSocket(SOCKET& s) { if (s != INVALID_SOCKET) { webNetClose(); s = INVALID_SOCKET; } }
+static void closeSocket(SOCKET& s) { if (s != INVALID_SOCKET) { webNetClose(s); s = INVALID_SOCKET; } }
 #else
 static bool startup() {
     if (g_wsa) return true;
@@ -235,25 +235,25 @@ static void closeSocket(SOCKET& s) {
 /* The data channel is reliable and ordered, so there is no partial-failure
    case to report: either bytes are waiting or they are not. A channel that
    has given up reads as a clean close, which is what the player sees. */
-static int txRecv(Peer&, u8* buf, int cap) {
-    const int n = webNetRecv(buf, cap);
+static int txRecv(Peer& peer, u8* buf, int cap) {
+    const int n = webNetRecv(peer.sock, buf, cap);
     if (n > 0) return n;
-    return webNetFailed() ? -1 : 0;
+    return webNetFailed(peer.sock) ? -1 : 0;
 }
-static int txSend(Peer&, const u8* buf, int n) {
-    const int sent = webNetSend(buf, n);
+static int txSend(Peer& peer, const u8* buf, int n) {
+    const int sent = webNetSend(peer.sock, buf, n);
     if (sent > 0) return sent;
-    return webNetFailed() ? -1 : 0;
+    return webNetFailed(peer.sock) ? -1 : 0;
 }
 /* Connecting finishes when the channel opens. There is no socket to ask, so
    this is the same question the rest of the file asks. */
-static bool txConnectPoll(Peer&, bool* failed) {
-    *failed = webNetFailed();
-    return webNetOpen() || *failed;
+static bool txConnectPoll(Peer& peer, bool* failed) {
+    *failed = webNetFailed(peer.sock);
+    return webNetOpen(peer.sock) || *failed;
 }
 static bool txReady(Peer& peer, bool* readable, bool* writable) {
-    *readable = webNetOpen();
-    *writable = webNetOpen() && peer.sendAt < peer.send.size();
+    *readable = webNetOpen(peer.sock);
+    *writable = webNetOpen(peer.sock) && peer.sendAt < peer.send.size();
     return true;
 }
 #else
@@ -1047,15 +1047,15 @@ static void pollPeer(Peer& peer, World& world) {
 
 void netPoll(World& world) {
 #ifndef _WIN32
-    /* No accept queue: there is one possible guest and they arrive by the
-       channel opening. Adopting the peer here rather than at netHost time is
-       what keeps the rest of the file honest -- a peer that is `live()` is
-       one the transport can actually carry bytes for. */
-    if (g_role == NET_HOST && !g_peers[0].live() && webNetOpen()) {
-        g_peers[0].clear();
-        g_peers[0].sock = WEB_PEER_SOCKET;
-        statusf("Player connecting");
-    }
+    /* Each browser data channel is an indexed socket. Adopting peers only when
+       their channel opens rather than at netHost time keeps the rest honest: a
+       peer that is `live()` is one the transport can actually carry bytes for. */
+    if (g_role == NET_HOST) for (int i = 0; i < MAX_PEERS; ++i)
+        if (!g_peers[i].live() && webNetOpen((SOCKET)(i + 1))) {
+            g_peers[i].clear();
+            g_peers[i].sock = (SOCKET)(i + 1);
+            sprintf(g_status, "Player connecting -- %d connected", connectedPeerCount());
+        }
 #else
     if (g_role == NET_HOST && g_listen != INVALID_SOCKET) {
         /* Accept in a loop: several people can click Join within one frame,

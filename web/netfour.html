@@ -1,0 +1,27 @@
+<!doctype html><meta charset="utf-8"><title>Cinderlift four-player transport test</title>
+<style>body{background:#12141a;color:#c8cedb;font:14px/1.5 ui-monospace,monospace;padding:18px}h1{color:#e8a24a;font-size:16px}#result{white-space:pre-wrap;background:#0e1016;border:1px solid #2a2f3c;padding:12px}iframe{display:none}</style>
+<h1>FOUR-PLAYER BROWSER TRANSPORT</h1><div id="result">starting four isolated browser documents...</div>
+<script>
+(async function(){
+  var out=document.getElementById('result'), frames=[], seq=1, pending=new Map(), ready=0;
+  function log(s){out.textContent+='\n'+s;}
+  addEventListener('message',function(e){var m=e.data||{};if(m.ready){ready++;return;}var p=pending.get(m.id);if(!p)return;pending.delete(m.id);m.ok?p.resolve(m.value):p.reject(new Error(m.error));});
+  function rpc(frame,msg){return new Promise(function(resolve,reject){msg.id=seq++;pending.set(msg.id,{resolve,reject});frame.contentWindow.postMessage(msg,'*');setTimeout(function(){if(pending.delete(msg.id))reject(new Error('test command timed out'));},15000);});}
+  for(var i=0;i<4;i++){var f=document.createElement('iframe');f.src='netpeer.html?peer='+i;document.body.appendChild(f);frames.push(f);}
+  while(ready<4)await new Promise(r=>setTimeout(r,25));
+  try{
+    var offers=await rpc(frames[0],{cmd:'host'});log('host created three independent offers');
+    var answers=await Promise.all([0,1,2].map(i=>rpc(frames[i+1],{cmd:'join',offer:offers[i]})));
+    await Promise.all(answers.map((a,i)=>rpc(frames[0],{cmd:'accept',slot:i,answer:a})));log('three guests answered simultaneously');
+    var open=false;
+    for(var n=0;n<200&&!open;n++){var states=await rpc(frames[0],{cmd:'open',host:true});open=states.every(Boolean);if(!open)await new Promise(r=>setTimeout(r,25));}
+    if(!open)throw new Error('not all host channels opened');
+    var payloads=[[17,1,1,1],[34,2,2,2,2],[51,3,3,3,3,3]];
+    await Promise.all(payloads.map((b,i)=>rpc(frames[i+1],{cmd:'send',bytes:b})));
+    await new Promise(r=>setTimeout(r,100));
+    for(var slot=0;slot<3;slot++){var got=await rpc(frames[0],{cmd:'read',slot:slot});if(JSON.stringify(got)!==JSON.stringify(payloads[slot]))throw new Error('slot '+slot+' received crossed/corrupt bytes');}
+    out.textContent='PASS — host + 3 browser guests connected\nThree indexed channels opened and each delivered distinct intact bytes.';
+    document.title='PASS — four-player transport';
+  }catch(e){out.textContent='FAIL — '+e.message;document.title='FAIL — four-player transport';throw e;}
+})();
+</script>

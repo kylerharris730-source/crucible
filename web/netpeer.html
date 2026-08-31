@@ -1,0 +1,21 @@
+<!doctype html><meta charset="utf-8"><script src="webrtc.js"></script><script>
+/* Isolated document used by netfour.html. Each frame has its own CinderNet,
+   exactly like a separate tab, while the parent only carries SDP test control
+   messages -- game bytes still travel over the real RTCDataChannels. */
+addEventListener('message', async function (e) {
+  var m=e.data||{}, value=null;
+  try {
+    if(m.cmd==='host') {
+      CinderNet.beginHost();
+      for(var i=0;i<120;i++){var offers=CinderNet.hostCodes();if(offers.every(Boolean)){value=offers;break;}await new Promise(r=>setTimeout(r,50));}
+      if(!value)throw new Error('host offers timed out');
+    } else if(m.cmd==='join') value=await CinderNet.join(m.offer);
+    else if(m.cmd==='accept') { await CinderNet.accept(m.answer,m.slot); value=true; }
+    else if(m.cmd==='open') value=m.host?[0,1,2].map(s=>CinderNet.isOpen(s)):CinderNet.isOpen();
+    else if(m.cmd==='send') value=CinderNet.send(new Uint8Array(m.bytes));
+    else if(m.cmd==='read') { var n=CinderNet.pending(m.slot), b=new Uint8Array(n);CinderNet.read(b,n,m.slot);value=Array.from(b); }
+    parent.postMessage({id:m.id,ok:true,value:value},'*');
+  } catch(err) { parent.postMessage({id:m.id,ok:false,error:err.message},'*'); }
+});
+parent.postMessage({ready:true},'*');
+</script>

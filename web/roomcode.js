@@ -82,8 +82,8 @@
     },
 
     /* Host: hand over a description, get a code to read out. */
-    open: async function (offer) {
-      var res = await ask('/room', { method: 'POST', body: offer });
+    open: async function (offers) {
+      var res = await ask('/room', { method: 'POST', body: JSON.stringify({ offers: offers }) });
       if (!res.ok) throw new Error('could not open a room');
       var body = await res.json();
       if (!body.code) throw new Error('could not open a room');
@@ -94,15 +94,19 @@
     fetchOffer: async function (code) {
       var res = await ask('/room/' + encodeURIComponent(code), { method: 'GET' });
       if (res.status === 404) throw new Error('no game with that code');
+      if (res.status === 409) throw new Error((await res.json()).error || 'that game is full');
       if (!res.ok) throw new Error('could not read that code');
-      return (await res.json()).offer;
+      return await res.json();
     },
 
     /* Guest: send the reply back. */
-    postAnswer: async function (code, answer) {
+    postAnswer: async function (code, reservation, answer) {
       var res = await ask('/room/' + encodeURIComponent(code) + '/answer',
-                          { method: 'POST', body: answer });
+                          { method: 'POST', body: JSON.stringify({ slot: reservation.slot,
+                                                                  claim: reservation.claim,
+                                                                  answer: answer }) });
       if (res.status === 404) throw new Error('that code expired');
+      if (res.status === 409) throw new Error((await res.json()).error || 'that seat expired');
       if (!res.ok) throw new Error('could not send the reply');
     },
 
@@ -114,8 +118,10 @@
       while (Date.now() < until) {
         if (cancelled && cancelled()) return null;
         var res = await ask('/room/' + encodeURIComponent(code) + '/answer', { method: 'GET' });
-        if (res.status === 200) return (await res.json()).answer;
+        if (res.status === 200) return await res.json();
         if (res.status === 404) throw new Error('that code expired');
+        if (res.status === 409) throw new Error((await res.json()).error || 'room is busy');
+        if (res.status !== 204) throw new Error('could not check that room');
         /* 204: nobody has answered yet. */
         await new Promise(function (r) { setTimeout(r, POLL_MS); });
       }
