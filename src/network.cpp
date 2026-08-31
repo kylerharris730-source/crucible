@@ -192,6 +192,71 @@ static void closeSocket(SOCKET& s) {
     if (s != INVALID_SOCKET) { closesocket(s); s = INVALID_SOCKET; }
 }
 
+/* ==========================================================================
+   The transport seam
+   ==========================================================================
+
+   Everything below this line in the file is protocol: the handshake, packet
+   framing, state serialization, chunk repair. None of it knows what carries
+   the bytes. These functions are the entire surface that does.
+
+   They exist because a browser tab cannot open a TCP socket, and the port
+   of this game to the browser is built on reimplementing platform APIs
+   rather than forking the game -- see src/web/win32.h, which does the same
+   thing for the Win32 API. A second copy of the protocol maintained beside
+   this one would drift, and the failures it produced would be desyncs: the
+   most expensive kind of bug to find.
+
+   The winsock implementations are the code that was previously inline at
+   each of these call sites, moved rather than rewritten. Windows behaviour
+   is meant to be identical, which is what network_smoke and network_four
+   are there to confirm. */
+
+/* Non-blocking read. >0 bytes, 0 for nothing waiting, -1 for a clean close,
+   -2 for a broken connection. Those last two are distinguished because they
+   say different things to the player. */
+static int txRecv(Peer& peer, u8* buf, int cap) {
+    const int n = recv(peer.sock, (char*)buf, cap, 0);
+    if (n > 0) return n;
+    if (n == 0) return -1;
+    return WSAGetLastError() == WSAEWOULDBLOCK ? 0 : -2;
+}
+
+/* >0 bytes taken, 0 if the transport is full for now, -1 on failure. */
+static int txSend(Peer& peer, const u8* buf, int n) {
+    const int sent = send(peer.sock, (const char*)buf, n, 0);
+    if (sent > 0) return sent;
+    return WSAGetLastError() == WSAEWOULDBLOCK ? 0 : -1;
+}
+
+/* Has an in-progress connection resolved? Sets *failed when it resolved
+   badly. Returning false means still waiting. */
+static bool txConnectPoll(Peer& peer, bool* failed) {
+    *failed = false;
+    fd_set writeSet, errSet; FD_ZERO(&writeSet); FD_ZERO(&errSet);
+    FD_SET(peer.sock, &writeSet); FD_SET(peer.sock, &errSet); timeval tv = { 0, 0 };
+    if (select(0, 0, &writeSet, &errSet, &tv) <= 0) return false;
+    int err = 0; int len = sizeof(err);
+    getsockopt(peer.sock, SOL_SOCKET, SO_ERROR, (char*)&err, &len);
+    if (err || FD_ISSET(peer.sock, &errSet)) { *failed = true; return true; }
+    return true;
+}
+
+/* Whether a read or a write would make progress this frame. Split because
+   sending first is what lets a just-connected client deliver HELLO before
+   either side waits on the other. */
+static bool txReady(Peer& peer, bool* readable, bool* writable) {
+    fd_set readSet, writeSet;
+    FD_ZERO(&readSet); FD_ZERO(&writeSet);
+    FD_SET(peer.sock, &readSet);
+    if (peer.sendAt < peer.send.size()) FD_SET(peer.sock, &writeSet);
+    timeval tv = { 0, 0 };
+    if (select(0, &readSet, &writeSet, 0, &tv) == SOCKET_ERROR) return false;
+    *readable = FD_ISSET(peer.sock, &readSet) != 0;
+    *writable = FD_ISSET(peer.sock, &writeSet) != 0;
+    return true;
+}
+
 static int connectedPeerCount() {
     int n = 0;
     for (int i = 0; i < MAX_PEERS; ++i) if (g_peers[i].live()) ++n;
@@ -840,11 +905,10 @@ static void pumpReceive(Peer& peer, World& world) {
        Snapshot traffic could therefore take seconds to drain on a perfectly
        healthy LAN. Drain a bounded batch while the nonblocking socket has it. */
     while (received < 512u * 1024u) {
-        const int n = recv(peer.sock, (char*)temp, sizeof(temp), 0);
+        const int n = txRecv(peer, temp, (int)sizeof(temp));
         if (n > 0) { peer.recv.insert(peer.recv.end(), temp, temp + n); received += (size_t)n; continue; }
-        if (n == 0) { disconnectPeer(peer, "Host disconnected"); return; }
-        const int e = WSAGetLastError();
-        if (e != WSAEWOULDBLOCK) disconnectPeer(peer, "Network receive failed");
+        if (n == -1) { disconnectPeer(peer, "Host disconnected"); return; }
+        if (n == -2) disconnectPeer(peer, "Network receive failed");
         break;
     }
     size_t used = 0;
@@ -868,11 +932,10 @@ static void pumpSend(Peer& peer) {
     while (peer.live() && peer.sendAt < peer.send.size() && sent < 512u * 1024u) {
         const size_t left = peer.send.size() - peer.sendAt;
         const int ask = (int)(left > 64 * 1024 ? 64 * 1024 : left);
-        const int n = send(peer.sock, (const char*)&peer.send[peer.sendAt], ask, 0);
+        const int n = txSend(peer, &peer.send[peer.sendAt], ask);
         if (n > 0) { peer.sendAt += (size_t)n; sent += (size_t)n; }
         else {
-            const int e = WSAGetLastError();
-            if (e != WSAEWOULDBLOCK) disconnectPeer(peer, "Network send failed");
+            if (n < 0) disconnectPeer(peer, "Network send failed");
             break;
         }
     }
@@ -881,29 +944,21 @@ static void pumpSend(Peer& peer) {
 
 static void pollPeer(Peer& peer, World& world) {
     if (g_role == NET_CLIENT && peer.connecting) {
-        fd_set writeSet, errSet; FD_ZERO(&writeSet); FD_ZERO(&errSet);
-        FD_SET(peer.sock, &writeSet); FD_SET(peer.sock, &errSet); timeval tv = { 0, 0 };
-        const int n = select(0, 0, &writeSet, &errSet, &tv);
-        if (n > 0) {
-            int err = 0; int len = sizeof(err); getsockopt(peer.sock, SOL_SOCKET, SO_ERROR, (char*)&err, &len);
-            if (err || FD_ISSET(peer.sock, &errSet)) { statusf("Connection failed"); closeSocket(peer.sock); }
+        bool failed = false;
+        if (txConnectPoll(peer, &failed)) {
+            if (failed) { statusf("Connection failed"); closeSocket(peer.sock); }
             else { peer.connecting = false; queueHello(peer); }
         }
         return;
     }
     if (g_role == NET_CLIENT && !peer.handshake) queueHello(peer);
-    fd_set readSet, writeSet;
-    FD_ZERO(&readSet); FD_ZERO(&writeSet);
-    FD_SET(peer.sock, &readSet);
-    if (peer.sendAt < peer.send.size()) FD_SET(peer.sock, &writeSet);
-    timeval tv = { 0, 0 };
-    const int n = select(0, &readSet, &writeSet, 0, &tv);
-    if (n == SOCKET_ERROR) { disconnectPeer(peer, "Network poll failed"); return; }
+    bool readable = false, writable = false;
+    if (!txReady(peer, &readable, &writable)) { disconnectPeer(peer, "Network poll failed"); return; }
     /* Sending first guarantees a just-connected client can deliver HELLO
        before either side waits for an answer. One bounded operation per
        readiness result also makes an accidental blocking socket harmless. */
-    if (FD_ISSET(peer.sock, &writeSet)) pumpSend(peer);
-    if (peer.live() && FD_ISSET(peer.sock, &readSet)) pumpReceive(peer, world);
+    if (writable) pumpSend(peer);
+    if (peer.live() && readable) pumpReceive(peer, world);
 }
 
 void netPoll(World& world) {
