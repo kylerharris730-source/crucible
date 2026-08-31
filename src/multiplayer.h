@@ -1,4 +1,5 @@
 #pragma once
+#include "identity.h"
 #include "item.h"
 
 /* Multiplayer begins with identity, not sockets. A network packet, projectile,
@@ -156,6 +157,59 @@ void playerSessionsReset();
    handshake; tests can use it now to prove player state is independent. */
 PlayerId playerSessionOpen(bool local, float spawnX, float spawnY);
 void playerSessionClose(PlayerId id);
+
+/* --- remembering people between visits -------------------------------
+
+   A guest's pack used to live only as long as their connection: the slot
+   was cleared on disconnect and their tools handed back to the pool, so
+   every visit started from nothing. The roster is where a departing
+   player's inventory waits for them.
+
+   Keyed by the identity in identity.h -- a random number the joining
+   client stores under its own user account -- so it follows the person
+   rather than the slot they happened to be given, and survives the host
+   restarting because it is written into the save.
+
+   Bounded, and evicting the oldest when full. An unbounded roster in a
+   world file is a slow leak that only shows up on somebody who has run a
+   server for a year. */
+static const int MAX_REMEMBERED = 24;
+
+/* Tools are kept BY VALUE rather than by handle, because of a hard limit:
+   there are only MAX_TOOL_INST (32) tool instances in the entire game.
+   Leaving a remembered player's drill sitting in a live instance while they
+   are away would spend that pool on people who are not here, and two dozen
+   of them would exhaust it before anybody logged in.
+
+   So a remembered stack's `inst` is a 1-based index into this array rather
+   than a pool handle, and restoring allocates a real instance and copies the
+   stored contents into it. Eight is a generous ceiling on tools actually
+   carried at once; anything past it comes back as a working but blank tool
+   rather than quietly taking somebody else's. */
+static const int REMEMBERED_TOOLS = 8;
+
+struct RememberedPlayer {
+    char      id[PLAYER_IDENTITY_CHARS + 1];
+    Inventory inventory;    /* stack.inst indexes tools[]; it is not a handle */
+    ToolInst  tools[REMEMBERED_TOOLS];
+    u8        toolCount;
+    float     x, y;
+    u32       lastSeen;     /* ordering for eviction, not a wall clock */
+    bool      used;
+};
+
+extern RememberedPlayer g_roster[MAX_REMEMBERED];
+
+/* Copy a departing player's pack into the roster. Called BEFORE
+   playerSessionClose, which is what frees their tool instances. */
+void rosterRemember(const char* id, const PlayerSession& session);
+
+/* Give a returning player back what they left with. False means nobody by
+   that name has been here, and the caller should hand out a starting kit
+   instead. */
+bool rosterRestore(const char* id, PlayerSession& session);
+
+void rosterClear();
 bool playerSessionConnected(PlayerId id);
 int playerSessionSlotForNetworkId(PlayerId networkId);
 /* Consumes exactly one healing item and starts the shared cooldown. Passive

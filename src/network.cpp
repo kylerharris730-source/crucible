@@ -95,6 +95,10 @@ struct Peer {
     size_t sendAt;
     bool connecting, handshake, ready;
     PlayerId assigned;      /* host: the player slot given to this connection */
+    /* Who this connection says it is, from the handshake. An identity, not
+       a credential -- see identity.h. The host uses it to give somebody back
+       the pack they left with. */
+    char identity[PLAYER_IDENTITY_CHARS + 1];
     u32 appliedCommand;     /* newest command from THIS peer the host consumed */
     u32 appliedAction;
     int scanCursor, urgentCursor, frame;
@@ -106,6 +110,7 @@ struct Peer {
 
     Peer() { sock = INVALID_SOCKET; clear(); }
     void clear() {
+        identity[0] = 0;
         recv.clear(); send.clear(); sendAt = 0;
         connecting = handshake = ready = false; assigned = PLAYER_NONE;
         appliedCommand = appliedAction = 0;
@@ -200,6 +205,9 @@ static void disconnectPeer(Peer& peer, const char* reason) {
     closeSocket(peer.sock);
     if (g_role == NET_HOST && peer.assigned != PLAYER_NONE) {
         const PlayerId gone = peer.assigned;
+        /* Before the close, which is what frees their tools. The roster
+           takes copies rather than the handles, so closing is still right. */
+        rosterRemember(peer.identity, g_playerSessions[gone]);
         playerSessionClose(gone);
         if (gone < MAX_PLAYERS) g_haveRemoteCommand[gone] = false;
         /* Queued actions from a departed player would otherwise be applied to
@@ -296,6 +304,7 @@ static size_t backlog(const Peer& peer) { return peer.send.size() - peer.sendAt;
 
 static void queueHello(Peer& peer) {
     Writer w; w.u32v(NET_MAGIC); w.u32v(NET_PROTOCOL); w.string(CINDERLIFT_BUILD_ID);
+    w.string(playerIdentity());
     queuePacket(peer, PK_HELLO, w.b); peer.handshake = true;
     statusf("Connected -- checking game build");
 }
@@ -681,6 +690,10 @@ static void handlePacket(Peer& peer, u8 type, const u8* data, size_t len, World&
     Reader r(data, len);
     if (type == PK_HELLO && g_role == NET_HOST) {
         char build[80]; const u32 magic = r.u32v(), protocol = r.u32v(); r.string(build, sizeof(build));
+        /* Read before the build check rejects, so the reader stays in step
+           with what the client wrote either way. */
+        char who[PLAYER_IDENTITY_CHARS + 1]; who[0] = 0;
+        r.string(who, sizeof(who));
         if (!r.ok || magic != NET_MAGIC || protocol != NET_PROTOCOL || strcmp(build, CINDERLIFT_BUILD_ID) != 0) {
             Writer reject; reject.string("Game builds do not match"); queuePacket(peer, PK_REJECT, reject.b); return;
         }
@@ -714,6 +727,15 @@ static void handlePacket(Peer& peer, u8 type, const u8* data, size_t len, World&
                 fabsf(other.body.centreY() - sy) < PLAYER_H) { sx += PLAYER_W + 8.0f; i = -1; }
         }
         peer.assigned = playerSessionOpen(false, sx, sy);
+        if (peer.assigned != PLAYER_NONE) {
+            strncpy(peer.identity, who, PLAYER_IDENTITY_CHARS);
+            peer.identity[PLAYER_IDENTITY_CHARS] = 0;
+            /* playerSessionOpen has already handed out a starting kit. If
+               this is somebody coming back, that kit is replaced by what
+               they actually left with -- rosterRestore returns the borrowed
+               tool instances before overwriting anything. */
+            rosterRestore(peer.identity, g_playerSessions[peer.assigned]);
+        }
         if (peer.assigned == PLAYER_NONE) { Writer reject; reject.string("Game is full"); queuePacket(peer, PK_REJECT, reject.b); return; }
         PlayerSession& joined = g_playerSessions[peer.assigned];
         joined.inventory.add(ITEM_BOLTER, 1); joined.inventory.add(ITEM_FLINT, 1);

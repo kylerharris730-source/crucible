@@ -221,13 +221,19 @@ static ItemId remapSavedItem(ItemId old) {
     return (now >= MAT_COUNT && now < ITEM_COUNT) ? (ItemId)now : ITEM_NONE;
 }
 
-static void remapInventoryItems() {
-    for (int i = 0; i < INV_SLOTS; ++i) g_inv.slot[i].item = remapSavedItem(g_inv.slot[i].item);
-    for (int i = 0; i < EQ_COUNT; ++i) g_inv.equip[i].item = remapSavedItem(g_inv.equip[i].item);
+/* Taken by reference so the roster's inventories get the same treatment as
+   the host's. A saved player carrying iron in a world written before a new
+   material existed needs their ids shifted exactly as g_inv does, and
+   forgetting them would hand somebody back a pack of the wrong things. */
+static void remapStacksIn(Inventory& inv) {
+    for (int i = 0; i < INV_SLOTS; ++i) inv.slot[i].item = remapSavedItem(inv.slot[i].item);
+    for (int i = 0; i < EQ_COUNT; ++i) inv.equip[i].item = remapSavedItem(inv.equip[i].item);
     for (int d = 0; d < DRONE_BAY_COUNT; ++d)
         for (int i = 0; i < Inventory::DRONE_MODULE_SLOTS_MAX; ++i)
-            g_inv.droneModule[d][i].item = remapSavedItem(g_inv.droneModule[d][i].item);
+            inv.droneModule[d][i].item = remapSavedItem(inv.droneModule[d][i].item);
 }
+
+static void remapInventoryItems() { remapStacksIn(g_inv); }
 
 static void remapToolItems() {
     for (int i = 0; i < MAX_TOOL_INST; ++i) {
@@ -353,6 +359,27 @@ bool saveWrite(const char* path, const World& w, const u8* thumbRgb) {
     {
         SectionWriter s; s.begin(f, "INVN", "inventory");
         fwrite(&g_inv, sizeof(Inventory), 1, f);
+        s.end();
+    }
+    {
+        /* Everyone the host has played with, and what they were carrying.
+
+           A guest's pack used to exist only for the length of their
+           connection, so every visit began from nothing. This is the part
+           that makes it survive the HOST restarting as well as the guest
+           leaving -- without it the roster would be a session cache and the
+           first thing to evaporate on the evening you stop playing.
+
+           Only occupied entries are written, so an empty roster costs four
+           bytes. Adding a section does not move SAVE_VERSION -- see the note
+           on it -- which is the whole reason this can be added to a format
+           people already have worlds in. */
+        SectionWriter s; s.begin(f, "PLRS", "remembered players");
+        u32 n = 0;
+        for (int i = 0; i < MAX_REMEMBERED; ++i) if (g_roster[i].used) ++n;
+        fwrite(&n, sizeof(n), 1, f);
+        for (int i = 0; i < MAX_REMEMBERED; ++i)
+            if (g_roster[i].used) fwrite(&g_roster[i], sizeof(RememberedPlayer), 1, f);
         s.end();
     }
     {
@@ -581,6 +608,7 @@ bool saveRead(const char* path, World& w) {
     w.reset();
     devClear(); sparkClear(); roomsClear(w); treesClear();
     g_inv.clear();
+    rosterClear();
     g_playerSessions[0].respawnBedX = g_playerSessions[0].respawnBedY = -1;
     g_playerSessions[0].respawnFrames = 0;
     g_playerSessions[0].healCooldown = 0;
@@ -668,6 +696,26 @@ bool saveRead(const char* path, World& w) {
                     imin(HEAL_COOLDOWN_FRAMES, imax(0, checkpoint[2]));
             }
             statAdd("respawn checkpoint", len + 12);
+        } else if (tag == fourcc("PLRS")) {
+            u32 n = 0;
+            if (len >= sizeof(n)) {
+                fread(&n, sizeof(n), 1, f);
+                /* The count and the length have to agree. A file claiming a
+                   thousand entries in twelve bytes is corruption, and
+                   trusting it would read the rest of the save as players. */
+                const u64 want = sizeof(n) + (u64)n * sizeof(RememberedPlayer);
+                if (n <= (u32)MAX_REMEMBERED && len == want) {
+                    for (u32 i = 0; i < n; ++i) {
+                        if (fread(&g_roster[i], sizeof(RememberedPlayer), 1, f) != 1) break;
+                        g_roster[i].used = true;
+                        g_roster[i].id[PLAYER_IDENTITY_CHARS] = 0;
+                        if (g_roster[i].toolCount > REMEMBERED_TOOLS)
+                            g_roster[i].toolCount = REMEMBERED_TOOLS;
+                        remapStacksIn(g_roster[i].inventory);
+                    }
+                }
+            }
+            statAdd("remembered players", len + 12);
         } else if (tag == fourcc("INVN")) {
             /* Inventory grew by APPENDING durable state (such as drone chip
                bays) for as long as every change was at the end, and a short
