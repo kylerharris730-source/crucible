@@ -66,6 +66,11 @@ PlayerId playerSessionOpen(bool local, float spawnX, float spawnY) {
         if (!s.generation) ++s.generation;
         clearSession(s);
         s.body.reset(spawnX, spawnY);
+        /* The same handout the host got when the world was made. Without
+           this a guest spawns with an empty pack and no way to light a
+           fire, which is not a difficulty curve, it is an oversight: the
+           kit was written when there was only ever one character. */
+        inventoryStartingKit(s.inventory);
         s.connected = true;
         s.local = local;
         s.networkId = (PlayerId)i; /* authoritative host slots map 1:1 */

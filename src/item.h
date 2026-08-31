@@ -1031,6 +1031,19 @@ void toolCommitShot(ItemStack& st, const ToolShot& shot, int cooldown);
 
 
 /* Session-zero compatibility alias; storage lives in multiplayer.cpp. */
+/* What a new character carries.
+
+   Takes the inventory rather than assuming g_inv, because there is more
+   than one character now: this used to be a main.cpp helper that only ever
+   touched the local pack, and the visible consequence was that a friend who
+   joined arrived with nothing at all while the host had wood, a weapon and
+   a fire starter.
+
+   Every item is guarded on not already being carried, so calling it twice
+   is not a duplicate handout and a player who has thrown their axe away
+   does not get a fresh one on reconnect. */
+void inventoryStartingKit(Inventory& inv);
+
 extern Inventory& g_inv;
 
 /* --- what a digging implement can do --------------------------------------

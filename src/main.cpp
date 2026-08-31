@@ -2801,14 +2801,12 @@ static void changeZoom(int d) {
    number should come back down hard -- a starting stack this large also
    deletes the first hour of scarcity, which is a real cost and not obviously
    one worth paying twice. */
-static const int STARTING_WOOD = 1000;
 
-static void giveStartingKit() {
-    if (g_inv.countOf(ITEM_BOLTER) == 0) g_inv.add(ITEM_BOLTER, 1);
-    if (g_inv.countOf(ITEM_FLINT)  == 0) g_inv.add(ITEM_FLINT, 1);
-    if (g_inv.countOf((ItemId)MAT_WOOD) == 0)
-        g_inv.add((ItemId)MAT_WOOD, STARTING_WOOD);
-}
+
+/* The kit itself lives in item.cpp now, so that the code which opens a
+   session for somebody JOINING can hand out the same one -- see
+   inventoryStartingKit. */
+static void giveStartingKit() { inventoryStartingKit(g_inv); }
 
 /* Builds the world. See worldgen.cpp -- plains to the left, a mountain to the
    right, and the flats beyond it. */

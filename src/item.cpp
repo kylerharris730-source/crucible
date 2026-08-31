@@ -1599,6 +1599,21 @@ void Inventory::clear() {
     selected = 0;
 }
 
+/* A thousand, which is a blunt number and admitted as one: wood is tedious
+   to gather early and this is a stopgap until it is not. */
+static const int STARTING_WOOD = 1000;
+
+void inventoryStartingKit(Inventory& inv) {
+    if (inv.countOf(ITEM_BOLTER) == 0)    inv.add(ITEM_BOLTER, 1);
+    if (inv.countOf(ITEM_FLINT) == 0)     inv.add(ITEM_FLINT, 1);
+    /* Slow enough not to be a free ride -- one charge, three seconds to
+       refill -- and convenience is worth more here than the ceremony of
+       earning it. See the wand's own note for what the battery costs. */
+    if (inv.countOf(ITEM_WARP_WAND) == 0) inv.add(ITEM_WARP_WAND, 1);
+    if (inv.countOf((ItemId)MAT_WOOD) == 0)
+        inv.add((ItemId)MAT_WOOD, STARTING_WOOD);
+}
+
 int Inventory::add(ItemId item, int count) {
     if (!g_itemsReady) {
         fprintf(stderr, "inventory used before initItems() -- every stack limit "
