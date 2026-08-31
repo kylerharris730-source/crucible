@@ -341,10 +341,10 @@ void initItems() {
 
        Short range, and short in the way that matters. A shot that runs out
        of life in mid air does not teleport at all -- the effect needs an
-       impact to have a landing cell (see projectile.cpp) -- so 26 frames at
-       2.6 cells each is about seventy cells of usable reach and a wasted
-       charge if you fire it at open sky. That is the honest weakness of a
-       cheap one: it is a tunnel tool, and it is unreliable outdoors.
+       impact to have a landing cell (see projectile.cpp) -- so 52 frames at
+       2.6 cells each is about a hundred and thirty cells of usable reach and
+       a wasted charge if you fire it at open sky. Still short enough that
+       the cheap one is happier underground than out in the open.
 
        No damage, and a beam so it does not arc into the floor at this
        speed. Pierce 1 so it stops at the first thing it meets, which is
@@ -364,7 +364,7 @@ void initItems() {
     ITEMS[ITEM_WARP_WAND].shotColour     = 0xFF72D8;
     ITEMS[ITEM_WARP_WAND].shotSpeed      = 2.6f;
     ITEMS[ITEM_WARP_WAND].shotBeam       = 1;
-    ITEMS[ITEM_WARP_WAND].shotLife       = 26;
+    ITEMS[ITEM_WARP_WAND].shotLife       = 52;
     ITEMS[ITEM_WARP_WAND].shotEffect     = PROJ_EFFECT_TELEPORT;
     ITEMS[ITEM_WARP_WAND].sprite         = SPR_WARP_WAND;
 

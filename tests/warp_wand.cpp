@@ -83,7 +83,7 @@ int main() {
        Player* -- see teleportProjectileOwner. */
     const int PX = 900, PY = 900;
     for (int y = PY - 60; y <= PY + 60; ++y)
-        for (int x = PX - 20; x <= PX + 200; ++x)
+        for (int x = PX - 20; x <= PX + 400; ++x)
             g_world.setCell(x, y, MAT_EMPTY);
     for (int y = PY - 60; y <= PY + 60; ++y)
         for (int x = PX + 50; x <= PX + 70; ++x)
@@ -92,7 +92,7 @@ int main() {
        below it. A floor any higher means the backward search for somewhere
        the whole player FITS fails at every step and nobody moves. */
     for (int y = PY + 16; y <= PY + 40; ++y)
-        for (int x = PX - 20; x <= PX + 200; ++x)
+        for (int x = PX - 20; x <= PX + 400; ++x)
             g_world.setCell(x, y, MAT_STONE);          /* a floor to stand on */
     g_world.setLiveWindow(PX - 200, PY - 200, PX + 400, PY + 200);
 
@@ -123,8 +123,11 @@ int main() {
     for (int y = PY - 60; y <= PY + 60; ++y)
         for (int x = PX + 50; x <= PX + 70; ++x)
             g_world.setCell(x, y, MAT_EMPTY);
+    const int FAR = PX + 300;   /* past speed*life, whatever that currently is */
+    check((float)(FAR - PX) > ws.speed * (float)ws.life,
+          "the far wall really is out of range (else this proves nothing)");
     for (int y = PY - 60; y <= PY + 15; ++y)
-        for (int x = PX + 150; x <= PX + 170; ++x)
+        for (int x = FAR; x <= FAR + 20; ++x)
             g_world.setCell(x, y, MAT_STONE);
     me.body.reset((float)PX, (float)PY);
     const float farStart = me.body.centreX();
@@ -132,8 +135,44 @@ int main() {
     projSpawn((float)(PX + 4), (float)PY, ws.speed, 0.0f,
               ws.power, ws.pierce, ws.life, ws.colour, 0, MAT_EMPTY,
               ws.damage, false, 0.0f, ws.effect, 0, 0.0f, 0);
-    for (int f = 0; f < 240; ++f) projUpdate(g_world);
+    for (int f = 0; f < 400; ++f) projUpdate(g_world);
     check(me.body.centreX() == farStart, "a shot that reaches nothing moves nobody");
+
+    /* --- a wall puts you level with the mark, not back down the corridor --- */
+    /* The case the backward-only search got wrong. A corridor too short for a
+       30-cell player, a wall at the end of it, and headroom only near that
+       wall: backing away from a vertical face never finds a fit at any
+       distance, while sliding UP the face finds one immediately. The check is
+       that the player ends up in the impact's column rather than somewhere
+       behind it. */
+    g_world.reset();
+    for (int y = PY - 60; y <= PY + 60; ++y)
+        for (int x = PX - 20; x <= PX + 200; ++x)
+            g_world.setCell(x, y, MAT_EMPTY);
+    for (int y = PY - 60; y <= PY - 10; ++y)          /* low ceiling over the run */
+        for (int x = PX - 20; x <= PX + 45; ++x)
+            g_world.setCell(x, y, MAT_STONE);
+    for (int y = PY + 6; y <= PY + 40; ++y)           /* floor, close under the shot */
+        for (int x = PX - 20; x <= PX + 200; ++x)
+            g_world.setCell(x, y, MAT_STONE);
+    for (int y = PY - 60; y <= PY + 60; ++y)          /* the wall it stops against */
+        for (int x = PX + 60; x <= PX + 80; ++x)
+            g_world.setCell(x, y, MAT_STONE);
+    g_world.setLiveWindow(PX - 200, PY - 200, PX + 400, PY + 200);
+
+    me.body.reset((float)(PX + 20), (float)(PY - 8));
+    me.body.alive = true;
+    projClear();
+    projSpawn((float)(PX + 4), (float)PY, ws.speed, 0.0f,
+              ws.power, ws.pierce, ws.life, ws.colour, 0, MAT_EMPTY,
+              ws.damage, false, 0.0f, ws.effect, 0, 0.0f, 0);
+    for (int f = 0; f < 240; ++f) projUpdate(g_world);
+
+    const float wallX = me.body.centreX(), wallY = me.body.centreY();
+    printf("wall hit at x=%d: player landed at %.0f,%.0f\n", PX + 59, wallX, wallY);
+    check(wallX > (float)(PX + 50),
+          "the player arrives level with the wall it shot, not back down the corridor");
+    check(wallY < (float)PY, "having been lifted to where a body actually fits");
 
     if (failures) {
         fprintf(stderr, "%d warp wand check(s) failed\n", failures);

@@ -320,27 +320,79 @@ static bool teleportFits(const World& w, float cx, float cy) {
     return true;
 }
 
+static void teleportPlace(PlayerSession& session, float cx, float cy) {
+    Player& body = session.body;
+    body.x = cx - PLAYER_W * 0.5f;
+    body.y = cy - PLAYER_H * 0.5f;
+    body.vx = body.vy = 0.0f;
+    body.fallFromY = body.y;
+    body.onGround = false; body.buried = false;
+    session.restBed = -1;
+}
+
+/* Put the shooter where the bolt stopped -- as near to it as a whole body
+   can actually stand.
+
+   The impact cell is safe for a PROJECTILE, which is a point. A player is
+   11 by 30, so the arrival spot usually has to be somewhere near the impact
+   rather than exactly on it, and the question is which way to look.
+
+   This used to walk straight back along the shot, and that is fine when the
+   bolt hits something roughly horizontal: the floor is below you, the body
+   fits immediately, and you arrive where you aimed. It is bad when the bolt
+   hits a WALL. Backing away from a vertical face means retreating along the
+   corridor you fired down, and in a corridor shorter than the player the
+   only fit can be dozens of cells behind the impact -- you aim at a wall
+   ten cells away and materialise back where you started.
+
+   So the search is ordered by DISTANCE from the impact, and at equal
+   distance it prefers moving vertically. Staying in the impact's column is
+   what makes the wall case read correctly: you slide up (or down) the face
+   you shot until there is headroom, and end up level with the mark instead
+   of behind it. Backing off along the shot is still there, but it is now
+   the fallback for a column that is solid all the way rather than the first
+   thing tried.
+
+   Up before down at the same distance: a wall you shoot at chest height
+   usually has floor just below and air above, so up is where the room is. */
 static void teleportProjectileOwner(const World& w, Projectile& p, int impactX, int impactY) {
     if (p.owner >= MAX_PLAYERS || !g_playerSessions[p.owner].connected) return;
     PlayerSession& session = g_playerSessions[p.owner];
-    Player& body = session.body;
-    if (!body.alive) return;
-    float speed = sqrtf(p.vx * p.vx + p.vy * p.vy);
-    float backX = speed > 0.001f ? -p.vx / speed : -1.0f;
-    float backY = speed > 0.001f ? -p.vy / speed : 0.0f;
-    /* The impact cell is safe for a projectile, not necessarily a whole body.
-       Walk backward along the shot until the complete player box fits. */
-    for (int step = 0; step <= PLAYER_H * 2; ++step) {
-        const float cx = (float)impactX + 0.5f + backX * (float)step;
-        const float cy = (float)impactY + 0.5f + backY * (float)step;
-        if (!teleportFits(w, cx, cy)) continue;
-        body.x = cx - PLAYER_W * 0.5f;
-        body.y = cy - PLAYER_H * 0.5f;
-        body.vx = body.vy = 0.0f;
-        body.fallFromY = body.y;
-        body.onGround = false; body.buried = false;
-        session.restBed = -1;
-        return;
+    if (!session.body.alive) return;
+
+    const float speed = sqrtf(p.vx * p.vx + p.vy * p.vy);
+    const float backX = speed > 0.001f ? -p.vx / speed : -1.0f;
+    const float backY = speed > 0.001f ? -p.vy / speed : 0.0f;
+    const float atX = (float)impactX + 0.5f, atY = (float)impactY + 0.5f;
+
+    /* Searched outward by COST rather than by distance, where going back along
+       the shot is priced at three cells for every one spent moving up or down.
+
+       Two lines through the impact were not enough. A body is eleven wide, so
+       a bolt that stops one cell from a wall cannot be matched by any purely
+       vertical move -- the box still overlaps the rock -- and a purely
+       backward one keeps the same height and stays stuck in the same short
+       corridor. The arrival needs a little of both, and the weighting is what
+       keeps `a little` honest: it will climb ten cells before it gives up
+       three, so you finish level with the mark rather than behind it. */
+    static const int BACK_COST = 3;
+    static const int MAX_BACK  = PLAYER_H;
+    static const int MAX_COST  = PLAYER_H * 2;
+
+    for (int cost = 0; cost <= MAX_COST; ++cost) {
+        for (int back = 0; back * BACK_COST <= cost && back <= MAX_BACK; ++back) {
+            const int rise = cost - back * BACK_COST;
+            const float cx = atX + backX * (float)back;
+            const float base = atY + backY * (float)back;
+            /* Up before down: a wall shot at chest height usually has floor
+               just under it and air over it, so up is where the room is. */
+            if (teleportFits(w, cx, base - (float)rise)) {
+                teleportPlace(session, cx, base - (float)rise); return;
+            }
+            if (rise && teleportFits(w, cx, base + (float)rise)) {
+                teleportPlace(session, cx, base + (float)rise); return;
+            }
+        }
     }
 }
 
