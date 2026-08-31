@@ -1,0 +1,102 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Cinderlift transport check</title>
+<style>
+  body { background:#12141a; color:#c8cedb; font:14px/1.5 ui-monospace,Consolas,monospace; margin:0; padding:18px; }
+  h1 { font-size:15px; letter-spacing:.08em; color:#e8a24a; margin:0 0 4px; }
+  p.note { color:#7e8696; margin:0 0 16px; max-width:60em; }
+  .cols { display:flex; gap:18px; flex-wrap:wrap; }
+  .col { flex:1 1 340px; background:#191c24; border:1px solid #2a2f3c; padding:12px; }
+  h2 { font-size:13px; color:#8fb3d8; margin:0 0 8px; }
+  textarea { width:100%; height:88px; background:#0e1016; color:#c8cedb; border:1px solid #2a2f3c;
+             font:12px/1.4 ui-monospace,monospace; padding:6px; box-sizing:border-box; }
+  button { background:#2a3140; color:#dfe6f2; border:1px solid #3c4557; padding:6px 12px; cursor:pointer; margin:4px 4px 4px 0; }
+  button:hover { background:#39435a; }
+  #state { color:#e8a24a; }
+  #log { background:#0e1016; border:1px solid #2a2f3c; padding:8px; height:180px; overflow:auto;
+         white-space:pre-wrap; margin-top:16px; font-size:12px; }
+  code { color:#e8a24a; }
+</style>
+
+<h1>CINDERLIFT — TRANSPORT CHECK</h1>
+<p class="note">
+  Proves WebRTC moves bytes between two tabs with no server: STUN only, no relay, codes
+  pasted by hand. Open this page in two tabs (or on two machines), press <code>Host</code>
+  in one and paste the code into the other. This is the transport the game uses — nothing
+  here is a mock.
+</p>
+
+<div class="cols">
+  <div class="col">
+    <h2>1 — HOST</h2>
+    <button id="bhost">Host</button>
+    <textarea id="offer" placeholder="the host code appears here; send it to the other tab"></textarea>
+    <h2>3 — PASTE THE REPLY</h2>
+    <textarea id="answerIn" placeholder="paste the join code back here"></textarea>
+    <button id="baccept">Accept</button>
+  </div>
+  <div class="col">
+    <h2>2 — JOIN</h2>
+    <textarea id="offerIn" placeholder="paste the host code here"></textarea>
+    <button id="bjoin">Join</button>
+    <textarea id="answer" placeholder="the join code appears here; send it back"></textarea>
+  </div>
+  <div class="col">
+    <h2>TRAFFIC</h2>
+    <div>state: <span id="state">idle</span></div>
+    <button id="bping">Send 32 bytes</button>
+    <button id="bbig">Send 1 MB</button>
+    <div id="counts" style="margin-top:8px;color:#7e8696"></div>
+  </div>
+</div>
+
+<div id="log"></div>
+
+<script src="webrtc.js"></script>
+<script>
+  const $ = id => document.getElementById(id);
+  const log = (m) => { $('log').textContent += m + '\n'; $('log').scrollTop = 1e9; };
+
+  let sent = 0, got = 0, expecting = 0, checked = true;
+
+  $('bhost').onclick = async () => {
+    try { $('offer').value = await CinderNet.host(); log('host code ready (' + $('offer').value.length + ' chars)'); }
+    catch (e) { log('host failed: ' + e.message); }
+  };
+  $('bjoin').onclick = async () => {
+    try { $('answer').value = await CinderNet.join($('offerIn').value); log('join code ready (' + $('answer').value.length + ' chars)'); }
+    catch (e) { log('join failed: ' + e.message); }
+  };
+  $('baccept').onclick = async () => {
+    try { await CinderNet.accept($('answerIn').value); log('answer accepted, connecting'); }
+    catch (e) { log('accept failed: ' + e.message); }
+  };
+
+  /* A known byte pattern, so a corrupted or reordered stream is caught rather
+     than just counted. The game's framing would desync on either. */
+  function pattern(n) {
+    const b = new Uint8Array(n);
+    for (let i = 0; i < n; i++) b[i] = (i * 7 + 13) & 0xFF;
+    return b;
+  }
+
+  $('bping').onclick = () => { const b = pattern(32); if (CinderNet.send(b)) { sent += b.length; log('sent 32'); } };
+  $('bbig').onclick  = () => { const b = pattern(1 << 20); if (CinderNet.send(b)) { sent += b.length; log('sent 1 MB'); } };
+
+  /* Drained on a timer the way the game drains it each frame. */
+  setInterval(() => {
+    $('state').textContent = CinderNet.state() + (CinderNet.error() ? ' — ' + CinderNet.error() : '');
+    const n = CinderNet.pending();
+    if (n) {
+      const view = new Uint8Array(n);
+      const read = CinderNet.read(view, n);
+      for (let i = 0; i < read; i++) {
+        if (view[i] !== (((got + i) * 7 + 13) & 0xFF)) { checked = false; }
+      }
+      got += read;
+      log('received ' + read + ' bytes (total ' + got + ')' + (checked ? '' : '  ** PATTERN MISMATCH **'));
+    }
+    $('counts').textContent = 'sent ' + sent + ' / received ' + got +
+                              (checked ? '  bytes intact' : '  CORRUPT');
+  }, 100);
+</script>
