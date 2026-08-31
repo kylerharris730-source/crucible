@@ -41,6 +41,7 @@
   var inbox = [];
   var inboxBytes = 0;
 
+  var hostBlob = '', joinBlob = '';
   var pc = null;          // RTCPeerConnection
   var chan = null;        // RTCDataChannel
   var state = 'idle';     // idle | gathering | waiting | connecting | open | closed | failed
@@ -241,7 +242,33 @@
       return wrote;
     },
 
-    close: function () { reset(); state = 'closed'; }
+    close: function () { reset(); state = 'closed'; },
+
+    /* --- the surface the game calls ---------------------------------------
+       C cannot await, so the async handshake is started and then polled. Each
+       of these begins work and returns immediately; the code appears in
+       hostCode()/joinCode() when it is ready, and until then they are empty.
+       That maps onto a game loop without threading anything through it. */
+    lastFault: '',
+    beginHost: function () {
+      api.lastFault = '';
+      hostBlob = '';
+      api.host().then(function (c) { hostBlob = c; })
+                .catch(function (e) { api.lastFault = e.message || 'host failed'; state = 'failed'; });
+    },
+    beginJoin: function (code) {
+      api.lastFault = '';
+      joinBlob = '';
+      api.join(code).then(function (c) { joinBlob = c; })
+                    .catch(function (e) { api.lastFault = e.message || 'join failed'; state = 'failed'; });
+    },
+    beginAccept: function (code) {
+      api.lastFault = '';
+      api.accept(code).catch(function (e) { api.lastFault = e.message || 'accept failed'; state = 'failed'; });
+    },
+    hostCode: function () { return hostBlob; },
+    joinCode: function () { return joinBlob; },
+    fault: function () { return api.lastFault || lastError; }
   };
 
   window.CinderNet = api;

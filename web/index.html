@@ -381,11 +381,13 @@
     about 1.5&nbsp;MB, and it runs on any desktop browser.
   </p>
   <p>
-    Both versions <b>keep ten save slots</b>. The <b>Windows download</b> is still
-    the fuller one: it has direct-IP multiplayer, which a browser tab cannot do,
-    and its saves are ordinary files you can move between machines. It is the same
-    game and the same code &mdash; the browser build is that code compiled to
-    WebAssembly rather than a cut-down port.
+    Both versions <b>keep ten save slots</b> and both <b>play with a friend</b>.
+    They connect differently: the browser pairs two players directly by swapping
+    a short code, and the <b>Windows download</b> connects by IP address, which is
+    steadier on awkward networks. Windows also keeps its saves as ordinary files
+    you can move between machines. It is the same game and the same code &mdash;
+    the browser build is that code compiled to WebAssembly rather than a cut-down
+    port.
   </p>
   <div class="cta">
     <a class="dl" href="https://github.com/kylerharris730-source/crucible/releases/latest/download/cinderlift.exe">Download for Windows<span class="ver" id="ver2"></span></a>
@@ -410,12 +412,19 @@
     saves as ordinary files instead.
   </p>
 
-  <h3>Why is there no multiplayer in the browser?</h3>
+  <h3>How does multiplayer work in the browser?</h3>
   <p>
-    Multiplayer connects two machines directly by IP, and a browser tab is not
-    allowed to open that kind of connection. Doing it in a tab would mean running
-    a relay server in the middle, which is a thing that has to be paid for and
-    kept alive forever. The Windows build has multiplayer.
+    Press <b>Multiplayer</b> under the game. One of you hosts and gets a code;
+    send it to the other however you are already talking, and they send a code
+    back. Paste that in and you are connected.
+  </p>
+  <p>
+    Two codes rather than one because there is <b>no server</b> anywhere in this.
+    The two browsers talk straight to each other, so there is nothing in the
+    middle to pay for, keep running, or read your traffic. The cost of that is
+    the copying and pasting, and that some strict networks will not allow a
+    direct connection at all &mdash; there is no relay to fall back on. If it will
+    not connect, the Windows build can host by IP instead.
   </p>
 
   <h3>Windows says the download is unrecognised.</h3>
@@ -448,8 +457,9 @@
   <b>Cinderlift</b> &mdash; a falling-sand sandbox with real heat, pressure and circuits.
   <a href="https://github.com/kylerharris730-source/crucible">Source</a> &middot;
   <a href="https://github.com/kylerharris730-source/crucible/releases">Releases</a><br>
-  This browser build is <b>single-player only</b>; its ten save slots live in this
-  browser's storage. The Windows download adds multiplayer and saves to files.
+  This browser build plays with a friend by swapping codes, and its ten save slots
+  live in this browser's storage. The Windows download connects by IP and saves to
+  files.
 </footer>
 
 <!-- Shown after the download has already started; see askBeforeDownload(). -->
@@ -817,7 +827,13 @@
     }
   });
 </script>
+<!-- Not async, and before the game. netshim.cpp reaches for window.CinderNet the
+     first time anybody clicks Host, and a transport that had not finished
+     loading would present as the game failing to host rather than as a missing
+     script. It is a few KB. -->
+<script src="webrtc.js"></script>
 <script async src="cinderlift.js"></script>
+<script src="multiplayer.js"></script>
 
 </body>
 </html>

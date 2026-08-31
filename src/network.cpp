@@ -1,6 +1,12 @@
 #define WIN32_LEAN_AND_MEAN
+#ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#else
+/* A tab has no sockets. See web/netshim.h for what stands in and why the
+   protocol below is untouched by the difference. */
+#include "web/netshim.h"
+#endif
 #include "network.h"
 #include "save.h"
 #include "entity.h"
@@ -158,6 +164,15 @@ static void statusf(const char* fmt, const char* arg = 0) {
     if (arg) sprintf(g_status, fmt, arg); else strcpy(g_status, fmt);
 }
 
+#ifndef _WIN32
+/* Nothing to start, and no local address to report: a tab does not know its
+   own IP and does not need to, because nobody dials it. The other player is
+   reached with a pasted code, not an address. */
+static bool startup() { g_wsa = true; return true; }
+static bool nonblocking(SOCKET) { return true; }
+static void preferLowLatency(SOCKET) {}
+static void closeSocket(SOCKET& s) { if (s != INVALID_SOCKET) { webNetClose(); s = INVALID_SOCKET; } }
+#else
 static bool startup() {
     if (g_wsa) return true;
     WSADATA data;
@@ -191,6 +206,7 @@ static void preferLowLatency(SOCKET s) {
 static void closeSocket(SOCKET& s) {
     if (s != INVALID_SOCKET) { closesocket(s); s = INVALID_SOCKET; }
 }
+#endif
 
 /* ==========================================================================
    The transport seam
@@ -215,6 +231,32 @@ static void closeSocket(SOCKET& s) {
 /* Non-blocking read. >0 bytes, 0 for nothing waiting, -1 for a clean close,
    -2 for a broken connection. Those last two are distinguished because they
    say different things to the player. */
+#ifndef _WIN32
+/* The data channel is reliable and ordered, so there is no partial-failure
+   case to report: either bytes are waiting or they are not. A channel that
+   has given up reads as a clean close, which is what the player sees. */
+static int txRecv(Peer&, u8* buf, int cap) {
+    const int n = webNetRecv(buf, cap);
+    if (n > 0) return n;
+    return webNetFailed() ? -1 : 0;
+}
+static int txSend(Peer&, const u8* buf, int n) {
+    const int sent = webNetSend(buf, n);
+    if (sent > 0) return sent;
+    return webNetFailed() ? -1 : 0;
+}
+/* Connecting finishes when the channel opens. There is no socket to ask, so
+   this is the same question the rest of the file asks. */
+static bool txConnectPoll(Peer&, bool* failed) {
+    *failed = webNetFailed();
+    return webNetOpen() || *failed;
+}
+static bool txReady(Peer& peer, bool* readable, bool* writable) {
+    *readable = webNetOpen();
+    *writable = webNetOpen() && peer.sendAt < peer.send.size();
+    return true;
+}
+#else
 static int txRecv(Peer& peer, u8* buf, int cap) {
     const int n = recv(peer.sock, (char*)buf, cap, 0);
     if (n > 0) return n;
@@ -256,6 +298,7 @@ static bool txReady(Peer& peer, bool* readable, bool* writable) {
     *writable = FD_ISSET(peer.sock, &writeSet) != 0;
     return true;
 }
+#endif
 
 static int connectedPeerCount() {
     int n = 0;
@@ -313,6 +356,33 @@ void netStop() {
     g_role = NET_OFF; statusf("Offline");
 }
 
+#ifndef _WIN32
+/* There is no port and nothing to bind. Hosting in a tab means starting an
+   offer; the player hands the resulting code to their friend, and the peer
+   slot fills in when the channel opens -- see netPoll. */
+bool netHost(u16, bool) {
+    netStop(); startup();
+    webNetBeginHost();
+    g_role = NET_HOST;
+    statusf("Making a host code -- this takes a moment");
+    return true;
+}
+
+/* `ipv4` carries an offer code here rather than an address. See netshim.h:
+   the signature is the game's, the meaning is what the transport has. */
+bool netJoin(const char* ipv4, u16) {
+    netStop(); startup();
+    if (!ipv4 || !*ipv4) { statusf("Paste the host's code first"); return false; }
+    webNetBeginJoin(ipv4);
+    Peer& peer = g_peers[0];
+    peer.clear();
+    peer.sock = WEB_PEER_SOCKET;
+    peer.connecting = true;
+    g_role = NET_CLIENT;
+    statusf("Making a join code -- send it back to the host");
+    return true;
+}
+#else
 bool netHost(u16 port, bool loopbackOnly) {
     netStop(); if (!startup()) return false;
     g_listen = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -356,6 +426,7 @@ bool netJoin(const char* ipv4, u16 port) {
     sprintf(g_status, "Connecting to %s:%u", ipv4, (unsigned)port);
     return true;
 }
+#endif
 
 static void queuePacket(Peer& peer, u8 type, const std::vector<u8>& payload) {
     if (!peer.live()) return;
@@ -393,15 +464,28 @@ static bool writeWholeFile(const char* path, const u8* p, size_t n) {
    does not. Keep the original fixed snapshot paths that Defender accepts and
    create only their parent directory, rather than moving received network data
    into the system temporary directory. */
+#ifdef _WIN32
 static bool ensureSnapshotDirectory() {
     if (CreateDirectoryA("build", 0)) return true;
     /* ERROR_ALREADY_EXISTS is 183 in WinError.h; this old MinGW's lean Win32
        headers expose the APIs but omit that symbolic constant here. */
     return GetLastError() == 183u;
 }
+static const char* SNAPSHOT_SCRATCH = "build\\net-host-snapshot.tmp";
+static const char* CLIENT_SNAPSHOT_SCRATCH = "build\\net-client-snapshot.tmp";
+#else
+/* A tab's filesystem is made at startup and always has a root to write in,
+   so there is no directory to create. The scratch file goes there rather
+   than into /saves: it is a few megabytes of temporary bytes, and putting it
+   in the IDBFS mount would push a whole world through IndexedDB on every
+   join for no reason. */
+static bool ensureSnapshotDirectory() { return true; }
+static const char* SNAPSHOT_SCRATCH = "/net-host-snapshot.tmp";
+static const char* CLIENT_SNAPSHOT_SCRATCH = "/net-client-snapshot.tmp";
+#endif
 
 static void sendSnapshot(Peer& peer, World& world) {
-    const char* path = "build\\net-host-snapshot.tmp";
+    const char* path = SNAPSHOT_SCRATCH;
     if (!ensureSnapshotDirectory()) { statusf("Could not create snapshot directory"); return; }
     if (!saveWrite(path, world)) { statusf("Could not make join snapshot"); return; }
     std::vector<u8> bytes;
@@ -811,7 +895,7 @@ static void handlePacket(Peer& peer, u8 type, const u8* data, size_t len, World&
     } else if (type == PK_WELCOME && g_role == NET_CLIENT) {
         g_assigned = r.u8v(); (void)r.u16v(); statusf("Accepted -- receiving world");
     } else if (type == PK_WORLD_SNAPSHOT && g_role == NET_CLIENT) {
-        const char* path = "build\\net-client-snapshot.tmp";
+        const char* path = CLIENT_SNAPSHOT_SCRATCH;
         if (!ensureSnapshotDirectory()) { statusf("Could not create snapshot directory"); return; }
         if (!writeWholeFile(path, data, len) || !saveRead(path, world)) {
             remove(path); statusf("Could not load host world snapshot"); return;
@@ -962,6 +1046,17 @@ static void pollPeer(Peer& peer, World& world) {
 }
 
 void netPoll(World& world) {
+#ifndef _WIN32
+    /* No accept queue: there is one possible guest and they arrive by the
+       channel opening. Adopting the peer here rather than at netHost time is
+       what keeps the rest of the file honest -- a peer that is `live()` is
+       one the transport can actually carry bytes for. */
+    if (g_role == NET_HOST && !g_peers[0].live() && webNetOpen()) {
+        g_peers[0].clear();
+        g_peers[0].sock = WEB_PEER_SOCKET;
+        statusf("Player connecting");
+    }
+#else
     if (g_role == NET_HOST && g_listen != INVALID_SOCKET) {
         /* Accept in a loop: several people can click Join within one frame,
            and an unaccepted backlog entry would otherwise wait a whole frame
@@ -979,6 +1074,7 @@ void netPoll(World& world) {
             sprintf(g_status, "Player connecting -- %d connected", connectedPeerCount());
         }
     }
+#endif
     for (int i = 0; i < MAX_PEERS; ++i) if (g_peers[i].live()) pollPeer(g_peers[i], world);
 }
 

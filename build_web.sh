@@ -25,6 +25,14 @@ cd "$(dirname "$0")"
 # after install -- leaving em++.py, which runs perfectly under the interpreter
 # emsdk bundles for exactly this purpose. Hence: PATH first, then the SDK's own
 # Python driving the .py. EMXX overrides the lot.
+# Git Bash rewrites any argument that looks like an absolute POSIX path into
+# a Windows one, so -DCINDERLIFT_SAVE_PATH="/saves/..." reached the compiler
+# as "C:/Program Files/Git/saves/...". The game then tried to save to a
+# directory that does not exist in the tab's filesystem and every browser save
+# failed -- silently, because the path looked plausible in the error message.
+# This turns that rewriting off for the two defines that carry MEMFS paths.
+export MSYS2_ARG_CONV_EXCL='-DCINDERLIFT_SAVE_PATH;-DCINDERLIFT_LEGACY_SAVE_PATH'
+
 EMXX_CMD=()
 if [ -n "${EMXX:-}" ]; then
     EMXX_CMD=("$EMXX")
@@ -48,7 +56,12 @@ if [ ${#EMXX_CMD[@]} -eq 0 ]; then
 fi
 
 # Every game source except the winsock one, plus the shim.
-SRC=$(ls src/*.cpp | grep -v '/network\.cpp$')
+# network.cpp is IN now. It used to be held back for src/web/network_stub.cpp,
+# which refused to host or join because a tab cannot open a TCP socket. The
+# socket calls have since been put behind a seam and web/netshim.cpp fills it
+# with a WebRTC data channel, so the browser runs the same protocol as Windows
+# rather than a second copy of it.
+SRC=$(ls src/*.cpp)
 SRC="$SRC $(ls src/web/*.cpp)"
 
 BUILD_ID=$(git rev-parse --short=12 HEAD 2>/dev/null || echo unknown)
@@ -91,7 +104,7 @@ mkdir -p web
     $SRC \
     -s USE_SDL=2 \
     -l idbfs.js \
-    -s EXPORTED_RUNTIME_METHODS=FS,IDBFS,addRunDependency,removeRunDependency \
+    -s EXPORTED_RUNTIME_METHODS=FS,IDBFS,addRunDependency,removeRunDependency,stringToUTF8,UTF8ToString,ccall,cwrap \
     -s ASYNCIFY=1 \
     -s ASYNCIFY_STACK_SIZE=65536 \
     -s INITIAL_MEMORY=671088640 \
