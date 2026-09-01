@@ -152,4 +152,17 @@ if((await call('/room/'+dropCode+'/seat','POST',
    JSON.stringify({slot:9,offer:'x'}))).status!==400)
   throw new Error('an out-of-range seat was accepted');
 
+/* Asking for a specific seat back. A preference, not a reservation: honoured
+   when that seat is free, ignored when it is not, because refusing outright
+   would leave somebody unable to rejoin a game that has room in it. */
+response=await call('/room','POST',JSON.stringify({offers:['p0','p1','p2']}));
+const prefCode=(await response.json()).code;
+const askTwo=await (await call('/room/'+prefCode+'?seat=2')).json();
+if(askTwo.slot!==2)throw new Error('a free preferred seat was not honoured');
+if(askTwo.offer!=='p2')throw new Error('preferred seat gave the wrong offer');
+const askTwoAgain=await (await call('/room/'+prefCode+'?seat=2')).json();
+if(askTwoAgain.slot===2)throw new Error('a taken seat was handed out twice');
+const askJunk=await (await call('/room/'+prefCode+'?seat=99')).json();
+if(!Number.isInteger(askJunk.slot))throw new Error('a nonsense preference broke the reservation');
+
 console.log('four-player signaling passed (three atomic reservations, overflow refused)');

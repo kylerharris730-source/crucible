@@ -93,6 +93,9 @@
      by the time somebody actually wants to play. */
   var broker = null;
   var guestSession = null;
+  /* Which seat this client last held, so a reconnection can ask for it
+     back rather than being handed the next free one. */
+  var lastSeat = null;
 
   function menu() {
     shell('MULTIPLAYER',
@@ -368,8 +371,9 @@
 
   /* One attempt at joining, so that the first one and every reconnection
      afterwards are the same code rather than two versions that drift. */
-  async function joinOnce(code) {
-    var reservation = await CinderSignal.fetchOffer(code);
+  async function joinOnce(code, preferSeat) {
+    var reservation = await CinderSignal.fetchOffer(code, preferSeat);
+    lastSeat = reservation.slot;
     call('webMpJoin', ['null', 'string'], [reservation.offer]);
     var answer = '';
     for (var i = 0; i < 150 && !answer; i++) {
@@ -422,7 +426,7 @@
           await new Promise(function (r) { setTimeout(r, attempt * 2000); });
           if (!session.active) return;
           try {
-            await joinOnce(code);
+            await joinOnce(code, lastSeat);
             for (var i = 0; i < 150 && CinderNet.state(0) !== 'open'; i++)
               await new Promise(function (r) { setTimeout(r, 100); });
             if (CinderNet.state(0) === 'open') { everOpen = true; announce(''); break; }

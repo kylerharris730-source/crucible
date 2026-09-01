@@ -235,14 +235,33 @@ static void closeSocket(SOCKET& s) {
 /* The data channel is reliable and ordered, so there is no partial-failure
    case to report: either bytes are waiting or they are not. A channel that
    has given up reads as a clean close, which is what the player sees. */
+/* A peer that has finished its handshake must have an OPEN channel. Anything
+   else means the link underneath it is gone.
+
+   Asking only whether the link had FAILED was not enough, and the gap had a
+   cost measured on a live game: when the host re-offers a seat whose guest
+   dropped, that link goes back to 'waiting' rather than to 'failed'. Not
+   failed, so the peer was never disconnected -- the host went on counting a
+   player who was not there, the seat stayed occupied forever, and the
+   returning guest was pushed into a different one. Two connected players on a
+   host with one.
+
+   `connecting` is what keeps this honest for a guest, whose link legitimately
+   is not open yet while it is still dialling; pollPeer routes those through
+   txConnectPoll and never reaches here. */
+static bool txLinkLost(const Peer& peer) {
+    return !peer.connecting && !webNetOpen(peer.sock);
+}
 static int txRecv(Peer& peer, u8* buf, int cap) {
     const int n = webNetRecv(peer.sock, buf, cap);
     if (n > 0) return n;
+    if (txLinkLost(peer)) return -1;
     return webNetFailed(peer.sock) ? -1 : 0;
 }
 static int txSend(Peer& peer, const u8* buf, int n) {
     const int sent = webNetSend(peer.sock, buf, n);
     if (sent > 0) return sent;
+    if (txLinkLost(peer)) return -1;
     return webNetFailed(peer.sock) ? -1 : 0;
 }
 /* Connecting finishes when the channel opens. There is no socket to ask, so

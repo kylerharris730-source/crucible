@@ -173,12 +173,24 @@ export default {
           const state = roomState(row.answer);
           if (!state || !Array.isArray(offers) || offers.length !== ROOM_SLOTS)
             return json({ error: 'room format is obsolete' }, 409);
+          /* A reconnecting guest asks for the seat it had. Honoured when that
+             seat is genuinely free, ignored otherwise -- it is a preference,
+             not a reservation, because the host may not have re-opened it yet
+             and refusing outright would leave somebody unable to rejoin a game
+             with room in it. What it buys is that a player who drops comes
+             back as the same number instead of the next one. */
+          const wanted = url.searchParams.get('seat');
+          const prefer = wanted === null ? -1 : parseInt(wanted, 10);
+          const free = function (i) {
+            if (state.used[i]) return false;
+            const expired = state.claims[i] && !state.answers[i] &&
+                            state.claimedAt[i] < now - CLAIM_TTL_MS;
+            return !state.claims[i] || expired;
+          };
           let slot = -1;
-          for (let i = 0; i < ROOM_SLOTS; i++) {
-            if (state.used[i]) continue;
-            const expired = state.claims[i] && !state.answers[i] && state.claimedAt[i] < now - CLAIM_TTL_MS;
-            if (!state.claims[i] || expired) { slot = i; break; }
-          }
+          if (Number.isInteger(prefer) && prefer >= 0 && prefer < ROOM_SLOTS && free(prefer))
+            slot = prefer;
+          else for (let i = 0; i < ROOM_SLOTS; i++) if (free(i)) { slot = i; break; }
           if (slot < 0) return json({ error: 'room full' }, 409);
           const claim = newClaim();
           state.claims[slot] = claim; state.claimedAt[slot] = now; state.answers[slot] = null;
