@@ -55,7 +55,16 @@ version="${tag#v}.$count"
 # not make the build something other than what the tag says it is, and marking
 # it would mean the local build almost never matches the site even when the
 # code is identical.
-if [ -n "$(git status --porcelain -- src Makefile build.bat build_web.sh 2>/dev/null)" ]; then
+#
+# core.fileMode=false because the question is whether the CODE differs from
+# the tag, and a permission bit is not code. This is not hypothetical: the
+# Pages workflow used to chmod +x this script before running it, git counted
+# that mode change as a modification, and the website published itself as
+# "0.4.4.19+dirty" from a checkout that was untouched. The workflow no longer
+# chmods, but the check should not have been fooled by it either -- a build
+# on any filesystem that reports modes differently would have hit the same
+# thing.
+if [ -n "$(git -c core.fileMode=false status --porcelain -- src Makefile build.bat build_web.sh 2>/dev/null)" ]; then
     version="$version+dirty"
 fi
 

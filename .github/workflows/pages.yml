@@ -47,9 +47,10 @@ jobs:
           actions-cache-folder: emsdk-cache
 
       - name: Build the browser game
-        run: |
-          chmod +x build_web.sh
-          ./build_web.sh
+        # Run through bash rather than chmod +x and then ./ -- the chmod is a
+        # real file-mode change to a tracked file, which git reports as a
+        # modification and which made the published build call itself dirty.
+        run: bash build_web.sh
 
       - name: Confirm the artefacts exist
         # A Pages deploy that silently ships an index.html with no wasm beside

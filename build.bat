@@ -57,6 +57,10 @@ if defined CL_TAG (
 )
 if defined SOURCE_DIRTY set CL_VERSION=!CL_VERSION!+dirty
 
+REM Printed so a CI log records what it built. Without this the only way to
+REM learn the version of a published executable is to run it.
+echo Version !CL_VERSION!  build !BUILD_ID!
+
 REM --- version resource ------------------------------------------------------
 REM Windows reads the publisher and product name for its "unknown publisher"
 REM warning out of this. Without it those fields are blank, which is one of the
