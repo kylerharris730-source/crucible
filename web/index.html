@@ -111,9 +111,33 @@
      canvas cannot have, and the canvas is 768 tall -- on a 900px screen the
      difference between chrome of 180 and 132 is the difference between a
      filtered 0.94x and an exact 1:1. */
+  /* --- the first screen ----------------------------------------------
+     Header, game and control strip in a column exactly one viewport tall,
+     with the game taking whatever is left over. The article below scrolls
+     after it as normal.
+
+     This exists because the canvas used to be sized by MEASURING the
+     header and the strip in JavaScript and subtracting them from the
+     viewport, which failed in two ways at once. Any change in their height
+     -- the strip wrapping to a second line, which it does when the game
+     puts a message there -- shrank the canvas, and nothing recomputed it
+     afterwards, so it stayed shrunk until the window was resized. Being
+     off by a line in the other direction produced a canvas slightly too
+     tall, a scrollbar, a narrower viewport, and another pass measuring the
+     narrower value.
+
+     Flexbox already knows all of this and cannot disagree with itself.
+     min-height:0 is what lets the stage shrink below the canvas's own
+     size -- without it a flex item refuses to go under its content and the
+     column overflows instead of fitting. */
+  #screen {
+    display: flex; flex-direction: column;
+    height: 100vh; height: 100dvh;
+  }
   #stage {
+    flex: 1 1 auto; min-height: 0; overflow: hidden;
     display: flex; align-items: center; justify-content: center;
-    padding: 8px; min-height: 50vh;
+    padding: 8px;
   }
   canvas#canvas {
     display: block;
@@ -130,6 +154,12 @@
        ATTRIBUTES no matter who ends up deciding the width, so no clamp
        anywhere can distort it. fitCanvas therefore sets width only. */
     max-width: 100%;
+    /* A ceiling in the other axis too, so the canvas can never be taller
+       than the space it was given even for the frame between a layout
+       change and the fit that answers it. For a replaced element this
+       shrinks the width to match rather than squashing the picture, so it
+       is a guard rather than a second opinion about the size. */
+    max-height: 100%;
     height: auto;
     outline: none;
     /* Smooth is the DEFAULT here, and that is the opposite of the usual advice
@@ -262,6 +292,7 @@
 </style>
 </head>
 <body>
+<div id="screen">
 
 <header>
   <h1>CINDERLIFT</h1>
@@ -290,6 +321,8 @@
   <kbd>Tab</kbd> inventory &middot; <kbd>Q</kbd> throw an item &middot; <kbd>Esc</kbd> menu
   &middot; <a href="#about" class="more">read more &darr;</a>
 </div>
+
+</div><!-- #screen: the article below scrolls after the first screen -->
 
 <main>
 
@@ -782,23 +815,32 @@
   // Returns null on a hidden or not-yet-laid-out tab, which reports 0x0 --
   // sizing against that collapsed the canvas to 2x80, and it stayed that way
   // when the tab came back because nothing recomputed it.
+  /* Ask the stage how big it is. Nothing else.
+
+     This used to add up the header and the control strip and subtract them
+     from the viewport, and every part of that was a way to be wrong. The
+     strip's height depends on whether its text wraps, so a message appearing
+     under the game shrank the canvas; being off by a line the other way gave
+     a canvas slightly too tall, which produced a scrollbar, which narrowed
+     the viewport, which fed back into the next measurement.
+
+     #screen is a flex column one viewport tall and the stage takes what is
+     left, so the browser has already done this arithmetic and cannot
+     disagree with itself about it. The canvas is inside a stage that
+     overflow-hides and has min-height:0, so it cannot push the box it is
+     being measured against -- which is what makes this a measurement rather
+     than a feedback loop. */
   function availableBox() {
-    const vw = window.innerWidth, vh = window.innerHeight;
-    if (!vw || !vh) return null;
-    const header = document.querySelector('header');
-    /* #controls, NOT <footer>. The footer sits at the bottom of a long page
-       now; counting it would shrink the canvas to leave room for content that
-       is several screens away and that nobody has scrolled to. Only what
-       shares the first screen with the game is chrome. */
-    const strip = document.getElementById('controls');
-    const chrome = (header ? header.offsetHeight : 0) +
-                   (strip ? strip.offsetHeight : 0) + 18;   // stage padding + border
-    const stageEl = document.getElementById('stage');
-    return {
-      w: Math.max(160, (stageEl ? stageEl.clientWidth : vw) - 18),
-      h: Math.max(120, vh - chrome),
-      dpr: window.devicePixelRatio || 1
-    };
+    const stage = document.getElementById('stage');
+    if (!stage) return null;
+    const w = stage.clientWidth - 16, h = stage.clientHeight - 16;  // padding
+    /* A hidden tab, a collapsed layout, or a measurement taken before the
+       first paint all report something unusable. Sizing against that once
+       collapsed the canvas to 2x80 and left it there. Refuse rather than
+       apply, and wait to be asked again -- the observer below guarantees
+       there will be another chance. */
+    if (!(w > 40) || !(h > 40)) return null;
+    return { w: w, h: h, dpr: window.devicePixelRatio || 1 };
   }
 
   function fitCanvas() {
@@ -821,11 +863,37 @@
     canvas.classList.toggle('crisp', actual >= 0.999);
   }
 
-  window.addEventListener('resize', fitCanvas);
+  /* Coalesced to one fit per frame. A drag-resize fires continuously, and
+     each fit reads layout and then writes to it -- doing that per event is
+     how a resize turns into a stutter. */
+  var fitQueued = false;
+  function requestFit() {
+    if (fitQueued) return;
+    fitQueued = true;
+    requestAnimationFrame(function () { fitQueued = false; fitCanvas(); });
+  }
+
+  window.addEventListener('resize', requestFit);
+  window.addEventListener('orientationchange', requestFit);
   // A tab sized while hidden gets a second chance once it can be measured.
   document.addEventListener('visibilitychange', function () {
-    if (!document.hidden) fitCanvas();
+    if (!document.hidden) requestFit();
   });
+
+  /* The important one. `resize` fires for the WINDOW, and most of the ways
+     the game's box changes are not that: the control strip wrapping to a
+     second line, a font finishing loading, the version label arriving,
+     a scrollbar appearing. Every one of those used to leave the canvas at
+     whatever size it happened to be, with no event to put it right -- which
+     is exactly the shape of `it got small and I could not get it back`.
+
+     Watching the stage catches all of them, including the ones nobody has
+     thought of yet, because it observes the outcome rather than the
+     suspected causes. */
+  if (typeof ResizeObserver === 'function') {
+    const stage = document.getElementById('stage');
+    if (stage) new ResizeObserver(requestFit).observe(stage);
+  }
 
   // The canvas has to hold focus or the arrow keys and space scroll the page
   // instead of reaching the game.
