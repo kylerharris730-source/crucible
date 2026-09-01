@@ -106,6 +106,7 @@
   }
   a.ghost:hover { color: var(--ink); border-color: var(--dim); }
   .ver { font-size: 11px; opacity: .75; font-weight: 400; }
+  .build { font-size: 11px; opacity: .5; margin-left: 10px; font-family: ui-monospace, Consolas, monospace; }
 
   /* Tight padding on purpose. Every pixel of page chrome is a pixel the
      canvas cannot have, and the canvas is 768 tall -- on a 900px screen the
@@ -297,6 +298,11 @@
 <header>
   <h1>CINDERLIFT</h1>
   <span class="tag">falling sand, heat, pressure, circuits</span>
+  <!-- The version of THIS PAGE, read out of the wasm once it loads. Not the
+       same number as the download button beside it: that one is the newest
+       Windows release, this one is the build you are looking at, which moves
+       on every push. Seeing them differ is normal. -->
+  <span class="build" id="build"></span>
   <span class="spacer"></span>
   <a class="ghost" href="https://github.com/kylerharris730-source/crucible">Source</a>
   <!-- /releases/latest/download/ always resolves to the newest published
@@ -577,6 +583,26 @@
   // The link always resolves to the newest release, but says so only if this
   // succeeds. Public, unauthenticated, and rate-limited per IP, so it is
   // written to fail invisibly: the button works identically without it.
+  /* The build's own version, straight out of the wasm -- see
+     src/web/webinfo.cpp for why it is not stamped into this file. The module
+     is not ready at parse time and there is no event for it here, so this
+     asks until it answers and then gives up rather than polling a broken
+     load forever. A blank label is the correct outcome when the game did not
+     start; the page has louder ways of saying that. */
+  (function showBuild() {
+    var tries = 0;
+    var timer = setInterval(function () {
+      if (++tries > 100) { clearInterval(timer); return; }
+      if (typeof Module === 'undefined' || !Module.ccall) return;
+      var text;
+      try { text = Module.ccall('webVersion', 'string', [], []); }
+      catch (e) { return; }            /* linked but not callable yet */
+      clearInterval(timer);
+      var el = document.getElementById('build');
+      if (el && text) el.textContent = 'build ' + text;
+    }, 200);
+  })();
+
   (function fetchVersion() {
     fetch('https://api.github.com/repos/kylerharris730-source/crucible/releases/latest')
       .then(function (r) { return r.ok ? r.json() : null; })

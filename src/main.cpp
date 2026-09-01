@@ -38,6 +38,7 @@
 #include "accessory.h"
 #include "save.h"
 #include "multiplayer.h"
+#include "version.h"
 #include "network.h"
 
 /* The window is a fixed-size left-hand tool panel plus the sim viewport. The
@@ -6913,6 +6914,19 @@ static void drawMenu(HDC hdc) {
     SetTextColor(hdc, RGB(226, 190, 90));
     DrawTextA(hdc, netRole() == NET_OFF ? "PAUSED" : "MULTIPLAYER", -1,
               &title, DT_CENTER | DT_TOP | DT_SINGLELINE);
+
+    /* Right-aligned on the title's own line, which is why nothing in
+       layoutMenu moved: the title is centred and short, so the corner beside
+       it is empty at every UI scale. Dim, because this is a thing you look
+       for deliberately when checking whether an update landed, not a thing
+       that should compete with the buttons. */
+    {
+        RECT ver = title;
+        ver.right -= 14;
+        SetTextColor(hdc, RGB(120, 126, 138));
+        DrawTextA(hdc, CINDERLIFT_VERSION, -1, &ver,
+                  DT_RIGHT | DT_TOP | DT_SINGLELINE);
+    }
 
     drawButton(hdc, g_menuResume, "Resume", NULL, false, inRect(g_menuResume, g_mx, g_my));
     char hostLabel[96];

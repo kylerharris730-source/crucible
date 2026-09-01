@@ -32,6 +32,13 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v4
+        with:
+          # Tags, and enough history to count commits since one. The
+          # default checkout is shallow with no tags at all, which makes
+          # scripts/version.sh print "unknown" and the page show no
+          # version -- the exact failure the version number exists to
+          # rule out.
+          fetch-depth: 0
 
       - name: Install Emscripten
         uses: mymindstorm/setup-emsdk@v14

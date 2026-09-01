@@ -66,6 +66,11 @@ SRC="$SRC $(ls src/web/*.cpp)"
 
 BUILD_ID=$(git rev-parse --short=12 HEAD 2>/dev/null || echo unknown)
 
+# Shown in the menu and on the page, so a deploy can be told apart from the
+# one before it. Prints "unknown" when tags are missing, which in CI means
+# actions/checkout was not given fetch-depth: 0.
+CL_VERSION=$(bash scripts/version.sh 2>/dev/null || echo unknown)
+
 mkdir -p web
 
 # --- why these flags ---------------------------------------------------------
@@ -98,6 +103,7 @@ mkdir -p web
     -std=c++11 -O3 \
     -I src \
     -DCINDERLIFT_BUILD_ID="\"$BUILD_ID\"" \
+    -DCINDERLIFT_VERSION="\"$CL_VERSION\"" \
     -DCINDERLIFT_SAVE_PATH="\"/saves/cinderlift.sav\"" \
     -DCINDERLIFT_LEGACY_SAVE_PATH="\"/saves/crucible.sav\"" \
     ${EXTRA_FLAGS:-} \

@@ -38,6 +38,25 @@ if defined GIT_HEAD (
     )
 )
 
+REM --- the displayed version -------------------------------------------------
+REM Newest tag plus the number of commits since it, so a build can be checked
+REM against what was pushed. scripts/version.sh is the reference implementation
+REM and carries the reasoning; this is the same thing in cmd because cmd cannot
+REM run it. Keep the two in step -- the only rule is: tag with the v stripped,
+REM a dot, and `git rev-list --count <tag>..HEAD`.
+set CL_TAG=
+set CL_COUNT=
+set CL_VERSION=unknown
+for /f %%i in ('git describe --tags --abbrev^=0 2^>nul') do set CL_TAG=%%i
+if defined CL_TAG (
+    for /f %%i in ('git rev-list --count !CL_TAG!..HEAD 2^>nul') do set CL_COUNT=%%i
+    if defined CL_COUNT (
+        set CL_BASE=!CL_TAG:v=!
+        set CL_VERSION=!CL_BASE!.!CL_COUNT!
+    )
+)
+if defined SOURCE_DIRTY set CL_VERSION=!CL_VERSION!+dirty
+
 REM --- version resource ------------------------------------------------------
 REM Windows reads the publisher and product name for its "unknown publisher"
 REM warning out of this. Without it those fields are blank, which is one of the
@@ -80,7 +99,7 @@ REM -static, not only -static-libgcc/-static-libstdc++. The 64-bit MinGW used
 REM by GitHub Actions builds libstdc++ against libwinpthread; leaving that last
 REM runtime dynamic produced executables that worked on the runner and failed
 REM on clean Windows installs with "libwinpthread-1.dll was not found".
-g++ -std=c++11 -O2 -Wall -Wextra -mwindows -static -static-libgcc -static-libstdc++ -DCINDERLIFT_BUILD_ID=\"!BUILD_ID!\" !SRC! build/obj/version_game.o ^
+g++ -std=c++11 -O2 -Wall -Wextra -mwindows -static -static-libgcc -static-libstdc++ -DCINDERLIFT_BUILD_ID=\"!BUILD_ID!\" -DCINDERLIFT_VERSION=\"!CL_VERSION!\" !SRC! build/obj/version_game.o ^
     -o build\cinderlift.new.exe ^
     -lgdi32 -luser32 -lwinmm -lmsimg32 -lws2_32
 

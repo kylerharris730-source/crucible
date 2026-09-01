@@ -10,6 +10,14 @@ else
 BUILD_ID := $(GIT_HEAD)-dirty-$(shell powershell -NoProfile -Command "[guid]::NewGuid().ToString('N')")
 endif
 CXXFLAGS += -DCINDERLIFT_BUILD_ID=\"$(BUILD_ID)\"
+
+# The human-readable version: newest tag plus commits since it. Derived,
+# never stored -- scripts/version.sh explains why at length. Shelling out to
+# the one script rather than reimplementing it here is deliberate: build.bat
+# has to reimplement it (cmd cannot source bash) and that is already one copy
+# too many.
+CL_VERSION := $(shell bash scripts/version.sh 2>/dev/null || echo unknown)
+CXXFLAGS += -DCINDERLIFT_VERSION=\"$(CL_VERSION)\"
 # Keep distributed builds self-contained instead of requiring MinGW runtime
 # DLLs to be copied alongside cinderlift.exe.
 LDFLAGS  := -mwindows -static -static-libgcc -static-libstdc++ -lgdi32 -luser32 -lwinmm -lmsimg32 -lws2_32
