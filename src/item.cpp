@@ -1072,27 +1072,33 @@ void initItems() {
        So the premium came off, not the arc: 7/10/14/15/20/26/34 became
        6/9/12/13/17/22/29. Swords still lead every tier except copper, where
        the two now tie at 6 and are separated by what they ARE -- the sword's
-       sweep against the spear's extra seven cells of reach -- rather than by a
-       number. Spears, cooldowns and reaches are all untouched, so the shape of
-       the ladder and the gold-is-fast, tungsten-is-heavy character of it are
-       exactly as they were. */
+       sweep against the spear's extra reach -- rather than by a number.
+       Cooldowns are untouched, so the gold-is-fast, tungsten-is-heavy
+       character of the ladder is exactly as it was.
+
+       Every spear then gained six cells, moving the gap over a sword from
+       seven cells to thirteen. Reach is the entire argument for carrying
+       one -- it hits less hard, shoves less, and its only answer is that it
+       lands first -- and seven cells was not enough of an answer to feel
+       like one. The ORDER is unchanged: gold is still the shortest past
+       copper, which is the price of it being the quickest. */
     static const MeleeTier MELEE[] = {
         /*                                     ---- sword ----   ---- spear ---- */
-        { ITEM_SWORD_COPPER,   ITEM_SPEAR_COPPER,   "Copper",     6, 33, 32,   6, 22, 39, 0xC87A32, SPR_SWORD_COPPER,   SPR_SPEAR_COPPER,   0.9f },
-        { ITEM_SWORD_BRONZE,   ITEM_SPEAR_BRONZE,   "Bronze",     9, 33, 35,   8, 22, 41, 0xCE9B4E, SPR_SWORD_BRONZE,   SPR_SPEAR_BRONZE,   1.0f },
-        { ITEM_SWORD_IRON,     ITEM_SPEAR_IRON,     "Iron",      12, 33, 35,  11, 22, 44, 0xA8ADB6, SPR_SWORD_IRON,     SPR_SPEAR_IRON,     1.1f },
+        { ITEM_SWORD_COPPER,   ITEM_SPEAR_COPPER,   "Copper",     6, 33, 32,   6, 22, 45, 0xC87A32, SPR_SWORD_COPPER,   SPR_SPEAR_COPPER,   0.9f },
+        { ITEM_SWORD_BRONZE,   ITEM_SPEAR_BRONZE,   "Bronze",     9, 33, 35,   8, 22, 47, 0xCE9B4E, SPR_SWORD_BRONZE,   SPR_SPEAR_BRONZE,   1.0f },
+        { ITEM_SWORD_IRON,     ITEM_SPEAR_IRON,     "Iron",      12, 33, 35,  11, 22, 50, 0xA8ADB6, SPR_SWORD_IRON,     SPR_SPEAR_IRON,     1.1f },
         /* Gold: the fast tier. Its reach is the SHORTEST of anything past
            copper, which is the other half of paying for the speed -- a quick
            weapon that also kept you at range would have no downside at all. */
-        { ITEM_SWORD_GOLD,     ITEM_SPEAR_GOLD,     "Gold",      13, 24, 32,  12, 16, 39, 0xE8C233, SPR_SWORD_GOLD,     SPR_SPEAR_GOLD,     0.8f },
-        { ITEM_SWORD_STEEL,    ITEM_SPEAR_STEEL,    "Steel",     17, 33, 38,  16, 22, 48, 0x8E97A6, SPR_SWORD_STEEL,    SPR_SPEAR_STEEL,    1.3f },
-        { ITEM_SWORD_TITANIUM, ITEM_SPEAR_TITANIUM, "Titanium",  22, 33, 40,  21, 22, 51, 0xD2DAE4, SPR_SWORD_TITANIUM, SPR_SPEAR_TITANIUM, 1.4f },
+        { ITEM_SWORD_GOLD,     ITEM_SPEAR_GOLD,     "Gold",      13, 24, 32,  12, 16, 45, 0xE8C233, SPR_SWORD_GOLD,     SPR_SPEAR_GOLD,     0.8f },
+        { ITEM_SWORD_STEEL,    ITEM_SPEAR_STEEL,    "Steel",     17, 33, 38,  16, 22, 54, 0x8E97A6, SPR_SWORD_STEEL,    SPR_SPEAR_STEEL,    1.3f },
+        { ITEM_SWORD_TITANIUM, ITEM_SPEAR_TITANIUM, "Titanium",  22, 33, 40,  21, 22, 57, 0xD2DAE4, SPR_SWORD_TITANIUM, SPR_SPEAR_TITANIUM, 1.4f },
         /* Tungsten is the heaviest thing on the ladder and swings slowest of
            the top three, which is what stops the last tier being strictly
            better than everything at everything. It hits hardest and shoves
            furthest; titanium remains the one you pick if you want to keep
            moving. */
-        { ITEM_SWORD_TUNGSTEN, ITEM_SPEAR_TUNGSTEN, "Tungsten",  29, 35, 44,  27, 24, 56, 0x6F7A86, SPR_SWORD_TUNGSTEN, SPR_SPEAR_TUNGSTEN, 1.8f },
+        { ITEM_SWORD_TUNGSTEN, ITEM_SPEAR_TUNGSTEN, "Tungsten",  29, 35, 44,  27, 24, 62, 0x6F7A86, SPR_SWORD_TUNGSTEN, SPR_SPEAR_TUNGSTEN, 1.8f },
     };
 
     /* Shared across the whole ladder rather than being per-tier columns,

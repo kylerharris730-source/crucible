@@ -163,8 +163,30 @@ int main() {
             ITEM_SPEAR_TUNGSTEN
         };
         static const int swordReach[] = { 32, 35, 35, 32, 38, 40, 44 };
-        static const int spearReach[] = { 39, 41, 44, 39, 48, 51, 56 };
+        static const int spearReach[] = { 45, 47, 50, 45, 54, 57, 62 };
+        static const char* MELEE_TIER_NAME[] = {
+            "copper", "bronze", "iron", "gold", "steel", "titanium",
+            "tungsten"
+        };
         static const int swordCool[] = { 33, 33, 33, 24, 33, 33, 35 };
+        /* The arrays above are literals, and a literal only catches an edit
+           that forgot to update this file. The thing actually worth keeping
+           is the RELATIONSHIP: a spear's whole case for existing is that it
+           lands first, since it hits softer and shoves less than the sword
+           of its tier. If a tuning pass ever leaves a spear out-reached by
+           its own sword -- or close enough that the difference stops being
+           felt -- the weapon has no argument left, and that should fail here
+           even if both tables were updated in step. */
+        for (int i = 0; i < 7; ++i) {
+            const int gap = (int)ITEMS[spear[i]].meleeReach -
+                            (int)ITEMS[sword[i]].meleeReach;
+            if (gap < 8) {
+                fprintf(stderr, "FAIL: the %s spear only out-reaches its sword by %d\n",
+                        MELEE_TIER_NAME[i], gap);
+                ++failures;
+            }
+        }
+
         for (int i = 0; i < 7; ++i) {
             if (ITEMS[sword[i]].meleeReach != swordReach[i]) {
                 fprintf(stderr, "FAIL: sword reach ladder drifted at tier %d (%u/%d)\n",

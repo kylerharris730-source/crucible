@@ -5709,10 +5709,22 @@ static void drawMeleeSegment(u32* px, bool lit, ItemId item,
 
         /* Long swords get a symmetric three-cell blade for their lower half,
            narrowing to a single-cell point. The former one-sided thickness
-           made the blade visibly wobble around its hit segment as it rotated. */
+           made the blade visibly wobble around its hit segment as it rotated.
+
+           A spear used to be drawn one cell wide down its whole length,
+           which at forty-odd cells read as a thread rather than as a shaft --
+           the longest weapon in the game was also the faintest thing on
+           screen. It now has a body, tapering over the last two cells so the
+           point stays a point. Still narrower than a sword, which has a
+           crossguard as well as a blade; the difference between them is
+           meant to be shape, not visibility. */
         int halfWidth = 0;
-        if (sword && i > grip && i < steps - 2 &&
-            i < grip + (steps - grip) * 3 / 5) halfWidth = 1;
+        if (sword) {
+            if (i > grip && i < steps - 2 &&
+                i < grip + (steps - grip) * 3 / 5) halfWidth = 1;
+        } else if (i > grip && i < steps - 2) {
+            halfWidth = 1;
+        }
         for (int w = -halfWidth; w <= halfWidth; ++w)
             put(fx + nx * (float)w, fy + ny * (float)w, colour);
 
