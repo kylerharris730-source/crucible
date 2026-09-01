@@ -113,6 +113,20 @@
     /* Host: wait for it. Resolves with the answer, or null if nobody came.
        `cancelled` lets the panel stop the poll when it closes, so a shut
        dialog does not keep talking to the network. */
+    /* Re-open a seat whose guest dropped, with a freshly built offer.
+
+       A WebRTC link that has gone cannot be resumed: the description that
+       created it described one moment's network, and there is nothing to
+       retry. So coming back means a new offer for that same seat -- which is
+       also what keeps the returning player their original number instead of
+       being handed the next free one. */
+    reopenSeat: async function (code, slot, offer) {
+      var res = await ask('/room/' + encodeURIComponent(code) + '/seat',
+                          { method: 'POST', body: JSON.stringify({ slot: slot, offer: offer }) });
+      if (res.status === 404) throw new Error('that code expired');
+      if (!res.ok) throw new Error('could not re-open the seat');
+    },
+
     waitForAnswer: async function (code, cancelled) {
       var until = Date.now() + WAIT_MS;
       while (Date.now() < until) {

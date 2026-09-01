@@ -13,6 +13,7 @@ class FakeStatement {
   async first() {
     const row=this.db.rooms.get(this.args[0]);
     if (!row || row.expires <= this.args[1]) return null;
+    if (this.sql.startsWith('SELECT offer, answer, expires')) return { offer:row.offer, answer:row.answer, expires:row.expires };
     if (this.sql.startsWith('SELECT offer, answer')) return { offer:row.offer, answer:row.answer };
     if (this.sql.startsWith('SELECT answer')) return { answer:row.answer };
     /* The rollout guard reads the offer alone to find out whether a room is
@@ -42,6 +43,20 @@ class FakeStatement {
       const [next,code,old,expiry]=this.args, row=this.db.rooms.get(code);
       if(!row||row.answer!==old||(expiry!==undefined&&row.expires<=expiry))return {meta:{changes:0}};
       row.answer=next;return {meta:{changes:1}};
+    }
+    /* Re-opening a seat writes the offer, the seat state and a fresh expiry
+       together, with the compare-and-swap still on the seat state -- a guest
+       may be reserving another seat in the same instant. */
+    if (this.sql.startsWith('UPDATE rooms SET offer')) {
+      const [offer,next,expires,code,old]=this.args, row=this.db.rooms.get(code);
+      if(!row||row.answer!==old)return {meta:{changes:0}};
+      row.offer=offer;row.answer=next;row.expires=expires;return {meta:{changes:1}};
+    }
+    /* Hosting extends the room's life from the answer poll. */
+    if (this.sql.startsWith('UPDATE rooms SET expires')) {
+      const [expires,code]=this.args, row=this.db.rooms.get(code);
+      if(!row)return {meta:{changes:0}};
+      row.expires=expires;return {meta:{changes:1}};
     }
     throw new Error('unexpected run: '+this.sql);
   }
@@ -102,5 +117,39 @@ if(stillThere.slot===seat.slot)throw new Error('the surviving room forgot a seat
 if((await call('/room/'+mixedCode+'/answer','POST',
    JSON.stringify({slot:seat.slot,claim:seat.claim,answer:'real'}))).status!==204)
   throw new Error('the original guest lost its reservation to a stale tab');
+
+/* Reconnection, which is the case a real game produced within minutes: a guest
+   in New York joined, dropped, re-entered the same code, and came back as
+   player THREE rather than player two. Their old seat was still marked used,
+   so the room handed out the next one, and after three drops a room would be
+   full of ghosts with nobody in it.
+
+   A dropped WebRTC link cannot be resumed -- the description that built it
+   described one moment's network -- so the host has to publish a NEW offer for
+   that seat. This checks the seat comes back, keeps its index, and hands out
+   the replacement offer rather than the stale one. */
+response=await call('/room','POST',JSON.stringify({offers:['seat-a','seat-b','seat-c']}));
+const dropCode=(await response.json()).code;
+const first=await (await call('/room/'+dropCode)).json();
+await call('/room/'+dropCode+'/answer','POST',
+  JSON.stringify({slot:first.slot,claim:first.claim,answer:'first-answer'}));
+if((await (await call('/room/'+dropCode+'/answer')).json()).slot!==first.slot)
+  throw new Error('host did not collect the first answer');
+
+/* That seat is now used. Until the host re-opens it, it must stay used. */
+const beforeReopen=await (await call('/room/'+dropCode)).json();
+if(beforeReopen.slot===first.slot)throw new Error('a used seat was handed out again');
+
+if((await call('/room/'+dropCode+'/seat','POST',
+   JSON.stringify({slot:first.slot,offer:'seat-a-second'}))).status!==204)
+  throw new Error('host could not re-open the dropped seat');
+const back=await (await call('/room/'+dropCode)).json();
+if(back.slot!==first.slot)throw new Error('the returning guest did not get its old seat');
+if(back.offer!=='seat-a-second')throw new Error('the returning guest got the stale offer');
+if(back.claim===first.claim)throw new Error('the re-opened seat reused the old reservation');
+
+if((await call('/room/'+dropCode+'/seat','POST',
+   JSON.stringify({slot:9,offer:'x'}))).status!==400)
+  throw new Error('an out-of-range seat was accepted');
 
 console.log('four-player signaling passed (three atomic reservations, overflow refused)');

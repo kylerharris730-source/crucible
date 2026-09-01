@@ -241,6 +241,51 @@ export default {
         return json({ error: 'room is busy, try again' }, 409);
       }
 
+      /* --- host re-opens a seat -------------------------------------------
+
+         A WebRTC connection that drops is gone for good: the description
+         that built it described one moment's network conditions, and there
+         is nothing to retry. The seat therefore needs a NEW offer before
+         anybody can take it again, which is why this exists rather than a
+         plain 'mark it free'.
+
+         Without it, a guest who drops cannot come back into the seat they
+         had -- the room hands them the next unused one instead, so the
+         player who was number two returns as number three, and after three
+         drops the room is full of ghosts. */
+      if (tail === 'seat' && request.method === 'POST') {
+        const body = await readBody(request);
+        let seat;
+        try { seat = JSON.parse(body); } catch (e) {}
+        if (!seat || !Number.isInteger(seat.slot) || seat.slot < 0 ||
+            seat.slot >= ROOM_SLOTS || typeof seat.offer !== 'string' || !seat.offer)
+          return json({ error: 'bad seat' }, 400);
+        for (let attempt = 0; attempt < 5; attempt++) {
+          const row = await db.prepare('SELECT offer, answer FROM rooms WHERE code = ? AND expires > ?')
+                              .bind(code, Date.now()).first();
+          if (!row) return json({ error: 'no such code' }, 404);
+          let offers;
+          try { offers = JSON.parse(row.offer).offers; } catch (e) {}
+          if (!Array.isArray(offers) || offers.length !== ROOM_SLOTS)
+            return json({ error: 'room format is obsolete' }, 409);
+          const state = roomState(row.answer);
+          if (!state) return json({ error: 'room format is obsolete' }, 409);
+          offers[seat.slot] = seat.offer;
+          state.claims[seat.slot] = null; state.claimedAt[seat.slot] = 0;
+          state.answers[seat.slot] = null; state.used[seat.slot] = false;
+          const next = JSON.stringify(state);
+          /* Both columns move together, and the seat state is the one under
+             contention -- a guest may be reserving another seat in the same
+             instant -- so the compare-and-swap is on it. */
+          const changed = await db.prepare(
+            'UPDATE rooms SET offer = ?, answer = ?, expires = ? WHERE code = ? AND answer = ?')
+            .bind(JSON.stringify({ offers }), next,
+                  Date.now() + ROOM_TTL_SECONDS * 1000, code, row.answer).run();
+          if (changed.meta.changes > 0) return empty(204);
+        }
+        return json({ error: 'room is busy, try again' }, 409);
+      }
+
       /* --- host waits for it ---------------------------------------------
          204 means "not yet", which is a different thing from 404 "that code
          does not exist", and the client shows different words for each. A
@@ -248,9 +293,22 @@ export default {
          friend. */
       if (tail === 'answer' && request.method === 'GET') {
         for (let attempt = 0; attempt < 5; attempt++) {
-          const row = await db.prepare('SELECT offer, answer FROM rooms WHERE code = ? AND expires > ?')
+          const row = await db.prepare('SELECT offer, answer, expires FROM rooms WHERE code = ? AND expires > ?')
                               .bind(code, Date.now()).first();
           if (!row) return json({ error: 'no such code' }, 404);
+          /* Only the host polls this, and it polls for as long as it is
+             hosting -- so it is the honest signal that a room is still in
+             use, and the room's life is extended from here rather than from
+             a separate heartbeat nobody would remember to send.
+
+             Refreshed only past the halfway mark. Rewriting the expiry on
+             every poll would be a database write per second per host, for a
+             value that changes nothing until it is nearly due. */
+          if (typeof row.expires === 'number' &&
+              row.expires - Date.now() < (ROOM_TTL_SECONDS * 1000) / 2) {
+            await db.prepare('UPDATE rooms SET expires = ? WHERE code = ?')
+                    .bind(Date.now() + ROOM_TTL_SECONDS * 1000, code).run();
+          }
           let legacy = true;
           try { legacy = !Array.isArray(JSON.parse(row.offer).offers); } catch (e) {}
           if (legacy) {

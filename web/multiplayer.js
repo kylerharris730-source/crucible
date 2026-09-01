@@ -92,6 +92,7 @@
      across openings: a worker that was down when the game loaded may be up
      by the time somebody actually wants to play. */
   var broker = null;
+  var guestSession = null;
 
   function menu() {
     shell('MULTIPLAYER',
@@ -218,18 +219,92 @@
         if (box) box.textContent = code;
         setStatus('0/3 guests joined — room stays open in the background');
         watch(function () { return refreshHostStatus(); }, false);
-        while (hostSession.active && hostSession.accepted < 3) {
-          var reply = await CinderSignal.waitForAnswer(code, function () { return !hostSession.active; });
-          if (!reply) { hostSession.active=false; hostSession.error='room code expired'; break; }
-          CinderNet.beginAccept(reply.slot, reply.answer);
-          hostSession.accepted++;
-          refreshHostStatus();
-        }
+        superviseHost();
       } catch (e) {
         if (hostSession) { hostSession.error=e.message; hostSession.active=false; refreshHostStatus(); }
         else fallback(e.message, hostPaste);
       }
     })();
+  }
+
+  /* Keep the room truthful for as long as the game runs.
+
+     The first version of this stopped once three guests had been accepted,
+     which was fine right up until somebody dropped -- and somebody did,
+     from New York, within minutes. Their seat stayed marked used, so when
+     they re-entered the same code the room handed them the NEXT one and
+     they came back as player three. Three drops and a room is full of
+     players who are not there.
+
+     So this runs for the whole session and does two things: it accepts
+     answers as they arrive, and it notices a link that was open and is not
+     any more, builds a fresh offer for that exact seat, and publishes it.
+     A dropped WebRTC link cannot be resumed -- the description that made it
+     described one moment's network -- so re-offering is the only way back,
+     and doing it per seat is what returns a player to their own number.
+
+     It is detached from the panel on purpose. The player closes that as
+     soon as they have read the code, and a room that stopped healing at
+     that moment would be a room that only works while somebody is
+     watching it. */
+  function superviseHost() {
+    var wasOpen = [false, false, false];
+
+    (async function acceptLoop() {
+      while (hostSession && hostSession.active) {
+        try {
+          var reply = await CinderSignal.waitForAnswer(
+            hostSession.code, function () { return !hostSession || !hostSession.active; });
+          if (!hostSession || !hostSession.active) return;
+          if (reply) {
+            CinderNet.beginAccept(reply.slot, reply.answer);
+            refreshHostStatus();
+          }
+          /* A null reply is the poll timing out with nobody there, which is
+             the ordinary state of a room waiting for friends -- not a
+             reason to stop hosting. */
+        } catch (e) {
+          /* The room really is gone (expired, or the service is down). Stop
+             claiming to host something that no longer exists. */
+          hostSession.error = e.message;
+          hostSession.active = false;
+          refreshHostStatus();
+          return;
+        }
+      }
+    })();
+
+    (async function seatLoop() {
+      while (hostSession && hostSession.active) {
+        await new Promise(function (r) { setTimeout(r, 1500); });
+        if (!hostSession || !hostSession.active) return;
+        for (var slot = 0; slot < 3; slot++) {
+          var state = CinderNet.state(slot);
+          if (state === 'open') { wasOpen[slot] = true; continue; }
+          /* Only a seat that HELD somebody needs re-offering. One that has
+             never been used still has its original offer sitting in the
+             room, waiting, and replacing that would invalidate a code a
+             friend is in the middle of typing. */
+          if (!wasOpen[slot]) continue;
+          if (linkLive(state)) continue;
+          wasOpen[slot] = false;
+          reopen(slot);
+        }
+      }
+    })();
+  }
+
+  async function reopen(slot) {
+    try {
+      var offer = await CinderNet.host(slot);
+      if (!hostSession || !hostSession.active) return;
+      await CinderSignal.reopenSeat(hostSession.code, slot, offer);
+      refreshHostStatus();
+    } catch (e) {
+      /* Left for the next sweep rather than escalated: a seat that failed to
+         re-open is a seat nobody can take, which is the same as the state it
+         was already in. Nothing else is harmed by trying again in a moment. */
+    }
   }
 
   function showHostSession() {
@@ -269,17 +344,9 @@
       setStatus('looking for that game...');
       (async function () {
         try {
-          var reservation = await CinderSignal.fetchOffer(code);
-          call('webMpJoin', ['null', 'string'], [reservation.offer]);
-          setStatus('connecting...');
-          var answer = '';
-          for (var i = 0; i < 150 && !answer; i++) {
-            answer = CinderNet.joinCode();
-            if (!answer) await new Promise(function (r) { setTimeout(r, 100); });
-          }
-          if (!answer) throw new Error('could not build a join code');
-          await CinderSignal.postAnswer(code, reservation, answer);
+          await joinOnce(code);
           watch(function () {});
+          superviseGuest(code);
         } catch (e) {
           setStatus(e.message);
         }
@@ -287,6 +354,100 @@
     };
     document.getElementById('mpg').onclick = go;
     input.onkeydown = function (e) { if (e.key === 'Enter') go(); };
+  }
+
+  /* A link is either making progress or it is gone. Listing the states that
+     mean "gone" is the wrong way round -- it was written that way first, and
+     a reset link reporting 'idle' slipped straight through the gap. Listing
+     the ones that mean "still working" cannot miss a new state; at worst it
+     reconnects something that was about to connect anyway. */
+  function linkLive(state) {
+    return state === 'open' || state === 'gathering' ||
+           state === 'connecting' || state === 'waiting';
+  }
+
+  /* One attempt at joining, so that the first one and every reconnection
+     afterwards are the same code rather than two versions that drift. */
+  async function joinOnce(code) {
+    var reservation = await CinderSignal.fetchOffer(code);
+    call('webMpJoin', ['null', 'string'], [reservation.offer]);
+    var answer = '';
+    for (var i = 0; i < 150 && !answer; i++) {
+      answer = CinderNet.joinCode();
+      if (!answer) await new Promise(function (r) { setTimeout(r, 100); });
+    }
+    if (!answer) throw new Error('could not build a join code');
+    await CinderSignal.postAnswer(code, reservation, answer);
+    return reservation;
+  }
+
+  /* Come back after a drop.
+
+     What happened without this is worse than it sounds: the connection went,
+     and the guest carried on walking around a world nobody else could see.
+     They still had the terrain, because a client simulates locally and the
+     host is only a correction -- so nothing looked wrong. They were playing
+     alone and had no way to know.
+
+     So a drop is now something the page acts on. It waits for the host to
+     re-open the seat (which its own supervisor does within a couple of
+     seconds) and walks back in on the same code. The player is told, because
+     a silent reconnection that fails looks identical to one that never
+     started.
+
+     Bounded. If the host has closed the game there is nothing to come back
+     to, and retrying forever would be a tab quietly talking to a room that
+     stopped existing an hour ago. */
+  function superviseGuest(code) {
+    if (guestSession) guestSession.active = false;
+    guestSession = { code: code, active: true };
+    var session = guestSession;
+
+    (async function () {
+      var everOpen = false;
+      while (session.active) {
+        await new Promise(function (r) { setTimeout(r, 1000); });
+        if (!session.active) return;
+        var state = CinderNet.state(0);
+        if (state === 'open') { everOpen = true; continue; }
+        if (!everOpen) continue;                 /* never connected: not a drop */
+        if (linkLive(state)) continue;
+
+        everOpen = false;
+        for (var attempt = 1; attempt <= 6 && session.active; attempt++) {
+          announce('Connection lost — rejoining (' + attempt + '/6)');
+          /* The host needs a moment to notice and publish a fresh offer for
+             the seat. Backing off also keeps six attempts from being spent
+             in six seconds on a host that is simply gone. */
+          await new Promise(function (r) { setTimeout(r, attempt * 2000); });
+          if (!session.active) return;
+          try {
+            await joinOnce(code);
+            for (var i = 0; i < 150 && CinderNet.state(0) !== 'open'; i++)
+              await new Promise(function (r) { setTimeout(r, 100); });
+            if (CinderNet.state(0) === 'open') { everOpen = true; announce(''); break; }
+          } catch (e) { /* room gone or full for now; the next attempt says so */ }
+          if (attempt === 6) announce('Could not rejoin — the game may have ended');
+        }
+      }
+    })();
+  }
+
+  /* Reconnection happens with the panel shut, so it needs somewhere to speak
+     that is not the panel. Reuses the strip under the game rather than
+     inventing a second place for the game to talk to you. */
+  function announce(text) {
+    var strip = document.getElementById('controls');
+    if (!strip) return;
+    var slot = document.getElementById('mpnote');
+    if (!slot) {
+      slot = document.createElement('span');
+      slot.id = 'mpnote';
+      slot.style.cssText = 'margin-left:12px;color:#e8a24a';
+      strip.appendChild(slot);
+    }
+    slot.textContent = text;
+    setStatus(text);
   }
 
   function setStatus(text) {
