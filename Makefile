@@ -63,4 +63,20 @@ clean:
 # Never recursively remove build here: `make clean` must clean compiler output,
 # not erase the user's worlds or the separately built launcher.
 
-.PHONY: all run clean
+# --- tests -----------------------------------------------------------------
+# Every test is a standalone main() linking all of src/ except main.cpp. There
+# was no way to run them for a long time, and the cost was real: a sweep once
+# reported 37 failures that were really one mistyped script name.
+#
+#     mingw32-make test                 all of them
+#     mingw32-make test T=melee_test    just one
+#
+# The work lives in scripts/run_tests.sh rather than in pattern rules here,
+# because network_mismatch needs the SAME source compiled twice with different
+# CINDERLIFT_BUILD_ID values and linked into two binaries that then talk to
+# each other -- which is not a thing one make rule can say.
+T ?=
+test:
+	@bash scripts/run_tests.sh $(T)
+
+.PHONY: all run clean test

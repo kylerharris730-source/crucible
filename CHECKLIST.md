@@ -77,14 +77,25 @@ Released: **v0.4.5**. Two commits sit past it (see *Ship it* below).
 
 ## Engineering debt
 
-- [ ] **There is no way to run the tests.** No `make test`, no runner script —
-      the suite can only be run by reconstructing the compile command by hand
-      (every `src/*.cpp` except `main.cpp`, plus the test). This actively
-      caused a wrong result: a sweep reported 37 failures that were really one
-      missing script. A `test` target in the Makefile is maybe ten lines.
-- [ ] **`network_mismatch` never runs.** It needs the same source compiled
-      twice with different `CINDERLIFT_BUILD_ID` values, which no runner does,
-      so it is skipped in every sweep and is effectively untested.
+- [x] **A way to run the tests.** `mingw32-make test` builds and runs all 39,
+      or `mingw32-make test T=melee_test` for one. Work lives in
+      `scripts/run_tests.sh`; objects are shared and rebuilt only when stale.
+      Build failures are reported separately from test failures, because a
+      sweep once reported 37 failures that were really one mistyped script
+      name and the two looked identical.
+- [x] **`network_mismatch` runs now.** The runner compiles `network.cpp`
+      twice with different `CINDERLIFT_BUILD_ID` values -- it is the only file
+      that reads it -- links two binaries, and has the host launch the client.
+      Verified non-vacuous: with both builds given the SAME id the test fails,
+      as it should.
+- [ ] **CI still does not run the tests.** Now that one command does it, the
+      Pages workflow could -- though the suite is Windows-only today
+      (winsock, `CreateProcess`), so it would need a Windows job.
+
+## The long arc
+
+What *done* looks like -- bosses, populating all three layers, the rocket, and
+the bees-and-wax idea -- lives in [ROADMAP.md](ROADMAP.md).
 
 ## Known and deliberate
 
