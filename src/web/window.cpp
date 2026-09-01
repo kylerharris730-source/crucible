@@ -48,6 +48,10 @@ static SDL_Window*  g_sdlWindow  = 0;
 static SDL_Renderer* g_renderer  = 0;
 static SDL_Texture* g_texture    = 0;
 static bool         g_focused    = true;
+/* Which buttons this shim has told the game are down, so focus loss can
+   take them back. Not read from SDL: SDL never saw the release either. */
+static bool         g_mouseDown[2] = { false, false };
+static LPARAM       g_lastMouseLp = 0;
 static bool         g_quitPosted = false;
 
 /* --- message queue -------------------------------------------------------
@@ -128,22 +132,37 @@ static void pumpSdl(void) {
                 /* Dropping focus with keys held would leave them held forever,
                    which walks the character while the player is elsewhere. */
                 memset(g_keyDown, 0, sizeof(g_keyDown));
+                /* And the same for the mouse, which this used to miss.
+                   SDL listens for the release on the canvas, so letting go
+                   anywhere else -- a click on the page, alt-tab mid-drag --
+                   delivered no button-up at all and the game went on
+                   believing the button was down for the rest of the
+                   session. Sent as messages rather than by zeroing a flag
+                   so the game unwinds through its ordinary path, releasing
+                   the capture and any half-drawn line with it. */
+                if (g_mouseDown[0]) postMessage(WM_LBUTTONUP, 0, g_lastMouseLp);
+                if (g_mouseDown[1]) postMessage(WM_RBUTTONUP, 0, g_lastMouseLp);
+                g_mouseDown[0] = g_mouseDown[1] = false;
             }
             break;
 
         case SDL_MOUSEMOTION:
-            postMessage(WM_MOUSEMOVE, 0, MAKELPARAM(e.motion.x, e.motion.y));
+            g_lastMouseLp = MAKELPARAM(e.motion.x, e.motion.y);
+            postMessage(WM_MOUSEMOVE, 0, g_lastMouseLp);
             break;
 
         case SDL_MOUSEBUTTONDOWN:
         case SDL_MOUSEBUTTONUP: {
             const bool down = (e.type == SDL_MOUSEBUTTONDOWN);
             const LPARAM lp = MAKELPARAM(e.button.x, e.button.y);
+            g_lastMouseLp = lp;
             if (e.button.button == SDL_BUTTON_LEFT) {
                 g_keyDown[VK_LBUTTON] = down;
+                g_mouseDown[0] = down;
                 postMessage(down ? WM_LBUTTONDOWN : WM_LBUTTONUP, 0, lp);
             } else if (e.button.button == SDL_BUTTON_RIGHT) {
                 g_keyDown[VK_RBUTTON] = down;
+                g_mouseDown[1] = down;
                 postMessage(down ? WM_RBUTTONDOWN : WM_RBUTTONUP, 0, lp);
             }
             break;

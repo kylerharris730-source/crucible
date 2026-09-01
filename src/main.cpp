@@ -1454,6 +1454,8 @@ struct Aim {
 static Aim currentAim();
 static Aim currentWireAim();
 static void applyBrush();
+/* Defined with the other input state; needed here by the window proc. */
+static void releaseMouseState();
 static void circuitWireClick();
 static bool sendClientAction(u8 type, u8 container = 0, u8 a = 0, u8 b = 0, u8 flags = 0,
                              i32 x = 0, i32 y = 0);
@@ -3164,6 +3166,11 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
     case WM_CAPTURECHANGED:
         g_sizeDragging = false;
+        /* Only when somebody ELSE took it. lp is null for our own
+           ReleaseCapture in the button-up handlers, and clearing both
+           buttons there would break releasing one while the other is still
+           held -- which is a real state, since right beats left. */
+        if ((HWND)lp && (HWND)lp != hwnd) releaseMouseState();
         return 0;
 
     case WM_SETCURSOR:
@@ -4565,6 +4572,48 @@ static Aim currentWireAim() {
     }
     a.x = bestX; a.y = bestY;
     return a;
+}
+
+/* --- a button released somewhere else is still released -----------------
+
+   g_lmb and g_rmb are driven by WM_LBUTTONDOWN/UP, and the UP is the half
+   that can go missing: alt-tab in the middle of a drag, another window
+   taking the capture, or -- in a browser tab -- letting go of the mouse
+   outside the canvas. The message never arrives, the flag stays set, and
+   nothing ever unsets it.
+
+   The flint striker is where players actually meet this. Its condition is
+   `g_lmb && !g_rmb`, so a right button that was stranded once disables it
+   for the rest of the session, and clicking harder does not help: the fix
+   is a press and release of the OTHER button, which nobody would guess.
+   Hence the report -- used it a bunch, and it stopped working.
+
+   The keyboard already had this problem and already solved it, a few
+   thousand lines up: keyHeld() asks the system every frame behind a focus
+   gate rather than trusting a flag to be unwound by a message that may
+   never come. This is that same answer for the mouse. Doing it by polling
+   rather than by enumerating every way an UP can be lost is the point --
+   the list of ways is open-ended and was already wrong twice.
+
+   A drag interrupted this way is abandoned rather than committed. Drawing
+   the line somebody walked away from is worse than losing it. */
+static void releaseMouseState() {
+    g_lmb = g_rmb = false;
+    g_useLatch = false;
+    g_uiCapture = false;
+    g_sizeDragging = false;
+    g_lineOn = false;
+    g_wireOn = false;
+    g_pmx = -1;
+    ReleaseCapture();
+}
+
+/* Cheap enough to run every frame: one compare in the common case. */
+static void releaseMouseIfUnfocused() {
+    if (g_hwnd && GetForegroundWindow() == g_hwnd) return;
+    if (!g_lmb && !g_rmb && !g_uiCapture && !g_lineOn && !g_wireOn
+        && !g_sizeDragging && !g_useLatch) return;
+    releaseMouseState();
 }
 
 static void circuitWireClick() {
@@ -7278,6 +7327,7 @@ static void drawPanel(HDC hdc) {
    loopback queues; hosting consumes those plus a remote peer; joining never
    enters serverTick at all. */
 static void clientInputTick() {
+    releaseMouseIfUnfocused();
     netPoll(g_world);
     const bool authoritative = netRole() != NET_CLIENT;
     if (netRole() == NET_CLIENT && netClientReady()) {
