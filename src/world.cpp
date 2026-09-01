@@ -2529,6 +2529,20 @@ void World::updateGrass(int x, int y) {
         moreToDo = true;
         if (rngChance(GRASS_SPREAD)) convert(nx, ny, MAT_GRASS);
     }
+    /* --- blossom ------------------------------------------------------
+       A rare flower on turf that has room above it, so a fresh world grows
+       its own bee food and nobody has to be told to plant some before a
+       hive will do anything.
+
+       Deliberately inside the spreading path, which means it happens while
+       turf is still MOVING and stops when the field settles. That is what
+       keeps it from being a slow leak: an old world does not accumulate
+       flowers forever, it has however many it grew while it was greening.
+       Planting more is what ITEM_FLOWER_SEED is for. */
+    if (moreToDo && rngChance(GRASS_FLOWER) &&
+        y - 1 >= PLAY_Y0 && cells[(y - 1) * SIM_W + x].mat == MAT_EMPTY)
+        setCell(x, y - 1, MAT_FLOWER);
+
     /* Only stay awake while there is still somewhere to go. */
     if (moreToDo) dirtyPoint(x, y);
 }

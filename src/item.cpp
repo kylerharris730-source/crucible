@@ -1374,6 +1374,60 @@ void initItems() {
     ITEMS[ITEM_FLINT].colour   = 0xB8B4A6;
     ITEMS[ITEM_FLINT].sprite   = SPR_FLINT;
 
+    /* --- the hive -------------------------------------------------------
+       A device like any other, so placing it goes through the same path a
+       workbench does and costs no new code in main.cpp. */
+    ITEMS[ITEM_HIVE].name       = "Hive";
+    ITEMS[ITEM_HIVE].kind       = ITEMK_DEVICE;
+    ITEMS[ITEM_HIVE].deviceType = DEV_HIVE;
+    ITEMS[ITEM_HIVE].maxStack   = 16;
+    ITEMS[ITEM_HIVE].colour     = 0xE8C25C;
+    ITEMS[ITEM_HIVE].sprite     = SPR_HIVE;
+
+    /* A bee in a jar. ITEMK_EGG because that is exactly what it is: an item
+       that consumes itself and puts a creature in the world. Reusing the egg
+       path rather than inventing a `release` verb means catching a bee and
+       letting it out already works, in multiplayer too, with no new branch
+       in the use handler.
+
+       A released bee has no hive -- see Entity::home -- so it forages and
+       has nowhere to deliver until it is near one. That is the honest
+       behaviour rather than a special case, and it is what makes moving a
+       colony a matter of moving the hive. */
+    ITEMS[ITEM_BEE].name     = "Bee";
+    ITEMS[ITEM_BEE].kind     = ITEMK_EGG;
+    ITEMS[ITEM_BEE].summons  = ENT_BEE;
+    ITEMS[ITEM_BEE].maxStack = 16;
+    ITEMS[ITEM_BEE].colour   = 0xF0B72A;
+    ITEMS[ITEM_BEE].sprite   = SPR_BEE;
+
+    ITEMS[ITEM_COAL_BEE].name     = "Coal Bee";
+    ITEMS[ITEM_COAL_BEE].kind     = ITEMK_EGG;
+    ITEMS[ITEM_COAL_BEE].summons  = ENT_COAL_BEE;
+    ITEMS[ITEM_COAL_BEE].maxStack = 16;
+    ITEMS[ITEM_COAL_BEE].colour   = 0x6E6A60;
+    ITEMS[ITEM_COAL_BEE].sprite   = SPR_COAL_BEE;
+
+    /* 55 against bread's 30. Better than bread, and deliberately not by
+       enough to retire it: bread is a field and an oven, honey is a hive, a
+       flower bed and a colony you had to keep alive. The gap is the reward
+       for the machine, not a replacement for eating. */
+    ITEMS[ITEM_HONEY_POTION].name     = "Honey Draught";
+    ITEMS[ITEM_HONEY_POTION].kind     = ITEMK_FOOD;
+    ITEMS[ITEM_HONEY_POTION].heal     = 55;
+    ITEMS[ITEM_HONEY_POTION].maxStack = 16;
+    ITEMS[ITEM_HONEY_POTION].colour   = 0xE59A1E;
+    ITEMS[ITEM_HONEY_POTION].sprite   = SPR_HONEY_POTION;
+
+    /* Sown like any other seed. Flowers also appear on their own -- see
+       updateGrass -- so a player never HAS to farm them, but a hive worth
+       running wants more than the surface happens to grow. */
+    ITEMS[ITEM_FLOWER_SEED].name     = "Flower Seed";
+    ITEMS[ITEM_FLOWER_SEED].kind     = ITEMK_SEED;
+    ITEMS[ITEM_FLOWER_SEED].maxStack = 64;
+    ITEMS[ITEM_FLOWER_SEED].colour   = 0xD98FC0;
+    ITEMS[ITEM_FLOWER_SEED].sprite   = SPR_FLOWER_ITEM;
+
     /* Layer-two creature matter. It stays a non-placeable component rather
        than pretending to be a world material: adding a MatId would move
        MAT_COUNT and renumber every established tool in existing saves. */
@@ -1561,6 +1615,11 @@ void initItems() {
     ITEMS[ITEM_BREAD].description =
         "Eat to restore health. All consumable healing shares one cooldown.";
     ITEMS[ITEM_FLINT].description = "Use on a nearby flammable material to ignite it.";
+    ITEMS[ITEM_HIVE].description = "Houses bees. They visit flowers and bring back pollen; the hive pushes wax from its top and honey from its sides.";
+    ITEMS[ITEM_BEE].description = "Let it out near a hive. Bees tolerate heat, but not a lot of it -- and coal settling on one changes what it makes.";
+    ITEMS[ITEM_COAL_BEE].description = "A bee that has been through coal. Its wax and honey boil back down into coal.";
+    ITEMS[ITEM_HONEY_POTION].description = "Thick and sweet. Restores more than bread does.";
+    ITEMS[ITEM_FLOWER_SEED].description = "Sow on dirt. Bees need flowers within reach of their hive.";
     ITEMS[ITEM_BROOD_CALL].description = "Consume to summon the Brood Queen nearby.";
 
     /* Spawn eggs. Named from the creature table so the two can never disagree
@@ -2284,6 +2343,23 @@ int sowSeeds(World& w, Inventory& inv, int cx, int cy, int r, int maxCells) {
         if (maxCells > 0 && sown >= maxCells) break;
         const int x = cx + g_disc[i].dx, y = cy + g_disc[i].dy;
         if (x < PLAY_X0 || x > PLAY_X1 || y < PLAY_Y0 || y > PLAY_Y1) continue;
+        /* --- the flower is not a crop -------------------------------
+           Every other seed here turns dirt into grass and lets the grower
+           take over. A flower has no stalk and no growth stages, so sowing
+           one means placing it -- on top of ground rather than into it,
+           which is also what lets a player fill a meadow around a hive
+           rather than waiting on the turf to do it. */
+        if (h.item == ITEM_FLOWER_SEED) {
+            if (w.at(x, y).mat != MAT_EMPTY) continue;
+            const int below = y + 1;
+            if (below > PLAY_Y1) continue;
+            const u8 under = w.at(x, below).mat;
+            if (under != MAT_GRASS && under != MAT_DIRT) continue;
+            if (inv.take(ITEM_FLOWER_SEED, 1) != 1) return sown;
+            w.setCell(x, y, MAT_FLOWER);
+            ++sown;
+            continue;
+        }
         if (w.at(x, y).mat != MAT_DIRT) continue;
         /* Only dirt with a face to the air takes. Buried dirt would turn to
            grass and die back on the very next frame, so charging a seed for it

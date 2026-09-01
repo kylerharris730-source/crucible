@@ -284,6 +284,13 @@ enum {
     ITEM_WARP_WAND,
     /* Captured circuit pulse. Appended because item ids are serialized. */
     ITEM_SPARK,
+    /* The hive and what comes out of it. Appended, like everything
+       above: item ids are written into saves as numbers. */
+    ITEM_HIVE,
+    ITEM_BEE,
+    ITEM_COAL_BEE,
+    ITEM_HONEY_POTION,
+    ITEM_FLOWER_SEED,
     ITEM_COUNT
 };
 

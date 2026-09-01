@@ -390,6 +390,29 @@ enum MatId {
        saves keep every existing material id. */
     MAT_INERT_FLUID,
 
+    /* --- the hive ------------------------------------------------------
+       Appended, like everything above, because a material's id is written
+       into every save that contains a cell of it. Inserting one anywhere
+       but the end would silently reinterpret existing worlds.
+
+       Beeswax is a SOLID that melts easily, which in this engine is the
+       ice/water pattern rather than a new concept: the solid boils to the
+       melt at its melting point and the melt cools back below it. The gap
+       between the two temperatures is deliberate hysteresis -- without it a
+       cell sitting exactly on the line flickers between states forever,
+       which is the bug stone/lava already documents.
+
+       Coal wax and coal honey do not melt; they BOIL AWAY AND LEAVE COAL.
+       That is the whole point of the coal bee: heat the product and the
+       coal that flavoured it comes back out, so a hive plus a heat source
+       is a coal supply that runs without you. */
+    MAT_FLOWER,
+    MAT_BEESWAX,
+    MAT_BEESWAX_MELT,
+    MAT_HONEY,
+    MAT_COAL_WAX,
+    MAT_COAL_HONEY,
+
     MAT_COUNT
 };
 

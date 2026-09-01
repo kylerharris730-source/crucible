@@ -66,6 +66,7 @@ void codecEntity(Blob& b, Entity& e) {
     b.intf(e.phase); b.f32f(e.animPhase);
     b.intf(e.telegraph); b.boolf(e.weightless);
     b.f32f(e.prevX); b.f32f(e.prevY); b.intf(e.stuck);
+    b.i16f(e.home); b.u8f(e.soot);
 }
 
 void codecPickup(Blob& b, Pickup& p) {

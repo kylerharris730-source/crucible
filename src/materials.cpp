@@ -916,6 +916,34 @@ MatInfo MATS[MAT_COUNT] = {
      wax still crosses its buoyancy point normally, while driving the bath to
      the top of the temperature scale cannot replace it with gas. */
   { "Inert Fluid", KIND_LIQUID, 100, 0, 0, 5, 0, 0, 0, 180, 0, 3, 0, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, 0xB992DA, 0xAA82CC, 0xB992DA, 0xAA82CC, 0 },
+
+  /* A blossom. Static and passable like the other plants, and flammable at
+     the same low temperature dry stalk is -- a field of flowers should burn
+     if you take a striker to it. Bees look for exactly this material. */
+  { "Flower", KIND_STATIC, 30, 0, 0, 0, 0, 0, 0, 10, 0, 0, 0, 0, MAT_EMPTY, 0, MAT_EMPTY, degC(65), MAT_FIRE, 0, 0xF2C6E0, 0xD98FC0, 0xF2C6E0, 0xD98FC0, 0 },
+
+  /* Beeswax: gold, solid at room temperature, and off it goes at 46 C --
+     low enough that a torch or a shallow pool of anything warm renders it,
+     which is what makes it worth collecting rather than a wall material. */
+  { "Beeswax", KIND_STATIC, 96, 0, 0, 0, 0, 0, 0, 70, 1, 0, 0, 0, MAT_EMPTY, degC(46), MAT_BEESWAX_MELT, 0, MAT_EMPTY, 0, 0xE8C25C, 0xC79A38, 0xE8C25C, 0xC79A38, 0 },
+  { "Molten Beeswax", KIND_LIQUID, 94, 0, 0, 3, 40, 0, 0, 60, 1, 0, 0, degC(40), MAT_BEESWAX, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, 0xF6D97E, 0xD9AE4A, 0xF6D97E, 0xD9AE4A, 0 },
+
+  /* Honey: denser than water and genuinely thick. Dispersion ZERO is what
+     makes it thick, and it is worth knowing why that is not the same as
+     `does not flow`: reach is dispersion PLUS the pressure of its own column,
+     so a single spilled cell stays exactly where it landed while a deep pool
+     still spreads under its own weight. Dispersion 1 -- the first attempt --
+     looked viscous and was not: one cell crept sideways forever at a cell a
+     frame and a spill simply walked out of the room.
+     Water is 5 for comparison, and finds its level almost at once. */
+  { "Honey", KIND_LIQUID, 138, 0, 0, 0, 0, 0, 0, 90, 1, 0, 0, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, 0xE59A1E, 0xB4700F, 0xE59A1E, 0xB4700F, 0 },
+
+  /* The coal bee's product. Boils at a temperature an ordinary fire clears
+     easily and leaves COAL behind rather than a gas: a hive over a hot plate
+     becomes a coal mine that needs no miner. Darker than the plain kind so
+     the two are never confused in a hopper. */
+  { "Coal Wax", KIND_STATIC, 100, 0, 0, 0, 0, 0, 0, 70, 1, 0, 0, 0, MAT_EMPTY, degC(78), MAT_COAL, 0, MAT_EMPTY, 0, 0x8A7434, 0x5E4E22, 0x8A7434, 0x5E4E22, 0 },
+  { "Coal Honey", KIND_LIQUID, 142, 0, 0, 0, 0, 0, 0, 90, 1, 0, 0, 0, MAT_EMPTY, degC(72), MAT_COAL, 0, MAT_EMPTY, 0, 0x8A6414, 0x5C420C, 0x8A6414, 0x5C420C, 0 },
 };
 
 u32 g_colorLut[MAT_COUNT * 256];
@@ -1983,6 +2011,17 @@ void initMaterials() {
         if (MATS[m].kind == KIND_GAS)    g_matThermalExpansionQ8[m] = 4;
     }
     g_matThermalExpansionQ8[MAT_WAX] = 52;
+
+    /* --- the hive materials --------------------------------------------
+       A flower is a plant like the crops are: passable, weak, and counted as
+       plant matter so it does not stop a shot. Wax and honey are ordinary
+       solids and liquids otherwise; only their phase points are unusual. */
+    g_matPassable[MAT_FLOWER]  = 1;
+    g_matIsPlant[MAT_FLOWER]   = 1;
+    g_matStrength[MAT_FLOWER]  = STR_LOOSE;
+    g_matSheer[MAT_FLOWER]     = 3;
+    g_matStrength[MAT_BEESWAX]  = STR_LOOSE;
+    g_matStrength[MAT_COAL_WAX] = STR_LOOSE;
 
     for (int m = 0; m < MAT_COUNT; ++m) g_matGasExpansion[m] = 1;
     /* --- how much Steam one cell of Water becomes ------------------------

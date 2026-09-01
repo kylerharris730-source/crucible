@@ -1,5 +1,6 @@
 #include "entity.h"
 #include "multiplayer.h"
+#include "device.h"       /* hiveTarget and hiveDeliver, for the round trip */
 #include "sprite.h"
 #include "light.h"
 #include "projectile.h"
@@ -38,9 +39,14 @@ static void unlockLayerTwo(World& w) {
 static const float ENT_GRAVITY  = 0.18f;
 static const float ENT_MAX_FALL = 6.0f;
 
+/* The last two columns on every row are `tame` and `heatTolerance`. False
+   and zero mean `an ordinary enemy that cooks at the usual 60 C`, which is
+   every creature here except the bees -- stated rather than left to
+   zero-fill so that adding a field is a compile error somewhere obvious
+   rather than a silent default nobody chose. */
 const EntityDef ENT_DEFS[ENT_COUNT] = {
     /* name       w   h  hp dmg  cd   speed accel  fly layers night | shotEvery dmg spd standOff boss | drop min max charm 1-in sprite egg | eggItem indestructible */
-    { "none",      0,  0,  0,   0,   0, 0.00f, 0.00f, false, 0,  false,   0, 0, 0.0f, 0.0f, false, ITEM_NONE,        0, 0, ITEM_NONE,            0, SPR_NONE,  0x000000, ITEM_NONE,          false },
+    { "none",      0,  0,  0,   0,   0, 0.00f, 0.00f, false, 0,  false,   0, 0, 0.0f, 0.0f, false, ITEM_NONE,        0, 0, ITEM_NONE,            0, SPR_NONE,  0x000000, ITEM_NONE,          false, false, 0 },
 
     /* --- rock mite ---------------------------------------------------------
        The one that makes the first twenty minutes treacherous. Slow enough to
@@ -54,7 +60,7 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
        matriarch. That is the Terraria shape: the summon is assembled out of
        what the place is already made of, so deciding to fight the boss is a
        decision you make gradually while doing something else. */
-    { "Rock Mite",12,  9, 18,   6,  36, 0.34f, 0.05f, false, 1,  true,    0, 0, 0.0f, 0.0f, false, (ItemId)MAT_CHITIN, 1, 2, ITEM_CARAPACE_CHARM, 50, SPR_MITE,  0x8E7758, ITEM_EGG_MITE,      false },
+    { "Rock Mite",12,  9, 18,   6,  36, 0.34f, 0.05f, false, 1,  true,    0, 0, 0.0f, 0.0f, false, (ItemId)MAT_CHITIN, 1, 2, ITEM_CARAPACE_CHARM, 50, SPR_MITE,  0x8E7758, ITEM_EGG_MITE,      false, false, 0 },
 
     /* --- cinder moth -------------------------------------------------------
        Navigates to the hottest cell it can sense, which means it navigates to
@@ -78,7 +84,7 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
        rather than stockpiled. See the note in PROGRESSION about what this costs:
        glass is back to being gated on that one beach, and the honest fix is for
        sand to generate somewhere underground too. */
-    { "Cinder Moth",9,  7, 10,   4,  30, 0.52f, 0.09f, true,  1,  true,    0, 0, 0.0f, 0.0f, false, (ItemId)MAT_COAL,   1, 2, ITEM_MOTH_LANTERN,   50, SPR_MOTH,  0xE0561C, ITEM_EGG_MOTH,      false },
+    { "Cinder Moth",9,  7, 10,   4,  30, 0.52f, 0.09f, true,  1,  true,    0, 0, 0.0f, 0.0f, false, (ItemId)MAT_COAL,   1, 2, ITEM_MOTH_LANTERN,   50, SPR_MOTH,  0xE0561C, ITEM_EGG_MOTH,      false, false, 0 },
 
     /* --- drip slime --------------------------------------------------------
        The corroder, and the slowest thing in the game: it is not a chase, it is
@@ -89,7 +95,7 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
        Introduces acid a whole layer above where acid pockets generate, so the
        material is familiar before the terrain is full of it. Drops it too,
        which is the only way to get any in layer 1. */
-    { "Drip Slime",11,  8, 24,   5,  40, 0.20f, 0.04f, false, 1,  false,   0, 0, 0.0f, 0.0f, false, (ItemId)MAT_ACID,   1, 3, ITEM_SLIME_MAGNET,   50, SPR_SLIME, 0x6FA23C, ITEM_EGG_SLIME,     false },
+    { "Drip Slime",11,  8, 24,   5,  40, 0.20f, 0.04f, false, 1,  false,   0, 0, 0.0f, 0.0f, false, (ItemId)MAT_ACID,   1, 3, ITEM_SLIME_MAGNET,   50, SPR_SLIME, 0x6FA23C, ITEM_EGG_SLIME,     false, false, 0 },
 
     /* --- husk ---------------------------------------------------------------
        The zombie, and deliberately the dullest thing in the game: it walks at
@@ -102,7 +108,7 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
        that you cannot casually kill it, so it turns a corridor into somewhere
        you have to decide about. Everything interesting about the encounter
        comes from the terrain it is standing in. */
-    { "Husk",     11, 22, 46,  11,  34, 0.42f, 0.06f, false, 1,  true,    0, 0, 0.0f, 0.0f, false, (ItemId)MAT_CHITIN, 1, 3, ITEM_HUSK_HEART,     50, SPR_HUSK,  0x6E7A52, ITEM_EGG_HUSK,      false },
+    { "Husk",     11, 22, 46,  11,  34, 0.42f, 0.06f, false, 1,  true,    0, 0, 0.0f, 0.0f, false, (ItemId)MAT_CHITIN, 1, 3, ITEM_HUSK_HEART,     50, SPR_HUSK,  0x6E7A52, ITEM_EGG_HUSK,      false, false, 0 },
 
     /* --- bat ----------------------------------------------------------------
        Fast, and BAD AT STEERING. The overshoot is the entire creature.
@@ -116,7 +122,7 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
 
        Fragile to match: two hits from the starting shot. A bat you had to chase
        AND could not kill would be a tax rather than an encounter. */
-    { "Bat",       9,  7, 12,   7,  26, 1.35f, 0.055f, true, 1,  true,    0, 0, 0.0f, 0.0f, false, (ItemId)MAT_CHITIN, 1, 1, ITEM_SWIFT_CHARM,    50, SPR_BAT,   0x6A4C68, ITEM_EGG_BAT,       false },
+    { "Bat",       9,  7, 12,   7,  26, 1.35f, 0.055f, true, 1,  true,    0, 0, 0.0f, 0.0f, false, (ItemId)MAT_CHITIN, 1, 1, ITEM_SWIFT_CHARM,    50, SPR_BAT,   0x6A4C68, ITEM_EGG_BAT,       false, false, 0 },
 
     /* --- spitter ------------------------------------------------------------
        The one that makes standing still wrong. It holds its distance and shoots,
@@ -152,7 +158,7 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
        ARC rather than a flat line, which is easier to read the landing point
        of, not harder. Whether that trade is right is a play-testing question
        and it is on the list. */
-    { "Spitter",  10, 12, 22,   5,  30, 0.26f, 0.05f, false, 1,  false,  95, 9, 4.7f, 90.0f, false, (ItemId)MAT_CHITIN, 1, 2, ITEM_SPITTER_BRACER, 50, SPR_SPITTER, 0x8A5A3A, ITEM_EGG_SPITTER, false },
+    { "Spitter",  10, 12, 22,   5,  30, 0.26f, 0.05f, false, 1,  false,  95, 9, 4.7f, 90.0f, false, (ItemId)MAT_CHITIN, 1, 2, ITEM_SPITTER_BRACER, 50, SPR_SPITTER, 0x8A5A3A, ITEM_EGG_SPITTER, false, false, 0 },
 
     /* --- the brood mother, layer 1's boss ------------------------------------
        A rock mite grown enormous, which is the right shape for a first boss:
@@ -166,7 +172,7 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
        hp 900 against a starting shot that does 6 is a real fight without being
        a war of attrition, and it is meant to be fought AFTER the Blast Module,
        which does 22. Drops the Forge Core -- see the note there. */
-    { "Brood Mother", 34, 24, 900, 16, 26, 0.55f, 0.05f, false, 0, false,  0, 0, 0.0f, 0.0f, true,  ITEM_FORGE_CORE, 1, 1, ITEM_NONE,            0, SPR_BROOD, 0xB04838, ITEM_EGG_BROOD,     false },
+    { "Brood Mother", 34, 24, 900, 16, 26, 0.55f, 0.05f, false, 0, false,  0, 0, 0.0f, 0.0f, true,  ITEM_FORGE_CORE, 1, 1, ITEM_NONE,            0, SPR_BROOD, 0xB04838, ITEM_EGG_BROOD,     false, false, 0 },
 
     /* --- the crash dummy ---------------------------------------------------
        A test rig, not a creature, and every column says so: no touch damage, no
@@ -181,7 +187,7 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
        does the work instead: see the restore in entTickMode. A huge hp bar
        would still tick down, still show damage numbers climbing toward an end,
        and would eventually get there if you left something burning it. */
-    { "Crash Dummy", PLAYER_W, PLAYER_H, 100, 0, 60, 0.62f, 0.09f, false, 0, false, 0, 0, 0.0f, 0.0f, false, ITEM_NONE, 0, 0, ITEM_NONE, 0, SPR_DUMMY, 0xE8C233, ITEM_EGG_DUMMY, true },
+    { "Crash Dummy", PLAYER_W, PLAYER_H, 100, 0, 60, 0.62f, 0.09f, false, 0, false, 0, 0, 0.0f, 0.0f, false, ITEM_NONE, 0, 0, ITEM_NONE, 0, SPR_DUMMY, 0xE8C233, ITEM_EGG_DUMMY, true, false, 0 },
 
     /* --- the Shambler, layer 2 --------------------------------------------
        The first ordinary enemy below the first seal and the first creature
@@ -198,7 +204,7 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
       0.32f, 0.045f, false, 2, false,
       0, 0, 0.0f, 0.0f, false,
       ITEM_ICHOR, 2, 4, ITEM_NONE, 0, SPR_NONE, 0x6F8062,
-      ITEM_EGG_SHAMBLER, false },
+      ITEM_EGG_SHAMBLER, false, false, 0 },
     /* --- the Thresher, layer 2 --------------------------------------------
        The Shambler is a body that hits you. This is four limbs that do, and
        the difference is the whole creature: it is 28 cells wide against a body
@@ -220,7 +226,7 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
       0.66f, 0.095f, false, 2, false,
       0, 0, 0.0f, 0.0f, false,
       ITEM_ICHOR, 1, 3, ITEM_NONE, 0, SPR_NONE, 0x9A5F94,
-      ITEM_EGG_THRESHER, false },
+      ITEM_EGG_THRESHER, false, false, 0 },
     /* --- the Culverin, layer 2 ---------------------------------------------
        Layer 2 answer to the Spitter, and deliberately not a stronger one. The
        Spitter drips shots at a steady interval, so the counterplay is to keep
@@ -236,7 +242,7 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
       0.16f, 0.03f, false, 2, false,
       12, 8, 4.4f, 108.0f, false,
       ITEM_ICHOR, 1, 3, ITEM_NONE, 0, SPR_CULVERIN, 0x86A86A,
-      ITEM_EGG_CULVERIN, false },
+      ITEM_EGG_CULVERIN, false, false, 0 },
     /* --- the Wisp, layer 2 --------------------------------------------------
        The relentless one. Slow enough to outrun on open ground, and completely
        indifferent to terrain -- no line of sight, no pathfinding, no giving
@@ -249,7 +255,7 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
       0.26f, 0.012f, true, 2, false,
       0, 0, 0.0f, 0.0f, false,
       ITEM_ICHOR, 1, 2, ITEM_NONE, 0, SPR_WISP, 0xC98BB8,
-      ITEM_EGG_WISP, false },
+      ITEM_EGG_WISP, false, false, 0 },
     /* --- the Stooper, layer 2 -----------------------------------------------
        Climbs above you, holds, and then falls. The Bat is fast and steers
        badly, so it is dangerous by accident; this is dangerous on purpose and
@@ -263,7 +269,28 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
       0.95f, 0.05f, true, 2, false,
       0, 0, 0.0f, 0.0f, false,
       ITEM_ICHOR, 1, 2, ITEM_NONE, 0, SPR_STOOPER, 0x5A7048,
-      ITEM_EGG_STOOPER, false },
+      ITEM_EGG_STOOPER, false, false, 0 },
+
+    /* --- bees -----------------------------------------------------------
+       Tiny, harmless, and quick enough to be worth watching. layerMask 0 and
+       surfaceAtNight false keep them entirely out of the spawner: the only
+       way a bee comes to exist is that a hive made one, or a player let one
+       out of a jar. No drop -- you catch a bee, you do not butcher it.
+
+       The coal bee is the same animal wearing what it has been through. A
+       little tougher and a little more heat-proof, but no faster and no
+       better paid: the upgrade changes what it PRODUCES, and making it
+       strictly better would just retire the wild one. */
+    { "Bee", 4, 4, 6, 0, 30,
+      0.95f, 0.075f, true, 0, false,
+      0, 0, 0.0f, 0.0f, false,
+      ITEM_NONE, 0, 0, ITEM_NONE, 0, SPR_BEE, 0xF0B72A,
+      ITEM_NONE, false, true, degC(95) },
+    { "Coal Bee", 4, 4, 8, 0, 30,
+      0.95f, 0.075f, true, 0, false,
+      0, 0, 0.0f, 0.0f, false,
+      ITEM_NONE, 0, 0, ITEM_NONE, 0, SPR_COAL_BEE, 0x6E6A60,
+      ITEM_NONE, false, true, degC(110) },
 };
 
 /* Not saved with the creatures -- see entity.h. Written by save.cpp as one u32
@@ -1355,6 +1382,158 @@ static void stooperTick(const World& w, Entity& e, const Player& p) {
    aimHold is the commitment. While it runs, the bat flies at a point it decided
    on earlier -- so if you move after it commits, it arrives where you WERE,
    sails past, and has to come round again. */
+/* --- bees ------------------------------------------------------------------
+
+   A round trip: leave the hive, find the nearest flower, sit on it long
+   enough to be doing something, carry the pollen home, hand it over, repeat.
+   The hive turns each delivery into wax and honey -- see devHive.
+
+   The search is bounded and OCCASIONAL rather than per-frame. A bee that
+   re-scanned a 200-cell box every frame would cost more than every enemy in
+   the game put together, and it would also look wrong: a bee that
+   instantly re-targets whenever a nearer flower appears drifts sideways
+   like a compass needle instead of committing to a flower and going to it.
+   `aimHold` is that commitment, exactly as it is for a bat. */
+
+static const int BEE_SEARCH_R    = 150;  /* how far a bee will look for work */
+static const int BEE_SEARCH_STEP = 2;    /* sampled, not exhaustive */
+static const int BEE_GATHER      = 40;   /* frames spent on the flower */
+static const int BEE_ARRIVE      = 3;    /* cells that count as `there` */
+/* Roomier for the hive than for a flower. A flower is one cell and landing
+   on it should mean landing on it; a hive is a fourteen-cell box the bee
+   cannot enter, so `home` has to mean `at the door`. */
+static const int BEE_HOME_ARRIVE = 8;
+/* Soot needed to change species. Roughly a second and a half of continuous
+   contact, so brushing past a coal seam does nothing and standing a hive in
+   a coal chute converts the whole colony. */
+static const int BEE_SOOT_FULL   = 90;
+
+static bool beeFindFlower(const World& w, Entity& e) {
+    const int cx = (int)e.centreX(), cy = (int)e.centreY();
+    int bestD2 = BEE_SEARCH_R * BEE_SEARCH_R + 1, bx = 0, by = 0;
+    bool found = false;
+    for (int y = cy - BEE_SEARCH_R; y <= cy + BEE_SEARCH_R; y += BEE_SEARCH_STEP) {
+        if (y < PLAY_Y0 || y > PLAY_Y1) continue;
+        for (int x = cx - BEE_SEARCH_R; x <= cx + BEE_SEARCH_R; x += BEE_SEARCH_STEP) {
+            if (x < PLAY_X0 || x > PLAY_X1) continue;
+            if (w.at(x, y).mat != MAT_FLOWER) continue;
+            const int dx = x - cx, dy = y - cy, d2 = dx * dx + dy * dy;
+            if (d2 >= bestD2) continue;
+            bestD2 = d2; bx = x; by = y; found = true;
+        }
+    }
+    if (found) { e.aimX = (float)bx; e.aimY = (float)by; }
+    return found;
+}
+
+/* What has settled on this bee this frame. Coal is the one that matters so
+   far; the shape is a lookup rather than an if-chain because the next dust
+   to mean something only needs a line here and a species beside ENT_COAL_BEE. */
+static u8 beeDustAt(const World& w, const Entity& e) {
+    for (int y = e.top(); y <= e.bottom(); ++y)
+        for (int x = e.left(); x <= e.right(); ++x) {
+            if (x < PLAY_X0 || x > PLAY_X1 || y < PLAY_Y0 || y > PLAY_Y1) continue;
+            const u8 m = w.at(x, y).mat;
+            if (m == MAT_COAL) return MAT_COAL;
+        }
+    return MAT_EMPTY;
+}
+
+static void beeSteer(Entity& e, float tx, float ty) {
+    const EntityDef& d = ENT_DEFS[e.type];
+    float ax = tx - e.centreX(), ay = ty - e.centreY();
+    const float len = sqrtf(ax * ax + ay * ay);
+    if (len > 0.01f) { ax /= len; ay /= len; }
+    e.vx += ax * d.accel;
+    e.vy += ay * d.accel;
+    /* The wingbeat. Small, and on the vertical only, so a bee bobs along its
+       line rather than weaving across it. */
+    e.animPhase += 0.55f;
+    e.vy += sinf(e.animPhase) * 0.05f;
+    const float sp = sqrtf(e.vx * e.vx + e.vy * e.vy);
+    if (sp > d.speed) { e.vx = e.vx / sp * d.speed; e.vy = e.vy / sp * d.speed; }
+    if (e.vx > 0.05f) e.facing = 1; else if (e.vx < -0.05f) e.facing = -1;
+}
+
+static void beeTick(World& w, Entity& e) {
+    /* --- what it has been through ------------------------------------ */
+    if (e.type == ENT_BEE) {
+        if (beeDustAt(w, e) == MAT_COAL) {
+            if (e.soot < 255) ++e.soot;
+            if (e.soot >= BEE_SOOT_FULL) {
+                e.type = ENT_COAL_BEE;
+                e.soot = 0;
+                e.hp   = ENT_DEFS[ENT_COAL_BEE].hp;
+            }
+        } else if (e.soot > 0) {
+            /* It wears off. Without this a bee that once flew past a lump of
+               coal is permanently one step from turning, and the player has
+               no way to keep an ordinary hive ordinary. */
+            --e.soot;
+        }
+    }
+
+    /* --- the round trip ----------------------------------------------- */
+    const Device* hive = (e.home >= 0 && e.home < MAX_DEVICES &&
+                          g_devices[e.home].used &&
+                          g_devices[e.home].type == DEV_HIVE)
+                       ? &g_devices[e.home] : 0;
+
+    if (e.phase == 1) {
+        /* Carrying. Home is a fixed point, so no searching is needed. */
+        if (!hive) { e.phase = 0; e.aimHold = 0; return; }
+        float hx, hy; hiveTarget(*hive, &hx, &hy);
+        beeSteer(e, hx, hy);
+        const float dx = hx - e.centreX(), dy = hy - e.centreY();
+        if (dx * dx + dy * dy <= (float)(BEE_HOME_ARRIVE * BEE_HOME_ARRIVE)) {
+            hiveDeliver(g_devices[e.home], e.type == ENT_COAL_BEE);
+            e.phase = 0;
+            e.aimHold = 0;
+        }
+        return;
+    }
+
+    /* Sitting on the flower. actTimer is the visit; it is what stops a bee
+       touching a blossom and bouncing straight off it, which reads as a
+       collision rather than as foraging. */
+    if (e.actTimer > 0) {
+        --e.actTimer;
+        e.vx *= 0.7f; e.vy *= 0.7f;
+        if (e.actTimer == 0) e.phase = 1;
+        return;
+    }
+
+    if (--e.aimHold <= 0) {
+        if (!beeFindFlower(w, e)) {
+            /* Nothing to work. Mill around home rather than wander off and be
+               despawned by distance -- a hive whose flowers were cut down
+               should still have its bees when you plant more. */
+            float hx = e.centreX(), hy = e.centreY();
+            if (hive) hiveTarget(*hive, &hx, &hy);
+            e.aimX = hx + (float)((int)(rngNext() % 41u) - 20);
+            e.aimY = hy + (float)((int)(rngNext() % 41u) - 20);
+        }
+        e.aimHold = 30 + (int)(rngNext() % 30u);
+    }
+
+    beeSteer(e, e.aimX, e.aimY);
+
+    /* Arrived at something that is still a flower. Checked rather than
+       assumed: the target was chosen up to a second ago and the world is
+       allowed to change underneath it. */
+    const int tx = (int)e.aimX, ty = (int)e.aimY;
+    const float dx = e.aimX - e.centreX(), dy = e.aimY - e.centreY();
+    if (dx * dx + dy * dy <= (float)(BEE_ARRIVE * BEE_ARRIVE) &&
+        tx >= PLAY_X0 && tx <= PLAY_X1 && ty >= PLAY_Y0 && ty <= PLAY_Y1 &&
+        w.at(tx, ty).mat == MAT_FLOWER) {
+        /* The flower is NOT consumed. A field that is eaten by the thing you
+           built to harvest it is a machine that turns itself off, and the
+           interesting version of this is a stable supply you scale by
+           planting more. */
+        e.actTimer = BEE_GATHER;
+    }
+}
+
 static void batTick(const World& w, Entity& e, const Player& p) {
     const EntityDef& d = ENT_DEFS[e.type];
     if (--e.aimHold <= 0) {
@@ -1741,6 +1920,8 @@ static void entTickMode(World& w, Player& fallbackPlayer, Inventory& fallbackInv
         case ENT_CULVERIN: culverinTick(w, e, p); break;
         case ENT_WISP:     wispTick(w, e, p); break;
         case ENT_STOOPER:  stooperTick(w, e, p); break;
+        case ENT_BEE:
+        case ENT_COAL_BEE: beeTick(w, e); break;
         default: break;
         }
 
@@ -1762,7 +1943,10 @@ static void entTickMode(World& w, Player& fallbackPlayer, Inventory& fallbackInv
            lead things into a pool and watch nothing happen. Sampling the
            creature's own cells is the same measurement the player's heat
            damage makes, and it means a firetrap is a real answer. */
-        const u8 hot = degC(60);
+        /* Per species now, because a bee has to be able to live in a hive
+           that is rendering wax at 46 C. Zero keeps the old number, so every
+           creature that has not thought about it behaves exactly as before. */
+        const u8 hot = d.heatTolerance ? d.heatTolerance : degC(60);
         for (int y = e.top(); y <= e.bottom(); ++y)
             for (int x = e.left(); x <= e.right(); ++x) {
                 if (x < 0 || x >= SIM_W || y < 0 || y >= SIM_H) continue;
@@ -1774,7 +1958,10 @@ static void entTickMode(World& w, Player& fallbackPlayer, Inventory& fallbackInv
            here rather than at the call site because this is the only place a
            creature ever hurts the player, and a resistance applied somewhere
            else would be a resistance somebody could forget to apply. */
-        if (e.touchTimer == 0 && p.alive
+        /* `!d.tame` first, and it has to be: the damage below is
+           imax(1, touchDamage - armour), so a creature with zero contact
+           damage still hits for one. A bee landing on you would sting. */
+        if (!d.tame && e.touchTimer == 0 && p.alive
             && e.right()  >= p.left() && e.left() <= p.right()
             && e.bottom() >= p.top()  && e.top()  <= p.bottom()) {
             const int dmg = imax(1, d.touchDamage - inv.armour());
@@ -1953,7 +2140,7 @@ static int crowdingNear(float x, float y) {
     int n = 0;
     for (int i = 0; i < MAX_ENTITIES; ++i) {
         const Entity& e = g_entities[i];
-        if (!e.alive() || ENT_DEFS[e.type].isBoss) continue;
+        if (!e.alive() || ENT_DEFS[e.type].isBoss || ENT_DEFS[e.type].tame) continue;
         const float dx = e.centreX() - x, dy = e.centreY() - y;
         if (dx * dx + dy * dy <= (float)(SPAWN_LOCAL_R * SPAWN_LOCAL_R)) ++n;
     }
@@ -1968,7 +2155,7 @@ static int entSpawnedCount() {
     int n = 0;
     for (int i = 0; i < MAX_ENTITIES; ++i) {
         const Entity& e = g_entities[i];
-        if (e.alive() && !ENT_DEFS[e.type].isBoss) ++n;
+        if (e.alive() && !ENT_DEFS[e.type].isBoss && !ENT_DEFS[e.type].tame) ++n;
     }
     return n;
 }
@@ -2129,6 +2316,16 @@ static void entityPixelMotion(const Entity& e, int entityIndex, int sx, int sy,
         const int gait = gaitStep(e);
         if (moving && gait) --*dy;                         /* shell rises on a step */
         if (sy >= 10) *dx += (((sx / 2) + gait) & 1) ? 1 : -1;
+        break;
+    }
+    case ENT_BEE:
+    case ENT_COAL_BEE: {
+        /* The fastest wingbeat in the game, because that is what reads as a
+           bee rather than as a small bird: two frames up, two down, with the
+           body held still so only the wings move. The wing rows are the top
+           third of the sprite -- see ART_BEE. */
+        const int beat = ((tick >> 1) & 1u) ? -1 : 0;
+        if (sy <= 4) *dy += beat;
         break;
     }
     case ENT_MOTH: {

@@ -58,36 +58,46 @@ Measured, not guessed:
 
 ---
 
-## Bees and wax
+## Bees and wax — built
 
-Not started; recorded here so it is not lost. The shape, as described:
+Shipped. What exists now:
 
-- **Bees pathfind between flowers and their hive** and generate **honey** and
-  **beeswax** over time. Wax is solid at room temperature and melts low, which
-  the existing thermal system already models properly — it would slot into the
-  same phase-change machinery as everything else rather than needing special
-  cases.
-- **Upgradable bees.** Do something to a hive to advance it: sprinkle it with
-  valuable items, or heat it. Higher tiers produce a **special honey and wax**,
-  and combining those yields **a new metal** — so bees become a materials
-  route that is not mining, which is the interesting part. It gives the game a
-  second way to obtain things, on a timer and a supply chain rather than a
-  pickaxe.
-- Feeding it valuables makes the upgrade a real economic choice; heating it
-  ties into the heat ladder the game is already built around.
+- **Hives** are devices. They spawn bees up to a setpoint (1–5, default 5),
+  slowly, so a new hive fills rather than arrives finished. Each delivery a
+  bee brings back is extruded as **wax from the top** and **honey from the
+  sides** — different faces so the two products separate themselves with no
+  sorting machinery.
+- **Bees** fly hive → nearest flower → hive, on a bounded, occasional search.
+  They are the first creatures in the game that are not hostile: no contact
+  damage, and excluded from the spawn cap so an apiary does not accidentally
+  become a monster repellent.
+- **Flowers** grow on their own while turf spreads, and can be sown from
+  seed. A hive with no flowers in range produces nothing, which is tested.
+- **Beeswax** is solid at room temperature and melts at 46 °C (with 6° of
+  hysteresis so it cannot flicker). **Honey** is denser than water and
+  genuinely thick — dispersion zero, so a spilled cell stays put and only a
+  deep pool spreads under its own weight.
+- **Coal bees.** Sustained contact with coal converts a bee; a brush past a
+  seam does not, and the soot wears off. Their **coal wax and coal honey
+  boil back down into coal** at 78 °C and 72 °C — a hive over a heat source
+  is a coal supply that runs without you.
+- **Honey Draught** heals 55 against bread's 30.
 
-Worth knowing before this starts:
+### Still open on this
 
-- **Bees would be the first friendly creature in the game.** Every entity today
-  is hostile except the Crash Dummy, so this needs neutral-entity behaviour:
-  no aggro, no despawn while its hive stands, and it must not count against
-  `ENT_MAX_ALIVE` the way a threat does.
-- **There are no flowers yet.** The crop system has wheat, flax and cotton to
-  build on, but a blossom the bees can visit is new.
-- Pathing exists and is tested (`enemy_path`, `nav_cost`), so routing hive →
-  flower → hive is reusing machinery rather than inventing it.
-
----
+- [ ] **The metal.** Combining a special honey and a special wax into a new
+      alloy is the part that is not built. The materials and the boil-down
+      path exist; what is missing is the recipe and the metal itself.
+- [ ] **More bee kinds.** Only coal converts today. Ore dusts, steam and
+      gentle heat were all on the list; the conversion is written as a
+      lookup (`beeDustAt`) so another one is a line there and a species
+      beside `ENT_COAL_BEE`.
+- [ ] **A wild hive to find**, so the first hive does not need wax you can
+      only get from a hive. Today the entry point is planting flowers and
+      the bench recipe makes every hive after the first.
+- [ ] **Nobody has played it.** The loop is covered by `tests/hive_bees.cpp`
+      (13 checks) and the sprites have been looked at, but no hive has been
+      placed by hand in a running game.
 
 ## Not required for done
 

@@ -135,6 +135,14 @@ static u32 paletteOf(char c) {
     case 'r': return 0x4E5838;     /* husk: shade and hollows */
     case 's': return 0x8E9A6E;     /* husk: lit edge */
     case 't': return 0x2A2E20;     /* husk: the gaps between its ribs */
+    /* --- wax ------------------------------------------------------------
+       These two were the LAST unused characters in this table. Everything
+       else the hive and its bees are drawn with reuses a colour that was
+       already here -- gold for the body, the husk's near-black for banding,
+       the feather white for a wing. Anything added after this has to reuse
+       as well, or the key table has to become per-sprite. */
+    case '>': return 0xE8C25C;     /* wax and honey, lit */
+    case '~': return 0xC79A38;     /* wax, shaded */
     /* Bat: nearly black with a violet cast, so it reads as a SILHOUETTE first --
        right for the one creature you track by its motion rather than its
        detail. */
@@ -1133,6 +1141,91 @@ static const char* ART_BROOD[SPR_H] = {
 /* Two stones and the spark between them. The spark is the whole icon -- a pair
    of grey lumps alone would read as "rock", which is exactly what this is made
    of and exactly not what it is for. */
+static const char* ART_BEE[SPR_H] = {
+    "..............",
+    "..............",
+    ".....A..A.....",
+    "....AAAAAA....",
+    "....AAAAAA....",
+    ".....j33j.....",
+    "....j3333j....",
+    "....3jjjj3....",
+    "....j3333j....",
+    ".....j33j.....",
+    "......jj......",
+    ".....j..j.....",
+    "..............",
+    "..............",
+};
+
+static const char* ART_COAL_BEE[SPR_H] = {
+    "..............",
+    "..............",
+    ".....S..S.....",
+    "....SSSSSS....",
+    "....SSSSSS....",
+    ".....jggj.....",
+    "....jggggj....",
+    "....gjjjjg....",
+    "....jggggj....",
+    ".....jggj.....",
+    "......jj......",
+    ".....j..j.....",
+    "..............",
+    "..............",
+};
+
+static const char* ART_HIVE[SPR_H] = {
+    "..............",
+    ".....>>>>.....",
+    "...>>~~~~>>...",
+    "..>>>>>>>>>>..",
+    "..>~~~~~~~~>..",
+    "..>>>>>>>>>>..",
+    "..>~~~~~~~~>..",
+    "..>>>>>>>>>>..",
+    "..>~~~~~~~~>..",
+    "..>>>>>>>>>>..",
+    "..>~~~jj~~~>..",
+    "..>>>>jj>>>>..",
+    "...>>>>>>>>...",
+    "..............",
+};
+
+static const char* ART_HONEY_POTION[SPR_H] = {
+    "..............",
+    "......GG......",
+    "......GG......",
+    ".....GGGG.....",
+    "....G>>>>G....",
+    "...G>>>>>>G...",
+    "..G>>>>>>>>G..",
+    "..G>>>>>>>>G..",
+    "..G>>>>>>>>G..",
+    "..G>>>>>>>>G..",
+    "..G>>>>>>>>G..",
+    "...G>>>>>>G...",
+    "....GGGGGG....",
+    "..............",
+};
+
+static const char* ART_FLOWER_ITEM[SPR_H] = {
+    "..............",
+    "..............",
+    "..............",
+    "......@@......",
+    ".....@@@@.....",
+    "....@@>>@@....",
+    "....@@>>@@....",
+    ".....@@@@.....",
+    "......pp......",
+    "......pp......",
+    "....pppppp....",
+    "......pp......",
+    "......pp......",
+    "..............",
+};
+
 static const char* ART_FLINT[SPR_H] = {
     "..............",
     "...SS.........",
@@ -2161,6 +2254,11 @@ void initSprites() {
     expand(SPR_CIRCUIT_CONSTANT, ART_CIRCUIT_CONSTANT);
     expand(SPR_CIRCUIT_ARITH,    ART_CIRCUIT_ARITH);
     expand(SPR_CIRCUIT_DECIDER,  ART_CIRCUIT_DECIDER);
+    expand(SPR_BEE,           ART_BEE);
+    expand(SPR_COAL_BEE,      ART_COAL_BEE);
+    expand(SPR_HIVE,          ART_HIVE);
+    expand(SPR_HONEY_POTION,  ART_HONEY_POTION);
+    expand(SPR_FLOWER_ITEM,   ART_FLOWER_ITEM);
     for (int digit = 1; digit <= 9; ++digit) makeSignalSprite(SPR_SIGNAL1 + digit - 1, digit);
 
     buildPlayerFrames();

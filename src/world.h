@@ -233,6 +233,11 @@ static const int SPREAD_PROBES = 4;
    starts a fire and the FIRE does the work, which is the whole shape of the
    heat ladder: what you burn and what you burn it in are the interesting
    decisions, and being unable to strike a spark was never one of them. */
+/* Chance per frame that a spreading turf cell puts up a flower. Low: at
+   the rate turf spreads this still fills a meadow, and anything higher
+   turns the surface into a carpet. */
+static const int GRASS_FLOWER = 1;
+
 static const int IGNITE_MAX  = degC(110);
 static const int IGNITE_STEP = 14;   /* degrees a frame while it is held */
 /* Small: a striker lights a spot, not a room. Wide enough to cover a couple of

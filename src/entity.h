@@ -87,6 +87,13 @@ enum EntityType {
     ENT_CULVERIN,
     ENT_WISP,
     ENT_STOOPER,
+
+    /* --- the hive ------------------------------------------------------
+       The first creatures in this game that are not trying to kill you.
+       They are never spawned by the dark: a hive makes them, and without
+       one they do not exist. See `tame`. */
+    ENT_BEE,
+    ENT_COAL_BEE,
     ENT_COUNT
 };
 
@@ -172,6 +179,24 @@ struct EntityDef {
        restored before anything can act on it being gone. For the crash dummy,
        which is a target rather than an opponent. */
     bool  indestructible;
+    /* --- not an enemy ---------------------------------------------------
+       Three things at once, and they belong together because they are one
+       fact: this creature is not part of the threat model. It deals no
+       contact damage, the spawner neither creates it nor counts it against
+       the cap, and crowding ignores it.
+
+       The cap is the one that would actually bite. Five bees round a hive
+       is most of ENT_MAX_ALIVE, so without this a working apiary would
+       quietly stop the caves nearby from spawning anything at all -- the
+       player would have built a monster repellent by accident and would
+       never work out why. */
+    bool  tame;
+    /* Cell temperature at which this creature starts to cook, or 0 for the
+       default. Bees live in a hive that renders wax, so the ordinary 60 C
+       would kill them in their own home; they hold out to 95 and die past
+       it, which is what makes `lightly heating` a bee a thing you can do
+       on purpose and overdoing it a thing you can regret. */
+    u8    heatTolerance;
 };
 
 extern const EntityDef ENT_DEFS[ENT_COUNT];
@@ -242,6 +267,18 @@ struct Entity {
        to how a different creature notices it is wedged. */
     float walkPhase;
     float gaitX, gaitY;
+
+    /* --- bees -----------------------------------------------------------
+       `home` is the device index of the hive that made this bee, or -1 for
+       one that has been released by hand. A homeless bee still flies and
+       still collects, it just has nowhere to deliver, which is what makes
+       carrying one somewhere in your pocket and letting it out do the
+       obvious thing.
+
+       `soot` counts what has settled on it. Fill it and the bee changes
+       species -- see beeTick. */
+    i16   home;
+    u8    soot;
 
     bool  alive() const { return type != ENT_NONE && hp > 0; }
     int   width()  const { return ENT_DEFS[type].w; }

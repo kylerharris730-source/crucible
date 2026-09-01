@@ -2,6 +2,7 @@
 #include "door.h"
 #include "sprite.h"
 #include "item.h"      /* ITEMS[], for what a pedestal is holding */
+#include "entity.h"    /* g_entities and entSpawn, for the hive's bees */
 #include "light.h"
 #include "projectile.h"
 #include <string.h>
@@ -465,6 +466,11 @@ const DeviceInfo DEVS[DEV_COUNT] = {
        that blocks the route it is rewarding you for taking would be a strange
        object. */
     { "Pedestal", "", "", 0, 0, 0, 0, SPR_PEDESTAL, MAT_PLATFORM, false },
+    /* The setpoint is how many bees it keeps. Five is the default and the
+       ceiling: past that they stop reading as individuals and the hive is
+       just a cloud. Not aimable -- wax leaves through the top because wax
+       is the lighter product, not because anyone pointed it there. */
+    { "Hive", "bees", "", 1, 5, 1, 5, SPR_HIVE, MAT_DEVICE, false },
 };
 
 u16 pedestalItem(const Device& d) {
@@ -1366,6 +1372,110 @@ static void devDrain(World& w, Device& d) {
         devDrainSide(w, d, face, &taken);
 }
 
+/* --- the hive --------------------------------------------------------------
+
+   Two jobs. It keeps its bees alive -- topping the colony back up to its
+   setpoint, slowly, so a hive that has just been placed is something you
+   watch fill rather than something that arrives finished -- and it turns
+   deliveries into material.
+
+   Wax leaves through the TOP and honey through the SIDES. That is not
+   decoration: wax is a solid that will sit where it lands and can be mined
+   off the roof, and honey is a heavy liquid that would simply pour back down
+   over the hive if it came out of the same face. Putting them on different
+   faces is what makes the output separable without any sorting machinery.
+
+   FIELD ALIASING, stated plainly because it is the sort of thing that rots:
+   a hive uses `count` for pending ordinary deliveries, `count2` for pending
+   coal ones, and `phase` as its spawn timer. Those fields belong to the
+   logistics parts and the clock respectively, and nothing but a hive ever
+   reads them on a hive. */
+
+static const int HIVE_MAX_BEES   = 5;
+static const int HIVE_SPAWN_EVERY = 300;  /* five seconds a bee */
+static const int HIVE_EXTRUDE_EVERY = 24;
+
+/* Where a bee goes to hand its load over: clear of the top face, in line
+   with the mouth. Not the centre -- the footprint is solid, and a target
+   inside it is a target the bee can approach forever and never reach. */
+void hiveTarget(const Device& d, float* x, float* y) {
+    *x = (float)d.x + DEV_W * 0.5f;
+    *y = (float)d.y - 2.0f;
+}
+
+void hiveDeliver(Device& d, bool coal) {
+    if (d.type != DEV_HIVE) return;
+    /* Capped. An unattended hive with a big flower field should not be able
+       to bank an hour of production and then dump it in one go when you
+       finally come back and its chunk starts ticking again. */
+    if (coal) { if (d.count2 < 64) ++d.count2; }
+    else      { if (d.count  < 64) ++d.count;  }
+}
+
+static int hiveBeeCount(int index) {
+    int n = 0;
+    for (int i = 0; i < MAX_ENTITIES; ++i) {
+        const Entity& e = g_entities[i];
+        if (!e.alive() || e.home != (i16)index) continue;
+        if (e.type == ENT_BEE || e.type == ENT_COAL_BEE) ++n;
+    }
+    return n;
+}
+
+/* Put one cell of `mat` somewhere along an edge, preferring a free cell.
+   Returns whether it landed. Refusing when the face is blocked is what stops
+   a walled-in hive from overwriting the wall it is against. */
+static bool hiveExtrude(World& w, const Device& d, int face, u8 mat) {
+    const int start = (int)(rngNext() % (u32)DEV_W);
+    for (int k = 0; k < DEV_W; ++k) {
+        const int i = (start + k) % DEV_W;
+        int x, y;
+        if (face == 0)      { x = d.x + i;        y = d.y - 1; }
+        else if (face == 1) { x = d.x - 1;        y = d.y + i; }
+        else                { x = d.x + DEV_W;    y = d.y + i; }
+        if (x < PLAY_X0 || x > PLAY_X1 || y < PLAY_Y0 || y > PLAY_Y1) continue;
+        if (w.at(x, y).mat != MAT_EMPTY) continue;
+        w.setCell(x, y, mat);
+        return true;
+    }
+    return false;
+}
+
+static void devHive(World& w, Device& d, int index) {
+    /* --- keep the colony topped up ----------------------------------- */
+    const int want = imax(1, imin((int)d.value, HIVE_MAX_BEES));
+    if (++d.phase >= HIVE_SPAWN_EVERY) {
+        d.phase = 0;
+        if (hiveBeeCount(index) < want) {
+            /* At the MOUTH, not the middle. A hive's footprint is
+               fourteen cells of solid MAT_DEVICE, so a bee born at its
+               centre is born inside a wall: it cannot get out, and it
+               never reaches anything again. Two cells clear of the top
+               edge is outside the box, and is where hiveTarget sends it
+               back to. */
+            float bx, by; hiveTarget(d, &bx, &by);
+            const int slot = entSpawn(w, ENT_BEE, bx, by);
+            if (slot >= 0) {
+                g_entities[slot].home = (i16)index;
+                g_entities[slot].phase = 0;
+            }
+        }
+    }
+
+    /* --- turn deliveries into material -------------------------------- */
+    d.reading = d.count + d.count2;
+    if ((w.frame % HIVE_EXTRUDE_EVERY) != 0) return;
+    if (d.count2 > 0) {
+        if (hiveExtrude(w, d, 0, MAT_COAL_WAX) |
+            hiveExtrude(w, d, 1 + (int)(rngNext() & 1u), MAT_COAL_HONEY))
+            --d.count2;
+    } else if (d.count > 0) {
+        if (hiveExtrude(w, d, 0, MAT_BEESWAX) |
+            hiveExtrude(w, d, 1 + (int)(rngNext() & 1u), MAT_HONEY))
+            --d.count;
+    }
+}
+
 static void devSpout(World& w, Device& d) {
     /* --- the whole face, not the first few cells -------------------------
        The rate says how many cells a pulse delivers; it never said WHERE along
@@ -1711,6 +1821,9 @@ void devTick(World& w) {
         case DEV_SPOUT:
             if (d.enabled) devSpout(w, d);
             d.reading = d.count;
+            break;
+        case DEV_HIVE:
+            devHive(w, d, i);
             break;
         case DEV_BLOCK_WATCHER: {
             const u8 watched = devWatch(w, d);

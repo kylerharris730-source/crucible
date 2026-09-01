@@ -102,6 +102,29 @@ const Recipe RECIPES[] = {
     { { { (ItemId)MAT_STONE, 4 }, { ITEM_NONE, 0 }, { ITEM_NONE, 0 } },
       ITEM_FLINT, 1, "Flint Striker", STATION_HAND },
 
+    /* --- the hive -------------------------------------------------------
+       Built out of wax, which means the first one cannot be: you need a hive
+       to get wax. That is deliberate and it is why the seed comes from a
+       flower instead -- the entry point is planting, not crafting. A found
+       wild hive would be the other way to open this, and is worth doing
+       later; for now the bench recipe is how you make the SECOND one and
+       every one after it.
+
+       Plain wax only. Coal wax boils away at 78 C and a hive built from it
+       would render itself the first warm day. */
+    { { { (ItemId)MAT_BEESWAX, 24 }, { (ItemId)MAT_WOOD, 8 }, { ITEM_NONE, 0 } },
+      ITEM_HIVE, 1, "Hive", STATION_BENCH },
+
+    /* Flowers into seeds, so a meadow is something you can spread rather
+       than something you find once. */
+    { { { (ItemId)MAT_FLOWER, 2 }, { ITEM_NONE, 0 }, { ITEM_NONE, 0 } },
+      ITEM_FLOWER_SEED, 3, "3 Flower Seed", STATION_HAND },
+
+    /* Honey keeps; a draught of it is the keeping. Wax for the stopper is
+       what stops this being a straight relabel of the raw material. */
+    { { { (ItemId)MAT_HONEY, 8 }, { (ItemId)MAT_BEESWAX, 2 }, { ITEM_NONE, 0 } },
+      ITEM_HONEY_POTION, 1, "Honey Draught", STATION_HAND },
+
     /* --- stations -------------------------------------------------------
        HAND -> BENCH -> {ANVIL, CHEM} -> ASSEMBLY. Each station is craftable
        at the tier below it, which is what makes the ladder a ladder rather

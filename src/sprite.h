@@ -220,6 +220,12 @@ enum SpriteId {
     SPR_ARMOUR_VANGUARD_GREAVES,
     SPR_WARP_WAND,
     SPR_SPARK,
+    /* The hive and its occupants. */
+    SPR_BEE,
+    SPR_COAL_BEE,
+    SPR_HIVE,
+    SPR_HONEY_POTION,
+    SPR_FLOWER_ITEM,
 
     SPR_COUNT
 };

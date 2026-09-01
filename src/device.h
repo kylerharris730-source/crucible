@@ -155,6 +155,9 @@ enum DeviceType {
        Appended, like every device before it, because a Device's type is a raw
        number in that same save. */
     DEV_PEDESTAL,
+    /* Makes bees, and turns what they bring back into wax and honey.
+       Appended: a device type is written into every save. */
+    DEV_HIVE,
     DEV_COUNT
 };
 
@@ -470,6 +473,17 @@ struct Device {
    can name a type item.h defines. ItemId is a u16 and has to stay one for the
    wire format anyway (see Blob::itemf), so the two are the same declaration
    written from the side of the fence that can see it. */
+/* --- the hive -------------------------------------------------------
+   A bee that has reached its hive with a load hands it over here. The
+   hive does not act on it immediately: it queues, and devTick extrudes
+   at its own pace, so five bees arriving together produce five cells of
+   output over the next few seconds rather than one frame of five.
+
+   Declared in the header because entity.cpp calls it -- the bee knows it
+   has arrived, and the hive knows what arriving means. */
+void hiveTarget(const Device& d, float* x, float* y);
+void hiveDeliver(Device& d, bool coal);
+
 u16  pedestalItem(const Device& d);
 int  pedestalCount(const Device& d);
 void pedestalSet(Device& d, u16 item, int count);

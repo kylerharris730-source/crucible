@@ -92,6 +92,12 @@ Released: **v0.4.5**. Two commits sit past it (see *Ship it* below).
       Pages workflow could -- though the suite is Windows-only today
       (winsock, `CreateProcess`), so it would need a Windows job.
 
+## Ship it, second wave
+
+- [ ] The hive, bees, flowers, wax and honey are on `main` and
+      unreleased. Worth a release once someone has actually placed a
+      hive in a running game -- see ROADMAP.md.
+
 ## The long arc
 
 What *done* looks like -- bosses, populating all three layers, the rocket, and
