@@ -1629,10 +1629,27 @@ static void devHeatLamp(World& w, Device& d) {
     for (int i = 0; i < n; ++i) {
         const int idx = cells[i];
         const int t = w.temp[idx];
-        if (t >= (int)target) continue;   /* at the setpoint: leave it alone */
-        const int nt = t + HEAT_LAMP_STEP;
-        w.temp[idx] = (u8)(nt > (int)target ? target : nt);
-        w.dirtyPoint(idx % SIM_W, idx / SIM_W);
+        if (t < (int)target) {
+            const int nt = t + HEAT_LAMP_STEP;
+            w.temp[idx] = (u8)(nt > (int)target ? target : nt);
+            w.dirtyPoint(idx % SIM_W, idx / SIM_W);
+            continue;
+        }
+
+        /* --- already at temperature, and that used to be the end of it ----
+           Reaching the setpoint meant the lamp stopped writing to the cell,
+           which meant it stopped DIRTYING it, which meant updateCell never
+           visited it again -- and updateCell is where phase changes happen.
+           So a slab of beeswax heated to 100 C sat there as a solid forever,
+           well past its own 34 C melting point, because nothing ever looked
+           at it again. It was the cells that warmed FASTEST that stuck.
+
+           A cell above its own phase point still has work pending, so wake
+           it. Only those: waking the whole cone every frame would hold the
+           chunk open for a room full of air that has nothing left to do. */
+        const MatInfo& m = MATS[w.cells[idx].mat];
+        if (m.boilTemp && t >= (int)m.boilTemp)
+            w.dirtyPoint(idx % SIM_W, idx / SIM_W);
     }
 }
 

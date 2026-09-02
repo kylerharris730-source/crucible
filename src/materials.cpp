@@ -76,7 +76,26 @@ MatInfo MATS[MAT_COUNT] = {
      still outlasts a thin puddle by 1.4x, which is the behaviour worth
      keeping. The curve is steep here -- 7 already halves lava's life -- so do
      not nudge this without re-running the puddle measurements. */
-  { "Empty", KIND_EMPTY,    0,   0,    0,   0,   0,   0,  0,    6,  0,   0,  0,    0,  MAT_EMPTY,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0x0E0E12, 0x0E0E12, 0x0E0E12, 0x0E0E12, 0 },
+  /* heatCond 10, raised from 6, and it governs SOLID-to-air only -- air to
+     air goes through AIR_MIX and is untouched by this.
+
+     Six made air very nearly an insulator. That was deliberate: it is what
+     kept a lava pool molten a long time and stopped a flame warming the room
+     around it. In play the first half of that read as lava taking far too
+     long to set, and it also starved the air convection -- warm air can only
+     rise if something got heat into it, and at 6 almost nothing did.
+
+     Ten rather than more, and the ceiling is walls. Measured through a
+     single cell of stone with a lamp on one side: 18% of the near side's
+     warmth reaches the far side at 10, 27% at 12, and 39% at 16. A one-cell
+     wall should be a poor insulator, not a useless one, and past about ten
+     it stops being a wall at all. A small lava pool that took a quarter of a
+     minute to set now takes a few seconds.
+
+     Move this if lava sets before anyone can use it, and check the two wall
+     assertions in heat_lamp and air_convection when you do -- they measure
+     exactly what this trades away. */
+  { "Empty", KIND_EMPTY,    0,   0,    0,   0,   0,   0,  0,   10,  0,   0,  0,    0,  MAT_EMPTY,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0x0E0E12, 0x0E0E12, 0x0E0E12, 0x0E0E12, 0 },
   { "Wall",  KIND_STATIC, 255,   0,    0,   0,   0,   0,  0,   30,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0x4C5158, 0x353A41, 0x4C5158, 0x353A41, 0 },
   { "Stone", KIND_STATIC, 255,   0,    0,   0,   0,   0,  0,   85,  0,   0,   0,    0,  MAT_EMPTY, degC(185), MAT_LAVA, 0, MAT_EMPTY,   0,  0x6E747C, 0x50555C, 0x6E747C, 0x50555C, 0 },
   /* Sand melts into glass at 170 -- above copper's 165 so a copper furnace is
@@ -922,14 +941,28 @@ MatInfo MATS[MAT_COUNT] = {
      if you take a striker to it. Bees look for exactly this material. */
   { "Flower", KIND_STATIC, 30, 0, 0, 0, 0, 0, 0, 10, 0, 0, 0, 0, MAT_EMPTY, 0, MAT_EMPTY, degC(65), MAT_FIRE, 0, 0xF2C6E0, 0xD98FC0, 0xF2C6E0, 0xD98FC0, 0 },
 
-  /* Beeswax: gold, solid at room temperature, and off it goes at 34 C.
-     Fourteen degrees over ambient is enough that it keeps its shape in a
-     room and nowhere near enough to need a furnace -- a heat lamp on its
-     lowest useful setting renders it, which is the point. Six degrees of
-     hysteresis on the way back so a cell sitting exactly on the line does
-     not flicker between states. */
-  { "Beeswax", KIND_STATIC, 96, 0, 0, 0, 0, 0, 0, 70, 1, 0, 0, 0, MAT_EMPTY, degC(34), MAT_BEESWAX_MELT, 0, MAT_EMPTY, 0, 0xE8C25C, 0xC79A38, 0xE8C25C, 0xC79A38, 0 },
-  { "Molten Beeswax", KIND_LIQUID, 94, 0, 0, 3, 40, 0, 0, 60, 1, 0, 0, degC(28), MAT_BEESWAX, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, 0xF6D97E, 0xD9AE4A, 0xF6D97E, 0xD9AE4A, 0 },
+  /* Beeswax: gold, solid at room temperature, melting at 30 C.
+
+     The freezing point on the melt is BELOW ambient, and that is forced
+     rather than chosen. A phase change costs LATENT_HEAT (30) and
+     latentDrain clamps the result at ambient, so a solid melting anywhere
+     above ambient always lands at exactly ambient -- whatever its melting
+     point was. If the melt's own freezing point is above ambient it
+     therefore refreezes on the very next frame, and the cell sits
+     flickering between the two states forever while looking, in game, like
+     wax that simply refuses to melt.
+
+     latentDrain's own comment describes this happening to ICE and fixes it
+     for the below-ambient direction; the same trap is waiting on the
+     above-ambient side and this is what fell into it. The invariant, for
+     anything added later: a melt's coolTemp must be at or under
+     AMBIENT_TEMP unless its solid melts more than LATENT_HEAT above it.
+
+     The consequence is honest and worth knowing: once wax is melted it
+     STAYS melted at room temperature. Setting it again means actually
+     cooling it, not just waiting. */
+  { "Beeswax", KIND_STATIC, 96, 0, 0, 0, 0, 0, 0, 70, 1, 0, 0, 0, MAT_EMPTY, degC(30), MAT_BEESWAX_MELT, 0, MAT_EMPTY, 0, 0xE8C25C, 0xC79A38, 0xE8C25C, 0xC79A38, 0 },
+  { "Molten Beeswax", KIND_LIQUID, 94, 0, 0, 3, 40, 0, 0, 60, 1, 0, 0, degC(19), MAT_BEESWAX, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, 0xF6D97E, 0xD9AE4A, 0xF6D97E, 0xD9AE4A, 0 },
 
   /* Honey: denser than water, and thick without being tar. Dispersion 3
      against water's 5, so it finds its level but visibly takes its time

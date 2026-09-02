@@ -123,8 +123,14 @@ int main() {
                       g_world.dirtyPoint(x, y); }
             g_world.step();
         }
-        check(tempAt(CX, CY - 9)  > AMBIENT_TEMP + 1, "heat pools under a ceiling");
-        check(tempAt(CX, CY - 20) <= AMBIENT_TEMP + 1, "and does not pass through it");
+        const int under = tempAt(CX, CY - 9)  - AMBIENT_TEMP;
+        const int above = tempAt(CX, CY - 20) - AMBIENT_TEMP;
+        printf("    under the ceiling %d above ambient, over it %d\n", under, above);
+        check(under > 1, "heat pools under a ceiling");
+        /* Some gets through, and should: stone conducts, and air now exchanges
+           with solids properly instead of behaving as an insulator. The ceiling
+           is a strong barrier, not a perfect one. */
+        check(above * 3 < under, "and only a fraction of it gets past");
     }
 
     /* --- 4. it still settles ---------------------------------------------- */
