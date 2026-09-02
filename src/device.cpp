@@ -1477,56 +1477,65 @@ static int hiveBeeCount(int index) {
    Returns whether it landed. Refusing when the face is blocked is what stops
    a walled-in hive from overwriting the wall it is against. */
 static bool hiveExtrude(World& w, const Device& d, int face, u8 mat) {
-    /* --- centre outwards, not randomly ---------------------------------
-       Wax is meant to come OUT of the hive, and a random column each time
-       spreads it into an even slab a cell or two deep across the whole face --
-       which is what it did, and reads as a stain rather than as something
-       being extruded. Filling from the middle builds a plug that climbs, and
-       only widens once the middle has nowhere left to go.
+    /* --- the sides ------------------------------------------------------
+       Honey is a liquid and runs off wherever it is put, so a side face just
+       wants the first free cell along it. */
+    if (face != 0) {
+        for (int i = 0; i < DEV_W; ++i) {
+            const int x = (face == 1) ? d.x - 1 : d.x + DEV_W;
+            const int y = d.y + i;
+            if (x < PLAY_X0 || x > PLAY_X1 || y < PLAY_Y0 || y > PLAY_Y1) continue;
+            if (w.at(x, y).mat != MAT_EMPTY) continue;
+            w.setCell(x, y, mat);
+            return true;
+        }
+        return false;
+    }
 
-       Sides are unaffected in practice: honey is a liquid and runs off
-       wherever it is put. */
+    /* --- the top: ROWS, not columns -------------------------------------
+
+       Every column of the face gets its first cell before any column gets a
+       second, so the wax comes out as a sheet that thickens rather than as a
+       plug that climbs. Two earlier versions got this wrong in opposite
+       directions -- a random column made a ragged two-cell smear, and filling
+       centre-outward built a single tower with nothing either side of it.
+
+       Done by finding where the wax would LAND in every column and taking
+       the lowest of them. `Lowest` is the largest y, since y grows downward.
+       That is what makes it level: a column that is already one deep has a
+       higher landing spot than its empty neighbour, so the neighbour wins
+       until the row is complete.
+
+       Ties go centre-first, which only decides the ORDER a row fills in and
+       never its shape -- the row completes either way. */
+    int bestX = -1, bestY = -1;
     for (int k = 0; k < DEV_W; ++k) {
         const int half = (k + 1) / 2;
         const int i = DEV_W / 2 + ((k & 1) ? -half : half);
         if (i < 0 || i >= DEV_W) continue;
-        int x, y;
-        if (face == 0)      { x = d.x + i;        y = d.y - 1; }
-        else if (face == 1) { x = d.x - 1;        y = d.y + i; }
-        else                { x = d.x + DEV_W;    y = d.y + i; }
-        if (x < PLAY_X0 || x > PLAY_X1 || y < PLAY_Y0 || y > PLAY_Y1) continue;
-        if (w.at(x, y).mat != MAT_EMPTY) {
-            /* --- stack it, do not shove it -----------------------------
-               The first attempt used liftColumn, the spout's pump. It caps
-               out at three cells and the reason is written on the lift
-               itself: `static means static`, and beeswax is KIND_STATIC.
-               The pump can shove sand and water; it flatly refuses to move
-               a solid, so the hive filled its face row and then failed
-               every attempt after that.
+        const int x = d.x + i;
+        if (x < PLAY_X0 || x > PLAY_X1) continue;
 
-               A solid does not need shoving anyway -- it needs stacking. Walk
-               up the column and put the new cell on top of whatever is
-               already there, which is what extruding a solid upward actually
-               looks like. Bounded by HIVE_WAX_LIFT so a hive builds a slab
-               rather than a tower to the sky, and it stops at a ceiling
-               because the search runs out of empty cells. */
-            if (face != 0) continue;
-            int stackY = -1;
-            for (int up = 1; up <= HIVE_WAX_LIFT; ++up) {
-                const int ny = y - up;
-                if (ny < PLAY_Y0) break;
-                if (w.at(x, ny).mat != MAT_EMPTY) continue;
-                if (w.blocksCell(x, ny)) break;   /* somebody is standing there */
-                stackY = ny;
-                break;
-            }
-            if (stackY < 0) continue;
-            y = stackY;
+        /* Where a cell dropped on this column would come to rest: the first
+           empty cell going up from the face. Bounded by HIVE_WAX_LIFT, so the
+           sheet has a maximum thickness, and stopped by a ceiling or by
+           anything standing in the way. */
+        int landY = -1;
+        for (int up = 1; up <= HIVE_WAX_LIFT; ++up) {
+            const int ny = d.y - up;
+            if (ny < PLAY_Y0) break;
+            if (w.at(x, ny).mat != MAT_EMPTY) continue;
+            if (w.blocksCell(x, ny)) break;
+            landY = ny;
+            break;
         }
-        w.setCell(x, y, mat);
-        return true;
+        if (landY < 0) continue;              /* this column is full */
+        if (bestY >= 0 && landY <= bestY) continue;   /* not lower than the best */
+        bestX = x; bestY = landY;
     }
-    return false;
+    if (bestX < 0) return false;
+    w.setCell(bestX, bestY, mat);
+    return true;
 }
 
 /* --- the heat lamp ---------------------------------------------------------

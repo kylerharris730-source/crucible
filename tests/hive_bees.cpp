@@ -195,17 +195,26 @@ int main() {
         for (int i = 0; i < 60; ++i) hiveDeliver(*d, false);
         stepWorld(3000);
 
-        int tallest = 0;
+        int tallest = 0, shortest = 9999, total = 0;
         for (int x = d->x; x < d->x + DEV_W; ++x) {
             int h = 0;
             for (int y = d->y - 1; y >= d->y - 24; --y)   /* past HIVE_WAX_LIFT */
                 if (g_world.at(x, y).mat == MAT_BEESWAX) ++h;
             if (h > tallest) tallest = h;
+            if (h < shortest) shortest = h;
+            total += h;
         }
-        /* A real number, not `more than one`. The first version of this asked
-           for > 1 and passed happily while the hive was producing a three-cell
-           smear, which is what was actually shipped and complained about. */
-        check(tallest >= 15, "wax stacks well above the hive, not a few cells");
+        /* LEVEL, which is the property that says it fills in rows. Every column
+           gets its first cell before any column gets a second, so at any moment
+           the face is either flat or one row into the next -- a difference of
+           more than one means it is building a tower somewhere.
+
+           Two earlier versions failed this in opposite directions: a random
+           column left a ragged smear, and centre-outward built a single plug
+           twenty cells high with bare face either side of it. */
+        check(tallest - shortest <= 1, "the wax face stays level as it thickens");
+        check(total >= 40, "and it is genuinely thickening, not one thin row");
+        check(tallest >= 3, "several rows deep after sixty loads");
     }
 
     /* --- 2f. wax must not bury the bees' own door -------------------------- */
