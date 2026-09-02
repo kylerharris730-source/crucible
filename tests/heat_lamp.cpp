@@ -174,12 +174,22 @@ int main() {
         g_world.setCell(LX - 1, LY,     MAT_STONE);
         g_world.setCell(LX + 1, LY,     MAT_STONE);
         g_world.setCell(LX,     LY,     MAT_BEESWAX);
-        g_world.temp[LY * SIM_W + LX] = (u8)(MATS[MAT_BEESWAX].boilTemp + 4);
-        g_world.dirtyPoint(LX, LY);
 
         int sawSolidAfterMelting = 0;
         bool everMelted = false;
         for (int f = 0; f < 400; ++f) {
+            /* Held hot only UNTIL it melts, then left entirely alone.
+               That ordering is the test. Melting is probabilistic on the square
+               of how far over the point a cell is, so it has to be pushed well
+               over to melt at all -- but if the heat is still being applied
+               afterwards it masks the very fault being looked for, because the
+               melt is dragged back above its freezing point every frame. What
+               matters is where the cell lands on its OWN once latentDrain has
+               taken its cut. */
+            if (!everMelted) {
+                g_world.temp[LY * SIM_W + LX] = (u8)(MATS[MAT_BEESWAX].boilTemp + 30);
+                g_world.dirtyPoint(LX, LY);
+            }
             g_world.step();
             const u8 m = g_world.at(LX, LY).mat;
             if (m == MAT_BEESWAX_MELT) everMelted = true;
@@ -189,6 +199,46 @@ int main() {
                (int)everMelted, sawSolidAfterMelting);
         check(everMelted, "wax in a pocket melts");
         check(sawSolidAfterMelting == 0, "and never snaps back to solid");
+    }
+
+    /* --- 7. wax burns, and burns cooler than coal ------------------------- */
+    {
+        /* The two verbs must stay separate. A lamp tops out at 100 C and wax
+           lights at 105, so a lamp can render wax indefinitely and never set it
+           alight; a striker reaches 110 and can. That five-degree gap is the
+           whole distinction and it is easy to erase by accident. */
+        check((int)MATS[MAT_BEESWAX].igniteTemp > degC(100),
+              "a heat lamp at full can never ignite wax");
+        check((int)MATS[MAT_BEESWAX].igniteTemp < IGNITE_MAX,
+              "but a striker can");
+        check(MATS[MAT_BEESWAX].burnsTo == MAT_WAX_EMBER &&
+              MATS[MAT_BEESWAX_MELT].burnsTo == MAT_WAX_EMBER,
+              "and both solid and molten wax burn to wax ember");
+
+        /* Cooler than coal's ember at every end: it arrives cooler and it
+           survives down to a lower temperature, so a wax fire is a long low
+           warmth rather than a forge. */
+        check((int)MATS[MAT_WAX_EMBER].spawnTemp < (int)MATS[MAT_EMBER].spawnTemp,
+              "a wax ember starts cooler than a coal ember");
+        check((int)MATS[MAT_WAX_EMBER].coolTemp < (int)MATS[MAT_EMBER].coolTemp,
+              "and holds on to a lower temperature");
+
+        devClear();
+        g_world.reset();
+        g_world.setLiveWindow(LX - 40, LY - 40, LX + 40, LY + 40);
+        for (int x = LX - 10; x <= LX + 10; ++x) g_world.setCell(x, LY + 1, MAT_STONE);
+        g_world.setCell(LX, LY, MAT_BEESWAX);
+        bool burned = false;
+        for (int f = 0; f < 600 && !burned; ++f) {
+            if (g_world.at(LX, LY).mat == MAT_BEESWAX ||
+                g_world.at(LX, LY).mat == MAT_BEESWAX_MELT) {
+                g_world.temp[LY * SIM_W + LX] = (u8)(MATS[MAT_BEESWAX].igniteTemp + 20);
+                g_world.dirtyPoint(LX, LY);
+            }
+            g_world.step();
+            if (g_world.at(LX, LY).mat == MAT_WAX_EMBER) burned = true;
+        }
+        check(burned, "wax held at its ignition point becomes a wax ember");
     }
 
     if (failures == 0) { puts("PASS"); return 0; }

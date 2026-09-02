@@ -941,28 +941,30 @@ MatInfo MATS[MAT_COUNT] = {
      if you take a striker to it. Bees look for exactly this material. */
   { "Flower", KIND_STATIC, 30, 0, 0, 0, 0, 0, 0, 10, 0, 0, 0, 0, MAT_EMPTY, 0, MAT_EMPTY, degC(65), MAT_FIRE, 0, 0xF2C6E0, 0xD98FC0, 0xF2C6E0, 0xD98FC0, 0 },
 
-  /* Beeswax: gold, solid at room temperature, melting at 30 C.
+  /* Beeswax: gold, solid at room temperature, melting at 60 C and burning
+     at 105 C into a cool ember.
 
-     The freezing point on the melt is BELOW ambient, and that is forced
-     rather than chosen. A phase change costs LATENT_HEAT (30) and
-     latentDrain clamps the result at ambient, so a solid melting anywhere
-     above ambient always lands at exactly ambient -- whatever its melting
-     point was. If the melt's own freezing point is above ambient it
-     therefore refreezes on the very next frame, and the cell sits
-     flickering between the two states forever while looking, in game, like
-     wax that simply refuses to melt.
+     The two temperatures are chosen against the tools rather than picked.
+     A heat lamp stops at 100 C, so a lamp RENDERS wax and can never set it
+     alight however long you leave it; a flint striker reaches 110, so a
+     striker can. That five-degree gap is the whole difference between the
+     two verbs and it is deliberate.
 
-     latentDrain's own comment describes this happening to ICE and fixes it
-     for the below-ambient direction; the same trap is waiting on the
-     above-ambient side and this is what fell into it. The invariant, for
-     anything added later: a melt's coolTemp must be at or under
-     AMBIENT_TEMP unless its solid melts more than LATENT_HEAT above it.
+     THE INVARIANT, and it is easy to fall into: a phase change costs
+     LATENT_HEAT (30) and latentDrain clamps the result at AMBIENT, so a
+     solid melting anywhere above ambient lands at exactly ambient unless
+     it melts more than LATENT_HEAT above it. Give the melt a freezing
+     point above that landing spot and it refreezes on the very next frame
+     -- forever, while looking in game like wax that refuses to melt. That
+     is precisely what happened at melt 34 / freeze 28.
 
-     The consequence is honest and worth knowing: once wax is melted it
-     STAYS melted at room temperature. Setting it again means actually
-     cooling it, not just waiting. */
-  { "Beeswax", KIND_STATIC, 96, 0, 0, 0, 0, 0, 0, 70, 1, 0, 0, 0, MAT_EMPTY, degC(30), MAT_BEESWAX_MELT, 0, MAT_EMPTY, 0, 0xE8C25C, 0xC79A38, 0xE8C25C, 0xC79A38, 0 },
-  { "Molten Beeswax", KIND_LIQUID, 94, 0, 0, 3, 40, 0, 0, 60, 1, 0, 0, degC(19), MAT_BEESWAX, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, 0xF6D97E, 0xD9AE4A, 0xF6D97E, 0xD9AE4A, 0 },
+     At melt 60 the landing spot is 60 - 30 = 30 C, comfortably over the
+     25 C freezing point, so the melt survives AND wax sets again at room
+     temperature -- which the 30 C version had to give up. latentDrain's
+     own comment describes this same trap catching ICE from the other
+     side. */
+  { "Beeswax", KIND_STATIC, 96, 0, 0, 0, 0, 0, 0, 70, 1, 0, 0, 0, MAT_EMPTY, degC(60), MAT_BEESWAX_MELT, degC(105), MAT_WAX_EMBER, 0, 0xE8C25C, 0xC79A38, 0xE8C25C, 0xC79A38, 0 },
+  { "Molten Beeswax", KIND_LIQUID, 94, 0, 0, 3, 40, 0, 0, 60, 1, 0, 0, degC(25), MAT_BEESWAX, 0, MAT_EMPTY, degC(105), MAT_WAX_EMBER, 0, 0xF6D97E, 0xD9AE4A, 0xF6D97E, 0xD9AE4A, 0 },
 
   /* Honey: denser than water, and thick without being tar. Dispersion 3
      against water's 5, so it finds its level but visibly takes its time
@@ -983,6 +985,19 @@ MatInfo MATS[MAT_COUNT] = {
      the two are never confused in a hopper. */
   { "Coal Wax", KIND_STATIC, 100, 0, 0, 0, 0, 0, 0, 70, 1, 0, 0, 0, MAT_EMPTY, degC(78), MAT_COAL, 0, MAT_EMPTY, 0, 0x8A7434, 0x5E4E22, 0x8A7434, 0x5E4E22, 0 },
   { "Coal Honey", KIND_LIQUID, 142, 0, 0, 3, 0, 0, 0, 90, 1, 0, 0, 0, MAT_EMPTY, degC(72), MAT_COAL, 0, MAT_EMPTY, 0, 0x8A6414, 0x5C420C, 0x8A6414, 0x5C420C, 0 },
+
+  /* Burning wax: an ember that runs cool.
+
+     Modelled on MAT_EMBER, which is burning coal, and different in exactly
+     the way wax is different from coal -- it lights at a lower temperature,
+     sits at a lower one while it burns, and gives out less. Ember spawns at
+     185 C and dies below 70; this spawns at 120 and holds on down to 50, so
+     a wax fire is a long low warmth rather than a forge. Nothing like
+     Ember's graphene transition: there is nowhere hot enough for it to go.
+
+     Lighter and more orange than coal ember, because at a glance the
+     difference that matters is which one you are looking at. */
+  { "Wax Ember", KIND_STATIC, 255, 0, 0, 0, 0, 0, 0, 180, 3, 0, degC(120), degC(50), MAT_EMPTY, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, 0xE08A2A, 0x9A5010, 0xE08A2A, 0x9A5010, 0 },
 };
 
 u32 g_colorLut[MAT_COUNT * 256];
@@ -1309,6 +1324,9 @@ static void initLight() {
        matching how much hotter it is. */
     g_matLight[MAT_FUELFIRE]   = 105;
     g_matLight[MAT_EMBER]      = 75;
+    /* Dimmer than coal ember, and warmer in hue. A wax fire should read
+       as a candle rather than as a forge. */
+    g_matLight[MAT_WAX_EMBER]  = 55;
     g_matLight[MAT_FIRE]       = 100;
     g_matLight[MAT_LAVA]       = 95;
     g_matLight[MAT_GLOWFLUID]  = 88;
@@ -1815,12 +1833,15 @@ static void initBgRetain() {
    problem rather than a one-off. */
 static void initBurnLife() {
     g_matDecay[MAT_EMBER]    = 1;
+    /* Spends faster than coal: there is less in a cell of wax. */
+    g_matDecay[MAT_WAX_EMBER] = 3;
     g_matDecay[MAT_FUELFIRE] = 1;
 }
 
 static void initDrive() {
     for (int m = 0; m < MAT_COUNT; ++m) g_matDrive[m] = 0;
     g_matDrive[MAT_EMBER]    = 10;
+    g_matDrive[MAT_WAX_EMBER] = 6;
     g_matDrive[MAT_FUELFIRE] = 40;
 }
 

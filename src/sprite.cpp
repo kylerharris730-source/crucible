@@ -546,7 +546,28 @@ static void expandMetal(int id, const char* const* art, u32 metal, u32 shade) {
     }
 }
 
-static void expand(int id, const char* const* art) {
+/* --- a sprite may bring its own colours ------------------------------------
+
+   paletteOf is one global table mapping ONE character to one colour for every
+   sprite in the game, and it filled up: by the time the hive was drawn there
+   were two unused characters left in the whole printable set, and the bee had
+   to be built out of a gold borrowed from the pickaxe tiers and a black
+   borrowed from the husk.
+
+   The limit was never a SIZE -- no array was full, and making one bigger would
+   have fixed nothing. The limit is the encoding: one char per colour, shared
+   by everybody. So stop sharing it. A sprite can hand `expandPal` a small
+   table of its own, which is consulted first, and inside that sprite a
+   character means whatever it says it means. Two sprites can both use 'a' for
+   different colours and neither has to know about the other.
+
+   The global table stays, and stays the default: it is genuinely useful that
+   'S' is the same steel everywhere the tools are drawn. This is for the cases
+   where a sprite wants a colour nothing else needs. */
+struct SpriteColour { char key; u32 rgb; };
+
+static void expandPal(int id, const char* const* art,
+                      const SpriteColour* own, int ownCount) {
     for (int y = 0; y < SPR_H; ++y) {
         /* A short row would silently read past the end of the string literal
            and paint whatever followed it in the binary. Art is edited by hand,
@@ -556,9 +577,19 @@ static void expand(int id, const char* const* art) {
                     id, y, (int)strlen(art[y]), SPR_W);
             abort();
         }
-        for (int x = 0; x < SPR_W; ++x)
-            g_sprite[id][y * SPR_W + x] = paletteOf(art[y][x]);
+        for (int x = 0; x < SPR_W; ++x) {
+            const char k = art[y][x];
+            u32 c = 0;
+            bool mine = false;
+            for (int i = 0; i < ownCount; ++i)
+                if (own[i].key == k) { c = own[i].rgb; mine = true; break; }
+            g_sprite[id][y * SPR_W + x] = mine ? c : paletteOf(k);
+        }
     }
+}
+
+static void expand(int id, const char* const* art) {
+    expandPal(id, art, 0, 0);
 }
 
 /* --- the character ---------------------------------------------------------
@@ -2276,7 +2307,20 @@ void initSprites() {
     expand(SPR_HIVE,          ART_HIVE);
     expand(SPR_HONEY_POTION,  ART_HONEY_POTION);
     expand(SPR_FLOWER_ITEM,   ART_FLOWER_ITEM);
-    expand(SPR_HEAT_LAMP,     ART_HEAT_LAMP);
+    /* The first sprite with colours of its own. 'D', 'E' and 'i' mean
+       something else everywhere else in this file; here they are the lamp's
+       housing, its bezel and the glow off its face. */
+    {
+        static const SpriteColour LAMP[] = {
+            { 'D', 0x3A4150 },   /* housing */
+            { 'd', 0x272C36 },   /* housing, shaded */
+            { 'E', 0x59627A },   /* bezel */
+            { 'T', 0xFFF0C8 },   /* the element, white hot */
+            { 'i', 0xF25A2A }    /* the throw off its face */
+        };
+        expandPal(SPR_HEAT_LAMP, ART_HEAT_LAMP, LAMP,
+                  (int)(sizeof(LAMP) / sizeof(LAMP[0])));
+    }
     for (int digit = 1; digit <= 9; ++digit) makeSignalSprite(SPR_SIGNAL1 + digit - 1, digit);
 
     buildPlayerFrames();

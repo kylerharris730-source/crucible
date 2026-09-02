@@ -412,6 +412,9 @@ enum MatId {
     MAT_HONEY,
     MAT_COAL_WAX,
     MAT_COAL_HONEY,
+    /* Burning beeswax. An ember that runs cool -- see the row in
+       materials.cpp. Appended, like every material id. */
+    MAT_WAX_EMBER,
 
     MAT_COUNT
 };
