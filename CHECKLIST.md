@@ -98,6 +98,34 @@ Released: **v0.4.5**. Two commits sit past it (see *Ship it* below).
       unreleased. Worth a release once someone has actually placed a
       hive in a running game -- see ROADMAP.md.
 
+## Flowers are planted the wrong way
+
+- [ ] **`Flower Seed` does not behave like `Oak Seed`, and should.** Oak is a
+      MATERIAL you place or scatter; it germinates when it settles on soil with
+      air above. The flower seed is an ITEM of kind `ITEMK_SEED` -- the
+      grass-seed verb -- so it converts a cell instead of becoming one: you
+      must aim at the strip of empty air directly above soil, and it drops a
+      finished flower with no growth. Aiming at the ground does nothing, which
+      is what it feels like when it 'does not place right'.
+
+      Attempted and reverted on 2026-09-01. Two findings worth keeping:
+
+      1. `g_matIsSeed` is a hand-maintained list, and a seed missing from it is
+         **silently inert** -- it falls, settles, and is never reported to the
+         grower, with nothing anywhere complaining. Worth deriving from
+         `TREE_KINDS` when this is picked up again.
+      2. The blocker: a new seed material falls **straight through dirt and
+         grass**, where `MAT_OAK_SEED` rests on top of them -- with material
+         rows that are identical apart from density (116 vs 120, both well
+         under soil's 140). Unexplained. Whatever the cause, it has to be
+         understood before this ships; a seed that sinks into the ground is
+         worse than the current awkward verb.
+
+      Also note the tree grower is the wrong shape for a one-cell blossom --
+      lean, lumps, spread and pods are all meaningless -- so germinating
+      directly into `MAT_FLOWER` is probably right, rather than adding a
+      species to `TREE_KINDS`.
+
 ## The long arc
 
 What *done* looks like -- bosses, populating all three layers, the rocket, and
