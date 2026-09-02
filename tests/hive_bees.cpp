@@ -161,6 +161,44 @@ int main() {
         check(countMat(MAT_BEESWAX) == 0,   "and not the ordinary kind");
     }
 
+    /* --- 2d. wax stacks up instead of stopping at one row ------------------ */
+    /* The hive's own output settles on its roof, and without the spout's lift
+       that first row of wax blocks the face forever -- a colony would produce
+       one layer and quietly stop. */
+    {
+        Device* d = buildApiary(40);
+        if (!d) return 2;
+        d->value = 5;
+        for (int i = 0; i < 60; ++i) hiveDeliver(*d, false);
+        stepWorld(3000);
+
+        int tallest = 0;
+        for (int x = d->x; x < d->x + DEV_W; ++x) {
+            int h = 0;
+            for (int y = d->y - 1; y >= d->y - 24; --y)   /* past HIVE_WAX_LIFT */
+                if (g_world.at(x, y).mat == MAT_BEESWAX) ++h;
+            if (h > tallest) tallest = h;
+        }
+        check(tallest > 1, "wax stacks above the hive rather than stopping at one row");
+    }
+
+    /* --- 2e. a bee can be caught and is not lost when the pack is full ----- */
+    {
+        buildApiary(0);
+        const int slot = entSpawn(g_world, ENT_BEE, (float)HX, (float)(HY - 20));
+        if (slot < 0) return 2;
+        g_entities[slot].home = -1;
+
+        check(entBeeNear(HX, HY - 20, 8) == ITEM_BEE, "a bee can be seen by a right-click");
+        check(entBeeNear(HX + 400, HY, 8) == ITEM_NONE, "and only when one is near");
+
+        /* Peeking must not remove it -- that is the whole reason peek and take
+           are separate calls. */
+        check(entBeeNear(HX, HY - 20, 8) == ITEM_BEE, "peeking does not take the bee");
+        check(entTakeBeeNear(HX, HY - 20, 8) == ITEM_BEE, "taking it yields a Bee");
+        check(entBeeNear(HX, HY - 20, 8) == ITEM_NONE, "and it is gone from the world");
+    }
+
     /* --- 3. coal converts a bee, and a glance does not -------------------- */
     {
         buildApiary(0);

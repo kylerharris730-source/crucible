@@ -1394,6 +1394,12 @@ static void devDrain(World& w, Device& d) {
 static const int HIVE_MAX_BEES   = 5;
 static const int HIVE_SPAWN_EVERY = 300;  /* five seconds a bee */
 static const int HIVE_EXTRUDE_EVERY = 24;
+/* How far up the hive will shove its own output to make room. The same
+   trick the spout uses (DEV_SPOUT_LIFT) and for the same reason: without
+   it the first cell of wax to settle on the roof blocks the face and the
+   hive stops, so a working colony produced one row and quit. With it the
+   wax stacks into a column you can mine off the top. */
+static const int HIVE_WAX_LIFT = 20;
 
 /* Where a bee goes to hand its load over: clear of the top face, in line
    with the mouth. Not the centre -- the footprint is solid, and a target
@@ -1434,7 +1440,16 @@ static bool hiveExtrude(World& w, const Device& d, int face, u8 mat) {
         else if (face == 1) { x = d.x - 1;        y = d.y + i; }
         else                { x = d.x + DEV_W;    y = d.y + i; }
         if (x < PLAY_X0 || x > PLAY_X1 || y < PLAY_Y0 || y > PLAY_Y1) continue;
-        if (w.at(x, y).mat != MAT_EMPTY) continue;
+        if (w.at(x, y).mat != MAT_EMPTY) {
+            /* Blocked. Off the top face, shove the column up and dispense
+               into the cell that frees -- the spout's pump, and the reason a
+               hive keeps producing once its own wax is sitting on it. A
+               failed lift is skipped rather than retried, exactly as the
+               spout skips: the lift refuses to move anything static, so a
+               hive built under a rock ceiling simply fills the gap and
+               stops rather than grinding away at the rock. */
+            if (face != 0 || !w.liftColumn(x, y, HIVE_WAX_LIFT)) continue;
+        }
         w.setCell(x, y, mat);
         return true;
     }

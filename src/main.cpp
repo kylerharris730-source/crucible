@@ -3941,6 +3941,26 @@ static bool captureLooseSparkFor(Inventory& inv, int x, int y) {
     return true;
 }
 
+/* How close a right-click has to be to catch a bee. Generous on purpose:
+   a bee is four cells across and never still, and asking for a
+   pixel-accurate click on a moving four-cell target is a game of darts. */
+static const int BEE_CATCH_R = 8;
+
+/* Right-click to catch a bee, modelled on the loose-spark capture and
+   ordered before it, because a spark can be walked away from and a bee
+   is the thing that flies off if you miss.
+
+   Peek, fit, take -- never take-then-fit. */
+static bool captureBeeFor(Inventory& inv, int x, int y) {
+    const ItemId as = entBeeNear(x, y, BEE_CATCH_R);
+    if (as == ITEM_NONE) return false;
+    Inventory withBee = inv;
+    if (withBee.add(as, 1) != 0) return false;   /* no room; leave it flying */
+    if (entTakeBeeNear(x, y, BEE_CATCH_R) != as) return false;
+    inv = withBee;
+    return true;
+}
+
 static void applyPlayerUses(PlayerSession& session, const PlayerCommand& command) {
     const int undoSlot = (int)(&session - g_playerSessions);
     const bool recordUndo = netRole() != NET_CLIENT;
@@ -4088,6 +4108,9 @@ static void applyPlayerUses(PlayerSession& session, const PlayerCommand& command
             if (type && entSpawn(g_world, type, (float)aim.x, (float)aim.y) >= 0)
                 inv.take(item, 1);
         }
+    } else if (right && !command.background && (pressed & PCMD_USE_RIGHT) &&
+               captureBeeFor(inv, aim.x, aim.y)) {
+        /* caught one */
     } else if (right && !command.background && (pressed & PCMD_USE_RIGHT) &&
                captureLooseSparkFor(inv, aim.x, aim.y)) {
         /* Deliberate capture wins over mining for this click. Standing beside
@@ -4636,6 +4659,7 @@ static void circuitWireClick() {
 /* Frames until the hands can take another bite. Counted down every frame
    whether or not you are digging, so the first click after a pause acts
    immediately rather than waiting out a stale cooldown. */
+
 static int g_digCool = 0;
 
 /* --- firing ---------------------------------------------------------------
@@ -4945,6 +4969,10 @@ static void applyBrush() {
     }
 
     if (g_survival && g_playerOn && g_rmb) {
+        if (!g_useLatch && captureBeeFor(g_inv, aim.x, aim.y)) {
+            g_useLatch = true;
+            return;
+        }
         if (!g_useLatch && captureLooseSparkFor(g_inv, aim.x, aim.y)) {
             g_useLatch = true;
             g_pmx = aim.x; g_pmy = aim.y;
