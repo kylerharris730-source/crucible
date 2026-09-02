@@ -3,7 +3,7 @@
 #include "sprite.h"
 #include "item.h"      /* ITEMS[], for what a pedestal is holding */
 #include "entity.h"    /* g_entities and entSpawn, for the hive's bees */
-#include "light.h"
+#include "light.h"     /* isNight(), so the hive keeps daylight hours */
 #include "projectile.h"
 #include <string.h>
 #include <stdlib.h>
@@ -1401,12 +1401,53 @@ static const int HIVE_EXTRUDE_EVERY = 24;
    wax stacks into a column you can mine off the top. */
 static const int HIVE_WAX_LIFT = 20;
 
-/* Where a bee goes to hand its load over: clear of the top face, in line
-   with the mouth. Not the centre -- the footprint is solid, and a target
-   inside it is a target the bee can approach forever and never reach. */
-void hiveTarget(const Device& d, float* x, float* y) {
-    *x = (float)d.x + DEV_W * 0.5f;
-    *y = (float)d.y - 2.0f;
+/* --- where the bees go in --------------------------------------------
+
+   On TOP of whatever the hive has extruded, not at a fixed point.
+
+   Two wrong answers came first and both are worth keeping written down. A
+   fixed cell above the hive is the wax outlet, so two cells of production
+   buried the door and the colony milled about underneath its own hive
+   forever -- the reported bug. Moving the door UNDERNEATH fixed the burying
+   and broke foraging instead: bees steer straight at what they want with no
+   pathfinding, so a door below a fourteen-cell solid box meant every bee
+   pressed itself into the hive wall trying to leave.
+
+   Riding the pile solves both. The approach is always from open air above,
+   which is the direction a bee can actually fly in, and the door cannot be
+   buried because it is defined as the first cell that is NOT buried. As the
+   wax stacks, the landing pad rises with it.
+
+   Falls back around the sides for a hive with a ceiling on it, and finally
+   to just above the hive so a walled-in colony still has somewhere to aim
+   rather than a target inside solid rock. */
+void hiveTarget(const World& w, const Device& d, float* x, float* y) {
+    const int ix = d.x + DEV_W / 2;
+    /* A bee is four cells across and has to FIT where it is sent, so the
+       landing pad is the first cell with a bee's worth of clear air above it
+       -- not merely the first empty cell. Without the clearance the door sat
+       flush on the hive, every spawn was refused for want of room, and the
+       colony never appeared at all. */
+    const int CLEAR = 5;
+    for (int up = 1; up <= HIVE_WAX_LIFT + 8; ++up) {
+        const int sy = d.y - up;
+        if (sy - CLEAR < PLAY_Y0) break;
+        bool room = true;
+        for (int k = 0; k < CLEAR && room; ++k)
+            room = w.at(ix, sy - k).mat == MAT_EMPTY && !w.blocksCell(ix, sy - k);
+        if (!room) continue;
+        *x = (float)ix + 0.5f; *y = (float)(sy - 2) + 0.5f;
+        return;
+    }
+    const int sides[2] = { d.x - 2, d.x + DEV_W + 1 };
+    for (int k = 0; k < 2; ++k) {
+        const int sx = sides[k], sy = d.y + DEV_H / 2;
+        if (sx < PLAY_X0 || sx > PLAY_X1) continue;
+        if (w.at(sx, sy).mat != MAT_EMPTY) continue;
+        *x = (float)sx + 0.5f; *y = (float)sy + 0.5f;
+        return;
+    }
+    *x = (float)ix + 0.5f; *y = (float)(d.y - 2);
 }
 
 void hiveDeliver(Device& d, bool coal) {
@@ -1432,23 +1473,51 @@ static int hiveBeeCount(int index) {
    Returns whether it landed. Refusing when the face is blocked is what stops
    a walled-in hive from overwriting the wall it is against. */
 static bool hiveExtrude(World& w, const Device& d, int face, u8 mat) {
-    const int start = (int)(rngNext() % (u32)DEV_W);
+    /* --- centre outwards, not randomly ---------------------------------
+       Wax is meant to come OUT of the hive, and a random column each time
+       spreads it into an even slab a cell or two deep across the whole face --
+       which is what it did, and reads as a stain rather than as something
+       being extruded. Filling from the middle builds a plug that climbs, and
+       only widens once the middle has nowhere left to go.
+
+       Sides are unaffected in practice: honey is a liquid and runs off
+       wherever it is put. */
     for (int k = 0; k < DEV_W; ++k) {
-        const int i = (start + k) % DEV_W;
+        const int half = (k + 1) / 2;
+        const int i = DEV_W / 2 + ((k & 1) ? -half : half);
+        if (i < 0 || i >= DEV_W) continue;
         int x, y;
         if (face == 0)      { x = d.x + i;        y = d.y - 1; }
         else if (face == 1) { x = d.x - 1;        y = d.y + i; }
         else                { x = d.x + DEV_W;    y = d.y + i; }
         if (x < PLAY_X0 || x > PLAY_X1 || y < PLAY_Y0 || y > PLAY_Y1) continue;
         if (w.at(x, y).mat != MAT_EMPTY) {
-            /* Blocked. Off the top face, shove the column up and dispense
-               into the cell that frees -- the spout's pump, and the reason a
-               hive keeps producing once its own wax is sitting on it. A
-               failed lift is skipped rather than retried, exactly as the
-               spout skips: the lift refuses to move anything static, so a
-               hive built under a rock ceiling simply fills the gap and
-               stops rather than grinding away at the rock. */
-            if (face != 0 || !w.liftColumn(x, y, HIVE_WAX_LIFT)) continue;
+            /* --- stack it, do not shove it -----------------------------
+               The first attempt used liftColumn, the spout's pump. It caps
+               out at three cells and the reason is written on the lift
+               itself: `static means static`, and beeswax is KIND_STATIC.
+               The pump can shove sand and water; it flatly refuses to move
+               a solid, so the hive filled its face row and then failed
+               every attempt after that.
+
+               A solid does not need shoving anyway -- it needs stacking. Walk
+               up the column and put the new cell on top of whatever is
+               already there, which is what extruding a solid upward actually
+               looks like. Bounded by HIVE_WAX_LIFT so a hive builds a slab
+               rather than a tower to the sky, and it stops at a ceiling
+               because the search runs out of empty cells. */
+            if (face != 0) continue;
+            int stackY = -1;
+            for (int up = 1; up <= HIVE_WAX_LIFT; ++up) {
+                const int ny = y - up;
+                if (ny < PLAY_Y0) break;
+                if (w.at(x, ny).mat != MAT_EMPTY) continue;
+                if (w.blocksCell(x, ny)) break;   /* somebody is standing there */
+                stackY = ny;
+                break;
+            }
+            if (stackY < 0) continue;
+            y = stackY;
         }
         w.setCell(x, y, mat);
         return true;
@@ -1458,7 +1527,12 @@ static bool hiveExtrude(World& w, const Device& d, int face, u8 mat) {
 
 static void devHive(World& w, Device& d, int index) {
     /* --- keep the colony topped up ----------------------------------- */
-    const int want = imax(1, imin((int)d.value, HIVE_MAX_BEES));
+    /* Nothing comes out after dark. Without this the hive would keep
+       replacing the bees that have just gone in for the night, and the
+       colony would work a night shift -- which is exactly the thing the
+       going-in is meant to stop. The timer still runs, so dawn is not
+       followed by another five seconds of waiting. */
+    const int want = isNight() ? 0 : imax(1, imin((int)d.value, HIVE_MAX_BEES));
     if (++d.phase >= HIVE_SPAWN_EVERY) {
         d.phase = 0;
         if (hiveBeeCount(index) < want) {
@@ -1468,7 +1542,7 @@ static void devHive(World& w, Device& d, int index) {
                never reaches anything again. Two cells clear of the top
                edge is outside the box, and is where hiveTarget sends it
                back to. */
-            float bx, by; hiveTarget(d, &bx, &by);
+            float bx, by; hiveTarget(w, d, &bx, &by);
             const int slot = entSpawn(w, ENT_BEE, bx, by);
             if (slot >= 0) {
                 g_entities[slot].home = (i16)index;

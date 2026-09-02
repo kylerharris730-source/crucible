@@ -1479,10 +1479,31 @@ static void beeTick(World& w, Entity& e) {
                           g_devices[e.home].type == DEV_HIVE)
                        ? &g_devices[e.home] : 0;
 
+    /* --- turning in for the night --------------------------------------
+       A bee caught out after dark heads home and goes inside, carrying
+       whatever it has: the load is not lost, it is delivered on the way in,
+       which is what a bee coming home at dusk would do with it.
+
+       Going inside means leaving the world -- type = ENT_NONE, the same
+       removal a despawn uses rather than a death, so nothing drops and
+       nothing counts. The hive brings them back out at first light. A bee
+       with no hive to go to just keeps flying; it has nowhere to be. */
+    if (isNight() && hive) {
+        float hx, hy; hiveTarget(w, *hive, &hx, &hy);
+        beeSteer(e, hx, hy);
+        const float dx = hx - e.centreX(), dy = hy - e.centreY();
+        if (dx * dx + dy * dy <= (float)(BEE_HOME_ARRIVE * BEE_HOME_ARRIVE)) {
+            if (e.phase == 1) hiveDeliver(g_devices[e.home], e.type == ENT_COAL_BEE);
+            e.type = ENT_NONE;
+            e.hp   = 0;
+        }
+        return;
+    }
+
     if (e.phase == 1) {
         /* Carrying. Home is a fixed point, so no searching is needed. */
         if (!hive) { e.phase = 0; e.aimHold = 0; return; }
-        float hx, hy; hiveTarget(*hive, &hx, &hy);
+        float hx, hy; hiveTarget(w, *hive, &hx, &hy);
         beeSteer(e, hx, hy);
         const float dx = hx - e.centreX(), dy = hy - e.centreY();
         if (dx * dx + dy * dy <= (float)(BEE_HOME_ARRIVE * BEE_HOME_ARRIVE)) {
@@ -1509,7 +1530,7 @@ static void beeTick(World& w, Entity& e) {
                despawned by distance -- a hive whose flowers were cut down
                should still have its bees when you plant more. */
             float hx = e.centreX(), hy = e.centreY();
-            if (hive) hiveTarget(*hive, &hx, &hy);
+            if (hive) hiveTarget(w, *hive, &hx, &hy);
             e.aimX = hx + (float)((int)(rngNext() % 41u) - 20);
             e.aimY = hy + (float)((int)(rngNext() % 41u) - 20);
         }

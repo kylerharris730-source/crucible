@@ -928,22 +928,25 @@ MatInfo MATS[MAT_COUNT] = {
   { "Beeswax", KIND_STATIC, 96, 0, 0, 0, 0, 0, 0, 70, 1, 0, 0, 0, MAT_EMPTY, degC(46), MAT_BEESWAX_MELT, 0, MAT_EMPTY, 0, 0xE8C25C, 0xC79A38, 0xE8C25C, 0xC79A38, 0 },
   { "Molten Beeswax", KIND_LIQUID, 94, 0, 0, 3, 40, 0, 0, 60, 1, 0, 0, degC(40), MAT_BEESWAX, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, 0xF6D97E, 0xD9AE4A, 0xF6D97E, 0xD9AE4A, 0 },
 
-  /* Honey: denser than water and genuinely thick. Dispersion ZERO is what
-     makes it thick, and it is worth knowing why that is not the same as
-     `does not flow`: reach is dispersion PLUS the pressure of its own column,
-     so a single spilled cell stays exactly where it landed while a deep pool
-     still spreads under its own weight. Dispersion 1 -- the first attempt --
-     looked viscous and was not: one cell crept sideways forever at a cell a
-     frame and a spill simply walked out of the room.
-     Water is 5 for comparison, and finds its level almost at once. */
-  { "Honey", KIND_LIQUID, 138, 0, 0, 0, 0, 0, 0, 90, 1, 0, 0, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, 0xE59A1E, 0xB4700F, 0xE59A1E, 0xB4700F, 0 },
+  /* Honey: denser than water, and thick without being tar. Dispersion 3
+     against water's 5, so it finds its level but visibly takes its time
+     about it.
+
+     Both ends of this have been tried. Dispersion 1 was the first attempt
+     and read as a bug rather than as a liquid -- a lone cell crept sideways
+     a cell a frame and a spill walked out of the room. Zero was the
+     correction and overshot: reach is dispersion PLUS the pressure of the
+     column above, so a single cell never moved at all and a pool only
+     spread when it was deep enough to push itself, which made a spill a set
+     of little towers instead of a puddle. Three flattens. */
+  { "Honey", KIND_LIQUID, 138, 0, 0, 3, 0, 0, 0, 90, 1, 0, 0, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, 0xE59A1E, 0xB4700F, 0xE59A1E, 0xB4700F, 0 },
 
   /* The coal bee's product. Boils at a temperature an ordinary fire clears
      easily and leaves COAL behind rather than a gas: a hive over a hot plate
      becomes a coal mine that needs no miner. Darker than the plain kind so
      the two are never confused in a hopper. */
   { "Coal Wax", KIND_STATIC, 100, 0, 0, 0, 0, 0, 0, 70, 1, 0, 0, 0, MAT_EMPTY, degC(78), MAT_COAL, 0, MAT_EMPTY, 0, 0x8A7434, 0x5E4E22, 0x8A7434, 0x5E4E22, 0 },
-  { "Coal Honey", KIND_LIQUID, 142, 0, 0, 0, 0, 0, 0, 90, 1, 0, 0, 0, MAT_EMPTY, degC(72), MAT_COAL, 0, MAT_EMPTY, 0, 0x8A6414, 0x5C420C, 0x8A6414, 0x5C420C, 0 },
+  { "Coal Honey", KIND_LIQUID, 142, 0, 0, 3, 0, 0, 0, 90, 1, 0, 0, 0, MAT_EMPTY, degC(72), MAT_COAL, 0, MAT_EMPTY, 0, 0x8A6414, 0x5C420C, 0x8A6414, 0x5C420C, 0 },
 };
 
 u32 g_colorLut[MAT_COUNT * 256];

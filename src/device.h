@@ -481,7 +481,9 @@ struct Device {
 
    Declared in the header because entity.cpp calls it -- the bee knows it
    has arrived, and the hive knows what arriving means. */
-void hiveTarget(const Device& d, float* x, float* y);
+/* The world is needed because the door MOVES when it has to -- see the
+   note on hiveTarget in device.cpp. */
+void hiveTarget(const World& w, const Device& d, float* x, float* y);
 void hiveDeliver(Device& d, bool coal);
 
 u16  pedestalItem(const Device& d);

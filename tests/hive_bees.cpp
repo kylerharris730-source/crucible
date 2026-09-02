@@ -28,6 +28,7 @@
 #include "device.h"
 #include "player.h"
 #include "multiplayer.h"
+#include "light.h"      /* isNight and g_worldTime, for the night check */
 #include <stdio.h>
 #include <string.h>
 
@@ -80,12 +81,33 @@ static int beeCount() {
     return n;
 }
 
+/* Wide on purpose. Honey is a liquid that finds its level, so counting it in
+   a narrow box around the hive measures how far it has run rather than how
+   much was made -- which is what this did when honey was thick, and stopped
+   doing the moment it was allowed to flatten. The box is the whole floor. */
 static int countMat(u8 mat) {
     int n = 0;
-    for (int y = HY - 60; y <= HY + 60; ++y)
-        for (int x = HX - 60; x <= HX + 60; ++x)
+    for (int y = HY - 80; y <= HY + 60; ++y)
+        for (int x = HX - 300; x <= HX + 300; ++x)
             if (g_world.at(x, y).mat == mat) ++n;
     return n;
+}
+
+/* Honey beside the hive, sampled WHILE it runs rather than at the end: it
+   pours out of the side faces and then flows off, so by the time a run
+   finishes there is nothing left next to the hive to find. */
+static int honeyBesideEver(Device* d, int frames, int chunk) {
+    int seen = 0;
+    for (int t = 0; t < frames; t += chunk) {
+        stepWorld(chunk);
+        for (int y = d->y; y < d->y + DEV_H; ++y) {
+            for (int x = d->x - 4; x < d->x; ++x)
+                if (g_world.at(x, y).mat == MAT_HONEY) ++seen;
+            for (int x = d->x + DEV_W; x < d->x + DEV_W + 4; ++x)
+                if (g_world.at(x, y).mat == MAT_HONEY) ++seen;
+        }
+    }
+    return seen;
 }
 
 int main() {
@@ -125,23 +147,16 @@ int main() {
         if (!d) return 2;
         d->value = 5;
         stepWorld(300 * 6);           /* let the colony arrive */
-        stepWorld(1800);              /* thirty seconds of foraging */
+        const int honeyBeside = honeyBesideEver(d, 2400, 20);
         const int wax   = countMat(MAT_BEESWAX);
         const int honey = countMat(MAT_HONEY);
         check(wax > 0,   "a working hive extrudes beeswax");
         check(honey > 0, "a working hive extrudes honey");
 
-        /* Where they came out, not just that they exist. */
-        int waxAbove = 0, honeyBeside = 0;
+        int waxAbove = 0;
         for (int x = d->x; x < d->x + DEV_W; ++x)
             for (int y = d->y - 6; y < d->y; ++y)
                 if (g_world.at(x, y).mat == MAT_BEESWAX) ++waxAbove;
-        for (int y = d->y; y < d->y + DEV_H; ++y) {
-            for (int x = d->x - 6; x < d->x; ++x)
-                if (g_world.at(x, y).mat == MAT_HONEY) ++honeyBeside;
-            for (int x = d->x + DEV_W; x < d->x + DEV_W + 6; ++x)
-                if (g_world.at(x, y).mat == MAT_HONEY) ++honeyBeside;
-        }
         check(waxAbove > 0,    "wax comes out of the top");
         check(honeyBeside > 0, "honey comes out of the sides");
     }
@@ -155,9 +170,17 @@ int main() {
         if (!d) return 2;
         d->value = 1;
         for (int i = 0; i < 4; ++i) hiveDeliver(*d, true);
-        stepWorld(400);
-        check(countMat(MAT_COAL_WAX) > 0,   "a coal bee's load becomes coal wax");
-        check(countMat(MAT_COAL_HONEY) > 0, "a coal bee's load becomes coal honey");
+        /* Sampled as it runs. Coal honey is a liquid and will have flowed to
+           the far end of the floor -- or off it -- long before a fixed-length
+           run finishes, so counting only at the end measures drainage. */
+        int sawWax = 0, sawHoney = 0;
+        for (int t = 0; t < 600; t += 20) {
+            stepWorld(20);
+            sawWax   += countMat(MAT_COAL_WAX);
+            sawHoney += countMat(MAT_COAL_HONEY);
+        }
+        check(sawWax > 0,   "a coal bee's load becomes coal wax");
+        check(sawHoney > 0, "a coal bee's load becomes coal honey");
         check(countMat(MAT_BEESWAX) == 0,   "and not the ordinary kind");
     }
 
@@ -179,7 +202,66 @@ int main() {
                 if (g_world.at(x, y).mat == MAT_BEESWAX) ++h;
             if (h > tallest) tallest = h;
         }
-        check(tallest > 1, "wax stacks above the hive rather than stopping at one row");
+        /* A real number, not `more than one`. The first version of this asked
+           for > 1 and passed happily while the hive was producing a three-cell
+           smear, which is what was actually shipped and complained about. */
+        check(tallest >= 15, "wax stacks well above the hive, not a few cells");
+    }
+
+    /* --- 2f. wax must not bury the bees' own door -------------------------- */
+    /* The bug that got reported: the wax outlet and the door were the same
+       cell, so two cells of production walled the colony out of its own hive
+       and the bees hovered underneath it forever. */
+    {
+        Device* d = buildApiary(40);
+        if (!d) return 2;
+        d->value = 2;
+
+        /* Wall the whole top face off, as a full wax column would. */
+        for (int x = d->x - 1; x <= d->x + DEV_W; ++x)
+            for (int y = d->y - 24; y < d->y; ++y)
+                if (g_world.at(x, y).mat == MAT_EMPTY)
+                    g_world.setCell(x, y, MAT_BEESWAX);
+
+        float dx = 0.0f, dy = 0.0f;
+        hiveTarget(g_world, *d, &dx, &dy);
+        check(g_world.at((int)dx, (int)dy).mat == MAT_EMPTY,
+              "the door is somewhere a bee can actually be");
+        check(g_world.at((int)dx, (int)dy - 1).mat == MAT_EMPTY, "with room above it for a bee");
+
+        /* Accumulated while it runs, for the same reason as everywhere else
+           here: the honey drains away, so the end state says nothing. */
+        int produced = 0;
+        for (int t = 0; t < 300 * 8 + 2400; t += 30) {
+            stepWorld(30);
+            produced += countMat(MAT_HONEY);
+        }
+        check(produced > 0, "a hive buried in its own wax still takes deliveries");
+    }
+
+    /* --- 2g. bees go in at night ------------------------------------------ */
+    {
+        Device* d = buildApiary(40);
+        if (!d) return 2;
+        d->value = 3;
+        const u32 wasTime = g_worldTime;
+
+        /* Daytime first: find a time that is day, and fill the colony. */
+        for (u32 t = 0; t < DAY_LENGTH; t += 60) {
+            g_worldTime = t;
+            if (!isNight()) break;
+        }
+        stepWorld(300 * 5);
+        const int byDay = beeCount();
+        check(byDay > 0, "bees are out during the day");
+
+        for (u32 t = 0; t < DAY_LENGTH; t += 60) {
+            g_worldTime = t;
+            if (isNight()) break;
+        }
+        stepWorld(1800);
+        check(beeCount() == 0, "and indoors at night");
+        g_worldTime = wasTime;
     }
 
     /* --- 2e. a bee can be caught and is not lost when the pack is full ----- */
