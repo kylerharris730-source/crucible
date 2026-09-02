@@ -22,7 +22,23 @@ static inline int imax(int a, int b) { return a > b ? a : b; }
    rand() is far too slow (and on MSVCRT only has 15 bits of range anyway).
    xorshift32 is 3 shifts and 3 xors.
    ------------------------------------------------------------------------ */
-extern u32 g_rng;
+/* THREAD-LOCAL, because the simulation runs its stripes on several threads
+   and a shared stream would be both a race and a source of results that
+   differ from one run to the next. Each stripe seeds its own copy from the
+   world's master stream (see World::step), so the answer is the same however
+   many cores are doing the work -- that property is worth more than the
+   stream being globally sequential, which nothing ever depended on.
+
+   Everything OUTSIDE the sim -- worldgen, entities, devices, projectiles, the
+   brush -- runs on the main thread and so keeps using the main thread's copy,
+   which is the one codec.cpp serialises and the one a save restores.
+
+   This costs something on this toolchain: MinGW's __thread is emulated
+   (__emutls_get_address, a real call per access, measured at +5.4% on the sim
+   step). It is paid inside the parallel region, so the threads divide it
+   along with everything else. A MinGW-w64 toolchain would have native TLS
+   and not pay it at all. */
+extern __thread u32 g_rng;
 
 static inline u32 rngNext() {
     u32 x = g_rng;

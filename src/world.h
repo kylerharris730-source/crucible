@@ -94,6 +94,38 @@ static const int CHUNK_COUNT = CHUNKS_X * CHUNKS_Y;
    raise it.
    ------------------------------------------------------------------------ */
 static const int RULE_WRITE_REACH_X = 65;   /* 64, plus the one-cell outlet */
+
+/* ------------------------------------------------------------------------
+   The stripes themselves.
+
+   Six chunks, and six is a derived number rather than a chosen one. Two
+   stripes running at the same time are separated by exactly one stripe, so
+   with a stripe of W chunks:
+
+     the left one dirties chunks out to    W + (REACH+1)/CHUNK  =  W + 2
+     the right one dirties chunks back to  2W - (REACH+2)/CHUNK =  2W - 3
+
+   and they must not meet, so W + 2 < 2W - 3, so W >= 6. That is a stronger
+   condition than the cell reach alone (which would allow 5) because the
+   dirty rectangles are recorded per CHUNK: two lanes can write cells that
+   never touch and still both want to widen the same chunk's rectangle.
+   Rounding that up here is much cheaper than giving every lane its own
+   36,864-entry dirty plane to merge.
+   ------------------------------------------------------------------------ */
+static const int STRIPE_CHUNKS = 6;
+static const int STRIPE_W      = STRIPE_CHUNKS * CHUNK;    /* 192 cells */
+static const int STRIPE_COUNT  = (CHUNKS_X + STRIPE_CHUNKS - 1) / STRIPE_CHUNKS;
+static_assert(STRIPE_CHUNKS + (RULE_WRITE_REACH_X + 1) / CHUNK
+              < 2 * STRIPE_CHUNKS - (RULE_WRITE_REACH_X + 2 + CHUNK - 1) / CHUNK,
+              "stripes one apart can dirty the same chunk -- widen STRIPE_CHUNKS");
+
+/* How many threads the scan may use. 0 or 1 runs every stripe on the calling
+   thread, and that is not a special case in the code: the stripe order and
+   the per-stripe RNG streams are used either way, so a one-thread run and a
+   twelve-thread run produce the same world. Harnesses and tests leave it at
+   0; main.cpp turns it up. */
+void simSetWorkers(int threads);
+int  simWorkers(void);
 /* Five seconds at the normal 60 simulation steps/sec.  This is deliberately a
    per-chunk countdown rather than a wider permanent window: a waterfall keeps
    falling after the camera leaves, while settled terrain remains free. */
@@ -564,7 +596,6 @@ struct World {
     Chunk next[CHUNK_COUNT];      /* being accumulated for the next frame */
     u32   frame;
     int   activeChunks;           /* stat, for the HUD */
-    int   pressureRoutesRemaining;/* per-frame shared-pocket search budget */
 
     /* --- the live window -------------------------------------------------
        Chunks outside this rectangle are not simulated at all. Everything in
@@ -884,6 +915,12 @@ struct World {
 private:
     void updateCell(int x, int y);
     void reportFelled(int x, int y, u8 was, u8 now);
+
+public:
+    /* One vertical band of the chunk grid, whole world tall. Public only
+       because the lane threads call it; nothing else should. */
+    void runStripe(int stripe);
+private:
     void updateClone(int x, int y);
     void updateVoid(int x, int y);
     void spawnCell(int x, int y, u8 mat);

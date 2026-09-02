@@ -1,7 +1,43 @@
 #include "world.h"
 #include <string.h>
+#include <windows.h>
 
 World g_world;
+
+/* ======================================================================
+   Simulation lanes
+   ----------------------------------------------------------------------
+   The scan is split into full-height vertical stripes that run on several
+   threads at once. See RULE_WRITE_REACH_X in world.h for why stripes and
+   not tiles, and for the audit that says two stripes a stripe apart cannot
+   touch the same cell.
+
+   Everything the scan writes that is NOT a cell has to be dealt with here,
+   because those are the places where two lanes would otherwise collide:
+
+     the RNG          per thread, seeded per stripe (see common.h)
+     pocket budget    per stripe rather than per world
+     active count     per thread, summed afterwards
+     sprouts, felled  staged per STRIPE and merged in stripe order
+
+   Staged per stripe rather than per thread, and that distinction is the
+   whole reason the result does not depend on the core count: which thread
+   picks up a stripe is a race, so merging in thread order would make the
+   answer depend on who got there first. Stripe order is fixed.
+
+   t_stripe is -1 everywhere outside the parallel scan -- worldgen, the
+   brush, devices, entities -- and those callers write straight through to
+   the world arrays exactly as they always did.
+   ====================================================================== */
+static __thread int t_stripe = -1;
+
+
+static i32 g_stripeSprout[STRIPE_COUNT][World::MAX_SPROUTS];
+static int g_stripeSproutN[STRIPE_COUNT];
+static i32 g_stripeFelled[STRIPE_COUNT][World::MAX_FELLED];
+static int g_stripeFelledN[STRIPE_COUNT];
+static int g_stripeActive[STRIPE_COUNT];
+
 
 /* ======================================================================
    Dirty rectangle bookkeeping
@@ -95,6 +131,34 @@ static const int GAS_PRESSURE_POCKET_RADIUS  = 32;
 static const int GAS_PRESSURE_POCKET_NODES   = 2048;
 static const int GAS_PRESSURE_POCKET_BUDGET  = 128;
 static const int GAS_PRESSURE_EXPANSION_BURST = 5;
+
+/* Every scratch buffer the gas rules use, in one thread-local object.
+
+   ONE object, and one reference fetched at the top of each function that
+   needs it, because thread-local here is __emutls_get_address -- an opaque
+   call the compiler cannot hoist out of a loop. Left as separate
+   `static __thread` arrays, the breadth-first walks paid that call on every
+   single indexed access, and the sim went from 10.5 ms a frame to 18.2. The
+   arrays are identical; only the number of times their address is asked for
+   changed.
+
+   pressureRoutes rides along for the same reason: it is read and decremented
+   from two different functions, and one fetch each is cheaper than three. */
+struct LaneScratch {
+    int pressureRoutes;
+    u16 pocketSeen[(GAS_PRESSURE_POCKET_RADIUS * 2 + 1) *
+                   (GAS_PRESSURE_POCKET_RADIUS * 2 + 1)];
+    i16 pocketQueue[GAS_PRESSURE_POCKET_NODES];
+    u16 pocketEpoch;
+    i16 parent[(GAS_PRESSURE_LIQUID_RADIUS * 2 + 1) *
+               (GAS_PRESSURE_LIQUID_RADIUS * 2 + 1)];
+    u16 parentEpoch[(GAS_PRESSURE_LIQUID_RADIUS * 2 + 1) *
+                    (GAS_PRESSURE_LIQUID_RADIUS * 2 + 1)];
+    i16 bfsQueue[(GAS_PRESSURE_LIQUID_RADIUS * 2 + 1) *
+                 (GAS_PRESSURE_LIQUID_RADIUS * 2 + 1)];
+    u16 bfsEpoch;
+};
+static __thread LaneScratch t_lane;
 /* --- how far a buoyant gas climbs in one frame ------------------------------
    Cells, when the run is clear. One, before this, and that is what made steam
    feel sluggish: a parcel spends about eight frames in nine doing a diffusion
@@ -219,7 +283,6 @@ void World::reset() {
     memset(felledMark, 0, sizeof(felledMark));
     frame  = 0;
     activeChunks = 0;
-    pressureRoutesRemaining = 0;
     clearDirty(cur);
     clearDirty(next);
 
@@ -241,6 +304,16 @@ void World::reset() {
 void World::reportFelled(int x, int y, u8 was, u8 now) {
     if (!g_matIsWood[was] || g_matIsWood[now]) return;
     const int ch = (y >> CHUNK_SHIFT) * CHUNKS_X + (x >> CHUNK_SHIFT);
+    /* Inside the parallel scan this only stages the chunk index; felledMark
+       is the world's dedup set and two lanes must not both be deciding what
+       is in it. The merge applies the mark, so a chunk reported twice by two
+       stripes still lands in felled[] once. */
+    if (t_stripe >= 0) {
+        int& n = g_stripeFelledN[t_stripe];
+        if (n >= MAX_FELLED) return;
+        g_stripeFelled[t_stripe][n++] = ch;
+        return;
+    }
     if (felledMark[ch]) return;
     if (felledCount >= MAX_FELLED) return;
     felledMark[ch] = 1;
@@ -454,6 +527,7 @@ static inline u8 occupantMat(u8 packed) { return (u8)(packed & GAS_EXCESS_MASK);
    movement stamp guarantees the same gas parcel can be pushed only once in the
    frame rather than relayed through an entire lake. */
 bool World::displaceGasForLiquid(int sx, int sy, int tx, int ty) {
+    LaneScratch& L = t_lane;
     const int si = sy * SIM_W + sx, ti = ty * SIM_W + tx;
     Cell& liquid = cells[si];
     Cell& gas = cells[ti];
@@ -487,8 +561,8 @@ bool World::displaceGasForLiquid(int sx, int sy, int tx, int ty) {
         dirtyPoint(tx, ty);
     };
 
-    if (pressureRoutesRemaining > 0) {
-        --pressureRoutesRemaining;
+    if (L.pressureRoutes > 0) {
+        --L.pressureRoutes;
         /* The pictured boiler case: a tall Steam body with a real outlet above.
            This costs a straight ray rather than a flood over the whole pocket. */
         for (int d = 1; d <= GAS_PRESSURE_VERTICAL_REACH && ty - d >= PLAY_Y0; ++d) {
@@ -511,8 +585,8 @@ bool World::displaceGasForLiquid(int sx, int sy, int tx, int ty) {
 
     /* Bent local pockets. parent[] is both the visited set and the route from
        the outlet back to the touched boundary, keeping work strictly bounded. */
-    if (pressureRoutesRemaining > 0) {
-        --pressureRoutesRemaining;
+    if (L.pressureRoutes > 0) {
+        --L.pressureRoutes;
         static const int R = GAS_PRESSURE_LIQUID_RADIUS;
         static const int SIDE = R * 2 + 1;
         static const int CAP = SIDE * SIDE;
@@ -1397,6 +1471,7 @@ void World::updateLiquid(int x, int y) {
    sealed, its excess remains in the cell and costs nothing once equalized;
    changing a boundary dirties the neighbourhood and wakes it again. */
 bool World::updateGasPressure(int x, int y) {
+    LaneScratch& L = t_lane;
     const int i = y * SIM_W + x;
     Cell& c = cells[i];
     const u8 excess = (u8)(c.moisture & GAS_EXCESS_MASK);
@@ -1633,8 +1708,8 @@ bool World::updateGasPressure(int x, int y) {
         return false;
     };
 
-    if (!hasPressureRelief(x, y) && pressureRoutesRemaining > 0) {
-        --pressureRoutesRemaining;
+    if (!hasPressureRelief(x, y) && L.pressureRoutes > 0) {
+        --L.pressureRoutes;
         int receiver = -1, receiverDistance = 1000000, receiverExcess = 256;
         for (int k = 0; k < 4; ++k) {
             /* Long up and down, short sideways -- see the note on the two
@@ -1663,14 +1738,13 @@ bool World::updateGasPressure(int x, int y) {
         if (receiver < 0) {
             static const int R = GAS_PRESSURE_POCKET_RADIUS;
             static const int SIDE = R * 2 + 1;
-            static const int CAP = SIDE * SIDE;
-            static u16 seen[CAP] = { 0 };
-            static i16 queue[GAS_PRESSURE_POCKET_NODES];
-            static u16 epoch = 0;
-            if (++epoch == 0) {
-                memset(seen, 0, sizeof(seen));
-                epoch = 1;
-            }
+            /* Sized in LaneScratch, one per thread. */
+            u16* const seen  = L.pocketSeen;
+            i16* const queue = L.pocketQueue;
+            const u16 epoch = ++L.pocketEpoch ? L.pocketEpoch
+                                              : (L.pocketEpoch = 1);
+            if (epoch == 1 && L.pocketSeen[0] != 0)
+                memset(seen, 0, sizeof(L.pocketSeen));
 
             const int center = R * SIDE + R;
             int head = 0, tail = 0;
@@ -1728,7 +1802,6 @@ bool World::updateGasPressure(int x, int y) {
        lake size. */
     static const int R = GAS_PRESSURE_LIQUID_RADIUS;
     static const int SIDE = R * 2 + 1;
-    static const int CAP = SIDE * SIDE;
 
     const int orderDx[4] = { 0, dir, -dir, 0 };
     const int orderDy[4] = { -1, 0, 0, 1 };
@@ -1760,11 +1833,14 @@ bool World::updateGasPressure(int x, int y) {
 
            parent[k] is meaningful only where parentEpoch[k] == epoch; the
            wrap clears once every 65,536 searches and costs one memset. */
-        static i16 parent[CAP];
-        static u16 parentEpoch[CAP] = { 0 };
-        static i16 queue[CAP];
-        static u16 epoch = 0;
-        if (++epoch == 0) { memset(parentEpoch, 0, sizeof(parentEpoch)); epoch = 1; }
+        i16* const parent      = L.parent;
+        u16* const parentEpoch = L.parentEpoch;
+        i16* const queue       = L.bfsQueue;
+        u16 epoch = ++L.bfsEpoch;
+        if (epoch == 0) {
+            memset(parentEpoch, 0, sizeof(L.parentEpoch));
+            epoch = L.bfsEpoch = 1;
+        }
 
         int head = 0, tail = 0;
         for (int k = 0; k < 4; ++k) {
@@ -2690,10 +2766,24 @@ void World::updateCell(int x, int y) {
        moved -- a seed still falling past wet ground should not root in mid-air,
        and a seed that has settled is exactly a seed whose chunk is still awake
        from the frame it landed on. */
-    if (g_matIsSeed[c.mat] && sproutCount < MAX_SPROUTS) {
+    /* Staged into this stripe's slot, merged in stripe order once the scan
+       is done -- see the lane block at the top of this file. The cap is per
+       stripe now, so a world full of falling seeds can report a few more of
+       them per frame than it used to; tree.cpp takes what it is given and
+       the rest keep their chunks awake until next frame either way. */
+    if (g_matIsSeed[c.mat]) {
+        /* The lane lookup lives INSIDE this test and that placement is worth
+           a sentence, because getting it wrong cost double the frame time.
+           t_stripe is thread-local, and thread-local on this toolchain is a
+           function call, not an address -- so reading it once per cell, on
+           the way past, put a quarter of a million emutls calls a frame in
+           front of a branch that is false for all but a handful of them. */
+        const int st = t_stripe;
+        int& sproutN = (st >= 0) ? g_stripeSproutN[st] : sproutCount;
+        i32* const sproutTo = (st >= 0) ? g_stripeSprout[st] : sprout;
         const u8 below = (y < PLAY_Y1) ? cells[(y + 1) * SIM_W + x].mat : (u8)MAT_WALL;
-        if (below == MAT_DIRT || below == MAT_GRASS) {
-            sprout[sproutCount++] = i;
+        if (sproutN < MAX_SPROUTS && (below == MAT_DIRT || below == MAT_GRASS)) {
+            sproutTo[sproutN++] = i;
             /* Kept awake until somebody deals with it. Without this a seed that
                lands while the tree table happens to be full settles for ever
                and never gets a second look. */
@@ -3106,12 +3196,125 @@ void World::updateCell(int x, int y) {
     else if (m.kind == KIND_GAS)    updateGas(x, y);
 }
 
+
+/* Everything a stripe needs to know about the frame it is in, and nothing
+   that changes while it runs. Written by step() before any lane starts and
+   read-only for the rest of the frame. */
+struct StripeFrame {
+    int  coreCX0, coreCX1, coreCY0, coreCY1;
+    int  liveCX0, liveCX1, liveCY0, liveCY1;
+    bool leftFirst;
+    u32  seedBase;
+};
+static StripeFrame g_sf;
+
+/* ======================================================================
+   The lane pool
+   ----------------------------------------------------------------------
+   Raw Win32 threads rather than std::thread: this toolchain's C++11
+   threading is not available, and everything else in the project already
+   talks to Win32 directly.
+
+   Work is STOLEN, not dealt. Stripes are wildly uneven -- a boiling pool
+   sits in two of them and the rest of the screen is settled rock costing
+   nothing -- so handing each thread a fixed share would leave most of them
+   finished and waiting. A shared counter costs one interlocked increment
+   per stripe, which against a stripe's worth of work is nothing.
+
+   Stealing makes the ORDER of execution non-deterministic, which is why
+   nothing a lane accumulates is merged in completion order. See the lane
+   block at the top of this file.
+   ====================================================================== */
+static const int MAX_WORKERS = 31;
+static HANDLE  g_laneThread[MAX_WORKERS];
+static HANDLE  g_laneGo[MAX_WORKERS];
+static HANDLE  g_laneDone[MAX_WORKERS];
+static int     g_workerCount = 0;      /* threads BESIDES the caller */
+static volatile LONG g_laneQuit = 0;
+
+static World*  g_laneWorld = 0;
+static int     g_laneJob[STRIPE_COUNT];
+static int     g_laneJobs = 0;
+static volatile LONG g_laneNext = 0;
+
+static void laneDrain(void) {
+    for (;;) {
+        const LONG i = InterlockedIncrement(&g_laneNext) - 1;
+        if (i >= g_laneJobs) return;
+        g_laneWorld->runStripe(g_laneJob[i]);
+    }
+}
+
+static DWORD WINAPI laneMain(LPVOID param) {
+    const int id = (int)(size_t)param;
+    for (;;) {
+        WaitForSingleObject(g_laneGo[id], INFINITE);
+        if (g_laneQuit) return 0;
+        laneDrain();
+        SetEvent(g_laneDone[id]);
+    }
+}
+
+int simWorkers(void) { return g_workerCount; }
+
+void simSetWorkers(int threads) {
+    if (threads < 1) threads = 1;
+    if (threads > MAX_WORKERS + 1) threads = MAX_WORKERS + 1;
+    const int want = threads - 1;          /* the caller is one of them */
+    if (want == g_workerCount) return;
+
+    /* Tear the pool down whichever way the count is moving. Growing it in
+       place would mean two shapes of this function to get right instead of
+       one, and the call happens at most a handful of times in a session. */
+    if (g_workerCount) {
+        InterlockedExchange(&g_laneQuit, 1);
+        for (int i = 0; i < g_workerCount; ++i) SetEvent(g_laneGo[i]);
+        for (int i = 0; i < g_workerCount; ++i) {
+            WaitForSingleObject(g_laneThread[i], INFINITE);
+            CloseHandle(g_laneThread[i]);
+            CloseHandle(g_laneGo[i]);
+            CloseHandle(g_laneDone[i]);
+        }
+        InterlockedExchange(&g_laneQuit, 0);
+        g_workerCount = 0;
+    }
+    for (int i = 0; i < want; ++i) {
+        g_laneGo[i]   = CreateEvent(0, FALSE, FALSE, 0);
+        g_laneDone[i] = CreateEvent(0, FALSE, FALSE, 0);
+        g_laneThread[i] = CreateThread(0, 0, laneMain, (LPVOID)(size_t)i, 0, 0);
+        if (!g_laneThread[i] || !g_laneGo[i] || !g_laneDone[i]) {
+            /* Out of threads or handles: run with what was made rather than
+               refusing to simulate. */
+            if (g_laneThread[i]) CloseHandle(g_laneThread[i]);
+            if (g_laneGo[i])     CloseHandle(g_laneGo[i]);
+            if (g_laneDone[i])   CloseHandle(g_laneDone[i]);
+            break;
+        }
+        ++g_workerCount;
+    }
+}
+
+/* Run one phase's stripes across the pool, and return only once every one of
+   them has finished. The caller works too -- an idle main thread while eleven
+   others simulate would be one twelfth of the machine thrown away. */
+static void laneRunPhase(World* w, const int* stripes, int count) {
+    if (count <= 0) return;
+    g_laneWorld = w;
+    g_laneJobs = count;
+    for (int i = 0; i < count; ++i) g_laneJob[i] = stripes[i];
+    InterlockedExchange(&g_laneNext, 0);
+
+    for (int i = 0; i < g_workerCount; ++i) SetEvent(g_laneGo[i]);
+    laneDrain();
+    for (int i = 0; i < g_workerCount; ++i)
+        WaitForSingleObject(g_laneDone[i], INFINITE);
+}
+
 void World::step() {
     /* Pocket sharing is the only pressure operation that searches farther than
        its immediate material path. Bound it across the whole world, not per
        chunk, so a pathological mass-boil drains over several frames instead of
        turning one frame into an unbounded collection of 2,048-node walks. */
-    pressureRoutesRemaining = GAS_PRESSURE_POCKET_BUDGET;
     /* Last frame's accumulated rects become this frame's work list. */
     memcpy(cur, next, sizeof(cur));
     clearDirty(next);
@@ -3169,9 +3372,99 @@ void World::step() {
     const int liveCY0 = imax(0, coreCY0 - fingerTop);
     const int liveCY1 = imin(CHUNKS_Y - 1, coreCY1 + fingerBottom);
 
+    /* --- the parallel scan ---------------------------------------------
+       Two phases: even stripes, then odd. Adjacent stripes never run at the
+       same time, and two stripes that DO run together have a whole stripe
+       between them -- which is the separation RULE_WRITE_REACH_X says is
+       enough. Everything else about the scan is as it was: bottom to top so
+       a falling cell lands in a row already dealt with, and the left/right
+       alternation per frame so piles do not lean.
+
+       The frame constants the stripes share are handed over in g_sf rather
+       than captured, because a Win32 thread entry point takes one pointer
+       and this is one struct instead of a closure. */
+    g_sf.leftFirst = leftFirst;
+    g_sf.coreCX0 = coreCX0; g_sf.coreCX1 = coreCX1;
+    g_sf.coreCY0 = coreCY0; g_sf.coreCY1 = coreCY1;
+    g_sf.liveCX0 = liveCX0; g_sf.liveCX1 = liveCX1;
+    g_sf.liveCY0 = liveCY0; g_sf.liveCY1 = liveCY1;
+    /* One draw off the master stream per frame, and every stripe's stream
+       hangs off it. The master keeps advancing whether or not the sim did
+       anything, so a save still carries a stream that has moved on. */
+    g_sf.seedBase = rngNext();
+    const u32 masterRng = g_rng;
+
+    memset(g_stripeSproutN, 0, sizeof(g_stripeSproutN));
+    memset(g_stripeFelledN, 0, sizeof(g_stripeFelledN));
+    memset(g_stripeActive,  0, sizeof(g_stripeActive));
+
+    for (int phase = 0; phase < 2; ++phase) {
+        int list[STRIPE_COUNT], n = 0;
+        for (int st = phase; st < STRIPE_COUNT; st += 2) list[n++] = st;
+        laneRunPhase(this, list, n);
+    }
+
+    /* The lanes trampled this thread's copy of the stream while it was
+       working as one of them. */
+    g_rng = masterRng;
+
+    /* Merge, in stripe order, so the world is the same whichever thread got
+       to which stripe first. */
+    for (int st = 0; st < STRIPE_COUNT; ++st) {
+        activeChunks += g_stripeActive[st];
+        for (int i = 0; i < g_stripeSproutN[st] && sproutCount < MAX_SPROUTS; ++i)
+            sprout[sproutCount++] = g_stripeSprout[st][i];
+        for (int i = 0; i < g_stripeFelledN[st]; ++i) {
+            const int ch = g_stripeFelled[st][i];
+            if (felledMark[ch] || felledCount >= MAX_FELLED) continue;
+            felledMark[ch] = 1;
+            felled[felledCount++] = ch;
+        }
+    }
+    ++frame;
+}
+
+/* One stripe: every chunk in a band STRIPE_CHUNKS wide, whole world tall.
+
+   This is verbatim the loop step() used to run over the entire chunk grid,
+   with the x range narrowed and the things that used to be world-wide
+   counters made lane-local. */
+void World::runStripe(int stripe) {
+    const bool leftFirst = g_sf.leftFirst;
+    const int coreCX0 = g_sf.coreCX0, coreCX1 = g_sf.coreCX1;
+    const int coreCY0 = g_sf.coreCY0, coreCY1 = g_sf.coreCY1;
+    const int liveCX0 = g_sf.liveCX0, liveCX1 = g_sf.liveCX1;
+    const int liveCY0 = g_sf.liveCY0, liveCY1 = g_sf.liveCY1;
+    const int cxLo = stripe * STRIPE_CHUNKS;
+    const int cxHi = imin(CHUNKS_X - 1, cxLo + STRIPE_CHUNKS - 1);
+    if (cxLo > cxHi) return;
+
+    t_stripe = stripe;
+    /* Stream per stripe, not per thread. Mixed rather than added so that
+       neighbouring stripes on the same frame are not neighbouring streams --
+       an xorshift seeded with n and n+1 correlates visibly for a few draws,
+       and a few draws is exactly how many a single cell makes. */
+    u32 seed = g_sf.seedBase ^ (0x9E3779B9u * (u32)(stripe + 1));
+    seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5;
+    g_rng = seed ? seed : 0x9E3779B9u;
+    /* Per stripe rather than per world, and at the FULL budget rather than a
+       share of it. Sharing it out was tried and it is a trap: the budget is
+       not a cost cap that happens to work, it is what lets trapped pressure
+       find its outlet, and pressure that does not find an outlet searches
+       again next frame and every frame after. Measured, quartering it to
+       keep the world-wide total near 128 left five hundred units of hidden
+       volume stuck in the basin against the usual fifty, and cost 8 ms a
+       frame -- the exact failure mode a short pocket ray produces.
+
+       The honest reading is that the old 128 was already generous enough
+       that a busy region never hit it, so making it per stripe changes the
+       worst case on paper and nothing at all in practice. */
+    t_lane.pressureRoutes = GAS_PRESSURE_POCKET_BUDGET;
+    int active = 0;
+
     for (int cy = CHUNKS_Y - 1; cy >= 0; --cy) {
-        for (int ci = 0; ci < CHUNKS_X; ++ci) {
-            int cx = leftFirst ? ci : (CHUNKS_X - 1 - ci);
+        for (int ci = cxLo; ci <= cxHi; ++ci) {
+            int cx = leftFirst ? ci : (cxHi - (ci - cxLo));
             const int idx = cy * CHUNKS_X + cx;
             const Chunk& ch = cur[idx];
             if (ch.minX > ch.maxX) continue;   /* settled: skipped entirely */
@@ -3206,7 +3499,7 @@ void World::step() {
                 }
                 continue;
             }
-            ++activeChunks;
+            ++active;
 
             for (int y = ch.maxY; y >= ch.minY; --y) {
                 if (leftFirst) {
@@ -3217,5 +3510,6 @@ void World::step() {
             }
         }
     }
-    ++frame;
+    g_stripeActive[stripe] = active;
+    t_stripe = -1;
 }
