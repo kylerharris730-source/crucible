@@ -51,6 +51,49 @@ static const int CHUNK       = 1 << CHUNK_SHIFT;      /* 32 */
 static const int CHUNKS_X    = SIM_W >> CHUNK_SHIFT;
 static const int CHUNKS_Y    = SIM_H >> CHUNK_SHIFT;
 static const int CHUNK_COUNT = CHUNKS_X * CHUNKS_Y;
+
+/* ------------------------------------------------------------------------
+   How far SIDEWAYS one cell's turn can reach.
+
+   This is the number the parallel scan is built on, and it is an AUDIT, not
+   a wish: two stripes may run at once only if nothing either of them touches
+   can be touched by the other. Being wrong about it is a data race, which is
+   the kind of mistake that does not show up as a wrong picture -- it shows
+   up as a rare corrupt cell on somebody else's machine.
+
+   Only the HORIZONTAL component appears here, and that is the whole reason
+   the decomposition is full-height vertical stripes rather than a
+   checkerboard of square tiles. Gravity is vertical, so the long reaches in
+   this engine are vertical too: a gas pocket lifts a liquid column 512 cells
+   straight up, and a checkerboard would need 1024-cell tiles to contain
+   that -- more than the live window is tall. Stripes contain it for free,
+   because a column stays in its own stripe however long it is. They also
+   keep the bottom-to-top scan order intact inside each stripe, which is the
+   ordering the whole falling-sand model depends on.
+
+   The inventory, in cells, largest sideways write distance from the cell
+   taking its turn (reads never go further than writes in any of these):
+
+     liquid levelling       64   SUBMERGED_LEVEL_REACH; its sink is vertical
+     gas pocket ray         64   GAS_PRESSURE_POCKET_RAY_H, sideways only
+     gas pocket flood       32   receiver inside a 32-radius pocket
+     heat long-range hop    28   max heatSpread in MATS (Graphene)
+     gas bent-outlet BFS    16   the liquid path, inside a 16-radius box
+     liquid dispersion       8   max dispersion in MATS (Glowfluid)
+     gas powder shove        8 + 1
+     gas expansion burst     3
+     fluid convection        3
+
+   Two rules tie at 64, so both would have to come down to move the bound.
+   That is the next lever if more parallelism is ever wanted -- halving it
+   halves the stripe and doubles the stripe count -- but SUBMERGED_LEVEL_REACH
+   changes how a mound of dense liquid relaxes, and tests/liquid_layering.cpp
+   is what would have to agree.
+
+   Anything added to updateCell that writes further sideways than this MUST
+   raise it.
+   ------------------------------------------------------------------------ */
+static const int RULE_WRITE_REACH_X = 65;   /* 64, plus the one-cell outlet */
 /* Five seconds at the normal 60 simulation steps/sec.  This is deliberately a
    per-chunk countdown rather than a wider permanent window: a waterfall keeps
    falling after the camera leaves, while settled terrain remains free. */

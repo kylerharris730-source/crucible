@@ -63,11 +63,34 @@ static const int DENSITY_SWAP_EPS_Q8 = 64;
    expensive sideways search stays tightly local. These are deliberately two
    limits: the common case is a straight column of water above a steam pocket,
    and making that pay for a square flood fill would punish boilers for no
-   visual benefit. */
+   visual benefit.
+
+   The pocket ray is now two limits rather than one, and the split is what
+   makes the parallel scan possible. Both were 512, and 512 was never a
+   measured number -- it was "far enough that no boiler anyone builds hits
+   it". That is a fine way to pick a bound right until the bound decides
+   whether the sim can be split across cores.
+
+   VERTICALLY it has to stay long. A steam pocket under a deep lake routes
+   pressure up its own column to the surface, and tests/live_grace_test.cpp
+   builds exactly that: 160 cells of water over a 100-cell steam column,
+   with the charge injected 75 cells down inside it. At 64 the ray cannot
+   see out of the steam, the pocket never finds an outlet, and it re-searches
+   every frame -- measured, 12.9% of frames missed the budget where the same
+   scene at 512 missed 1.9%. Cutting this was a straight loss twice over.
+
+   HORIZONTALLY it can be short, and that costs nothing anyone will see: a
+   flat pocket looking 64 cells sideways for a vent is already looking
+   further than the widest boiler in the game. What it buys is the whole
+   parallel scan -- the sim is split into full-height vertical stripes, so a
+   write straight up or down stays inside its own stripe however long it is,
+   and only the SIDEWAYS reach has to fit in a stripe. See RULE_WRITE_REACH_X
+   in world.h for the audit this feeds. */
 static const int GAS_PRESSURE_VERTICAL_REACH = 512;
 static const int GAS_PRESSURE_LIQUID_RADIUS  = 16;
 static const int GAS_PRESSURE_POWDER_REACH   = 8;
-static const int GAS_PRESSURE_POCKET_RAY     = 512;
+static const int GAS_PRESSURE_POCKET_RAY_V   = 512;
+static const int GAS_PRESSURE_POCKET_RAY_H   = 64;
 static const int GAS_PRESSURE_POCKET_RADIUS  = 32;
 static const int GAS_PRESSURE_POCKET_NODES   = 2048;
 static const int GAS_PRESSURE_POCKET_BUDGET  = 128;
@@ -1614,7 +1637,12 @@ bool World::updateGasPressure(int x, int y) {
         --pressureRoutesRemaining;
         int receiver = -1, receiverDistance = 1000000, receiverExcess = 256;
         for (int k = 0; k < 4; ++k) {
-            for (int d = 1; d <= GAS_PRESSURE_POCKET_RAY; ++d) {
+            /* Long up and down, short sideways -- see the note on the two
+               constants. dx[k] is non-zero exactly for the two sideways
+               rays. */
+            const int rayMax = dx[k] ? GAS_PRESSURE_POCKET_RAY_H
+                                     : GAS_PRESSURE_POCKET_RAY_V;
+            for (int d = 1; d <= rayMax; ++d) {
                 const int nx = x + dx[k] * d, ny = y + dy[k] * d;
                 if (nx < PLAY_X0 || nx > PLAY_X1 || ny < PLAY_Y0 || ny > PLAY_Y1) break;
                 const int ni = ny * SIM_W + nx;
