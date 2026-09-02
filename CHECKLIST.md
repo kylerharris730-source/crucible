@@ -126,6 +126,21 @@ Released: **v0.4.5**. Two commits sit past it (see *Ship it* below).
       directly into `MAT_FLOWER` is probably right, rather than adding a
       species to `TREE_KINDS`.
 
+## Bees cannot be picked up
+
+- [ ] **`ITEM_BEE` and `ITEM_COAL_BEE` have no way to be obtained in
+      survival.** Right-click capture was built and then removed on
+      2026-09-01: right-click is also the dig verb, so every swing near a
+      working hive pocketed a bee instead of breaking ground, and the more
+      bees the hive had the worse it got. A verb that competes with mining
+      cannot be how you pick something up.
+
+      The items still exist and still release a bee when used, so a hive can
+      be moved if you already have one -- but nothing gives you one. Whatever
+      replaces the right-click has to be a gesture that cannot fire by
+      accident. Options worth considering: a dedicated net item, or having a
+      hive hand you a bee from its own colony when you interact with it.
+
 ## The long arc
 
 What *done* looks like -- bosses, populating all three layers, the rocket, and

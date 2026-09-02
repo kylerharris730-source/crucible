@@ -1996,43 +1996,6 @@ static void entTickMode(World& w, Player& fallbackPlayer, Inventory& fallbackInv
     pickupTickMode(w, fallbackPlayer, fallbackInv, multiplayer);
 }
 
-/* Nearest bee within r, or -1. One finder so the peek and the take can
-   never disagree about which creature is meant. */
-static int beeSlotNear(int x, int y, int r) {
-    int best = -1;
-    float bestD2 = (float)(r * r) + 1.0f;
-    for (int i = 0; i < MAX_ENTITIES; ++i) {
-        const Entity& e = g_entities[i];
-        if (!e.alive()) continue;
-        if (e.type != ENT_BEE && e.type != ENT_COAL_BEE) continue;
-        const float dx = e.centreX() - (float)x, dy = e.centreY() - (float)y;
-        const float d2 = dx * dx + dy * dy;
-        if (d2 >= bestD2) continue;
-        bestD2 = d2; best = i;
-    }
-    return best;
-}
-
-static ItemId beeItemOf(int slot) {
-    if (slot < 0) return ITEM_NONE;
-    return g_entities[slot].type == ENT_COAL_BEE ? ITEM_COAL_BEE : ITEM_BEE;
-}
-
-ItemId entBeeNear(int x, int y, int r) {
-    return beeItemOf(beeSlotNear(x, y, r));
-}
-
-ItemId entTakeBeeNear(int x, int y, int r) {
-    const int slot = beeSlotNear(x, y, r);
-    if (slot < 0) return ITEM_NONE;
-    const ItemId as = beeItemOf(slot);
-    /* Removed, not killed. entDie drops loot and counts toward the boss
-       flags, and catching a bee is not defeating one. */
-    g_entities[slot].type = ENT_NONE;
-    g_entities[slot].hp   = 0;
-    return as;
-}
-
 void entTick(World& w, Player& p, Inventory& inv) {
     entTickMode(w, p, inv, false);
 }

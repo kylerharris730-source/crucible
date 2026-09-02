@@ -341,19 +341,6 @@ int  entSpawn(const World& w, int type, float cx, float cy);
 
 /* One step for every live creature: senses, movement, contact damage, and
    whatever the archetype does to the world. */
-/* --- catching a bee --------------------------------------------------
-   Two calls rather than one, and the split is the whole point: the
-   caller has to be able to ASK what it would catch, check the item fits,
-   and only then take it. Rolled into a single call, a full pack means a
-   bee removed from the world and nothing to show for it -- the same trap
-   captureLooseSparkFor already documents.
-
-   entBeeNear returns the item a catch would yield, without touching the
-   world. entTakeBeeNear removes it and returns the same value. Both pick
-   the NEAREST bee, so they agree about which one they mean. */
-ItemId entBeeNear(int x, int y, int r);
-ItemId entTakeBeeNear(int x, int y, int r);
-
 void entTick(World& w, Player& p, Inventory& inv);
 void entTickPlayers(World& w);
 

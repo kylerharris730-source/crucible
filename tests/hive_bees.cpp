@@ -273,23 +273,6 @@ int main() {
         g_worldTime = wasTime;
     }
 
-    /* --- 2e. a bee can be caught and is not lost when the pack is full ----- */
-    {
-        buildApiary(0);
-        const int slot = entSpawn(g_world, ENT_BEE, (float)HX, (float)(HY - 20));
-        if (slot < 0) return 2;
-        g_entities[slot].home = -1;
-
-        check(entBeeNear(HX, HY - 20, 8) == ITEM_BEE, "a bee can be seen by a right-click");
-        check(entBeeNear(HX + 400, HY, 8) == ITEM_NONE, "and only when one is near");
-
-        /* Peeking must not remove it -- that is the whole reason peek and take
-           are separate calls. */
-        check(entBeeNear(HX, HY - 20, 8) == ITEM_BEE, "peeking does not take the bee");
-        check(entTakeBeeNear(HX, HY - 20, 8) == ITEM_BEE, "taking it yields a Bee");
-        check(entBeeNear(HX, HY - 20, 8) == ITEM_NONE, "and it is gone from the world");
-    }
-
     /* --- 3. coal converts a bee, and a glance does not -------------------- */
     {
         buildApiary(0);
