@@ -1384,6 +1384,15 @@ void initItems() {
     ITEMS[ITEM_HIVE].colour     = 0xE8C25C;
     ITEMS[ITEM_HIVE].sprite     = SPR_HIVE;
 
+    /* The heat lamp. A device like any other, so aiming and placing come
+       free with ITEMK_DEVICE. */
+    ITEMS[ITEM_HEAT_LAMP].name       = "Heat Lamp";
+    ITEMS[ITEM_HEAT_LAMP].kind       = ITEMK_DEVICE;
+    ITEMS[ITEM_HEAT_LAMP].deviceType = DEV_HEAT_LAMP;
+    ITEMS[ITEM_HEAT_LAMP].maxStack   = 16;
+    ITEMS[ITEM_HEAT_LAMP].colour     = 0xE8503A;
+    ITEMS[ITEM_HEAT_LAMP].sprite     = SPR_HEAT_LAMP;
+
     /* A bee in a jar. ITEMK_EGG because that is exactly what it is: an item
        that consumes itself and puts a creature in the world. Reusing the egg
        path rather than inventing a `release` verb means catching a bee and
@@ -1616,6 +1625,7 @@ void initItems() {
         "Eat to restore health. All consumable healing shares one cooldown.";
     ITEMS[ITEM_FLINT].description = "Use on a nearby flammable material to ignite it.";
     ITEMS[ITEM_HIVE].description = "Houses bees. They visit flowers and bring back pollen; the hive pushes wax from its top and honey from its sides.";
+    ITEMS[ITEM_HEAT_LAMP].description = "Warms everything in the cone it points at, air included, up to the temperature you set. Stops at 100C -- enough to keep wax running, not enough to smelt.";
     ITEMS[ITEM_BEE].description = "Let it out near a hive. Bees tolerate heat, but not a lot of it -- and coal settling on one changes what it makes.";
     ITEMS[ITEM_COAL_BEE].description = "A bee that has been through coal. Its wax and honey boil back down into coal.";
     ITEMS[ITEM_HONEY_POTION].description = "Thick and sweet. Restores more than bread does.";

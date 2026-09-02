@@ -226,6 +226,7 @@ enum SpriteId {
     SPR_HIVE,
     SPR_HONEY_POTION,
     SPR_FLOWER_ITEM,
+    SPR_HEAT_LAMP,
 
     SPR_COUNT
 };

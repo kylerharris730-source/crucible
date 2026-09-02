@@ -471,6 +471,10 @@ const DeviceInfo DEVS[DEV_COUNT] = {
        just a cloud. Not aimable -- wax leaves through the top because wax
        is the lighter product, not because anyone pointed it there. */
     { "Hive", "bees", "", 1, 5, 1, 5, SPR_HIVE, MAT_DEVICE, false },
+    /* Aimable: the cone is the whole point, and which way it points is the
+       only interesting thing about placing one. Capped at 100 in the table
+       itself, so the panel cannot even offer a smelting temperature. */
+    { "Heat Lamp", "warm to", "C", 20, 100, 5, 60, SPR_HEAT_LAMP, MAT_DEVICE, true },
 };
 
 u16 pedestalItem(const Device& d) {
@@ -1525,6 +1529,104 @@ static bool hiveExtrude(World& w, const Device& d, int face, u8 mat) {
     return false;
 }
 
+/* --- the heat lamp ---------------------------------------------------------
+
+   A cone of gentle warmth with a ceiling on it. The setpoint is a
+   TEMPERATURE, not a power: cells inside the cone climb toward it and stop,
+   so a lamp set to 60 C leaves a room at 60 C rather than cooking it
+   forever. That is the same shape as the striker's IGNITE_MAX and it is what
+   makes the thing safe to leave running.
+
+   One hundred is the hard ceiling. It clears beeswax at 46 C comfortably and
+   boils water at exactly its own limit, and it is deliberately under clay at
+   120 and every smelting point in the game -- the lamp is for keeping wax
+   moving and rooms warm, not a furnace you can point at things.
+
+   IT HEATS THE AIR, and that is not a special case: the simulation gives
+   every cell a temperature, air included, and updateHeat conducts through
+   empty space. So warming the air in the cone is the honest way to do this,
+   and it is why a lamp pointed at nothing still melts a wax pile that is
+   sitting in the warmed air a few cells away.
+
+   The cone is SHADOWED. A lamp shining at a wall does not warm what is
+   behind it, which matters both for sense and for the overlay -- a red cone
+   painted straight through rock would look like a bug. Shadowing is carried
+   forward per perpendicular offset as the scan walks outward, which costs
+   one pass over the cone rather than a ray per cell. */
+
+static const int HEAT_LAMP_STEP   = 3;    /* degrees a frame, per cell */
+static const u8  HEAT_LAMP_CEIL   = degC(100);
+
+int heatLampCells(const World& w, const Device& d, i32* out, int maxOut) {
+    /* Where the beam starts and which way it goes. face: 0 down, 1 up,
+       2 left, 3 right -- see Device::face. */
+    int ox = d.x + DEV_W / 2, oy = d.y + DEV_H / 2;
+    int ax = 0, ay = 1;
+    switch (d.face) {
+    case 1: ay = -1; oy = d.y - 1;            break;
+    case 2: ax = -1; ay = 0; ox = d.x - 1;    break;
+    case 3: ax =  1; ay = 0; ox = d.x + DEV_W; break;
+    default:         oy = d.y + DEV_H;        break;
+    }
+    /* Perpendicular to the axis. */
+    const int px = -ay, py = ax;
+
+    const int MAXHALF = HEAT_LAMP_RANGE / 2;
+    static bool blocked[2 * (HEAT_LAMP_RANGE / 2) + 1];
+    for (int i = 0; i < 2 * MAXHALF + 1; ++i) blocked[i] = false;
+
+    int n = 0;
+    for (int t = 1; t <= HEAT_LAMP_RANGE && n < maxOut; ++t) {
+        const int half = t / 2;          /* widens one cell every two out */
+        /* --- the shadow has to widen with the cone --------------------
+           An offset that appears for the first time at this distance has no
+           history of its own, and without inheriting one it walks straight
+           past a wall the narrower cone had already stopped against: the beam
+           squeezed round the edge of a solid barrier and warmed the room
+           behind it. Each new outer offset takes the state of the neighbour
+           just inside it, which is the cell the light would have had to come
+           through to get here. */
+        if (half > 0) {
+            blocked[ half + MAXHALF] = blocked[ half + MAXHALF] ||
+                                       blocked[ half - 1 + MAXHALF];
+            blocked[-half + MAXHALF] = blocked[-half + MAXHALF] ||
+                                       blocked[-half + 1 + MAXHALF];
+        }
+        for (int o = -half; o <= half && n < maxOut; ++o) {
+            if (blocked[o + MAXHALF]) continue;
+            const int cx = ox + ax * t + px * o;
+            const int cy = oy + ay * t + py * o;
+            if (cx < PLAY_X0 || cx > PLAY_X1 || cy < PLAY_Y0 || cy > PLAY_Y1) {
+                blocked[o + MAXHALF] = true;
+                continue;
+            }
+            out[n++] = cy * SIM_W + cx;
+            /* The surface itself is lit and warmed; everything behind it is
+               not. Opacity is the same measure the light field uses, so a
+               lamp is stopped by exactly what a torch is stopped by. */
+            if (g_matOpacity[w.at(cx, cy).mat] >= 2) blocked[o + MAXHALF] = true;
+        }
+    }
+    return n;
+}
+
+static void devHeatLamp(World& w, Device& d) {
+    u8 target = (u8)degC(imax(0, imin((int)d.value, 100)));
+    if (target > HEAT_LAMP_CEIL) target = HEAT_LAMP_CEIL;
+    d.reading = (int)d.value;
+
+    static i32 cells[HEAT_LAMP_MAX_CELLS];
+    const int n = heatLampCells(w, d, cells, HEAT_LAMP_MAX_CELLS);
+    for (int i = 0; i < n; ++i) {
+        const int idx = cells[i];
+        const int t = w.temp[idx];
+        if (t >= (int)target) continue;   /* at the setpoint: leave it alone */
+        const int nt = t + HEAT_LAMP_STEP;
+        w.temp[idx] = (u8)(nt > (int)target ? target : nt);
+        w.dirtyPoint(idx % SIM_W, idx / SIM_W);
+    }
+}
+
 static void devHive(World& w, Device& d, int index) {
     /* --- keep the colony topped up ----------------------------------- */
     /* Nothing comes out after dark. Without this the hive would keep
@@ -1914,6 +2016,9 @@ void devTick(World& w) {
         case DEV_HIVE:
             devHive(w, d, i);
             break;
+        case DEV_HEAT_LAMP:
+            devHeatLamp(w, d);
+            break;
         case DEV_BLOCK_WATCHER: {
             const u8 watched = devWatch(w, d);
             const bool hit = watched != MAT_EMPTY;
@@ -2030,6 +2135,44 @@ void devDraw(const World& w, u32* px, int camX, int camY, bool lit) {
             px[vy * VIEW_CELLS_W + vx] = lit ? shadeColor(c, viewShade(vx, vy)) : c;
         }
     }
+    /* --- the heat lamp's cone ------------------------------------------
+       Painted BEFORE the machines so a lamp's own housing is drawn over its
+       beam rather than under it, and blended rather than replaced so you can
+       still see what is being warmed. The cells come from the same function
+       the tick uses; see heatLampCells. */
+    {
+        static i32 cone[HEAT_LAMP_MAX_CELLS];
+        for (int i = 0; i < MAX_DEVICES; ++i) {
+            const Device& d = g_devices[i];
+            if (!d.used || d.type != DEV_HEAT_LAMP) continue;
+            /* Cull before walking the cone, not after. Tracing a thousand
+               cells for a lamp two screens away and then throwing every one of
+               them out is the sort of thing that costs nothing until somebody
+               builds forty of them. The box is the lamp plus its reach in every
+               direction, which is cheap and never wrong. */
+            if (d.x - camX + DEV_W + HEAT_LAMP_RANGE < 0) continue;
+            if (d.y - camY + DEV_H + HEAT_LAMP_RANGE < 0) continue;
+            if (d.x - camX - HEAT_LAMP_RANGE >= VIEW_CELLS_W) continue;
+            if (d.y - camY - HEAT_LAMP_RANGE >= VIEW_CELLS_H) continue;
+            const int n = heatLampCells(w, d, cone, HEAT_LAMP_MAX_CELLS);
+            for (int k = 0; k < n; ++k) {
+                const int vx = (cone[k] % SIM_W) - camX;
+                const int vy = (cone[k] / SIM_W) - camY;
+                if (vx < 0 || vx >= VIEW_CELLS_W || vy < 0 || vy >= VIEW_CELLS_H) continue;
+                u32& p = px[vy * VIEW_CELLS_W + vx];
+                /* A quarter-strength red wash. Enough to read as a beam,
+                   light enough that the material under it is still
+                   identifiable -- which is what you are looking at when you
+                   aim one of these. */
+                const u32 r = (p >> 16) & 0xFF, g = (p >> 8) & 0xFF, b = p & 0xFF;
+                const u32 nr = (r * 3 + 255) >> 2;
+                const u32 ng = (g * 3) >> 2;
+                const u32 nb = (b * 3) >> 2;
+                p = (nr << 16) | (ng << 8) | nb;
+            }
+        }
+    }
+
     for (int i = 0; i < MAX_DEVICES; ++i) {
         const Device& d = g_devices[i];
         if (!d.used) continue;

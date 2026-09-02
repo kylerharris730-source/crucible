@@ -115,6 +115,13 @@ const Recipe RECIPES[] = {
     { { { (ItemId)MAT_BEESWAX, 24 }, { (ItemId)MAT_WOOD, 8 }, { ITEM_NONE, 0 } },
       ITEM_HIVE, 1, "Hive", STATION_BENCH },
 
+    /* Copper for the reflector and glass for the face. At the bench rather
+       than the anvil: it is a lamp, not a furnace, and wanting one is an
+       early problem -- the first wax you collect is solid and needs warming
+       before it is any use. */
+    { { { (ItemId)MAT_COPPER, 8 }, { (ItemId)MAT_GLASS, 4 }, { ITEM_NONE, 0 } },
+      ITEM_HEAT_LAMP, 1, "Heat Lamp", STATION_BENCH },
+
     /* Flowers into seeds, so a meadow is something you can spread rather
        than something you find once. */
     { { { (ItemId)MAT_FLOWER, 2 }, { ITEM_NONE, 0 }, { ITEM_NONE, 0 } },

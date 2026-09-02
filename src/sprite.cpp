@@ -1141,6 +1141,23 @@ static const char* ART_BROOD[SPR_H] = {
 /* Two stones and the spark between them. The spark is the whole icon -- a pair
    of grey lumps alone would read as "rock", which is exactly what this is made
    of and exactly not what it is for. */
+static const char* ART_HEAT_LAMP[SPR_H] = {
+    "..............",
+    "...DDDDDDDD...",
+    "..DdddddddddD.",
+    "..DdEEEEEEddD.",
+    "..DdE......EdD",
+    "..DdE.TTTT.EdD",
+    "..DdE.TTTT.EdD",
+    "..DdEiiiiiiEdD",
+    "..DdiiiiiiiidD",
+    "..Diiiiiiiiii.",
+    "...iiiiiiiii..",
+    "....iiiiiii...",
+    ".....iiiii....",
+    "..............",
+};
+
 static const char* ART_BEE[SPR_H] = {
     "..............",
     "..............",
@@ -2259,6 +2276,7 @@ void initSprites() {
     expand(SPR_HIVE,          ART_HIVE);
     expand(SPR_HONEY_POTION,  ART_HONEY_POTION);
     expand(SPR_FLOWER_ITEM,   ART_FLOWER_ITEM);
+    expand(SPR_HEAT_LAMP,     ART_HEAT_LAMP);
     for (int digit = 1; digit <= 9; ++digit) makeSignalSprite(SPR_SIGNAL1 + digit - 1, digit);
 
     buildPlayerFrames();

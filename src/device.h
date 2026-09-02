@@ -158,6 +158,9 @@ enum DeviceType {
     /* Makes bees, and turns what they bring back into wax and honey.
        Appended: a device type is written into every save. */
     DEV_HIVE,
+    /* Warms a cone of world toward a setpoint. Appended, like every
+       device type: the number is written into saves. */
+    DEV_HEAT_LAMP,
     DEV_COUNT
 };
 
@@ -483,6 +486,17 @@ struct Device {
    has arrived, and the hive knows what arriving means. */
 /* The world is needed because the door MOVES when it has to -- see the
    note on hiveTarget in device.cpp. */
+/* --- the heat lamp's cone ---------------------------------------------
+   The cells it is shining on, as world indices. ONE definition of the
+   geometry, because two things need it and they must not disagree: the
+   tick warms these cells and the renderer paints exactly these red. A
+   cone you can see that is not the cone that heats is worse than no cone
+   at all -- it would teach the player something false about their own
+   machine. Returns how many were written, up to `maxOut`. */
+int heatLampCells(const World& w, const Device& d, i32* out, int maxOut);
+static const int HEAT_LAMP_RANGE = 48;
+static const int HEAT_LAMP_MAX_CELLS = 2048;
+
 void hiveTarget(const World& w, const Device& d, float* x, float* y);
 void hiveDeliver(Device& d, bool coal);
 
