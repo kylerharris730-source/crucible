@@ -2009,6 +2009,33 @@ void World::updateHeat(int x, int y) {
         heatPair(i, nx, ny);
     }
 
+    /* --- warm air rises ---------------------------------------------
+       Applied AFTER the symmetric exchange above, so this is a bias on top
+       of ordinary conduction rather than a replacement for it. See the
+       note on AIR_CONVECT_SHIFT in world.h for why air needs its own rule
+       instead of joining updateConvection.
+
+       Both cells must be air. A ceiling stops the plume, which is correct
+       and is also what makes heat pool under a roof instead of leaking
+       through it. */
+    if (cells[i].mat == MAT_EMPTY && y > PLAY_Y0) {
+        const int up = i - SIM_W;
+        if (cells[up].mat == MAT_EMPTY) {
+            const int here = (int)temp[i], there = (int)temp[up];
+            const int diff = here - there;
+            if (diff >= AIR_CONVECT_MIN) {
+                int move = diff >> AIR_CONVECT_SHIFT;
+                if (move < 1) move = 1;
+                if (there + move > 255) move = 255 - there;
+                if (move > 0) {
+                    temp[i]  = (u8)(here - move);
+                    temp[up] = (u8)(there + move);
+                    dirtyPoint(x, y - 1);
+                }
+            }
+        }
+    }
+
     /* Long-range conduction, for the good conductors only.
        ------------------------------------------------------------------
        The neighbour loop above advances a heat front at exactly one cell per

@@ -36,7 +36,26 @@ LIBS="-lws2_32"
 # CINDERLIFT_BUILD_ID. Everything else can be shared by every binary.
 COMMON_SRC=$(ls src/*.cpp | grep -v '/main\.cpp$' | grep -v '/network\.cpp$')
 
-stale() { [ ! -f "$2" ] || [ "$1" -nt "$2" ]; }
+# Newest header in the tree. Objects older than this are rebuilt.
+#
+# Without it, editing a HEADER rebuilt nothing: staleness was judged by
+# comparing each .cpp against its own .o, so a constant changed in world.h was
+# silently compiled out of a stale object and every test measured the old
+# value. That is worse than a build error, because the suite goes green and
+# the numbers you are reading are from code that no longer exists -- it cost a
+# tuning session before it was spotted.
+#
+# A blunt "any header changed, rebuild everything" rather than real dependency
+# tracking: 27 objects is a few seconds, and the alternative is a makedepend
+# that can itself be wrong.
+NEWEST_HDR=$(ls -t src/*.h src/web/*.h 2>/dev/null | head -1)
+
+stale() {
+    [ ! -f "$2" ] && return 0
+    [ "$1" -nt "$2" ] && return 0
+    [ -n "$NEWEST_HDR" ] && [ "$NEWEST_HDR" -nt "$2" ] && return 0
+    return 1
+}
 
 compile() {   # compile <src> <obj> <build-id>
     stale "$1" "$2" || return 0

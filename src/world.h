@@ -188,6 +188,27 @@ static const int WICK_UP_SHIFT   = 2;
 static const int AMBIENT_TEMP   = degC(20);
 static const int HEAT_MIN_DIFF  = 2;   /* below this no conduction happens, so
                                           the field can actually reach rest */
+
+/* --- warm air rises ---------------------------------------------------
+   Conduction is the same in every direction, which is right for a solid
+   and wrong for a room: heat put into the air spread into a slowly growing
+   disc and never went anywhere, so a fire warmed the floor beside it as
+   readily as the ceiling above it.
+
+   Air cannot convect the way the liquids do. updateConvection swaps whole
+   parcels and is gated on KIND_LIQUID or KIND_GAS; air is MAT_EMPTY, which
+   is KIND_EMPTY and has no parcel to swap. So the buoyancy is applied to
+   the HEAT instead of to the medium -- an air cell hands a share of its
+   surplus to the air above it, on top of the ordinary symmetric exchange.
+   That is what a plume is, and it costs one compare for every air cell
+   that is already at rest.
+
+   Conserving, never generating: what leaves one cell arrives in the other.
+   AIR_CONVECT_MIN mirrors HEAT_MIN_DIFF for the same reason -- without a
+   floor the last degree shuffles upward forever and the field never
+   settles. */
+static const int AIR_CONVECT_SHIFT = 1;   /* half the surplus moves up */
+static const int AIR_CONVECT_MIN   = 2;   /* below this, nothing rises */
 /* How many points along a long-range conduction run get checked before the hop
    is taken. See the fast path in updateHeat.
 

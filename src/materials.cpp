@@ -922,11 +922,14 @@ MatInfo MATS[MAT_COUNT] = {
      if you take a striker to it. Bees look for exactly this material. */
   { "Flower", KIND_STATIC, 30, 0, 0, 0, 0, 0, 0, 10, 0, 0, 0, 0, MAT_EMPTY, 0, MAT_EMPTY, degC(65), MAT_FIRE, 0, 0xF2C6E0, 0xD98FC0, 0xF2C6E0, 0xD98FC0, 0 },
 
-  /* Beeswax: gold, solid at room temperature, and off it goes at 46 C --
-     low enough that a torch or a shallow pool of anything warm renders it,
-     which is what makes it worth collecting rather than a wall material. */
-  { "Beeswax", KIND_STATIC, 96, 0, 0, 0, 0, 0, 0, 70, 1, 0, 0, 0, MAT_EMPTY, degC(46), MAT_BEESWAX_MELT, 0, MAT_EMPTY, 0, 0xE8C25C, 0xC79A38, 0xE8C25C, 0xC79A38, 0 },
-  { "Molten Beeswax", KIND_LIQUID, 94, 0, 0, 3, 40, 0, 0, 60, 1, 0, 0, degC(40), MAT_BEESWAX, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, 0xF6D97E, 0xD9AE4A, 0xF6D97E, 0xD9AE4A, 0 },
+  /* Beeswax: gold, solid at room temperature, and off it goes at 34 C.
+     Fourteen degrees over ambient is enough that it keeps its shape in a
+     room and nowhere near enough to need a furnace -- a heat lamp on its
+     lowest useful setting renders it, which is the point. Six degrees of
+     hysteresis on the way back so a cell sitting exactly on the line does
+     not flicker between states. */
+  { "Beeswax", KIND_STATIC, 96, 0, 0, 0, 0, 0, 0, 70, 1, 0, 0, 0, MAT_EMPTY, degC(34), MAT_BEESWAX_MELT, 0, MAT_EMPTY, 0, 0xE8C25C, 0xC79A38, 0xE8C25C, 0xC79A38, 0 },
+  { "Molten Beeswax", KIND_LIQUID, 94, 0, 0, 3, 40, 0, 0, 60, 1, 0, 0, degC(28), MAT_BEESWAX, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, 0xF6D97E, 0xD9AE4A, 0xF6D97E, 0xD9AE4A, 0 },
 
   /* Honey: denser than water, and thick without being tar. Dispersion 3
      against water's 5, so it finds its level but visibly takes its time
