@@ -103,7 +103,9 @@ REM -static, not only -static-libgcc/-static-libstdc++. The 64-bit MinGW used
 REM by GitHub Actions builds libstdc++ against libwinpthread; leaving that last
 REM runtime dynamic produced executables that worked on the runner and failed
 REM on clean Windows installs with "libwinpthread-1.dll was not found".
-g++ -std=c++11 -O2 -Wall -Wextra -mwindows -static -static-libgcc -static-libstdc++ -DCINDERLIFT_BUILD_ID=\"!BUILD_ID!\" -DCINDERLIFT_VERSION=\"!CL_VERSION!\" !SRC! build/obj/version_game.o ^
+REM -O3 rather than -O2, and kept in step with the Makefile and build_web.sh.
+REM See the note in the Makefile for what it measured and why -march stays put.
+g++ -std=c++11 -O3 -Wall -Wextra -mwindows -static -static-libgcc -static-libstdc++ -DCINDERLIFT_BUILD_ID=\"!BUILD_ID!\" -DCINDERLIFT_VERSION=\"!CL_VERSION!\" !SRC! build/obj/version_game.o ^
     -o build\cinderlift.new.exe ^
     -lgdi32 -luser32 -lwinmm -lmsimg32 -lws2_32
 

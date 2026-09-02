@@ -1696,72 +1696,106 @@ bool World::updateGasPressure(int x, int y) {
     /* A short bent pipe, cavity, or sloping shoreline needs more than a
        vertical ray. Search only a 33x33 box around the gas. parent[] is both
        the visited set and the path back to the first adjacent liquid, so the
-       work and stack storage have hard upper bounds independent of world or
+       work and the storage have hard upper bounds independent of world or
        lake size. */
     static const int R = GAS_PRESSURE_LIQUID_RADIUS;
     static const int SIDE = R * 2 + 1;
     static const int CAP = SIDE * SIDE;
-    i16 parent[CAP];
-    i16 queue[CAP];
-    for (int k = 0; k < CAP; ++k) parent[k] = -2;
 
     const int orderDx[4] = { 0, dir, -dir, 0 };
     const int orderDy[4] = { -1, 0, 0, 1 };
-    int head = 0, tail = 0;
-    for (int k = 0; k < 4; ++k) {
+
+    /* Nothing to search without a liquid FACE. The seed loop below can only
+       push adjacent liquid, so a cell with none of it walks nowhere and finds
+       nothing -- but it used to pay for the whole apparatus first. That is not
+       a rare case: it is every interior cell of a steam blob, and a boiling
+       pool has thousands of them per frame.
+
+       Measured, lava dropped into a water pool: this search was 4.28 ms of a
+       12.5 ms sim step, called 6,597 times a frame. See tools/steamprof.cpp,
+       which is the harness that found it -- tools/profile.cpp measures steady
+       states and this cost only exists during the transient. */
+    bool anyLiquidFace = false;
+    for (int k = 0; k < 4 && !anyLiquidFace; ++k) {
         const int nx = x + orderDx[k], ny = y + orderDy[k];
         if (nx < PLAY_X0 || nx > PLAY_X1 || ny < PLAY_Y0 || ny > PLAY_Y1) continue;
-        if (MATS[cells[ny * SIM_W + nx].mat].kind != KIND_LIQUID) continue;
-        const int li = (ny - (y - R)) * SIDE + (nx - (x - R));
-        if (parent[li] != -2) continue;
-        parent[li] = -1;
-        queue[tail++] = (i16)li;
+        if (MATS[cells[ny * SIM_W + nx].mat].kind == KIND_LIQUID) anyLiquidFace = true;
     }
 
-    int goal = -1, outletX = 0, outletSearchY = 0;
-    while (head < tail && goal < 0) {
-        const int li = queue[head++];
-        const int lx = li % SIDE, ly = li / SIDE;
-        const int wx = x - R + lx, wy = y - R + ly;
-        for (int k = 0; k < 4; ++k) {
-            const int nx = wx + orderDx[k], ny = wy + orderDy[k];
-            if (nx < PLAY_X0 || nx > PLAY_X1 || ny < PLAY_Y0 || ny > PLAY_Y1) continue;
-            const Cell& n = cells[ny * SIM_W + nx];
-            if (n.mat == MAT_EMPTY && !blocksCell(nx, ny)) {
-                goal = li; outletX = nx; outletSearchY = ny; break;
-            }
-        }
-        if (goal >= 0) break;
+    if (anyLiquidFace) {
+        /* parent[] is STAMPED rather than cleared, exactly as the pocket flood
+           above stamps its `seen`. Clearing it was 1,089 stores on every call
+           whatever the search then cost -- 1.70 ms/frame of the 4.28, spent
+           before the first cell was even looked at. The two arrays are static
+           for the same reason they can be: this is one thread, and the search
+           never re-enters itself.
 
+           parent[k] is meaningful only where parentEpoch[k] == epoch; the
+           wrap clears once every 65,536 searches and costs one memset. */
+        static i16 parent[CAP];
+        static u16 parentEpoch[CAP] = { 0 };
+        static i16 queue[CAP];
+        static u16 epoch = 0;
+        if (++epoch == 0) { memset(parentEpoch, 0, sizeof(parentEpoch)); epoch = 1; }
+
+        int head = 0, tail = 0;
         for (int k = 0; k < 4; ++k) {
-            const int nlx = lx + orderDx[k], nly = ly + orderDy[k];
-            if (nlx < 0 || nlx >= SIDE || nly < 0 || nly >= SIDE) continue;
-            const int ni = nly * SIDE + nlx;
-            if (parent[ni] != -2) continue;
-            const int nx = x - R + nlx, ny = y - R + nly;
+            const int nx = x + orderDx[k], ny = y + orderDy[k];
             if (nx < PLAY_X0 || nx > PLAY_X1 || ny < PLAY_Y0 || ny > PLAY_Y1) continue;
             if (MATS[cells[ny * SIM_W + nx].mat].kind != KIND_LIQUID) continue;
-            parent[ni] = (i16)li;
-            queue[tail++] = (i16)ni;
+            const int li = (ny - (y - R)) * SIDE + (nx - (x - R));
+            if (parentEpoch[li] == epoch) continue;
+            parentEpoch[li] = epoch;
+            parent[li] = -1;
+            queue[tail++] = (i16)li;
         }
-    }
 
-    if (goal >= 0) {
-        int dst = outletSearchY * SIM_W + outletX;
-        int path = goal;
-        while (path >= 0) {
-            const int px = x - R + path % SIDE;
-            const int py = y - R + path / SIDE;
-            const int src = py * SIM_W + px;
-            cells[dst] = cells[src];
-            temp[dst] = temp[src];
-            cells[dst].flags = (u8)((cells[dst].flags & F_DIR) | pressureStamp);
-            dirtyPoint(dst % SIM_W, dst / SIM_W);
-            dst = src;
-            path = parent[path];
+        int goal = -1, outletX = 0, outletSearchY = 0;
+        while (head < tail && goal < 0) {
+            const int li = queue[head++];
+            const int lx = li % SIDE, ly = li / SIDE;
+            const int wx = x - R + lx, wy = y - R + ly;
+            for (int k = 0; k < 4; ++k) {
+                const int nx = wx + orderDx[k], ny = wy + orderDy[k];
+                if (nx < PLAY_X0 || nx > PLAY_X1 || ny < PLAY_Y0 || ny > PLAY_Y1) continue;
+                const Cell& n = cells[ny * SIM_W + nx];
+                if (n.mat == MAT_EMPTY && !blocksCell(nx, ny)) {
+                    goal = li; outletX = nx; outletSearchY = ny; break;
+                }
+            }
+            if (goal >= 0) break;
+
+            for (int k = 0; k < 4; ++k) {
+                const int nlx = lx + orderDx[k], nly = ly + orderDy[k];
+                if (nlx < 0 || nlx >= SIDE || nly < 0 || nly >= SIDE) continue;
+                const int ni = nly * SIDE + nlx;
+                if (parentEpoch[ni] == epoch) continue;
+                const int nx = x - R + nlx, ny = y - R + nly;
+                if (nx < PLAY_X0 || nx > PLAY_X1 || ny < PLAY_Y0 || ny > PLAY_Y1) continue;
+                if (MATS[cells[ny * SIM_W + nx].mat].kind != KIND_LIQUID) continue;
+                parentEpoch[ni] = epoch;
+                parent[ni] = (i16)li;
+                queue[tail++] = (i16)ni;
+            }
         }
-        finishExpansion(dst);
-        return true;
+
+        if (goal >= 0) {
+            int dst = outletSearchY * SIM_W + outletX;
+            int path = goal;
+            while (path >= 0) {
+                const int px = x - R + path % SIDE;
+                const int py = y - R + path / SIDE;
+                const int src = py * SIM_W + px;
+                cells[dst] = cells[src];
+                temp[dst] = temp[src];
+                cells[dst].flags = (u8)((cells[dst].flags & F_DIR) | pressureStamp);
+                dirtyPoint(dst % SIM_W, dst / SIM_W);
+                dst = src;
+                path = parent[path];
+            }
+            finishExpansion(dst);
+            return true;
+        }
     }
 
     /* No free volume here. Move pressure toward the least-compressed adjacent

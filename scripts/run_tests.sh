@@ -27,7 +27,10 @@ BINDIR=build/tbin
 mkdir -p "$OBJDIR" "$BINDIR"
 
 VERSION=$(bash scripts/version.sh 2>/dev/null || echo unknown)
-FLAGS="-std=c++11 -O2 -Wall -Wextra -I src"
+# -O3 to match the shipped build, for the reason this file already gives
+# about stale objects: a suite compiled differently from the game is measuring
+# something the game does not do.
+FLAGS="-std=c++11 -O3 -Wall -Wextra -I src"
 FLAGS="$FLAGS -DCINDERLIFT_VERSION=\"$VERSION\""
 LIBS="-lws2_32"
 

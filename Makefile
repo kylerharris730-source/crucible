@@ -1,5 +1,11 @@
 CXX      := g++
-CXXFLAGS := -std=c++11 -O2 -Wall -Wextra
+# -O3, matching build_web.sh -- the native build was the odd one out. Measured
+# on the lava-into-water case in tools/steamprof.cpp: sim 10.95 -> 10.46 ms and
+# lighting 2.10 -> 1.79 ms, with the end state bit-identical to the -O2 build.
+# -march is deliberately NOT raised with it: it buys another 0.5 ms in the sim
+# and gives it straight back in the renderer, and -mfpmath=sse changes worldgen
+# float rounding, so the same seed stops making the same world.
+CXXFLAGS := -std=c++11 -O3 -Wall -Wextra
 GIT_HEAD := $(shell git rev-parse --short=12 HEAD 2>/dev/null || echo unknown)
 SOURCE_DIRTY := $(shell git status --porcelain --untracked-files=normal -- src Makefile build.bat 2>/dev/null)
 ifeq ($(strip $(SOURCE_DIRTY)),)
