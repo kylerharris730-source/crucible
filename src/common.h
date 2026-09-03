@@ -22,23 +22,20 @@ static inline int imax(int a, int b) { return a > b ? a : b; }
    rand() is far too slow (and on MSVCRT only has 15 bits of range anyway).
    xorshift32 is 3 shifts and 3 xors.
    ------------------------------------------------------------------------ */
-/* THREAD-LOCAL, because the simulation runs its stripes on several threads
-   and a shared stream would be both a race and a source of results that
-   differ from one run to the next. Each stripe seeds its own copy from the
-   world's master stream (see World::step), so the answer is the same however
-   many cores are doing the work -- that property is worth more than the
-   stream being globally sequential, which nothing ever depended on.
+/* The world's master stream, and the one codec.cpp serialises. Everything
+   outside the simulation draws from it: worldgen, entities, devices,
+   projectiles, the brush -- all of which run on the main thread.
 
-   Everything OUTSIDE the sim -- worldgen, entities, devices, projectiles, the
-   brush -- runs on the main thread and so keeps using the main thread's copy,
-   which is the one codec.cpp serialises and the one a save restores.
+   The SIMULATION does not touch this. Its stripes run on several threads and
+   each carries its own stream on its Lane, seeded from this one once a frame
+   (see World::step). That is what makes a twelve-core run produce the same
+   world as a one-core run, and it is why this can stay an ordinary global:
+   nothing that touches it runs anywhere but the main thread.
 
-   This costs something on this toolchain: MinGW's __thread is emulated
-   (__emutls_get_address, a real call per access, measured at +5.4% on the sim
-   step). It is paid inside the parallel region, so the threads divide it
-   along with everything else. A MinGW-w64 toolchain would have native TLS
-   and not pay it at all. */
-extern __thread u32 g_rng;
+   It was briefly __thread instead, which worked and cost 5.4% of the sim
+   step -- MinGW emulates thread-local storage with a function call per
+   access. See the Lane comment in world.cpp. */
+extern u32 g_rng;
 
 static inline u32 rngNext() {
     u32 x = g_rng;

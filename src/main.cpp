@@ -92,21 +92,24 @@ static int uiScaled(int px) { return imax(1, (px * uiScalePct() + 50) / 100); }
 /* How many threads the simulation scan may use. 0 means "decide from the
    machine", which is what a config that has never seen this key reads as.
 
-   The cap is four, and four is measured rather than modest. The scan splits
-   the world into vertical stripes and runs alternate ones together, so the
-   useful thread count is not the core count -- it is how many stripes a busy
-   scene actually lights up, and that is about two or three per phase. Timed
-   on the wide scene in tools/steamprof.cpp: one thread 41.3 ms, four threads
-   19.4 ms, twelve threads 19.7 ms. Everything past four stands and waits.
+   The cap is eight, which is where MAX_LANE_THREADS puts it and where the
+   measurements stop improving. The scan splits the world into 32-cell
+   vertical stripes and runs every fourth one together, so the useful thread
+   count is how many stripes a busy scene lights up -- not the core count.
+   Timed on tools/steamprof.cpp, sim milliseconds a frame:
 
-   Worth knowing before turning it up: it does NOTHING for activity confined
-   to a stripe or two. Lava into a 300-cell basin is two stripes, and it
-   measures flat across every thread count. Wide activity is what this is
-   for. */
+                        1 thread   2      4      8
+     lava into a basin    13.5     8.2    8.0    8.0
+     screen-wide pour     65.3    36.6   23.6   19.7
+
+   The basin is done at two threads and the wide pour is still gaining at
+   eight, and the difference between them is just how many stripes the work
+   covers. An earlier version used 192-cell stripes and the basin was flat
+   across every thread count, because the whole of it fell in two. */
 static int g_simThreads = 0;
 static int simThreadsAuto(void) {
     SYSTEM_INFO si; GetSystemInfo(&si);
-    return imax(1, imin(4, (int)si.dwNumberOfProcessors));
+    return imax(1, imin(MAX_LANE_THREADS, (int)si.dwNumberOfProcessors));
 }
 static int simThreadsWanted(void) {
     return g_simThreads > 0 ? g_simThreads : simThreadsAuto();

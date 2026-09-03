@@ -142,6 +142,14 @@ static_assert((STRIPE_COLOURS - 1) * STRIPE_W >= 2 * RULE_WRITE_REACH_X,
    threads and twelve threads finish the same scene within noise. */
 static const int MAX_LANE_THREADS = 8;
 
+/* One lane of the parallel scan: its random stream, its scratch buffers and
+   its dirty rectangles. Defined in world.cpp because nothing outside it has
+   any reason to see the inside, and named here because a great many methods
+   take one by reference -- which is the point. A method that takes a Lane
+   can be called from inside the scan; a method that does not, cannot. */
+struct Lane;
+Lane& simMainLane(void);
+
 /* How many threads the scan may use. 0 or 1 runs every stripe on the calling
    thread, and that is not a special case in the code: the stripe order and
    the per-stripe RNG streams are used either way, so a one-thread run and a
@@ -796,7 +804,7 @@ struct World {
     /* A striker's spark: warms a small disc TOWARD a ceiling and no further.
        See IGNITE_MAX for why the ceiling is the whole design. */
     void ignite(int cx, int cy, int r);
-    void setCell(int x, int y, u8 mat);
+    void setCell(Lane& L, int x, int y, u8 mat);
     /* Change what a cell is MADE OF and nothing else: temperature, moisture and
        speckle all survive. setCell is the wrong verb when the thing in the cell
        is the same object in a different state -- it resets the temperature to
@@ -808,7 +816,7 @@ struct World {
        use. That one re-rolls the tint on purpose, because a cell of water
        becoming a cell of steam really is new material and should not inherit the
        old speckle. This one is for an object that stayed itself. */
-    void swapMat(int x, int y, u8 mat);
+    void swapMat(Lane& L, int x, int y, u8 mat);
 
     /* Shove a column of loose material up one cell, leaving (x, y) empty.
 
@@ -826,7 +834,7 @@ struct World {
 
        Returns false and changes nothing on failure, so a caller can treat it as
        "did the piston fire". */
-    bool liftColumn(int x, int y, int maxLift);
+    bool liftColumn(Lane& L, int x, int y, int maxLift);
 
     /* Destroy a cell the way a blast or a falling canopy does: it leaves
        nothing behind, UNLESS it was a husk -- something whose whole job is to
@@ -844,21 +852,36 @@ struct World {
        list, which keeps it right when a species is added and keeps it from
        catching the other user of g_matDropsAs: an open door drops a closed
        one, and a door you blew up should not leave a door standing. */
-    void breakCell(int x, int y);
+    void breakCell(Lane& L, int x, int y);
 
     /* Schedule cells for simulation next frame. dirtyArea covers a span plus a
        one-cell margin; anything that moves further than one cell in a step
        must use it, or cells along the swept path never get woken. */
+    void dirtyArea(Lane& L, int x0, int y0, int x1, int y1);
+    void dirtyPoint(Lane& L, int x, int y) { dirtyArea(L, x, y, x, y); }
+
+    /* --- the same handful of entry points, for callers with no lane -------
+       Everything outside the simulation -- worldgen, the brush, devices,
+       entities, the save loader -- runs on the main thread and has no
+       business knowing what a lane is. These hand it the main one.
+
+       Kept deliberately few. A lane parameter is how this file says "this
+       can be called from inside the parallel scan", and a forwarder for
+       every method would throw that away. */
     void dirtyArea(int x0, int y0, int x1, int y1);
-    void dirtyPoint(int x, int y) { dirtyArea(x, y, x, y); }
+    void dirtyPoint(int x, int y);
+    void setCell(int x, int y, u8 mat);
+    void swapMat(int x, int y, u8 mat);
+    void breakCell(int x, int y);
+    bool liftColumn(int x, int y, int maxLift);
 
     /* Grass: spreads across exposed dirt, dies back to dirt when buried.
        Called from updateCell for grass cells only. */
-    void updateGrass(int x, int y);
+    void updateGrass(Lane& L, int x, int y);
     /* One frame of a condemned leaf's countdown. Called from updateCell for
        leaf cells only, and only for ones somebody has condemned -- a healthy
        leaf carries a zero here and costs one compare. */
-    void updateLeafFall(int x, int y);
+    void updateLeafFall(Lane& L, int x, int y);
     /* Is there open air within `r` cells? r = 1 is the four touching
        neighbours; anything larger is a disc. This is what "exposed" means for
        grass, and it is a RADIUS rather than a yes/no because a turf line one
@@ -936,31 +959,31 @@ struct World {
     u8  felledMark[CHUNK_COUNT];
 
 private:
-    void updateCell(int x, int y);
-    void reportFelled(int x, int y, u8 was, u8 now);
+    void updateCell(Lane& L, int x, int y);
+    void reportFelled(Lane& L, int x, int y, u8 was, u8 now);
 
 public:
     /* One vertical band of the chunk grid, whole world tall. Public only
        because the lane threads call it; nothing else should. */
     void runStripe(int stripe);
 private:
-    void updateClone(int x, int y);
-    void updateVoid(int x, int y);
-    void spawnCell(int x, int y, u8 mat);
-    void heatPair(int i, int jx, int jy);
-    void updateHeat(int x, int y);
-    void updateMoisture(int x, int y);
-    void updateEvaporation(int x, int y);
-    bool updateConvection(int x, int y);
-    void updatePowder(int x, int y);
-    void updateLiquid(int x, int y);
-    void updateGas(int x, int y);
-    bool updateGasPressure(int x, int y);
-    bool displaceGasForLiquid(int sx, int sy, int tx, int ty);
-    void updateFilterFluid(int x, int y);
-    bool moveFilterFluid(int sx, int sy, int tx, int ty);
-    void convert(int x, int y, u8 mat);
-    void phaseChange(int x, int y, u8 mat);
+    void updateClone(Lane& L, int x, int y);
+    void updateVoid(Lane& L, int x, int y);
+    void spawnCell(Lane& L, int x, int y, u8 mat);
+    void heatPair(Lane& L, int i, int jx, int jy);
+    void updateHeat(Lane& L, int x, int y);
+    void updateMoisture(Lane& L, int x, int y);
+    void updateEvaporation(Lane& L, int x, int y);
+    bool updateConvection(Lane& L, int x, int y);
+    void updatePowder(Lane& L, int x, int y);
+    void updateLiquid(Lane& L, int x, int y);
+    void updateGas(Lane& L, int x, int y);
+    bool updateGasPressure(Lane& L, int x, int y);
+    bool displaceGasForLiquid(Lane& L, int sx, int sy, int tx, int ty);
+    void updateFilterFluid(Lane& L, int x, int y);
+    bool moveFilterFluid(Lane& L, int sx, int sy, int tx, int ty);
+    void convert(Lane& L, int x, int y, u8 mat);
+    void phaseChange(Lane& L, int x, int y, u8 mat);
     /* Whether an unlike-liquid exchange is permitted, and WHICH WAY.
 
        A bool was enough while only one direction existed. The general gravity
@@ -980,7 +1003,7 @@ private:
        it always meant. */
     enum LiquidSwap { LIQ_SWAP_NONE = 0, LIQ_SWAP_DENSER_WINS, LIQ_SWAP_LIGHTER_WINS };
 
-    bool tryMove(int sx, int sy, int tx, int ty,
+    bool tryMove(Lane& L, int sx, int sy, int tx, int ty,
                  int liquidSwap = LIQ_SWAP_NONE);
 };
 
