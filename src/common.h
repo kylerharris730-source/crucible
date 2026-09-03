@@ -22,6 +22,19 @@ static inline int imax(int a, int b) { return a > b ? a : b; }
    rand() is far too slow (and on MSVCRT only has 15 bits of range anyway).
    xorshift32 is 3 shifts and 3 xors.
    ------------------------------------------------------------------------ */
+/* The world's master stream, and the one codec.cpp serialises. Everything
+   outside the simulation draws from it: worldgen, entities, devices,
+   projectiles, the brush -- all of which run on the main thread.
+
+   The SIMULATION does not touch this. Its stripes run on several threads and
+   each carries its own stream on its Lane, seeded from this one once a frame
+   (see World::step). That is what makes a twelve-core run produce the same
+   world as a one-core run, and it is why this can stay an ordinary global:
+   nothing that touches it runs anywhere but the main thread.
+
+   It was briefly __thread instead, which worked and cost 5.4% of the sim
+   step -- MinGW emulates thread-local storage with a function call per
+   access. See the Lane comment in world.cpp. */
 extern u32 g_rng;
 
 static inline u32 rngNext() {

@@ -51,6 +51,112 @@ static const int CHUNK       = 1 << CHUNK_SHIFT;      /* 32 */
 static const int CHUNKS_X    = SIM_W >> CHUNK_SHIFT;
 static const int CHUNKS_Y    = SIM_H >> CHUNK_SHIFT;
 static const int CHUNK_COUNT = CHUNKS_X * CHUNKS_Y;
+
+/* ------------------------------------------------------------------------
+   How far SIDEWAYS one cell's turn can reach.
+
+   This is the number the parallel scan is built on, and it is an AUDIT, not
+   a wish: two stripes may run at once only if nothing either of them touches
+   can be touched by the other. Being wrong about it is a data race, which is
+   the kind of mistake that does not show up as a wrong picture -- it shows
+   up as a rare corrupt cell on somebody else's machine.
+
+   Only the HORIZONTAL component appears here, and that is the whole reason
+   the decomposition is full-height vertical stripes rather than a
+   checkerboard of square tiles. Gravity is vertical, so the long reaches in
+   this engine are vertical too: a gas pocket lifts a liquid column 512 cells
+   straight up, and a checkerboard would need 1024-cell tiles to contain
+   that -- more than the live window is tall. Stripes contain it for free,
+   because a column stays in its own stripe however long it is. They also
+   keep the bottom-to-top scan order intact inside each stripe, which is the
+   ordering the whole falling-sand model depends on.
+
+   The inventory, in cells, largest sideways write distance from the cell
+   taking its turn (reads never go further than writes in any of these):
+
+     liquid levelling       40   SUBMERGED_LEVEL_REACH; its sink is vertical
+     gas pocket ray         40   GAS_PRESSURE_POCKET_RAY_H, sideways only
+     gas pocket flood       32   receiver inside a 32-radius pocket
+     heat long-range hop    28   max heatSpread in MATS (Graphene)
+     gas bent-outlet BFS    16   the liquid path, inside a 16-radius box
+     liquid dispersion       8   max dispersion in MATS (Glowfluid)
+     gas powder shove        8 + 1
+     gas expansion burst     3
+     fluid convection        3
+
+   The top two were 64 apiece, and bringing them to 40 is what let the
+   stripes go from 192 cells wide to 32. Both are "how far in one frame"
+   rather than "whether at all": a mound of dense liquid still levels and a
+   flat pocket still finds its vent, each just taking another frame or two
+   when the distance is over forty. Going lower stops helping -- the pocket
+   flood's own 32 takes over as the bound -- so 40 is the end of the useful
+   range rather than a halfway house.
+
+   Anything added to updateCell that writes further sideways than this MUST
+   raise it.
+   ------------------------------------------------------------------------ */
+static const int RULE_WRITE_REACH_X = 41;   /* 40, plus the one-cell outlet */
+
+/* ------------------------------------------------------------------------
+   The stripes themselves: one chunk wide, four colours.
+
+   The rule is that two stripes of the same colour must be far enough apart
+   that neither can reach what the other touches. With C colours they sit
+   C-1 stripes apart, so:
+
+     (STRIPE_COLOURS - 1) * STRIPE_W  >=  2 * RULE_WRITE_REACH_X
+
+   All of this geometry follows from one measurement. Timing the lava-into-
+   water scene one 32-cell column at a time, the work is eleven columns wide
+   and eight of them cost 1.5 to 1.7 ms each -- about as evenly divisible as
+   work ever gets. The first version used 192-cell stripes, which gathered
+   that into two lumps; the lumps were adjacent, so they were different
+   colours, so the frame was two lumps run one after the other and threading
+   it gained five percent.
+
+   Narrow and few-coloured is what wins, and those pull against each other.
+   Predicted from those column timings on four threads:
+
+     192 cells, 2 colours   12.75 ms   1.05x   <- what the first version did
+      96 cells, 3 colours   12.64 ms   1.06x
+      64 cells, 4 colours   11.96 ms   1.11x
+      32 cells, 6 colours    9.68 ms   1.38x   <- needs no reach change
+      32 cells, 4 colours    6.53 ms   2.04x   <- needs REACH <= 48
+
+   More colours is not more parallelism: every colour is another phase that
+   must finish before the next may start, so a sixth of the stripes running
+   at a time beats a quarter of them only while the stripes are still too
+   wide to divide the work.
+   ------------------------------------------------------------------------ */
+static const int STRIPE_CHUNKS  = 1;
+static const int STRIPE_COLOURS = 4;
+static const int STRIPE_W       = STRIPE_CHUNKS * CHUNK;   /* 32 cells */
+static const int STRIPE_COUNT   = (CHUNKS_X + STRIPE_CHUNKS - 1) / STRIPE_CHUNKS;
+static_assert((STRIPE_COLOURS - 1) * STRIPE_W >= 2 * RULE_WRITE_REACH_X,
+              "same-colour stripes can reach each other -- widen the stripe "
+              "or add a colour");
+
+/* The ceiling on lanes, and it is a memory number as much as a scheduling
+   one: every lane carries its own dirty plane, which is 442 KB. Eight is
+   already past where this decomposition stops gaining -- measured, four
+   threads and twelve threads finish the same scene within noise. */
+static const int MAX_LANE_THREADS = 8;
+
+/* One lane of the parallel scan: its random stream, its scratch buffers and
+   its dirty rectangles. Defined in world.cpp because nothing outside it has
+   any reason to see the inside, and named here because a great many methods
+   take one by reference -- which is the point. A method that takes a Lane
+   can be called from inside the scan; a method that does not, cannot. */
+struct Lane;
+Lane& simMainLane(void);
+
+/* How many threads the scan may use. 0 or 1 runs every stripe on the calling
+   thread, and that is not a special case in the code: the stripe order and
+   the per-stripe RNG streams are used either way, so a one-thread run and a
+   twelve-thread run produce the same world. Harnesses and tests leave it at
+   0; main.cpp turns it up. */
+void simSetWorkers(int threads);
+int  simWorkers(void);
 /* Five seconds at the normal 60 simulation steps/sec.  This is deliberately a
    per-chunk countdown rather than a wider permanent window: a waterfall keeps
    falling after the camera leaves, while settled terrain remains free. */
@@ -521,7 +627,6 @@ struct World {
     Chunk next[CHUNK_COUNT];      /* being accumulated for the next frame */
     u32   frame;
     int   activeChunks;           /* stat, for the HUD */
-    int   pressureRoutesRemaining;/* per-frame shared-pocket search budget */
 
     /* --- the live window -------------------------------------------------
        Chunks outside this rectangle are not simulated at all. Everything in
@@ -699,7 +804,7 @@ struct World {
     /* A striker's spark: warms a small disc TOWARD a ceiling and no further.
        See IGNITE_MAX for why the ceiling is the whole design. */
     void ignite(int cx, int cy, int r);
-    void setCell(int x, int y, u8 mat);
+    void setCell(Lane& L, int x, int y, u8 mat);
     /* Change what a cell is MADE OF and nothing else: temperature, moisture and
        speckle all survive. setCell is the wrong verb when the thing in the cell
        is the same object in a different state -- it resets the temperature to
@@ -711,7 +816,7 @@ struct World {
        use. That one re-rolls the tint on purpose, because a cell of water
        becoming a cell of steam really is new material and should not inherit the
        old speckle. This one is for an object that stayed itself. */
-    void swapMat(int x, int y, u8 mat);
+    void swapMat(Lane& L, int x, int y, u8 mat);
 
     /* Shove a column of loose material up one cell, leaving (x, y) empty.
 
@@ -729,7 +834,7 @@ struct World {
 
        Returns false and changes nothing on failure, so a caller can treat it as
        "did the piston fire". */
-    bool liftColumn(int x, int y, int maxLift);
+    bool liftColumn(Lane& L, int x, int y, int maxLift);
 
     /* Destroy a cell the way a blast or a falling canopy does: it leaves
        nothing behind, UNLESS it was a husk -- something whose whole job is to
@@ -747,21 +852,36 @@ struct World {
        list, which keeps it right when a species is added and keeps it from
        catching the other user of g_matDropsAs: an open door drops a closed
        one, and a door you blew up should not leave a door standing. */
-    void breakCell(int x, int y);
+    void breakCell(Lane& L, int x, int y);
 
     /* Schedule cells for simulation next frame. dirtyArea covers a span plus a
        one-cell margin; anything that moves further than one cell in a step
        must use it, or cells along the swept path never get woken. */
+    void dirtyArea(Lane& L, int x0, int y0, int x1, int y1);
+    void dirtyPoint(Lane& L, int x, int y) { dirtyArea(L, x, y, x, y); }
+
+    /* --- the same handful of entry points, for callers with no lane -------
+       Everything outside the simulation -- worldgen, the brush, devices,
+       entities, the save loader -- runs on the main thread and has no
+       business knowing what a lane is. These hand it the main one.
+
+       Kept deliberately few. A lane parameter is how this file says "this
+       can be called from inside the parallel scan", and a forwarder for
+       every method would throw that away. */
     void dirtyArea(int x0, int y0, int x1, int y1);
-    void dirtyPoint(int x, int y) { dirtyArea(x, y, x, y); }
+    void dirtyPoint(int x, int y);
+    void setCell(int x, int y, u8 mat);
+    void swapMat(int x, int y, u8 mat);
+    void breakCell(int x, int y);
+    bool liftColumn(int x, int y, int maxLift);
 
     /* Grass: spreads across exposed dirt, dies back to dirt when buried.
        Called from updateCell for grass cells only. */
-    void updateGrass(int x, int y);
+    void updateGrass(Lane& L, int x, int y);
     /* One frame of a condemned leaf's countdown. Called from updateCell for
        leaf cells only, and only for ones somebody has condemned -- a healthy
        leaf carries a zero here and costs one compare. */
-    void updateLeafFall(int x, int y);
+    void updateLeafFall(Lane& L, int x, int y);
     /* Is there open air within `r` cells? r = 1 is the four touching
        neighbours; anything larger is a disc. This is what "exposed" means for
        grass, and it is a RADIUS rather than a yes/no because a turf line one
@@ -839,25 +959,31 @@ struct World {
     u8  felledMark[CHUNK_COUNT];
 
 private:
-    void updateCell(int x, int y);
-    void reportFelled(int x, int y, u8 was, u8 now);
-    void updateClone(int x, int y);
-    void updateVoid(int x, int y);
-    void spawnCell(int x, int y, u8 mat);
-    void heatPair(int i, int jx, int jy);
-    void updateHeat(int x, int y);
-    void updateMoisture(int x, int y);
-    void updateEvaporation(int x, int y);
-    bool updateConvection(int x, int y);
-    void updatePowder(int x, int y);
-    void updateLiquid(int x, int y);
-    void updateGas(int x, int y);
-    bool updateGasPressure(int x, int y);
-    bool displaceGasForLiquid(int sx, int sy, int tx, int ty);
-    void updateFilterFluid(int x, int y);
-    bool moveFilterFluid(int sx, int sy, int tx, int ty);
-    void convert(int x, int y, u8 mat);
-    void phaseChange(int x, int y, u8 mat);
+    void updateCell(Lane& L, int x, int y);
+    void reportFelled(Lane& L, int x, int y, u8 was, u8 now);
+
+public:
+    /* One vertical band of the chunk grid, whole world tall. Public only
+       because the lane threads call it; nothing else should. */
+    void runStripe(int stripe);
+private:
+    void updateClone(Lane& L, int x, int y);
+    void updateVoid(Lane& L, int x, int y);
+    void spawnCell(Lane& L, int x, int y, u8 mat);
+    void heatPair(Lane& L, int i, int jx, int jy);
+    void updateHeat(Lane& L, int x, int y);
+    void updateMoisture(Lane& L, int x, int y);
+    void updateEvaporation(Lane& L, int x, int y);
+    bool updateConvection(Lane& L, int x, int y);
+    void updatePowder(Lane& L, int x, int y);
+    void updateLiquid(Lane& L, int x, int y);
+    void updateGas(Lane& L, int x, int y);
+    bool updateGasPressure(Lane& L, int x, int y);
+    bool displaceGasForLiquid(Lane& L, int sx, int sy, int tx, int ty);
+    void updateFilterFluid(Lane& L, int x, int y);
+    bool moveFilterFluid(Lane& L, int sx, int sy, int tx, int ty);
+    void convert(Lane& L, int x, int y, u8 mat);
+    void phaseChange(Lane& L, int x, int y, u8 mat);
     /* Whether an unlike-liquid exchange is permitted, and WHICH WAY.
 
        A bool was enough while only one direction existed. The general gravity
@@ -877,7 +1003,7 @@ private:
        it always meant. */
     enum LiquidSwap { LIQ_SWAP_NONE = 0, LIQ_SWAP_DENSER_WINS, LIQ_SWAP_LIGHTER_WINS };
 
-    bool tryMove(int sx, int sy, int tx, int ty,
+    bool tryMove(Lane& L, int sx, int sy, int tx, int ty,
                  int liquidSwap = LIQ_SWAP_NONE);
 };
 

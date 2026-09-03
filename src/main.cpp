@@ -89,12 +89,56 @@ static int uiScaled(int px) { return imax(1, (px * uiScalePct() + 50) / 100); }
 #define CINDERLIFT_CONFIG_PATH "cinderlift.cfg"
 #endif
 
+/* How many threads the simulation scan may use. 0 means "decide from the
+   machine", which is what a config that has never seen this key reads as.
+
+   Decided from the machine and then left alone -- there is no key for it,
+   because how many cores a computer has is not something a player has an
+   opinion about halfway through a game. `sim_threads` in cinderlift.cfg
+   overrides it for anyone who wants to argue, and the stats block shows what
+   it settled on.
+
+   The cap is eight, which is where MAX_LANE_THREADS puts it and where the
+   measurements stop improving. The scan splits the world into 32-cell
+   vertical stripes and runs every fourth one together, so the useful count is
+   how many stripes a busy scene lights up, not how many cores there are.
+   Timed on tools/steamprof.cpp, sim milliseconds a frame:
+
+                        1 thread   2      4      8
+     lava into a pool     10.2     6.0    5.8    5.9
+     screen-wide pour     35.7    18.8   11.6    9.0
+
+   Two cores already take almost all of the pool scene, because it only
+   covers a handful of stripes; the wide pour keeps gaining out to eight
+   because it covers the screen. Neither needs more than a machine sold this
+   decade has, and one core is not a broken case -- it is the same code with
+   every stripe on the caller, producing the same world. */
+static int g_simThreads = 0;
+static int simThreadsAuto(void) {
+#ifdef _WIN32
+    SYSTEM_INFO si; GetSystemInfo(&si);
+    return imax(1, imin(MAX_LANE_THREADS, (int)si.dwNumberOfProcessors));
+#else
+    /* The browser build has no lane pool -- see world.cpp. It still gets the
+       search budgets, which is where most of the frame came from anyway. */
+    return 1;
+#endif
+}
+static int simThreadsWanted(void) {
+    return g_simThreads > 0 ? g_simThreads : simThreadsAuto();
+}
+
 static void uiSettingsLoad() {
     FILE* f = fopen(CINDERLIFT_CONFIG_PATH, "rb");
     if (!f) return;
     char line[96];
     while (fgets(line, sizeof(line), f)) {
         int pct = 0;
+        int threads = 0;
+        if (sscanf(line, "sim_threads=%d", &threads) == 1) {
+            g_simThreads = imax(0, imin(32, threads));
+            continue;
+        }
         if (sscanf(line, "ui_scale=%d", &pct) != 1) continue;
         int best = 0;
         for (int i = 1; i < UI_SCALE_COUNT; ++i)
@@ -108,6 +152,7 @@ static void uiSettingsSave() {
     FILE* f = fopen(CINDERLIFT_CONFIG_PATH, "wb");
     if (!f) return;
     fprintf(f, "ui_scale=%d\n", uiScalePct());
+    fprintf(f, "sim_threads=%d\n", g_simThreads);
     fclose(f);
 }
 
@@ -7289,6 +7334,11 @@ static void drawPanel(HDC hdc) {
     else if (g_lightWork == LIGHT_REUSED)  sprintf(s, "sim %.2f ms   light reuse", g_simMs);
     else if (g_lightWork == LIGHT_PATCHED) sprintf(s, "sim %.2f ms   light %d%%", g_simMs, g_lightWorkPct);
     else                                   sprintf(s, "sim %.2f ms   light recut", g_simMs);
+    /* The thread count rides on the end of the sim line, because the sim time
+       is the only number it can change and the two want reading together.
+       Absent at one thread rather than saying "x1", so the line stays as
+       short as it always was unless something is actually on. */
+    if (simWorkers()) sprintf(s + strlen(s), "   x%d", simWorkers() + 1);
     drawText(hdc, 10, sy + 36, RGB(170, 178, 190), s);
     /* The save total shares the cells line rather than taking one of its own.
        A line of its own at sy+84 ran off the bottom edge of the window -- the
@@ -7931,6 +7981,9 @@ static int runLocalCommandSmoke() {
 
 int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR commandLine, int) {
     uiSettingsLoad();
+    /* After uiSettingsLoad, so a config that pins sim_threads wins over the
+       machine's own answer, and before anything steps the world. */
+    simSetWorkers(simThreadsWanted());
     initMaterials();
     g_world.reset();
     initItems();

@@ -1,7 +1,57 @@
 #include "world.h"
 #include <string.h>
 
+/* The lane pool is Win32, and the browser build has no threads to pool.
+   web/win32.h shims the drawing slice of Win32 and nothing else, so this is
+   guarded at the source rather than shimmed: everything below compiles for
+   both targets, and on a target without threads every stripe simply runs on
+   the caller. That is not a degraded path -- it is the same path the native
+   build takes at one thread, which is why it needs no separate testing. */
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#define CINDERLIFT_LANE_POOL 1
+#endif
+
 World g_world;
+
+/* ======================================================================
+   Simulation lanes
+   ----------------------------------------------------------------------
+   The scan is split into full-height vertical stripes that run on several
+   threads at once. See RULE_WRITE_REACH_X in world.h for why stripes and
+   not tiles, and for the audit that says two stripes a stripe apart cannot
+   touch the same cell.
+
+   Everything the scan writes that is NOT a cell has to be dealt with here,
+   because those are the places where two lanes would otherwise collide:
+
+     the RNG          per thread, seeded per stripe (see common.h)
+     pocket budget    per stripe rather than per world
+     active count     per thread, summed afterwards
+     sprouts, felled  staged per STRIPE and merged in stripe order
+
+   Staged per stripe rather than per thread, and that distinction is the
+   whole reason the result does not depend on the core count: which thread
+   picks up a stripe is a race, so merging in thread order would make the
+   answer depend on who got there first. Stripe order is fixed.
+
+   A lane's stripe is -1 everywhere outside the parallel scan -- worldgen,
+   the brush, devices, entities -- and those callers, holding the main lane,
+   write straight through to the world arrays exactly as they always did.
+   ====================================================================== */
+/* Which stripe this lane is on, or -1 when the lane is not in the scan at
+   all -- worldgen, the brush, devices, entities. Those callers get the main
+   lane, whose stripe stays -1, and their sprouts and felled chunks go
+   straight into the world arrays exactly as they always did. */
+
+
+static i32 g_stripeSprout[STRIPE_COUNT][World::MAX_SPROUTS];
+static int g_stripeSproutN[STRIPE_COUNT];
+static i32 g_stripeFelled[STRIPE_COUNT][World::MAX_FELLED];
+static int g_stripeFelledN[STRIPE_COUNT];
+static int g_stripeActive[STRIPE_COUNT];
+
 
 /* ======================================================================
    Dirty rectangle bookkeeping
@@ -14,11 +64,230 @@ static void clearDirty(Chunk* c) {
     }
 }
 
+/* ======================================================================
+   Per-lane dirty rectangles
+   ----------------------------------------------------------------------
+   Two lanes running at once can want to widen the SAME chunk's rectangle
+   even when the cells they wrote are nowhere near each other, because a
+   rectangle is recorded per chunk and a chunk is 32 cells wide. That, and
+   not the physics reach, was what forced stripes to be six chunks across --
+   and six-chunk stripes are why threading did nothing for anything smaller
+   than the screen.
+
+   So each lane accumulates into its own plane and they are unioned into
+   next[] once the scan is done. Union of min/max is commutative and
+   associative, so merge order cannot change the answer -- which is why
+   these are per THREAD, cheaply, where sprouts and felled chunks have to be
+   per stripe.
+
+   `touched` is what makes the merge affordable: without it every merge
+   would sweep 36,864 entries per lane per frame, which is exactly the kind
+   of whole-grid pass world.h forbids. A rectangle that is empty is not in
+   the list, so emptiness IS the membership test and no epoch is needed.
+   ====================================================================== */
+struct DirtyLog {
+    Chunk rect[CHUNK_COUNT];
+    i32   touched[CHUNK_COUNT];
+    int   n;
+};
+static DirtyLog g_dirtyLog[MAX_LANE_THREADS];
+
+/* 0 means "write straight to next[]", which is what everything outside the
+   parallel scan does -- worldgen, the brush, devices, entities. */
+/* Set while a lane is inside the scan; null means "write straight to
+   next[]", which is what the main lane does between steps. */
+
+/* The planes start as bss, so every rectangle reads minX 0, maxX 0 -- and
+   that is NOT empty, it is a one-cell rectangle in the corner of the world.
+   Emptiness is the membership test for `touched`, so an uninitialised plane
+   silently absorbs every update and offers none of them to the merge.
+   Measured, that looks exactly like the simulation switching itself off:
+   0.18 ms a frame and ten live chunks in a scene that should have three
+   hundred. */
+static void dirtyLogInit(void) {
+    static bool done = false;
+    if (done) return;
+    for (int i = 0; i < MAX_LANE_THREADS; ++i) clearDirty(g_dirtyLog[i].rect);
+    done = true;
+}
+
+static void dirtyLogClear(DirtyLog& d) {
+    for (int i = 0; i < d.n; ++i) {
+        Chunk& c = d.rect[d.touched[i]];
+        c.minX = SIM_W; c.minY = SIM_H; c.maxX = -1; c.maxY = -1;
+    }
+    d.n = 0;
+}
+
 /* Mark a span and the ring of cells around it as needing simulation next
    frame. The margin matters: when a cell moves away, whatever was resting on
    it has to get another look. The box can straddle several chunks, so each
    overlapped chunk absorbs only its own clipped slice of it. */
+/* Pressure can lift a reasonably deep column cheaply, while the more
+   expensive sideways search stays tightly local. These are deliberately two
+   limits: the common case is a straight column of water above a steam pocket,
+   and making that pay for a square flood fill would punish boilers for no
+   visual benefit.
+
+   The pocket ray is now two limits rather than one, and the split is what
+   makes the parallel scan possible. Both were 512, and 512 was never a
+   measured number -- it was "far enough that no boiler anyone builds hits
+   it". That is a fine way to pick a bound right until the bound decides
+   whether the sim can be split across cores.
+
+   VERTICALLY it has to stay long. A steam pocket under a deep lake routes
+   pressure up its own column to the surface, and tests/live_grace_test.cpp
+   builds exactly that: 160 cells of water over a 100-cell steam column,
+   with the charge injected 75 cells down inside it. At 64 the ray cannot
+   see out of the steam, the pocket never finds an outlet, and it re-searches
+   every frame -- measured, 12.9% of frames missed the budget where the same
+   scene at 512 missed 1.9%. Cutting this was a straight loss twice over.
+
+   HORIZONTALLY it can be short, and that costs nothing anyone will see: a
+   flat pocket looking 64 cells sideways for a vent is already looking
+   further than the widest boiler in the game. What it buys is the whole
+   parallel scan -- the sim is split into full-height vertical stripes, so a
+   write straight up or down stays inside its own stripe however long it is,
+   and only the SIDEWAYS reach has to fit in a stripe. See RULE_WRITE_REACH_X
+   in world.h for the audit this feeds. */
+static const int GAS_PRESSURE_VERTICAL_REACH = 512;
+static const int GAS_PRESSURE_LIQUID_RADIUS  = 16;
+static const int GAS_PRESSURE_POWDER_REACH   = 8;
+static const int GAS_PRESSURE_POCKET_RAY_V   = 512;
+static const int GAS_PRESSURE_POCKET_RAY_H   = 40;
+static const int GAS_PRESSURE_POCKET_RADIUS  = 32;
+static const int GAS_PRESSURE_POCKET_NODES   = 2048;
+/* --- what a stripe may SEARCH in one frame ---------------------------------
+   Two budgets, both per stripe per frame, and both on the same two rules:
+   the ones a compressed gas cell reaches for when it cannot see an outlet.
+
+   They are the whole cost of a boil. Timed over the peak of the transient --
+   frames 250 to 350 of lava into a pool, where the steam is forming fastest
+   and the frame is worst -- out of a 34 ms step:
+
+     bent-outlet BFS     1,606 calls    7.43 ms     16,184 cycles each
+     pocket route          544 calls    5.56 ms     35,814 cycles each
+     everything else in gas pressure    1.53 ms
+
+   Thirteen milliseconds of searching, nearly all of it failing, because
+   during formation most of the steam is in the middle of more steam and
+   there is genuinely nowhere for it to go yet. The searches are not wrong;
+   asking every cell to do one every frame is.
+
+   Budgeted, the ones that miss out simply wait a frame, which is what the
+   pocket route has always done. Measured on the whole transient at eight
+   threads: 9.30 ms a frame becomes 6.03, and the share of frames missing 60
+   fps goes from 13.7% to nothing at all. The basin also ends with LESS
+   pressure stuck in it than before (37 units against 49), because a search
+   that would have failed this frame tends to succeed a frame later once the
+   steam around it has moved.
+
+   PER STRIPE, and that matters: it makes the total budget scale with how
+   much of the world is actually boiling rather than being one world-wide
+   cap that a big enough boil saturates. Thirty-two was picked off a sweep --
+   at 12 the frame is no faster and pressure starts backing up (379 units
+   stuck), at 128 the searching is unbudgeted in all but name. */
+static const int GAS_PRESSURE_POCKET_BUDGET  = 32;
+static const int GAS_PRESSURE_BFS_BUDGET     = 32;
+static const int GAS_PRESSURE_EXPANSION_BURST = 5;
+
+/* Every scratch buffer the gas rules use, in one thread-local object.
+
+   ONE object, and one reference fetched at the top of each function that
+   needs it, because thread-local here is __emutls_get_address -- an opaque
+   call the compiler cannot hoist out of a loop. Left as separate
+   `static __thread` arrays, the breadth-first walks paid that call on every
+   single indexed access, and the sim went from 10.5 ms a frame to 18.2. The
+   arrays are identical; only the number of times their address is asked for
+   changed.
+
+   pressureRoutes rides along for the same reason: it is read and decremented
+   from two different functions, and one fetch each is cheaper than three. */
+struct LaneScratch {
+    int pressureRoutes;
+    int bfsSearches;
+    u16 pocketSeen[(GAS_PRESSURE_POCKET_RADIUS * 2 + 1) *
+                   (GAS_PRESSURE_POCKET_RADIUS * 2 + 1)];
+    i16 pocketQueue[GAS_PRESSURE_POCKET_NODES];
+    u16 pocketEpoch;
+    i16 parent[(GAS_PRESSURE_LIQUID_RADIUS * 2 + 1) *
+               (GAS_PRESSURE_LIQUID_RADIUS * 2 + 1)];
+    u16 parentEpoch[(GAS_PRESSURE_LIQUID_RADIUS * 2 + 1) *
+                    (GAS_PRESSURE_LIQUID_RADIUS * 2 + 1)];
+    i16 bfsQueue[(GAS_PRESSURE_LIQUID_RADIUS * 2 + 1) *
+                 (GAS_PRESSURE_LIQUID_RADIUS * 2 + 1)];
+    u16 bfsEpoch;
+};
+/* ONE per lane, passed by reference rather than found in thread-local
+   storage, and that is a performance decision with a number behind it.
+   MinGW's __thread is emulated -- __emutls_get_address, a real call on every
+   single access -- and the first version of this reached for the lane that
+   way. Measured on the lava-into-water transient, the calls in dirtyArea
+   alone cost 1.52 ms of a 14.9 ms step, and all the thread-local reads
+   together came to about three. A reference costs a register.
+
+   It is also the better design for a reason that has nothing to do with
+   speed: a function that can touch lane state now says so in its signature,
+   so adding a rule that needs a lane is a compile error rather than a race
+   nobody notices until it corrupts a cell on somebody else's machine. */
+struct Lane {
+    /* A POINTER, and that is the whole design of it. A stripe lane points at
+       its own storage, because two stripes drawing from one stream would be
+       a race and would make the world depend on the core count. The MAIN
+       lane points at g_rng, because everything holding the main lane --
+       devices, entities, the brush, the save loader -- is drawing from the
+       world's real stream, the one codec.cpp serialises. Pointing it at lane
+       storage instead was measured: two behaviour tests went red, and the
+       reason they did is that a device placing a cell had stopped advancing
+       the stream a save or a join would later restore from. */
+    u32         rngOwn;
+    u32*        rng;
+    int         stripe;          /* -1 outside the scan */
+    DirtyLog*   dirty;           /* null: write through to next[] */
+    LaneScratch scratch;
+
+    /* Constructed rather than left as bss, and both fields it sets are
+       load-bearing in a way that is invisible until it is not.
+
+       A stripe of 0 is a real stripe, so a zeroed main lane makes every
+       call from worldgen, the brush and the devices look like it came from
+       inside the scan -- sprouts and felled chunks get staged for a merge
+       that only happens during a step, and callers that never step at all
+       simply lose them. And an xorshift seeded with zero stays zero for
+       ever, so every "random" choice on the main lane collapses to the same
+       branch. Measured by two tests going red: a hive stopped extruding
+       honey and a dropped spark stopped starting its pulse.
+
+       The scratch arrays stay untouched here on purpose: static storage is
+       zeroed before any constructor runs, which is exactly what their epoch
+       counters want. */
+    Lane() : rngOwn(0x9E3779B9u), rng(&rngOwn), stripe(-1), dirty(0) {}
+};
+static Lane g_lane[MAX_LANE_THREADS];
+
+/* Lane zero is the main thread's, and it is also one of the scan's lanes --
+   the caller of step() works as a lane rather than watching the others do
+   it. Rebinding here rather than trusting whoever ran last: outside the scan
+   the main lane draws from the world's stream. */
+Lane& simMainLane(void) { g_lane[0].rng = &g_rng; return g_lane[0]; }
+
+/* --- the entry points for callers with no lane ------------------------
+   Everything outside the simulation runs on the main thread, so it gets
+   the main lane. Kept to the handful the rest of the game actually calls:
+   a forwarder for every method would throw away what the Lane parameter is
+   for, which is saying in the signature which code can run in a stripe. */
 void World::dirtyArea(int x0, int y0, int x1, int y1) {
+    dirtyArea(simMainLane(), x0, y0, x1, y1);
+}
+void World::dirtyPoint(int x, int y) { dirtyPoint(simMainLane(), x, y); }
+void World::setCell(int x, int y, u8 mat) { setCell(simMainLane(), x, y, mat); }
+void World::swapMat(int x, int y, u8 mat) { swapMat(simMainLane(), x, y, mat); }
+void World::breakCell(int x, int y) { breakCell(simMainLane(), x, y); }
+bool World::liftColumn(int x, int y, int maxLift) {
+    return liftColumn(simMainLane(), x, y, maxLift);
+}
+
+void World::dirtyArea(Lane& L, int x0, int y0, int x1, int y1) {
     x0 -= 1; y0 -= 1; x1 += 1; y1 += 1;
     if (x0 < 0) x0 = 0;
     if (y0 < 0) y0 = 0;
@@ -28,12 +297,19 @@ void World::dirtyArea(int x0, int y0, int x1, int y1) {
     int cx0 = x0 >> CHUNK_SHIFT, cx1 = x1 >> CHUNK_SHIFT;
     int cy0 = y0 >> CHUNK_SHIFT, cy1 = y1 >> CHUNK_SHIFT;
 
+    /* Fetched once for the whole rectangle rather than once per chunk:
+       thread-local is a function call on this toolchain, and this is one of
+       the most-called functions in the engine. */
+    DirtyLog* const log = L.dirty;
+
     for (int cy = cy0; cy <= cy1; ++cy) {
         for (int cx = cx0; cx <= cx1; ++cx) {
-            Chunk& c = next[cy * CHUNKS_X + cx];
+            const int idx = cy * CHUNKS_X + cx;
             int bx0 = cx << CHUNK_SHIFT, by0 = cy << CHUNK_SHIFT;
             int ax0 = imax(x0, bx0),               ay0 = imax(y0, by0);
             int ax1 = imin(x1, bx0 + CHUNK - 1),   ay1 = imin(y1, by0 + CHUNK - 1);
+            Chunk& c = log ? log->rect[idx] : next[idx];
+            if (log && c.minX > c.maxX) log->touched[log->n++] = idx;
             if (ax0 < c.minX) c.minX = ax0;
             if (ay0 < c.minY) c.minY = ay0;
             if (ax1 > c.maxX) c.maxX = ax1;
@@ -59,19 +335,18 @@ static const int NB8_DY[8] = { -1,  1,  0,  0, -1, -1,  1,  1 };
    one degree, turning a calm interface into permanent pixel vibration. */
 static const int DENSITY_SWAP_EPS_Q8 = 64;
 
-/* Pressure can lift a reasonably deep column cheaply, while the more
-   expensive sideways search stays tightly local. These are deliberately two
-   limits: the common case is a straight column of water above a steam pocket,
-   and making that pay for a square flood fill would punish boilers for no
-   visual benefit. */
-static const int GAS_PRESSURE_VERTICAL_REACH = 512;
-static const int GAS_PRESSURE_LIQUID_RADIUS  = 16;
-static const int GAS_PRESSURE_POWDER_REACH   = 8;
-static const int GAS_PRESSURE_POCKET_RAY     = 512;
-static const int GAS_PRESSURE_POCKET_RADIUS  = 32;
-static const int GAS_PRESSURE_POCKET_NODES   = 2048;
-static const int GAS_PRESSURE_POCKET_BUDGET  = 128;
-static const int GAS_PRESSURE_EXPANSION_BURST = 5;
+
+/* The stream, moved off the global and onto the lane. xorshift32, unchanged
+   -- three shifts and three xors, and the same sequence a given seed always
+   produced. */
+static inline u32 lrand(Lane& L) {
+    u32 x = *L.rng;
+    x ^= x << 13; x ^= x >> 17; x ^= x << 5;
+    *L.rng = x;
+    return x;
+}
+static inline bool lchance(Lane& L, u32 p) { return (lrand(L) & 0xFF) < p; }
+static inline u32  lbits(Lane& L, u32 n)   { return lrand(L) >> (32 - n); }
 /* --- how far a buoyant gas climbs in one frame ------------------------------
    Cells, when the run is clear. One, before this, and that is what made steam
    feel sluggish: a parcel spends about eight frames in nine doing a diffusion
@@ -113,18 +388,23 @@ static inline int gasRiseRun(u8 mat) {
 static const int FLUID_CONVECTION_REACH       = 3;
 static const int WAX_CONVECTION_REACH         = 1;
 static const int FLUID_CONVECTION_DELTA       = 2;
-static const int SUBMERGED_LEVEL_REACH         = 64;
+/* Forty rather than sixty-four, and the reason is the parallel scan rather
+   than the physics: this is one of the two longest SIDEWAYS writes in the
+   engine, and the stripe width has to clear it. See RULE_WRITE_REACH_X in
+   world.h. A mound still levels -- a very wide one takes another frame or
+   two about it. */
+static const int SUBMERGED_LEVEL_REACH         = 40;
 static const int SUBMERGED_SINK_REACH          = 8;
 
 /* Divide a heat transfer by 2^shift to get the temperature change a material of
    that thermal mass actually feels, carrying the remainder stochastically so
    small transfers average out correctly instead of truncating to nothing.
    `move` is always non-negative here; the caller applies the sign. */
-static inline int scaleByMass(int move, int shift) {
+static inline int scaleByMass(Lane& L, int move, int shift) {
     if (!shift) return move;
     const int q = move >> shift;
     const int r = move & ((1 << shift) - 1);
-    return q + ((r && (int)rngBits((u32)shift) < r) ? 1 : 0);
+    return q + ((r && (int)lbits(L, (u32)shift) < r) ? 1 : 0);
 }
 
 /* A phase change consumes latent heat: pull the cell LATENT_HEAT toward
@@ -196,7 +476,6 @@ void World::reset() {
     memset(felledMark, 0, sizeof(felledMark));
     frame  = 0;
     activeChunks = 0;
-    pressureRoutesRemaining = 0;
     clearDirty(cur);
     clearDirty(next);
 
@@ -208,6 +487,10 @@ void World::reset() {
         cells[y * SIM_W].mat = MAT_WALL;
         cells[y * SIM_W + SIM_W - 1].mat = MAT_WALL;
     }
+    /* The GLOBAL stream, not the lane's, and deliberately so. This draws
+       37.7 million times, and where it leaves g_rng is where worldgen starts
+       -- so moving it onto a lane would quietly re-roll every world from a
+       different point in the stream. Nothing here runs in a stripe. */
     for (int i = 0; i < SIM_W * SIM_H; ++i) cells[i].tint = (u8)rngBits(8);
 }
 
@@ -215,9 +498,19 @@ void World::reset() {
    the only moment a canopy can lose its support, so it is the only moment
    anything needs to look. Cheap by construction: two table lookups on a write
    that already happens, and a push on the rare one that matters. */
-void World::reportFelled(int x, int y, u8 was, u8 now) {
+void World::reportFelled(Lane& L, int x, int y, u8 was, u8 now) {
     if (!g_matIsWood[was] || g_matIsWood[now]) return;
     const int ch = (y >> CHUNK_SHIFT) * CHUNKS_X + (x >> CHUNK_SHIFT);
+    /* Inside the parallel scan this only stages the chunk index; felledMark
+       is the world's dedup set and two lanes must not both be deciding what
+       is in it. The merge applies the mark, so a chunk reported twice by two
+       stripes still lands in felled[] once. */
+    if (L.stripe >= 0) {
+        int& n = g_stripeFelledN[L.stripe];
+        if (n >= MAX_FELLED) return;
+        g_stripeFelled[L.stripe][n++] = ch;
+        return;
+    }
     if (felledMark[ch]) return;
     if (felledCount >= MAX_FELLED) return;
     felledMark[ch] = 1;
@@ -228,6 +521,7 @@ void World::reportFelled(int x, int y, u8 was, u8 now) {
    alone rather than dragged down -- a striker cannot cool anything, and running
    one over an ember should not put it out. */
 void World::ignite(int cx, int cy, int r) {
+    Lane& L = simMainLane();
     const int x0 = imax(0, cx - r), x1 = imin(SIM_W - 1, cx + r);
     const int y0 = imax(0, cy - r), y1 = imin(SIM_H - 1, cy + r);
     const int r2 = r * r;
@@ -240,30 +534,30 @@ void World::ignite(int cx, int cy, int r) {
             if (t >= IGNITE_MAX) continue;
             const int nt = t + IGNITE_STEP;
             temp[i] = (u8)(nt > IGNITE_MAX ? IGNITE_MAX : nt);
-            dirtyPoint(x, y);
+            dirtyPoint(L, x, y);
         }
 }
 
-void World::setCell(int x, int y, u8 mat) {
+void World::setCell(Lane& L, int x, int y, u8 mat) {
     const int i = y * SIM_W + x;
     Cell& c = cells[i];
-    reportFelled(x, y, c.mat, mat);
+    reportFelled(L, x, y, c.mat, mat);
     c.mat      = mat;
     c.moisture = 0;
-    c.tint     = (u8)rngBits(8);
+    c.tint     = (u8)lbits(L, 8);
     /* Stamped with the previous frame so a freshly painted cell is eligible on
        the very next step rather than sitting still for one, which would make
        the brush feel laggy. */
     c.flags    = (u8)(((frame - 1) & STAMP_MASK) << STAMP_SHIFT);
     const MatInfo& m = MATS[mat];
     temp[i] = m.spawnTemp ? m.spawnTemp : (u8)AMBIENT_TEMP;
-    dirtyPoint(x, y);
+    dirtyPoint(L, x, y);
 }
 
-void World::breakCell(int x, int y) {
+void World::breakCell(Lane& L, int x, int y) {
     const u8 m    = cells[y * SIM_W + x].mat;
     const u8 drop = g_matDropsAs[m];
-    setCell(x, y, (drop != m && g_matIsSeed[drop]) ? drop : (u8)MAT_EMPTY);
+    setCell(L, x, y, (drop != m && g_matIsSeed[drop]) ? drop : (u8)MAT_EMPTY);
 }
 
 /* See the note in world.h. The shift itself is the same three lines the gas
@@ -271,7 +565,7 @@ void World::breakCell(int x, int y) {
    temperature, restamp it so the movement pass does not treat it as a cell that
    has not moved yet -- because it is the same operation and should not be a
    second implementation of it. */
-bool World::liftColumn(int x, int y, int maxLift) {
+bool World::liftColumn(Lane& L, int x, int y, int maxLift) {
     if (x < PLAY_X0 || x > PLAY_X1 || y < PLAY_Y0 || y > PLAY_Y1) return false;
 
     /* Find the roof of the column: the first empty cell above. Everything
@@ -305,30 +599,31 @@ bool World::liftColumn(int x, int y, int maxLift) {
         temp[dst]  = temp[src];
         cells[dst].flags = (u8)((cells[dst].flags & F_DIR) | st);
     }
-    setCell(x, y, MAT_EMPTY);
-    dirtyArea(x, top, x, y);
+    setCell(L, x, y, MAT_EMPTY);
+    dirtyArea(L, x, top, x, y);
     return true;
 }
 
-void World::swapMat(int x, int y, u8 mat) {
+void World::swapMat(Lane& L, int x, int y, u8 mat) {
     cells[y * SIM_W + x].mat = mat;
-    dirtyPoint(x, y);
+    dirtyPoint(L, x, y);
 }
 
 /* Swap material without disturbing temperature: a phase change carries its
    heat across, and the stamp is left alone so the new material waits until
    next frame to move. */
-void World::convert(int x, int y, u8 mat) {
+void World::convert(Lane& L, int x, int y, u8 mat) {
     Cell& c = cells[y * SIM_W + x];
-    reportFelled(x, y, c.mat, mat);
+    reportFelled(L, x, y, c.mat, mat);
     c.mat      = mat;
     c.moisture = 0;
-    c.tint     = (u8)rngBits(8);
-    dirtyPoint(x, y);
+    c.tint     = (u8)lbits(L, 8);
+    dirtyPoint(L, x, y);
 }
 
 /* Clamped to the play area, so the border box can never be painted over. */
 void World::paint(int cx, int cy, int r, u8 mat, bool replace) {
+    Lane& L = simMainLane();
     int r2 = r * r;
     int x0 = imax(cx - r, PLAY_X0), x1 = imin(cx + r, PLAY_X1);
     int y0 = imax(cy - r, PLAY_Y0), y1 = imin(cy + r, PLAY_Y1);
@@ -340,7 +635,7 @@ void World::paint(int cx, int cy, int r, u8 mat, bool replace) {
             /* Erasing always applies -- "do not overwrite" is about pouring
                new material in, not about being unable to clear space. */
             if (!replace && mat != MAT_EMPTY && cells[y * SIM_W + x].mat != MAT_EMPTY) continue;
-            setCell(x, y, mat);
+            setCell(L, x, y, mat);
         }
     }
 }
@@ -356,6 +651,7 @@ void World::paintBg(int cx, int cy, int r, u8 mat) {
 }
 
 void World::heat(int cx, int cy, int r, int delta) {
+    Lane& L = simMainLane();
     int r2 = r * r;
     int x0 = imax(cx - r, PLAY_X0), x1 = imin(cx + r, PLAY_X1);
     int y0 = imax(cy - r, PLAY_Y0), y1 = imin(cy + r, PLAY_Y1);
@@ -367,7 +663,7 @@ void World::heat(int cx, int cy, int r, int delta) {
             const int i = y * SIM_W + x;
             int t = (int)temp[i] + delta;
             temp[i] = (u8)(t < 0 ? 0 : (t > 255 ? 255 : t));
-            dirtyPoint(x, y);
+            dirtyPoint(L, x, y);
         }
     }
 }
@@ -430,7 +726,7 @@ static inline u8 occupantMat(u8 packed) { return (u8)(packed & GAS_EXCESS_MASK);
    simple gameplay invariant: liquid treats gas as displacement space, while a
    movement stamp guarantees the same gas parcel can be pushed only once in the
    frame rather than relayed through an entire lake. */
-bool World::displaceGasForLiquid(int sx, int sy, int tx, int ty) {
+bool World::displaceGasForLiquid(Lane& L, int sx, int sy, int tx, int ty) {
     const int si = sy * SIM_W + sx, ti = ty * SIM_W + tx;
     Cell& liquid = cells[si];
     Cell& gas = cells[ti];
@@ -460,12 +756,12 @@ bool World::displaceGasForLiquid(int sx, int sy, int tx, int ty) {
         liquid.tint = 0;
         liquid.flags = st;
         temp[si] = AMBIENT_TEMP;
-        dirtyPoint(sx, sy);
-        dirtyPoint(tx, ty);
+        dirtyPoint(L, sx, sy);
+        dirtyPoint(L, tx, ty);
     };
 
-    if (pressureRoutesRemaining > 0) {
-        --pressureRoutesRemaining;
+    if (L.scratch.pressureRoutes > 0) {
+        --L.scratch.pressureRoutes;
         /* The pictured boiler case: a tall Steam body with a real outlet above.
            This costs a straight ray rather than a flood over the whole pocket. */
         for (int d = 1; d <= GAS_PRESSURE_VERTICAL_REACH && ty - d >= PLAY_Y0; ++d) {
@@ -479,7 +775,7 @@ bool World::displaceGasForLiquid(int sx, int sy, int tx, int ty) {
                     cells[dst].flags = (u8)((cells[dst].flags & F_DIR) | st);
                 }
                 finishLiquid();
-                dirtyArea(tx, ty - d, tx, ty);
+                dirtyArea(L, tx, ty - d, tx, ty);
                 return true;
             }
             if (!freshGas(di)) break;
@@ -488,8 +784,8 @@ bool World::displaceGasForLiquid(int sx, int sy, int tx, int ty) {
 
     /* Bent local pockets. parent[] is both the visited set and the route from
        the outlet back to the touched boundary, keeping work strictly bounded. */
-    if (pressureRoutesRemaining > 0) {
-        --pressureRoutesRemaining;
+    if (L.scratch.pressureRoutes > 0) {
+        --L.scratch.pressureRoutes;
         static const int R = GAS_PRESSURE_LIQUID_RADIUS;
         static const int SIDE = R * 2 + 1;
         static const int CAP = SIDE * SIDE;
@@ -539,7 +835,7 @@ bool World::displaceGasForLiquid(int sx, int sy, int tx, int ty) {
                 cells[dst] = cells[src];
                 temp[dst] = temp[src];
                 cells[dst].flags = (u8)((cells[dst].flags & F_DIR) | st);
-                dirtyPoint(dst % SIM_W, dst / SIM_W);
+                dirtyPoint(L, dst % SIM_W, dst / SIM_W);
                 dst = src;
                 path = parent[path];
             }
@@ -567,7 +863,7 @@ bool World::displaceGasForLiquid(int sx, int sy, int tx, int ty) {
                                  (receiverExcess + volumes));
         receiver.flags = (u8)((receiver.flags & F_DIR) | st);
         if (temp[ti] > temp[ri]) temp[ri] = temp[ti];
-        dirtyPoint(nx, ny);
+        dirtyPoint(L, nx, ny);
         finishLiquid();
         return true;
     }
@@ -602,13 +898,13 @@ bool World::displaceGasForLiquid(int sx, int sy, int tx, int ty) {
         liquid = displaced;
         liquid.flags = (u8)((liquid.flags & F_DIR) | st);
         temp[si] = displacedTemp;
-        dirtyPoint(sx, sy);
-        dirtyPoint(tx, ty);
+        dirtyPoint(L, sx, sy);
+        dirtyPoint(L, tx, ty);
         return true;
     }
 }
 
-bool World::tryMove(int sx, int sy, int tx, int ty,
+bool World::tryMove(Lane& L, int sx, int sy, int tx, int ty,
                     int liquidSwap) {
     /* Nothing moves into an occupied entity box -- see the note in world.h.
        First test in the function and first comparison of the box test, so the
@@ -687,7 +983,7 @@ bool World::tryMove(int sx, int sy, int tx, int ty,
                 receiver.moisture = (u8)((receiver.moisture & GAS_VOLUME_ONLY) |
                                          (receiverExcess + give));
                 receiver.flags = (u8)((receiver.flags & F_DIR) | st);
-                dirtyPoint(pressureReceiver[k] % SIM_W,
+                dirtyPoint(L, pressureReceiver[k] % SIM_W,
                            pressureReceiver[k] / SIM_W);
                 excessLeft -= give;
             }
@@ -698,7 +994,7 @@ bool World::tryMove(int sx, int sy, int tx, int ty,
             const u8 tt = temp[ti]; temp[ti] = temp[si]; temp[si] = tt;
             s.flags = (u8)(targetDir | st);
             t.flags = (u8)(sourceDir | st);
-            dirtyPoint(sx, sy); dirtyPoint(tx, ty);
+            dirtyPoint(L, sx, sy); dirtyPoint(L, tx, ty);
             return true;
         }
         const bool gas = MATS[s.mat].kind == KIND_GAS;
@@ -724,7 +1020,7 @@ bool World::tryMove(int sx, int sy, int tx, int ty,
                                             : (u8)(t.flags & F_FALL);
         t.flags = (u8)(targetLow | st);
         s.flags = (u8)((s.flags & F_DIR) | st);
-        dirtyPoint(sx, sy); dirtyPoint(tx, ty);
+        dirtyPoint(L, sx, sy); dirtyPoint(L, tx, ty);
         return true;
     }
 
@@ -807,7 +1103,7 @@ bool World::tryMove(int sx, int sy, int tx, int ty,
                    The routed pressure wave is stamped as a unit, so no parcel
                    can relay repeatedly during this in-place scan. */
                 if (tm.kind == KIND_GAS)
-                    return displaceGasForLiquid(sx, sy, tx, ty);
+                    return displaceGasForLiquid(L, sx, sy, tx, ty);
             }
         }
     }
@@ -822,8 +1118,8 @@ bool World::tryMove(int sx, int sy, int tx, int ty,
     const u8 st = (u8)(stamp() << STAMP_SHIFT);
     t.flags = (u8)((t.flags & F_DIR) | st);
     s.flags = (u8)((s.flags & F_DIR) | st);
-    dirtyPoint(sx, sy);
-    dirtyPoint(tx, ty);
+    dirtyPoint(L, sx, sy);
+    dirtyPoint(L, tx, ty);
     return true;
 }
 
@@ -832,7 +1128,7 @@ bool World::tryMove(int sx, int sy, int tx, int ty,
    moves. Temperature follows the parcel through the mesh; while occupied, the
    sieve and fluid share that one temperature, which also lets ordinary heat
    conduction act on the contents without another world-sized array. */
-bool World::moveFilterFluid(int sx, int sy, int tx, int ty) {
+bool World::moveFilterFluid(Lane& L, int sx, int sy, int tx, int ty) {
     if (tx < PLAY_X0 || tx > PLAY_X1 || ty < PLAY_Y0 || ty > PLAY_Y1) return false;
     const int si = sy * SIM_W + sx, ti = ty * SIM_W + tx;
     Cell& s = cells[si];
@@ -868,8 +1164,8 @@ bool World::moveFilterFluid(int sx, int sy, int tx, int ty) {
             const u8 st = (u8)(stamp() << STAMP_SHIFT);
             s.flags = (u8)(targetDir | st);
             t.flags = (u8)(sourceDir | st);
-            dirtyPoint(sx, sy);
-            dirtyPoint(tx, ty);
+            dirtyPoint(L, sx, sy);
+            dirtyPoint(L, tx, ty);
             return true;
         }
         t.moisture = packed;
@@ -900,8 +1196,8 @@ bool World::moveFilterFluid(int sx, int sy, int tx, int ty) {
             const u8 st = (u8)(stamp() << STAMP_SHIFT);
             s.flags = (u8)(targetDir | st);
             t.flags = (u8)(sourceDir | st);
-            dirtyPoint(sx, sy);
-            dirtyPoint(tx, ty);
+            dirtyPoint(L, sx, sy);
+            dirtyPoint(L, tx, ty);
             return true;
         }
         if (blocksCell(tx, ty)) return false;
@@ -916,12 +1212,12 @@ bool World::moveFilterFluid(int sx, int sy, int tx, int ty) {
     const u8 st = (u8)(stamp() << STAMP_SHIFT);
     t.flags = (u8)((s.flags & F_DIR) | st);
     s.flags = (u8)((s.flags & F_DIR) | st);
-    dirtyPoint(sx, sy);
-    dirtyPoint(tx, ty);
+    dirtyPoint(L, sx, sy);
+    dirtyPoint(L, tx, ty);
     return true;
 }
 
-void World::updateFilterFluid(int x, int y) {
+void World::updateFilterFluid(Lane& L, int x, int y) {
     const int i = y * SIM_W + x;
     Cell& c = cells[i];
     const u8 packed = c.moisture;
@@ -935,34 +1231,34 @@ void World::updateFilterFluid(int x, int y) {
         const int nx = x + NB_DX[k], ny = y + NB_DY[k];
         const u8 neighbour = cells[ny * SIM_W + nx].mat;
         if (!g_matWetInto[neighbour] || g_matWetBy[neighbour] != moving) continue;
-        convert(nx, ny, g_matWetInto[neighbour]);
+        convert(L, nx, ny, g_matWetInto[neighbour]);
         c.moisture = 0;
         temp[i] = AMBIENT_TEMP;
-        dirtyPoint(x, y);
+        dirtyPoint(L, x, y);
         return;
     }
 
     const MatInfo& m = MATS[moving];
     int dx = (c.flags & F_DIR) ? 1 : -1;
     if (m.kind == KIND_GAS) {
-        if (moveFilterFluid(x, y, x, y - 1)) return;
-        if (moveFilterFluid(x, y, x + dx, y - 1)) return;
-        if (moveFilterFluid(x, y, x - dx, y - 1)) return;
-        if (moveFilterFluid(x, y, x + dx, y)) return;
-        if (moveFilterFluid(x, y, x - dx, y)) return;
+        if (moveFilterFluid(L, x, y, x, y - 1)) return;
+        if (moveFilterFluid(L, x, y, x + dx, y - 1)) return;
+        if (moveFilterFluid(L, x, y, x - dx, y - 1)) return;
+        if (moveFilterFluid(L, x, y, x + dx, y)) return;
+        if (moveFilterFluid(L, x, y, x - dx, y)) return;
     } else { /* only liquids can enter the other permitted branch */
-        if (moveFilterFluid(x, y, x, y + 1)) return;
-        if (moveFilterFluid(x, y, x + dx, y + 1)) return;
-        if (moveFilterFluid(x, y, x - dx, y + 1)) return;
-        if (moveFilterFluid(x, y, x + dx, y)) return;
-        if (moveFilterFluid(x, y, x - dx, y)) return;
+        if (moveFilterFluid(L, x, y, x, y + 1)) return;
+        if (moveFilterFluid(L, x, y, x + dx, y + 1)) return;
+        if (moveFilterFluid(L, x, y, x - dx, y + 1)) return;
+        if (moveFilterFluid(L, x, y, x + dx, y)) return;
+        if (moveFilterFluid(L, x, y, x - dx, y)) return;
     }
 
     c.flags ^= F_DIR;
-    dirtyPoint(x, y);   /* occupied mesh retries until it can leave or react */
+    dirtyPoint(L, x, y);   /* occupied mesh retries until it can leave or react */
 }
 
-void World::updatePowder(int x, int y) {
+void World::updatePowder(Lane& L, int x, int y) {
     Cell& c = cells[y * SIM_W + x];
     const MatInfo& m = MATS[c.mat];
 
@@ -996,13 +1292,13 @@ void World::updatePowder(int x, int y) {
     if (drift && cells[(y + 1) * SIM_W + x].mat == MAT_EMPTY) {
         const int dir   = (c.tint & 1) ? 1 : -1;
         const u32 scale = ((c.tint >> 1) & 7) + 1;          /* 1..8 of 8 */
-        if (rngChance((u32)drift * scale / 8) && tryMove(x, y, x + dir, y + 1)) {
+        if (lchance(L, (u32)drift * scale / 8) && tryMove(L, x, y, x + dir, y + 1)) {
             cells[(y + 1) * SIM_W + x + dir].flags |= F_FALL;
             return;
         }
     }
 
-    if (tryMove(x, y, x, y + 1)) {
+    if (tryMove(L, x, y, x, y + 1)) {
         cells[(y + 1) * SIM_W + x].flags |= F_FALL;
         return;
     }
@@ -1041,12 +1337,12 @@ void World::updatePowder(int x, int y) {
         static const int TRY[4][2] = { {1,1}, {-1,1}, {1,0}, {-1,0} };
         for (int t = 0; t < 4; ++t) {
             const int tx = x + TRY[t][0] * out, ty = y + TRY[t][1];
-            if (tryMove(x, y, tx, ty)) {
+            if (tryMove(L, x, y, tx, ty)) {
                 cells[ty * SIM_W + tx].flags |= F_FALL;
                 return;
             }
         }
-        dirtyPoint(x, y);
+        dirtyPoint(L, x, y);
         return;                 /* F_FALL deliberately left set */
     }
 
@@ -1062,11 +1358,11 @@ void World::updatePowder(int x, int y) {
         if (wetF > 255) wetF = 255;
         slide += (((int)m.slideWet - (int)m.slideDry) * wetF) >> 8;
     }
-    if (!rngChance((u32)slide)) return;
+    if (!lchance(L, (u32)slide)) return;
 
-    int dx = (rngNext() & 1) ? 1 : -1;
-    if (tryMove(x, y, x + dx, y + 1)) return;
-    tryMove(x, y, x - dx, y + 1);
+    int dx = (lrand(L) & 1) ? 1 : -1;
+    if (tryMove(L, x, y, x + dx, y + 1)) return;
+    tryMove(L, x, y, x - dx, y + 1);
 }
 
 /* Buoyant parcel convection. Ordinary same-material liquids and gases use the
@@ -1085,7 +1381,7 @@ void World::updatePowder(int x, int y) {
    Alternating source-row parity and movement stamps keep each parcel to one
    bounded convection move of at most three cells per frame.
    No RNG is consumed, preserving the deterministic movement silhouette. */
-bool World::updateConvection(int x, int y) {
+bool World::updateConvection(Lane& L, int x, int y) {
     const int i = y * SIM_W + x;
     const u8 mat = cells[i].mat;
     const u8 kind = MATS[mat].kind;
@@ -1128,11 +1424,11 @@ bool World::updateConvection(int x, int y) {
     const u8 st = (u8)(stamp() << STAMP_SHIFT);
     cells[i].flags = (u8)((cells[i].flags & F_DIR) | st);
     cells[above].flags = (u8)((cells[above].flags & F_DIR) | st);
-    dirtyArea(x, above / SIM_W, x, y);
+    dirtyArea(L, x, above / SIM_W, x, y);
     return true;
 }
 
-void World::updateLiquid(int x, int y) {
+void World::updateLiquid(Lane& L, int x, int y) {
     const int i = y * SIM_W + x;
     Cell& c = cells[i];
     const MatInfo& m = MATS[c.mat];
@@ -1155,11 +1451,11 @@ void World::updateLiquid(int x, int y) {
                             cells[i + SIM_W    ].mat == mat &&
                             cells[i + SIM_W + 1].mat == mat;
     if (packedSame) {
-        updateConvection(x, y);
+        updateConvection(L, x, y);
         return;
     }
 
-    if (tryMove(x, y, x, y + 1)) return;
+    if (tryMove(L, x, y, x, y + 1)) return;
     /* A lone/exposed parcel may sink directly into a lighter liquid. Requiring
        no same-material parcel immediately above is the anti-relay ownership
        rule: the bottom cell of a Water column cannot repeatedly push one hot
@@ -1168,8 +1464,8 @@ void World::updateLiquid(int x, int y) {
     const u8 belowMat = cells[i + SIM_W].mat;
     if (belowMat != c.mat && MATS[belowMat].kind == KIND_LIQUID &&
         cells[i - SIM_W].mat != c.mat &&
-        tryMove(x, y, x, y + 1, true)) return;
-    if (updateConvection(x, y)) return;
+        tryMove(L, x, y, x, y + 1, true)) return;
+    if (updateConvection(L, x, y)) return;
 
     int dx = (c.flags & F_DIR) ? 1 : -1;
 
@@ -1217,8 +1513,8 @@ void World::updateLiquid(int x, int y) {
                         break;
                     targetY = nextY;
                 }
-                if (tryMove(x, y, tx, targetY, true)) {
-                    dirtyArea(imin(x, tx), y, imax(x, tx), targetY);
+                if (tryMove(L, x, y, tx, targetY, true)) {
+                    dirtyArea(L, imin(x, tx), y, imax(x, tx), targetY);
                     return;
                 }
                 break;
@@ -1280,8 +1576,8 @@ void World::updateLiquid(int x, int y) {
                         break;
                     targetY = nextY;
                 }
-                if (tryMove(x, y, tx, targetY, LIQ_SWAP_LIGHTER_WINS)) {
-                    dirtyArea(imin(x, tx), targetY, imax(x, tx), y);
+                if (tryMove(L, x, y, tx, targetY, LIQ_SWAP_LIGHTER_WINS)) {
+                    dirtyArea(L, imin(x, tx), targetY, imax(x, tx), y);
                     return;
                 }
                 break;
@@ -1303,16 +1599,16 @@ void World::updateLiquid(int x, int y) {
        itself to guarantee another attempt. A cell packed solid on all sides has
        nothing to retry and is left to sleep, which is what keeps a settled
        viscous pool free rather than spinning forever. */
-    if (m.jitter && rngChance(m.jitter)) {
+    if (m.jitter && lchance(L, m.jitter)) {
         if (cells[y * SIM_W + x - 1].mat == MAT_EMPTY ||
             cells[y * SIM_W + x + 1].mat == MAT_EMPTY ||
             cells[(y + 1) * SIM_W + x - 1].mat == MAT_EMPTY ||
-            cells[(y + 1) * SIM_W + x + 1].mat == MAT_EMPTY) dirtyPoint(x, y);
+            cells[(y + 1) * SIM_W + x + 1].mat == MAT_EMPTY) dirtyPoint(L, x, y);
         return;
     }
 
-    if (tryMove(x, y, x + dx, y + 1)) return;
-    if (tryMove(x, y, x - dx, y + 1)) return;
+    if (tryMove(L, x, y, x + dx, y + 1)) return;
+    if (tryMove(L, x, y, x - dx, y + 1)) return;
 
     /* Nothing below, so run sideways looking for somewhere to fall. Scanning
        ahead several cells in one frame is what makes a puddle flatten out
@@ -1354,11 +1650,11 @@ void World::updateLiquid(int x, int y) {
         }
 
         if (destX != x) {
-            tryMove(x, y, destX, y);
+            tryMove(L, x, y, destX, y);
             /* tryMove only dirties the two endpoints, but this hop can cover
                several cells at once. Anything resting along the swept path
                just lost its support and has to be woken too. */
-            dirtyArea(imin(x, destX), y, imax(x, destX), y);
+            dirtyArea(L, imin(x, destX), y, imax(x, destX), y);
             return;
         }
         dx = -dx;
@@ -1373,7 +1669,7 @@ void World::updateLiquid(int x, int y) {
    and powder paths still move one conserved volume at a time. If the parcel is
    sealed, its excess remains in the cell and costs nothing once equalized;
    changing a boundary dirties the neighbourhood and wakes it again. */
-bool World::updateGasPressure(int x, int y) {
+bool World::updateGasPressure(Lane& L, int x, int y) {
     const int i = y * SIM_W + x;
     Cell& c = cells[i];
     const u8 excess = (u8)(c.moisture & GAS_EXCESS_MASK);
@@ -1418,10 +1714,10 @@ bool World::updateGasPressure(int x, int y) {
                 if (n.mat != MAT_EMPTY || blocksCell(nx, ny)) continue;
                 n.mat = gasMat;
                 n.moisture = GAS_VOLUME_ONLY;
-                n.tint = (u8)rngBits(8);
+                n.tint = (u8)lbits(L, 8);
                 n.flags = (u8)(gasDir | pressureStamp);
                 temp[ni] = gasTemp;
-                dirtyPoint(nx, ny);
+                dirtyPoint(L, nx, ny);
                 queue[tail++] = (i16)niLocal;
                 ++spawned;
             }
@@ -1430,7 +1726,7 @@ bool World::updateGasPressure(int x, int y) {
             c.moisture = (u8)((c.moisture & GAS_VOLUME_ONLY) |
                               ((int)excess - spawned));
             c.flags = (u8)(gasDir | pressureStamp);
-            dirtyPoint(x, y);
+            dirtyPoint(L, x, y);
             return true;
         }
     }
@@ -1444,13 +1740,13 @@ bool World::updateGasPressure(int x, int y) {
         Cell& d = cells[di];
         d.mat = gasMat;
         d.moisture = GAS_VOLUME_ONLY;
-        d.tint = (u8)rngBits(8);
+        d.tint = (u8)lbits(L, 8);
         d.flags = (u8)(gasDir | pressureStamp);
         temp[di] = gasTemp;
         c.moisture = (u8)((c.moisture & GAS_VOLUME_ONLY) | (excess - 1));
         c.flags = (u8)(gasDir | pressureStamp);
-        dirtyPoint(x, y);
-        dirtyPoint(di % SIM_W, di / SIM_W);
+        dirtyPoint(L, x, y);
+        dirtyPoint(L, di % SIM_W, di / SIM_W);
     };
 
     /* Fast path: the overwhelmingly common boiler geometry is liquid directly
@@ -1483,7 +1779,7 @@ bool World::updateGasPressure(int x, int y) {
             Cell& g = cells[gi];
             g.mat = gasMat;
             g.moisture = GAS_VOLUME_ONLY;
-            g.tint = (u8)rngBits(8);
+            g.tint = (u8)lbits(L, 8);
             g.flags = (u8)(gasDir | pressureStamp);
             temp[gi] = gasTemp;
         }
@@ -1491,7 +1787,7 @@ bool World::updateGasPressure(int x, int y) {
             c.moisture = (u8)((c.moisture & GAS_VOLUME_ONLY) |
                               ((int)excess - burst));
             c.flags = (u8)(gasDir | pressureStamp);
-            dirtyArea(x, outletY - burst, x, y);
+            dirtyArea(L, x, outletY - burst, x, y);
             return true;
         }
     }
@@ -1543,7 +1839,7 @@ bool World::updateGasPressure(int x, int y) {
                upward and sideways movement must not leave F_FALL stale. */
             const u8 fall = (pdx == 0 && pdy == 1) ? F_FALL : 0;
             cells[dst].flags = (u8)(fall | pressureStamp);
-            dirtyPoint(tx, ty);
+            dirtyPoint(L, tx, ty);
         }
         finishExpansion((y + dy[powderDir]) * SIM_W + x + dx[powderDir]);
         return true;
@@ -1610,11 +1906,16 @@ bool World::updateGasPressure(int x, int y) {
         return false;
     };
 
-    if (!hasPressureRelief(x, y) && pressureRoutesRemaining > 0) {
-        --pressureRoutesRemaining;
+    if (!hasPressureRelief(x, y) && L.scratch.pressureRoutes > 0) {
+        --L.scratch.pressureRoutes;
         int receiver = -1, receiverDistance = 1000000, receiverExcess = 256;
         for (int k = 0; k < 4; ++k) {
-            for (int d = 1; d <= GAS_PRESSURE_POCKET_RAY; ++d) {
+            /* Long up and down, short sideways -- see the note on the two
+               constants. dx[k] is non-zero exactly for the two sideways
+               rays. */
+            const int rayMax = dx[k] ? GAS_PRESSURE_POCKET_RAY_H
+                                     : GAS_PRESSURE_POCKET_RAY_V;
+            for (int d = 1; d <= rayMax; ++d) {
                 const int nx = x + dx[k] * d, ny = y + dy[k] * d;
                 if (nx < PLAY_X0 || nx > PLAY_X1 || ny < PLAY_Y0 || ny > PLAY_Y1) break;
                 const int ni = ny * SIM_W + nx;
@@ -1635,14 +1936,13 @@ bool World::updateGasPressure(int x, int y) {
         if (receiver < 0) {
             static const int R = GAS_PRESSURE_POCKET_RADIUS;
             static const int SIDE = R * 2 + 1;
-            static const int CAP = SIDE * SIDE;
-            static u16 seen[CAP] = { 0 };
-            static i16 queue[GAS_PRESSURE_POCKET_NODES];
-            static u16 epoch = 0;
-            if (++epoch == 0) {
-                memset(seen, 0, sizeof(seen));
-                epoch = 1;
-            }
+            /* Sized in LaneScratch, one per thread. */
+            u16* const seen  = L.scratch.pocketSeen;
+            i16* const queue = L.scratch.pocketQueue;
+            const u16 epoch = ++L.scratch.pocketEpoch ? L.scratch.pocketEpoch
+                                              : (L.scratch.pocketEpoch = 1);
+            if (epoch == 1 && L.scratch.pocketSeen[0] != 0)
+                memset(seen, 0, sizeof(L.scratch.pocketSeen));
 
             const int center = R * SIDE + R;
             int head = 0, tail = 0;
@@ -1687,8 +1987,8 @@ bool World::updateGasPressure(int x, int y) {
             give = imin(give, (int)excess);
             c.moisture = (u8)((c.moisture & GAS_VOLUME_ONLY) | ((int)excess - give));
             r.moisture = (u8)((r.moisture & GAS_VOLUME_ONLY) | (receiverExcess + give));
-            dirtyPoint(x, y);
-            dirtyPoint(receiver % SIM_W, receiver / SIM_W);
+            dirtyPoint(L, x, y);
+            dirtyPoint(L, receiver % SIM_W, receiver / SIM_W);
             return true;
         }
     }
@@ -1700,7 +2000,6 @@ bool World::updateGasPressure(int x, int y) {
        lake size. */
     static const int R = GAS_PRESSURE_LIQUID_RADIUS;
     static const int SIDE = R * 2 + 1;
-    static const int CAP = SIDE * SIDE;
 
     const int orderDx[4] = { 0, dir, -dir, 0 };
     const int orderDy[4] = { -1, 0, 0, 1 };
@@ -1722,7 +2021,8 @@ bool World::updateGasPressure(int x, int y) {
         if (MATS[cells[ny * SIM_W + nx].mat].kind == KIND_LIQUID) anyLiquidFace = true;
     }
 
-    if (anyLiquidFace) {
+    if (anyLiquidFace && L.scratch.bfsSearches > 0) {
+        --L.scratch.bfsSearches;
         /* parent[] is STAMPED rather than cleared, exactly as the pocket flood
            above stamps its `seen`. Clearing it was 1,089 stores on every call
            whatever the search then cost -- 1.70 ms/frame of the 4.28, spent
@@ -1732,11 +2032,14 @@ bool World::updateGasPressure(int x, int y) {
 
            parent[k] is meaningful only where parentEpoch[k] == epoch; the
            wrap clears once every 65,536 searches and costs one memset. */
-        static i16 parent[CAP];
-        static u16 parentEpoch[CAP] = { 0 };
-        static i16 queue[CAP];
-        static u16 epoch = 0;
-        if (++epoch == 0) { memset(parentEpoch, 0, sizeof(parentEpoch)); epoch = 1; }
+        i16* const parent      = L.scratch.parent;
+        u16* const parentEpoch = L.scratch.parentEpoch;
+        i16* const queue       = L.scratch.bfsQueue;
+        u16 epoch = ++L.scratch.bfsEpoch;
+        if (epoch == 0) {
+            memset(parentEpoch, 0, sizeof(L.scratch.parentEpoch));
+            epoch = L.scratch.bfsEpoch = 1;
+        }
 
         int head = 0, tail = 0;
         for (int k = 0; k < 4; ++k) {
@@ -1789,7 +2092,7 @@ bool World::updateGasPressure(int x, int y) {
                 cells[dst] = cells[src];
                 temp[dst] = temp[src];
                 cells[dst].flags = (u8)((cells[dst].flags & F_DIR) | pressureStamp);
-                dirtyPoint(dst % SIM_W, dst / SIM_W);
+                dirtyPoint(L, dst % SIM_W, dst / SIM_W);
                 dst = src;
                 path = parent[path];
             }
@@ -1819,16 +2122,16 @@ bool World::updateGasPressure(int x, int y) {
     n.moisture = (u8)((n.moisture & GAS_VOLUME_ONLY) | (bestExcess + give));
     const u8 st = (u8)(stamp() << STAMP_SHIFT);
     n.flags = (u8)((n.flags & F_DIR) | st);
-    dirtyPoint(x, y);
-    dirtyPoint(best % SIM_W, best / SIM_W);
+    dirtyPoint(L, x, y);
+    dirtyPoint(L, best % SIM_W, best / SIM_W);
     return true;
 }
 
-void World::updateGas(int x, int y) {
+void World::updateGas(Lane& L, int x, int y) {
     Cell& c = cells[y * SIM_W + x];
     const MatInfo& m = MATS[c.mat];
 
-    if (updateGasPressure(x, y)) return;
+    if (updateGasPressure(L, x, y)) return;
 
     /* A submerged bubble gets one upward step per turn, but that step may be
        diagonal. This widens a plume naturally without restoring the old bug:
@@ -1837,12 +2140,12 @@ void World::updateGas(int x, int y) {
        travel -- after rising N cells a bubble can be at most N cells sideways. */
     const u8 aboveKind = MATS[cells[(y - 1) * SIM_W + x].mat].kind;
     if (aboveKind == KIND_LIQUID) {
-        if (m.jitter && rngChance(m.jitter)) {
-            const int jd = (rngNext() & 1u) ? 1 : -1;
-            if (tryMove(x, y, x + jd, y - 1)) return;
-            if (tryMove(x, y, x - jd, y - 1)) return;
+        if (m.jitter && lchance(L, m.jitter)) {
+            const int jd = (lrand(L) & 1u) ? 1 : -1;
+            if (tryMove(L, x, y, x + jd, y - 1)) return;
+            if (tryMove(L, x, y, x - jd, y - 1)) return;
         }
-        if (tryMove(x, y, x, y - 1)) return;
+        if (tryMove(L, x, y, x, y - 1)) return;
     }
 
     /* --- diffusion --------------------------------------------------------
@@ -1882,7 +2185,7 @@ void World::updateGas(int x, int y) {
        Downward draws are excluded while SUBMERGED. A bubble under water that
        wandered downward would be a bubble sinking, which is both wrong and
        exactly the thing the branch above this exists to get right. */
-    if (m.jitter && rngChance(m.jitter)) {
+    if (m.jitter && lchance(L, m.jitter)) {
         static const i8 DIFFUSE_DX[19] = {  0,  0,  0, -1, -1,  1,  1,
                                            -1, -1, -1,  1,  1,  1,
                                            -1, -1,  0,  0,  1,  1 };
@@ -1892,8 +2195,8 @@ void World::updateGas(int x, int y) {
         /* The first 13 are level or upward, so restricting a submerged bubble
            to that prefix is the whole guard -- no second table. */
         const int span = (aboveKind == KIND_LIQUID) ? 13 : 19;
-        const int k = (int)(rngNext() % (u32)span);
-        if (tryMove(x, y, x + DIFFUSE_DX[k], y + DIFFUSE_DY[k])) return;
+        const int k = (int)(lrand(L) % (u32)span);
+        if (tryMove(L, x, y, x + DIFFUSE_DX[k], y + DIFFUSE_DY[k])) return;
     }
 
     /* The buoyant climb. Scans up through clear air first and takes the whole
@@ -1911,16 +2214,16 @@ void World::updateGas(int x, int y) {
             if (cells[ny * SIM_W + x].mat != MAT_EMPTY || blocksCell(x, ny)) break;
             top = ny;
         }
-        if (top != y && tryMove(x, y, x, top)) { dirtyPoint(x, top); return; }
+        if (top != y && tryMove(L, x, y, x, top)) { dirtyPoint(L, x, top); return; }
     }
 
     /* A mirror of updateLiquid with the vertical sense flipped. */
-    if (tryMove(x, y, x, y - 1)) return;
-    if (updateConvection(x, y)) return;
+    if (tryMove(L, x, y, x, y - 1)) return;
+    if (updateConvection(L, x, y)) return;
 
     int dx = (c.flags & F_DIR) ? 1 : -1;
-    if (tryMove(x, y, x + dx, y - 1)) return;
-    if (tryMove(x, y, x - dx, y - 1)) return;
+    if (tryMove(L, x, y, x + dx, y - 1)) return;
+    if (tryMove(L, x, y, x - dx, y - 1)) return;
 
     for (int attempt = 0; attempt < 2; ++attempt) {
         int moveFromX = x, moveToX = x;
@@ -1948,8 +2251,8 @@ void World::updateGas(int x, int y) {
             moveToX = nx;
             break;
         }
-        if (moveToX != x && tryMove(moveFromX, y, moveToX, y)) {
-            dirtyArea(imin(x, moveToX), y, imax(x, moveToX), y);
+        if (moveToX != x && tryMove(L, moveFromX, y, moveToX, y)) {
+            dirtyArea(L, imin(x, moveToX), y, imax(x, moveToX), y);
             return;
         }
         dx = -dx;
@@ -1972,7 +2275,7 @@ void World::updateGas(int x, int y) {
    are what keep temperatures inside [0,255] with no second buffer, and a
    second hand-written copy of that arithmetic is precisely the kind of thing
    that drifts out of sync and starts quietly manufacturing heat. */
-void World::heatPair(int i, int jx, int jy) {
+void World::heatPair(Lane& L, int i, int jx, int jy) {
     const int j = jy * SIM_W + jx;
     const int ti = temp[i], tj = temp[j];
     int diff = ti - tj;
@@ -2019,16 +2322,16 @@ void World::heatPair(int i, int jx, int jy) {
            integer division rounds small transfers to zero, which would make a
            heavy material a perpetual heat source that never cools and never
            lets its chunk sleep. */
-        const int deltaI = scaleByMass(move, (int)MATS[cells[i].mat].heatMassShift);
-        const int deltaJ = scaleByMass(move, (int)MATS[cells[j].mat].heatMassShift);
+        const int deltaI = scaleByMass(L, move, (int)MATS[cells[i].mat].heatMassShift);
+        const int deltaJ = scaleByMass(L, move, (int)MATS[cells[j].mat].heatMassShift);
 
         if (diff < 0) { temp[i] = (u8)(ti + deltaI); temp[j] = (u8)(tj - deltaJ); }
         else          { temp[i] = (u8)(ti - deltaI); temp[j] = (u8)(tj + deltaJ); }
-        dirtyPoint(jx, jy);
+        dirtyPoint(L, jx, jy);
     }
 }
 
-void World::updateHeat(int x, int y) {
+void World::updateHeat(Lane& L, int x, int y) {
     const int i = y * SIM_W + x;
 
     /* Exchange with every neighbour, not one random one. The old single-random
@@ -2040,7 +2343,7 @@ void World::updateHeat(int x, int y) {
     for (int k = 0; k < 4; ++k) {
         const int nx = x + NB_DX[k], ny = y + NB_DY[k];
         if (nx < 0 || nx >= SIM_W || ny < 0 || ny >= SIM_H) continue;
-        heatPair(i, nx, ny);
+        heatPair(L, i, nx, ny);
     }
 
     /* --- warm air rises ---------------------------------------------
@@ -2064,7 +2367,7 @@ void World::updateHeat(int x, int y) {
                 if (move > 0) {
                     temp[i]  = (u8)(here - move);
                     temp[up] = (u8)(there + move);
-                    dirtyPoint(x, y - 1);
+                    dirtyPoint(L, x, y - 1);
                 }
             }
         }
@@ -2125,7 +2428,7 @@ void World::updateHeat(int x, int y) {
                 }
             }
             if (clear) {
-                if (spread > 1) heatPair(i, fxFull, fyFull);
+                if (spread > 1) heatPair(L, i, fxFull, fyFull);
                 continue;
             }
 
@@ -2140,7 +2443,7 @@ void World::updateHeat(int x, int y) {
             /* Only if we got past the immediate neighbour -- that pair was
                already handled above, and doing it twice would just double
                iron's rate to its nearest neighbour for no reason. */
-            if (fx >= 0 && (fx != x + dx || fy != y + dy)) heatPair(i, fx, fy);
+            if (fx >= 0 && (fx != x + dx || fy != y + dy)) heatPair(L, i, fx, fy);
         }
     }
 
@@ -2159,7 +2462,7 @@ void World::updateHeat(int x, int y) {
         int rate = (cells[i].mat == MAT_EMPTY) ? AIR_COOL
                  : (kind == KIND_GAS)          ? GAS_COOL
                  :                               SOLID_COOL;
-        if (rngChance(rate)) {
+        if (lchance(L, rate)) {
             /* The BACKGROUND gets a say, and this is the only place in the whole
                simulation that reads the bg array -- see the note on World::bg,
                which until now said nothing ever did. A ceramic-lined chamber holds
@@ -2177,7 +2480,7 @@ void World::updateHeat(int x, int y) {
                a byte already in a register. */
             const u8 back = (u8)(bg[i] & BG_MAT_MASK);
             const u8 hold = g_bgRetain[back];
-            if (!hold || !rngChance(hold))
+            if (!hold || !lchance(L, hold))
                 temp[i] = (u8)(t > AMBIENT_TEMP ? t - 1 : t + 1);
         }
     }
@@ -2197,7 +2500,7 @@ void World::updateHeat(int x, int y) {
         const u8 floorT = g_bgHeat[floorMat];
         if (floorT && temp[i] < floorT) {
             temp[i] = floorT;
-            dirtyPoint(x, y);
+            dirtyPoint(L, x, y);
         }
     }
 
@@ -2230,18 +2533,18 @@ void World::updateHeat(int x, int y) {
        0.0037% over 600 frames -- while genuine transfer drifts one way, and a
        pinned source keeps its neighbours drifting so it never looks converged.
        Until that exists, this stays unconditional on purpose. */
-    dirtyPoint(x, y);
+    dirtyPoint(L, x, y);
 }
 
 /* Table-driven phase conversion plus gas expansion charge. `convert` remains
    the right operation for chemistry and combustion; only a LIQUID becoming a
    GAS owns the volume increase that later becomes pressure. */
-void World::phaseChange(int x, int y, u8 mat) {
+void World::phaseChange(Lane& L, int x, int y, u8 mat) {
     Cell& c = cells[y * SIM_W + x];
     const u8 from = c.mat;
     const bool expands = MATS[from].kind == KIND_LIQUID &&
                          MATS[mat].kind == KIND_GAS;
-    convert(x, y, mat);
+    convert(L, x, y, mat);
     if (!expands) return;
     const int volumes = imax(1, (int)g_matGasExpansion[mat]);
     c.moisture = (u8)imin((int)GAS_EXCESS_MASK, volumes - 1);
@@ -2256,14 +2559,14 @@ void World::phaseChange(int x, int y, u8 mat) {
    one randomly chosen neighbour. Averaged over frames that behaves like
    diffusion with a downward bias, which is all we need it to look like.
    ====================================================================== */
-void World::updateMoisture(int x, int y) {
+void World::updateMoisture(Lane& L, int x, int y) {
     Cell& c = cells[y * SIM_W + x];
     const MatInfo& m = MATS[c.mat];
 
     /* --- absorb a touching water cell ---------------------------------- */
     if ((int)c.moisture + MOISTURE_UNIT <= (int)m.capacity) {
         static const int OFF[4][2] = { {0,-1}, {-1,0}, {1,0}, {0,1} };
-        u32 start = rngBits(2);   /* rotate the scan order, else water always
+        u32 start = lbits(L, 2);   /* rotate the scan order, else water always
                                      gets eaten from the same side first */
         for (u32 k = 0; k < 4; ++k) {
             const int* o = OFF[(start + k) & 3];
@@ -2273,8 +2576,8 @@ void World::updateMoisture(int x, int y) {
                 n.mat      = MAT_EMPTY;
                 n.moisture = 0;
                 c.moisture = (u8)(c.moisture + MOISTURE_UNIT);
-                dirtyPoint(nx, ny);
-                dirtyPoint(x, y);
+                dirtyPoint(L, nx, ny);
+                dirtyPoint(L, x, y);
                 break;
             }
         }
@@ -2283,7 +2586,7 @@ void World::updateMoisture(int x, int y) {
     if (c.moisture == 0) return;
 
     /* --- exchange with one neighbour ----------------------------------- */
-    u32 r = rngNext() & 7;
+    u32 r = lrand(L) & 7;
     int nx = x, ny = y, dirShift;
     if      (r == 4) { ny = y - 1; dirShift = WICK_UP_SHIFT;   }  /* 1/8 up   */
     else if (r == 5) { nx = x - 1; dirShift = WICK_SIDE_SHIFT; }  /* 1/8 left */
@@ -2303,11 +2606,11 @@ void World::updateMoisture(int x, int y) {
             (int)c.moisture > (int)m.capacity - MOISTURE_UNIT) {
             n.mat      = MAT_WATER;
             n.moisture = 0;
-            n.tint     = (u8)rngBits(8);
+            n.tint     = (u8)lbits(L, 8);
             n.flags    = (u8)(stamp() << STAMP_SHIFT);   /* waits a frame */
             c.moisture = (u8)(c.moisture - MOISTURE_UNIT);
-            dirtyPoint(x, y);
-            dirtyPoint(nx, ny);
+            dirtyPoint(L, x, y);
+            dirtyPoint(L, nx, ny);
         }
         return;
     }
@@ -2338,8 +2641,8 @@ void World::updateMoisture(int x, int y) {
 
     c.moisture = (u8)(c.moisture - amount);
     n.moisture = (u8)(n.moisture + amount);
-    dirtyPoint(x, y);
-    dirtyPoint(nx, ny);
+    dirtyPoint(L, x, y);
+    dirtyPoint(L, nx, ny);
 }
 
 /* ======================================================================
@@ -2382,19 +2685,19 @@ static_assert(MAT_COUNT <= 256,
    until next frame to move. Stamping it as already-handled matters because the
    scan runs bottom-to-top: a cell emitted upward sits in a row this frame has
    not reached yet, and without the stamp it would get a free extra step. */
-void World::spawnCell(int x, int y, u8 mat) {
+void World::spawnCell(Lane& L, int x, int y, u8 mat) {
     const int i = y * SIM_W + x;
     Cell& c = cells[i];
     c.mat      = mat;
     c.moisture = 0;
-    c.tint     = (u8)rngBits(8);
+    c.tint     = (u8)lbits(L, 8);
     c.flags    = (u8)(stamp() << STAMP_SHIFT);
     const MatInfo& m = MATS[mat];
     temp[i] = m.spawnTemp ? m.spawnTemp : (u8)AMBIENT_TEMP;
-    dirtyPoint(x, y);
+    dirtyPoint(L, x, y);
 }
 
-void World::updateClone(int x, int y) {
+void World::updateClone(Lane& L, int x, int y) {
     const int i = y * SIM_W + x;
     Cell& c = cells[i];
 
@@ -2425,7 +2728,7 @@ void World::updateClone(int x, int y) {
             if (nm == MAT_EMPTY || nm == MAT_WALL || nm == MAT_CLONE || nm == MAT_VOID
                 || nm == MAT_HEATER || nm == MAT_COOLER) continue;
             c.moisture = nm;
-            dirtyPoint(x, y);
+            dirtyPoint(L, x, y);
             break;
         }
         return;   /* spend the frame latching; emit from the next one on */
@@ -2438,11 +2741,11 @@ void World::updateClone(int x, int y) {
        flows or rises away. */
     for (int k = 0; k < 4; ++k) {
         const int nx = x + NB_DX[k], ny = y + NB_DY[k];
-        if (cells[ny * SIM_W + nx].mat == MAT_EMPTY) spawnCell(nx, ny, c.moisture);
+        if (cells[ny * SIM_W + nx].mat == MAT_EMPTY) spawnCell(L, nx, ny, c.moisture);
     }
 }
 
-void World::updateVoid(int x, int y) {
+void World::updateVoid(Lane& L, int x, int y) {
     for (int k = 0; k < 4; ++k) {
         const int nx = x + NB_DX[k], ny = y + NB_DY[k];
         const int j = ny * SIM_W + nx;
@@ -2454,7 +2757,7 @@ void World::updateVoid(int x, int y) {
         if (nm == MAT_WALL) continue;
         cells[j].mat      = MAT_EMPTY;
         cells[j].moisture = 0;
-        dirtyPoint(nx, ny);
+        dirtyPoint(L, nx, ny);
         /* Temperature is left alone: the matter is gone but its warmth lingers
            in the air and dissipates normally, so a drain does not double as a
            perfect heat sink. */
@@ -2476,7 +2779,7 @@ void World::updateVoid(int x, int y) {
    branchy special-casing between the two. Actual boiling is handled by the
    table-driven boilTemp path in updateCell and does not need a free surface.
    ====================================================================== */
-void World::updateEvaporation(int x, int y) {
+void World::updateEvaporation(Lane& L, int x, int y) {
     const int i = y * SIM_W + x;
     const MatInfo& m = MATS[cells[i].mat];
 
@@ -2485,7 +2788,7 @@ void World::updateEvaporation(int x, int y) {
         if (cells[(y + NB_DY[k]) * SIM_W + (x + NB_DX[k])].mat == MAT_EMPTY) { open = true; break; }
     }
     if (!open) return;
-    dirtyPoint(x, y);
+    dirtyPoint(L, x, y);
 
     int over = (int)temp[i] - AMBIENT_TEMP;
     if (over < 0) over = 0;
@@ -2494,9 +2797,9 @@ void World::updateEvaporation(int x, int y) {
        the only thing the table changes is what a liquid does when nothing is
        heating it at all. */
     const u32 chance = (u32)g_matVolatility[cells[i].mat] + (u32)(over * over);
-    if ((rngNext() & 0xFFFF) >= chance) return;
+    if ((lrand(L) & 0xFFFF) >= chance) return;
 
-    phaseChange(x, y, m.boilsTo);
+    phaseChange(L, x, y, m.boilsTo);
     temp[i] = latentDrain((int)temp[i]);
 }
 
@@ -2559,19 +2862,19 @@ bool World::airWithin(int x, int y, int r) const {
    because losing a tree's seeds for felling it is exactly the punishment that
    would make nobody fell trees. The seed is a powder, so it drops out of the
    dying canopy and lands where you can pick it up. */
-void World::updateLeafFall(int x, int y) {
+void World::updateLeafFall(Lane& L, int x, int y) {
     Cell& c = cells[y * SIM_W + x];
-    if (--c.moisture) { dirtyPoint(x, y); return; }
-    breakCell(x, y);
+    if (--c.moisture) { dirtyPoint(L, x, y); return; }
+    breakCell(L, x, y);
     /* The neighbourhood, not the cell: the light that was blocked by this leaf
        now reaches past it, and the cells under a vanishing canopy have to be
        given a look or the hole stays dark until something else wakes them. */
-    dirtyArea(x - 1, y - 1, x + 1, y + 1);
+    dirtyArea(L, x - 1, y - 1, x + 1, y + 1);
 }
 
-void World::updateGrass(int x, int y) {
+void World::updateGrass(Lane& L, int x, int y) {
     /* Buried: nothing living survives out of reach of the air. */
-    if (!airWithin(x, y, GRASS_DEPTH)) { convert(x, y, MAT_DIRT); return; }
+    if (!airWithin(x, y, GRASS_DEPTH)) { convert(L, x, y, MAT_DIRT); return; }
 
     /* Spread along the 8-neighbourhood, not the 4. Ground in this world is
        rarely flat, and orthogonal-only spread stops dead at every one-cell
@@ -2588,7 +2891,7 @@ void World::updateGrass(int x, int y) {
            runs out rather than because anything counts layers. */
         if (!airWithin(nx, ny, GRASS_DEPTH)) continue;
         moreToDo = true;
-        if (rngChance(GRASS_SPREAD)) convert(nx, ny, MAT_GRASS);
+        if (lchance(L, GRASS_SPREAD)) convert(L, nx, ny, MAT_GRASS);
     }
     /* --- blossom ------------------------------------------------------
        A rare flower on turf that has room above it, so a fresh world grows
@@ -2600,20 +2903,20 @@ void World::updateGrass(int x, int y) {
        keeps it from being a slow leak: an old world does not accumulate
        flowers forever, it has however many it grew while it was greening.
        Planting more is what ITEM_FLOWER_SEED is for. */
-    if (moreToDo && rngChance(GRASS_FLOWER) &&
+    if (moreToDo && lchance(L, GRASS_FLOWER) &&
         y - 1 >= PLAY_Y0 && cells[(y - 1) * SIM_W + x].mat == MAT_EMPTY)
-        setCell(x, y - 1, MAT_FLOWER);
+        setCell(L, x, y - 1, MAT_FLOWER);
 
     /* Only stay awake while there is still somewhere to go. */
-    if (moreToDo) dirtyPoint(x, y);
+    if (moreToDo) dirtyPoint(L, x, y);
 }
 
-void World::updateCell(int x, int y) {
+void World::updateCell(Lane& L, int x, int y) {
     const int i = y * SIM_W + x;
 
     /* Heat first, and for every cell -- air and walls included -- so warmth
        crosses open space. Cells already at ambient cost a single compare. */
-    if (temp[i] != AMBIENT_TEMP) updateHeat(x, y);
+    if (temp[i] != AMBIENT_TEMP) updateHeat(L, x, y);
 
     Cell& c = cells[i];
     if (c.mat == MAT_EMPTY || c.mat == MAT_WALL) return;
@@ -2625,7 +2928,7 @@ void World::updateCell(int x, int y) {
            next frame: that costs nothing here (whatever moved it already
            dirtied these cells) and it is what makes a stale stamp, on the rare
            frame one aliases, heal itself instead of stranding the cell. */
-        dirtyPoint(x, y);
+        dirtyPoint(L, x, y);
         return;
     }
     c.flags = (u8)((c.flags & F_DIR) | (st << STAMP_SHIFT));
@@ -2636,7 +2939,7 @@ void World::updateCell(int x, int y) {
        Give that parcel its turn before applying phase/reaction tables to the
        mesh material itself. */
     if ((c.mat == MAT_SIEVE || c.mat == MAT_GAS_SIEVE) && c.moisture) {
-        updateFilterFluid(x, y);
+        updateFilterFluid(L, x, y);
         return;
     }
 
@@ -2648,7 +2951,7 @@ void World::updateCell(int x, int y) {
        light the Coal before the wet reaction gets a chance. */
     if (c.moisture && reactivePowderAllowsGas(c.mat, occupantMat(c.moisture))) {
         const u8 into = g_matWetInto[c.mat];
-        convert(x, y, into);          /* also clears the consumed gas occupant */
+        convert(L, x, y, into);          /* also clears the consumed gas occupant */
         return;
     }
 
@@ -2662,14 +2965,22 @@ void World::updateCell(int x, int y) {
        moved -- a seed still falling past wet ground should not root in mid-air,
        and a seed that has settled is exactly a seed whose chunk is still awake
        from the frame it landed on. */
-    if (g_matIsSeed[c.mat] && sproutCount < MAX_SPROUTS) {
+    /* Staged into this stripe's slot, merged in stripe order once the scan
+       is done -- see the lane block at the top of this file. The cap is per
+       stripe now, so a world full of falling seeds can report a few more of
+       them per frame than it used to; tree.cpp takes what it is given and
+       the rest keep their chunks awake until next frame either way. */
+    if (g_matIsSeed[c.mat]) {
+        const int st = L.stripe;
+        int& sproutN = (st >= 0) ? g_stripeSproutN[st] : sproutCount;
+        i32* const sproutTo = (st >= 0) ? g_stripeSprout[st] : sprout;
         const u8 below = (y < PLAY_Y1) ? cells[(y + 1) * SIM_W + x].mat : (u8)MAT_WALL;
-        if (below == MAT_DIRT || below == MAT_GRASS) {
-            sprout[sproutCount++] = i;
+        if (sproutN < MAX_SPROUTS && (below == MAT_DIRT || below == MAT_GRASS)) {
+            sproutTo[sproutN++] = i;
             /* Kept awake until somebody deals with it. Without this a seed that
                lands while the tree table happens to be full settles for ever
                and never gets a second look. */
-            dirtyPoint(x, y);
+            dirtyPoint(L, x, y);
         }
     }
 
@@ -2689,9 +3000,9 @@ void World::updateCell(int x, int y) {
            not implemented anywhere -- molten slag is lighter than either molten
            metal, so the existing density rule sinks the metal through it. */
         u8 into = m.boilsTo;
-        if (g_matSmeltYield[c.mat] && !rngChance(g_matSmeltYield[c.mat]))
+        if (g_matSmeltYield[c.mat] && !lchance(L, g_matSmeltYield[c.mat]))
             into = MAT_SLAG_MELT;
-        phaseChange(x, y, into);
+        phaseChange(L, x, y, into);
         /* Boiling absorbs latent heat. Without this a single hot cell flashes
            an entire pool to steam in one frame instead of simmering. */
         temp[i] = latentDrain(t);
@@ -2713,7 +3024,7 @@ void World::updateCell(int x, int y) {
             const int nx = x + NB_DX[k], ny = y + NB_DY[k];
             const int j = ny * SIM_W + nx;
             if (cells[j].mat != g_matWetBy[c.mat]) continue;
-            convert(x, y, g_matWetInto[c.mat]);
+            convert(L, x, y, g_matWetInto[c.mat]);
             /* One reagent VOLUME is consumed. For an ordinary Steam cell that
                means removing the cell, as before. A compressed cell also owns
                hidden expansion volumes, though, and deleting it wholesale
@@ -2728,10 +3039,10 @@ void World::updateCell(int x, int y) {
                                         (reagentExcess - 1));
                 reagent.flags = (u8)((reagent.flags & F_DIR) |
                                      (stamp() << STAMP_SHIFT));
-                dirtyPoint(nx, ny);
+                dirtyPoint(L, nx, ny);
             } else {
-                spawnCell(nx, ny, MAT_EMPTY);
-                dirtyPoint(nx, ny);
+                spawnCell(L, nx, ny, MAT_EMPTY);
+                dirtyPoint(L, nx, ny);
             }
             return;
         }
@@ -2750,7 +3061,7 @@ void World::updateCell(int x, int y) {
         for (int k = 0; k < 4; ++k) {
             const int nx = x + NB_DX[k], ny = y + NB_DY[k];
             if (cells[ny * SIM_W + nx].mat != g_matAlloyWith[c.mat]) continue;
-            convert(x, y, g_matAlloysTo[c.mat]);
+            convert(L, x, y, g_matAlloysTo[c.mat]);
             return;
         }
     }
@@ -2774,30 +3085,30 @@ void World::updateCell(int x, int y) {
                    Any lava qualifies: it freezes back to stone below 100, well
                    above wood's ignition point. */
                 if ((nm == MAT_FIRE || nm == MAT_LAVA || nm == MAT_PLASMA)
-                    && rngChance(FIRE_SPREAD)) { ignite = true; break; }
+                    && lchance(L, FIRE_SPREAD)) { ignite = true; break; }
             }
         }
         if (ignite) {
             /* Combustion, unlike boiling, RELEASES heat: light the flame at
                least as hot as fresh fire so it keeps the front going. */
             const u8 prod = m.burnsTo;
-            convert(x, y, prod);
+            convert(L, x, y, prod);
             temp[i] = (u8)imax(t, (int)MATS[prod].spawnTemp);
             return;
         }
     }
     if (m.coolTemp && t < (int)m.coolTemp
         && (g_matCondenseChance[c.mat] >= 65536u
-            || (rngNext() & 0xFFFFu) < g_matCondenseChance[c.mat])) {
+            || (lrand(L) & 0xFFFFu) < g_matCondenseChance[c.mat])) {
         /* Expansion-only gas volumes carry pressure but no condensation mass
            token. They collapse to empty; exactly one owner parcel from the
            original liquid returns to liquid, so 1 Water -> 3 Steam -> 1 Water
            rather than multiplying matter on the round trip. */
         if (m.kind == KIND_GAS && MATS[m.coolsTo].kind == KIND_LIQUID &&
             (c.moisture & GAS_VOLUME_ONLY))
-            convert(x, y, MAT_EMPTY);
+            convert(L, x, y, MAT_EMPTY);
         else
-            phaseChange(x, y, m.coolsTo); /* fire dies, steam condenses, lava sets */
+            phaseChange(L, x, y, m.coolsTo); /* fire dies, steam condenses, lava sets */
         return;
     }
     /* Expiry on a timer rather than by temperature. Only cold fire uses this,
@@ -2806,8 +3117,8 @@ void World::updateCell(int x, int y) {
        to cool itself to death the way fire does. See g_matDecay in materials.h.
        The check is a single load against a MAT_COUNT-byte table that is 0 for
        everything else, so it costs nothing for materials that do not opt in. */
-    if (g_matDecay[c.mat] && rngChance(g_matDecay[c.mat])) {
-        convert(x, y, MAT_EMPTY);
+    if (g_matDecay[c.mat] && lchance(L, g_matDecay[c.mat])) {
+        convert(L, x, y, MAT_EMPTY);
         return;
     }
     /* --- a leaf that has been condemned --------------------------------
@@ -2820,7 +3131,7 @@ void World::updateCell(int x, int y) {
        the moment it was condemned would refuse to burn for the second and a
        half it takes to fall. Leaves have nothing below this to do anyway --
        they are static, so the movement rules never applied to them. */
-    if (g_matIsLeaf[c.mat] && c.moisture) { updateLeafFall(x, y); return; }
+    if (g_matIsLeaf[c.mat] && c.moisture) { updateLeafFall(L, x, y); return; }
 
     if (m.quenchedBy) {
         for (int k = 0; k < 4; ++k) {
@@ -2831,8 +3142,8 @@ void World::updateCell(int x, int y) {
                that is what lets a fire dropped in water raise steam. */
             const int give = imin(80, t - AMBIENT_TEMP);
             if (give > 0) temp[j] = (u8)imin(255, (int)temp[j] + give);
-            convert(x, y, MAT_EMPTY);
-            dirtyPoint(nx, ny);
+            convert(L, x, y, MAT_EMPTY);
+            dirtyPoint(L, nx, ny);
             return;
         }
     }
@@ -2893,12 +3204,12 @@ void World::updateCell(int x, int y) {
             const int nx = x + NB_DX[k], ny = y + NB_DY[k];
             if (cells[ny * SIM_W + nx].mat != MAT_EMPTY) continue;
             room = true;
-            if (!rngChance(SPRING_FLOW_CHANCE)) continue;
-            spawnCell(nx, ny, MAT_WATER);
-            dirtyPoint(nx, ny);
+            if (!lchance(L, SPRING_FLOW_CHANCE)) continue;
+            spawnCell(L, nx, ny, MAT_WATER);
+            dirtyPoint(L, nx, ny);
             return;
         }
-        if (room) dirtyPoint(x, y);
+        if (room) dirtyPoint(L, x, y);
     }
 
     /* Both phases of acid corrode, on identical terms -- see g_matCorrodes. The
@@ -2912,7 +3223,7 @@ void World::updateCell(int x, int y) {
             const u8 nm = cells[ny * SIM_W + nx].mat;
             if (g_matDissolvedBy[nm] != MAT_ACID) continue;
             moreToDo = true;
-            if (!rngChance(ACID_DISSOLVE_CHANCE)) continue;
+            if (!lchance(L, ACID_DISSOLVE_CHANCE)) continue;
             /* BOTH cells go: the wall is eaten and the acid that ate it is
                SPENT. That second half is what bounds the whole mechanism,
                and it is not optional.
@@ -2946,12 +3257,12 @@ void World::updateCell(int x, int y) {
                whatever it lands in. Read before the cell is destroyed, for the
                obvious reason. */
             const u8 give = g_matDissolveHeat[nm];
-            convert(nx, ny, MAT_EMPTY);
-            convert(x, y, MAT_EMPTY);
+            convert(L, nx, ny, MAT_EMPTY);
+            convert(L, x, y, MAT_EMPTY);
             if (give) heat(nx, ny, 1, (int)give);
             return;
         }
-        if (moreToDo) dirtyPoint(x, y);
+        if (moreToDo) dirtyPoint(L, x, y);
     }
 
     /* Machines act on their neighbours and never move; nothing below applies. */
@@ -2997,13 +3308,13 @@ void World::updateCell(int x, int y) {
             if (tj == set) continue;
             temp[j] = (u8)(tj < set ? imin(set, tj + MACHINE_DRIVE)
                                     : imax(set, tj - MACHINE_DRIVE));
-            dirtyPoint(nx, ny);
+            dirtyPoint(L, nx, ny);
         }
-        dirtyPoint(x, y);
+        dirtyPoint(L, x, y);
         return;
     }
-    if (c.mat == MAT_CLONE) { updateClone(x, y); return; }
-    if (c.mat == MAT_VOID)  { updateVoid(x, y);  return; }
+    if (c.mat == MAT_CLONE) { updateClone(L, x, y); return; }
+    if (c.mat == MAT_VOID)  { updateVoid(L, x, y);  return; }
 
     /* Burning fuel forces heat into its neighbours, the same way a heater does and
        for the same reason -- see g_matDrive in materials.h. Placed here, after the
@@ -3024,7 +3335,7 @@ void World::updateCell(int x, int y) {
             const int give = imin(drive, set - tj);
             temp[j] = (u8)(tj + give);
             spent += give;
-            dirtyPoint(nx, ny);
+            dirtyPoint(L, nx, ny);
         }
         /* And it COSTS the fire what it gave, shifted by its own thermal mass --
            the same accounting conduction uses. Without this the drive creates heat
@@ -3051,7 +3362,7 @@ void World::updateCell(int x, int y) {
             const int shift = MATS[c.mat].heatMassShift;
             int loss = spent >> shift;
             const int rem = spent - (loss << shift);
-            if (rem && rngChance((u32)((rem << 8) >> shift))) ++loss;
+            if (rem && lchance(L, (u32)((rem << 8) >> shift))) ++loss;
             if (loss) {
                 const int now = temp[i];
                 temp[i] = (u8)(now > loss ? now - loss : 0);
@@ -3059,11 +3370,11 @@ void World::updateCell(int x, int y) {
         }
     }
 
-    if (m.capacity) updateMoisture(x, y);   /* before moving, so the moisture
+    if (m.capacity) updateMoisture(L, x, y);   /* before moving, so the moisture
                                                travels with the cell */
     if (m.kind == KIND_LIQUID && m.boilsTo) {
         const u8 was = c.mat;
-        updateEvaporation(x, y);
+        updateEvaporation(L, x, y);
         if (c.mat != was) return;           /* it turned to vapour; `m` is now
                                                the wrong material to act on */
     }
@@ -3071,19 +3382,179 @@ void World::updateCell(int x, int y) {
     /* Grass first, and it may turn this cell into dirt -- after which the
        powder rule below still runs on it, which is right: a buried clod of turf
        should keep falling in the same frame it stops being turf. */
-    if (c.mat == MAT_GRASS) updateGrass(x, y);
+    if (c.mat == MAT_GRASS) updateGrass(L, x, y);
 
-    if      (m.kind == KIND_POWDER) updatePowder(x, y);
-    else if (m.kind == KIND_LIQUID) updateLiquid(x, y);
-    else if (m.kind == KIND_GAS)    updateGas(x, y);
+    if      (m.kind == KIND_POWDER) updatePowder(L, x, y);
+    else if (m.kind == KIND_LIQUID) updateLiquid(L, x, y);
+    else if (m.kind == KIND_GAS)    updateGas(L, x, y);
+}
+
+
+/* Everything a stripe needs to know about the frame it is in, and nothing
+   that changes while it runs. Written by step() before any lane starts and
+   read-only for the rest of the frame. */
+struct StripeFrame {
+    int  coreCX0, coreCX1, coreCY0, coreCY1;
+    int  liveCX0, liveCX1, liveCY0, liveCY1;
+    bool leftFirst;
+    u32  seedBase;
+};
+static StripeFrame g_sf;
+
+/* ======================================================================
+   The lane pool
+   ----------------------------------------------------------------------
+   Raw Win32 threads rather than std::thread: this toolchain's C++11
+   threading is not available, and everything else in the project already
+   talks to Win32 directly.
+
+   Work is STOLEN, not dealt. Stripes are wildly uneven -- a boiling pool
+   sits in two of them and the rest of the screen is settled rock costing
+   nothing -- so handing each thread a fixed share would leave most of them
+   finished and waiting. A shared counter costs one interlocked increment
+   per stripe, which against a stripe's worth of work is nothing.
+
+   Stealing makes the ORDER of execution non-deterministic, which is why
+   nothing a lane accumulates is merged in completion order. See the lane
+   block at the top of this file.
+   ====================================================================== */
+#ifdef CINDERLIFT_LANE_POOL
+static const int MAX_WORKERS = MAX_LANE_THREADS - 1;
+static HANDLE  g_laneThread[MAX_WORKERS];
+static HANDLE  g_laneGo[MAX_WORKERS];
+static HANDLE  g_laneDone[MAX_WORKERS];
+static int     g_workerCount = 0;      /* threads BESIDES the caller */
+static volatile LONG g_laneQuit = 0;
+
+#else
+static const int g_workerCount = 0;
+#endif
+
+static World*  g_laneWorld = 0;
+static int     g_laneJob[STRIPE_COUNT];
+static int     g_laneJobs = 0;
+#ifdef CINDERLIFT_LANE_POOL
+static volatile LONG g_laneNext = 0;
+#else
+static int g_laneNext = 0;
+#endif
+
+/* Stripes are stolen, so a stripe does not know which THREAD will run it --
+   but it does have to know which LANE, because that is where its scratch and
+   its dirty plane live. Resolved by asking the pool, once, at the top of
+   runStripe: the drain loop parks its own id here first. */
+#ifdef CINDERLIFT_LANE_POOL
+static __thread int t_laneId = 0;
+#else
+static int t_laneId = 0;
+#endif
+static int laneOf(int stripe) { (void)stripe; return t_laneId; }
+
+static void laneDrain(void) {
+    for (;;) {
+#ifdef CINDERLIFT_LANE_POOL
+        const long i = InterlockedIncrement(&g_laneNext) - 1;
+#else
+        const long i = g_laneNext++;
+#endif
+        if (i >= g_laneJobs) return;
+        g_laneWorld->runStripe(g_laneJob[i]);
+    }
+}
+
+#ifdef CINDERLIFT_LANE_POOL
+static DWORD WINAPI laneMain(LPVOID param) {
+    const int id = (int)(size_t)param;
+    /* Set once for the life of the thread. Lane 0's plane belongs to whoever
+       calls step(), which works as one of the lanes too. */
+    t_laneId = id + 1;
+    g_lane[id + 1].dirty = &g_dirtyLog[id + 1];
+    for (;;) {
+        WaitForSingleObject(g_laneGo[id], INFINITE);
+        if (g_laneQuit) return 0;
+        laneDrain();
+        SetEvent(g_laneDone[id]);
+    }
+}
+
+#endif  /* CINDERLIFT_LANE_POOL */
+
+int simWorkers(void) { return g_workerCount; }
+
+void simSetWorkers(int threads) {
+#ifndef CINDERLIFT_LANE_POOL
+    /* No pool on this target: one lane, every stripe, on the caller. */
+    (void)threads;
+    return;
+#else
+    if (threads < 1) threads = 1;
+    if (threads > MAX_WORKERS + 1) threads = MAX_WORKERS + 1;
+    const int want = threads - 1;          /* the caller is one of them */
+    if (want == g_workerCount) return;
+
+    /* Tear the pool down whichever way the count is moving. Growing it in
+       place would mean two shapes of this function to get right instead of
+       one, and the call happens at most a handful of times in a session. */
+    if (g_workerCount) {
+        InterlockedExchange(&g_laneQuit, 1);
+        for (int i = 0; i < g_workerCount; ++i) SetEvent(g_laneGo[i]);
+        for (int i = 0; i < g_workerCount; ++i) {
+            WaitForSingleObject(g_laneThread[i], INFINITE);
+            CloseHandle(g_laneThread[i]);
+            CloseHandle(g_laneGo[i]);
+            CloseHandle(g_laneDone[i]);
+        }
+        InterlockedExchange(&g_laneQuit, 0);
+        g_workerCount = 0;
+    }
+    for (int i = 0; i < want; ++i) {
+        g_laneGo[i]   = CreateEvent(0, FALSE, FALSE, 0);
+        g_laneDone[i] = CreateEvent(0, FALSE, FALSE, 0);
+        g_laneThread[i] = CreateThread(0, 0, laneMain, (LPVOID)(size_t)i, 0, 0);
+        if (!g_laneThread[i] || !g_laneGo[i] || !g_laneDone[i]) {
+            /* Out of threads or handles: run with what was made rather than
+               refusing to simulate. */
+            if (g_laneThread[i]) CloseHandle(g_laneThread[i]);
+            if (g_laneGo[i])     CloseHandle(g_laneGo[i]);
+            if (g_laneDone[i])   CloseHandle(g_laneDone[i]);
+            break;
+        }
+        ++g_workerCount;
+    }
+#endif
+}
+
+/* Run one phase's stripes across the pool, and return only once every one of
+   them has finished. The caller works too -- an idle main thread while eleven
+   others simulate would be one twelfth of the machine thrown away. */
+static void laneRunPhase(World* w, const int* stripes, int count) {
+    if (count <= 0) return;
+    g_laneWorld = w;
+    g_laneJobs = count;
+    for (int i = 0; i < count; ++i) g_laneJob[i] = stripes[i];
+#ifdef CINDERLIFT_LANE_POOL
+    InterlockedExchange(&g_laneNext, 0);
+    for (int i = 0; i < g_workerCount; ++i) SetEvent(g_laneGo[i]);
+#else
+    g_laneNext = 0;
+#endif
+    t_laneId = 0;
+    g_lane[0].dirty = &g_dirtyLog[0];
+    laneDrain();
+    g_lane[0].dirty = 0;
+    g_lane[0].rng = &g_rng;
+#ifdef CINDERLIFT_LANE_POOL
+    for (int i = 0; i < g_workerCount; ++i)
+        WaitForSingleObject(g_laneDone[i], INFINITE);
+#endif
 }
 
 void World::step() {
+    dirtyLogInit();
     /* Pocket sharing is the only pressure operation that searches farther than
        its immediate material path. Bound it across the whole world, not per
        chunk, so a pathological mass-boil drains over several frames instead of
        turning one frame into an unbounded collection of 2,048-node walks. */
-    pressureRoutesRemaining = GAS_PRESSURE_POCKET_BUDGET;
     /* Last frame's accumulated rects become this frame's work list. */
     memcpy(cur, next, sizeof(cur));
     clearDirty(next);
@@ -3141,9 +3612,115 @@ void World::step() {
     const int liveCY0 = imax(0, coreCY0 - fingerTop);
     const int liveCY1 = imin(CHUNKS_Y - 1, coreCY1 + fingerBottom);
 
+    /* --- the parallel scan ---------------------------------------------
+       Two phases: even stripes, then odd. Adjacent stripes never run at the
+       same time, and two stripes that DO run together have a whole stripe
+       between them -- which is the separation RULE_WRITE_REACH_X says is
+       enough. Everything else about the scan is as it was: bottom to top so
+       a falling cell lands in a row already dealt with, and the left/right
+       alternation per frame so piles do not lean.
+
+       The frame constants the stripes share are handed over in g_sf rather
+       than captured, because a Win32 thread entry point takes one pointer
+       and this is one struct instead of a closure. */
+    g_sf.leftFirst = leftFirst;
+    g_sf.coreCX0 = coreCX0; g_sf.coreCX1 = coreCX1;
+    g_sf.coreCY0 = coreCY0; g_sf.coreCY1 = coreCY1;
+    g_sf.liveCX0 = liveCX0; g_sf.liveCX1 = liveCX1;
+    g_sf.liveCY0 = liveCY0; g_sf.liveCY1 = liveCY1;
+    /* One draw off the master stream per frame, and every stripe's stream
+       hangs off it. The master keeps advancing whether or not the sim did
+       anything, so a save still carries a stream that has moved on. */
+    g_sf.seedBase = rngNext();
+
+    memset(g_stripeSproutN, 0, sizeof(g_stripeSproutN));
+    memset(g_stripeFelledN, 0, sizeof(g_stripeFelledN));
+    memset(g_stripeActive,  0, sizeof(g_stripeActive));
+
+    for (int phase = 0; phase < STRIPE_COLOURS; ++phase) {
+        int list[STRIPE_COUNT], n = 0;
+        for (int st = phase; st < STRIPE_COUNT; st += STRIPE_COLOURS) list[n++] = st;
+        laneRunPhase(this, list, n);
+    }
+
+    /* Union every lane's dirty plane into next[]. Only the chunks a lane
+       actually touched are visited, so this costs what happened rather than
+       what the world is -- the whole-grid pass world.h forbids would undo
+       the point of the chunk system entirely. */
+    for (int lane = 0; lane < MAX_LANE_THREADS; ++lane) {
+        DirtyLog& d = g_dirtyLog[lane];
+        for (int i = 0; i < d.n; ++i) {
+            const int idx = d.touched[i];
+            const Chunk& c = d.rect[idx];
+            Chunk& n = next[idx];
+            if (c.minX < n.minX) n.minX = c.minX;
+            if (c.minY < n.minY) n.minY = c.minY;
+            if (c.maxX > n.maxX) n.maxX = c.maxX;
+            if (c.maxY > n.maxY) n.maxY = c.maxY;
+        }
+        dirtyLogClear(d);
+    }
+
+    /* Merge, in stripe order, so the world is the same whichever thread got
+       to which stripe first. */
+    for (int st = 0; st < STRIPE_COUNT; ++st) {
+        activeChunks += g_stripeActive[st];
+        for (int i = 0; i < g_stripeSproutN[st] && sproutCount < MAX_SPROUTS; ++i)
+            sprout[sproutCount++] = g_stripeSprout[st][i];
+        for (int i = 0; i < g_stripeFelledN[st]; ++i) {
+            const int ch = g_stripeFelled[st][i];
+            if (felledMark[ch] || felledCount >= MAX_FELLED) continue;
+            felledMark[ch] = 1;
+            felled[felledCount++] = ch;
+        }
+    }
+    ++frame;
+}
+
+/* One stripe: every chunk in a band STRIPE_CHUNKS wide, whole world tall.
+
+   This is verbatim the loop step() used to run over the entire chunk grid,
+   with the x range narrowed and the things that used to be world-wide
+   counters made lane-local. */
+void World::runStripe(int stripe) {
+    const bool leftFirst = g_sf.leftFirst;
+    const int coreCX0 = g_sf.coreCX0, coreCX1 = g_sf.coreCX1;
+    const int coreCY0 = g_sf.coreCY0, coreCY1 = g_sf.coreCY1;
+    const int liveCX0 = g_sf.liveCX0, liveCX1 = g_sf.liveCX1;
+    const int liveCY0 = g_sf.liveCY0, liveCY1 = g_sf.liveCY1;
+    const int cxLo = stripe * STRIPE_CHUNKS;
+    const int cxHi = imin(CHUNKS_X - 1, cxLo + STRIPE_CHUNKS - 1);
+    if (cxLo > cxHi) return;
+
+    Lane& L = g_lane[laneOf(stripe)];
+    L.stripe = stripe;
+    /* Stream per stripe, not per thread. Mixed rather than added so that
+       neighbouring stripes on the same frame are not neighbouring streams --
+       an xorshift seeded with n and n+1 correlates visibly for a few draws,
+       and a few draws is exactly how many a single cell makes. */
+    u32 seed = g_sf.seedBase ^ (0x9E3779B9u * (u32)(stripe + 1));
+    seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5;
+    L.rngOwn = seed ? seed : 0x9E3779B9u;
+    L.rng = &L.rngOwn;
+    /* Per stripe rather than per world, and at the FULL budget rather than a
+       share of it. Sharing it out was tried and it is a trap: the budget is
+       not a cost cap that happens to work, it is what lets trapped pressure
+       find its outlet, and pressure that does not find an outlet searches
+       again next frame and every frame after. Measured, quartering it to
+       keep the world-wide total near 128 left five hundred units of hidden
+       volume stuck in the basin against the usual fifty, and cost 8 ms a
+       frame -- the exact failure mode a short pocket ray produces.
+
+       The honest reading is that the old 128 was already generous enough
+       that a busy region never hit it, so making it per stripe changes the
+       worst case on paper and nothing at all in practice. */
+    L.scratch.pressureRoutes = GAS_PRESSURE_POCKET_BUDGET;
+    L.scratch.bfsSearches    = GAS_PRESSURE_BFS_BUDGET;
+    int active = 0;
+
     for (int cy = CHUNKS_Y - 1; cy >= 0; --cy) {
-        for (int ci = 0; ci < CHUNKS_X; ++ci) {
-            int cx = leftFirst ? ci : (CHUNKS_X - 1 - ci);
+        for (int ci = cxLo; ci <= cxHi; ++ci) {
+            int cx = leftFirst ? ci : (cxHi - (ci - cxLo));
             const int idx = cy * CHUNKS_X + cx;
             const Chunk& ch = cur[idx];
             if (ch.minX > ch.maxX) continue;   /* settled: skipped entirely */
@@ -3178,16 +3755,17 @@ void World::step() {
                 }
                 continue;
             }
-            ++activeChunks;
+            ++active;
 
             for (int y = ch.maxY; y >= ch.minY; --y) {
                 if (leftFirst) {
-                    for (int x = ch.minX; x <= ch.maxX; ++x) updateCell(x, y);
+                    for (int x = ch.minX; x <= ch.maxX; ++x) updateCell(L, x, y);
                 } else {
-                    for (int x = ch.maxX; x >= ch.minX; --x) updateCell(x, y);
+                    for (int x = ch.maxX; x >= ch.minX; --x) updateCell(L, x, y);
                 }
             }
         }
     }
-    ++frame;
+    g_stripeActive[stripe] = active;
+    L.stripe = -1;
 }

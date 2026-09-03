@@ -25,7 +25,8 @@
      g++ -std=c++11 -O3 -Isrc tools/steamprof.cpp <src/(*).cpp except main> \
          -o artifacts/steamprof.exe -lgdi32 -luser32 -lwinmm -lmsimg32 -lws2_32
 
-   Pass "unlit" to take the light solver out of the measurement.
+   Pass "unlit" to take the light solver out of the measurement, and a number
+   to set the thread count (default 1).
    ========================================================================== */
 #include "world.h"
 #include "materials.h"
@@ -162,7 +163,17 @@ static void census(int cx, int cy) {
 int main(int argc, char** argv) {
     LARGE_INTEGER fq; QueryPerformanceFrequency(&fq);
     g_freq = (double)fq.QuadPart;
-    const bool lit = !(argc > 1 && strcmp(argv[1], "unlit") == 0);
+    /* steamprof [unlit] [threads] -- threads defaults to 1, which runs every
+       stripe on this thread. The stripe decomposition is used either way, so
+       the numbers across thread counts are comparable and the worlds they
+       produce are identical; see simSetWorkers in world.h. */
+    bool lit = true;
+    int threads = 1;
+    for (int i = 1; i < argc; ++i) {
+        if (strcmp(argv[i], "unlit") == 0) lit = false;
+        else threads = atoi(argv[i]);
+    }
+    simSetWorkers(threads);
 
     initMaterials();
     initItems();
@@ -175,8 +186,8 @@ int main(int argc, char** argv) {
     const int camX = (int)sx - VIEW_CELLS_W / 2;
     const int camY = (int)sy - VIEW_CELLS_H / 2;
     const int bx = (int)sx, by = (int)sy + 120;
-    printf("  spawn %.0f,%.0f   basin %d,%d   lighting %s\n\n",
-           sx, sy, bx, by, lit ? "on" : "off");
+    printf("  spawn %.0f,%.0f   basin %d,%d   lighting %s   threads %d\n\n",
+           sx, sy, bx, by, lit ? "on" : "off", simWorkers() + 1);
 
     buildBasin(bx, by);
     for (int i = 0; i < SETTLE_FRAMES; ++i) runFrame(camX, camY, lit, NULL);
