@@ -1,6 +1,17 @@
 #include "world.h"
 #include <string.h>
+
+/* The lane pool is Win32, and the browser build has no threads to pool.
+   web/win32.h shims the drawing slice of Win32 and nothing else, so this is
+   guarded at the source rather than shimmed: everything below compiles for
+   both targets, and on a target without threads every stripe simply runs on
+   the caller. That is not a degraded path -- it is the same path the native
+   build takes at one thread, which is why it needs no separate testing. */
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#define CINDERLIFT_LANE_POOL 1
+#endif
 
 World g_world;
 
@@ -3407,6 +3418,7 @@ static StripeFrame g_sf;
    nothing a lane accumulates is merged in completion order. See the lane
    block at the top of this file.
    ====================================================================== */
+#ifdef CINDERLIFT_LANE_POOL
 static const int MAX_WORKERS = MAX_LANE_THREADS - 1;
 static HANDLE  g_laneThread[MAX_WORKERS];
 static HANDLE  g_laneGo[MAX_WORKERS];
@@ -3414,26 +3426,43 @@ static HANDLE  g_laneDone[MAX_WORKERS];
 static int     g_workerCount = 0;      /* threads BESIDES the caller */
 static volatile LONG g_laneQuit = 0;
 
+#else
+static const int g_workerCount = 0;
+#endif
+
 static World*  g_laneWorld = 0;
 static int     g_laneJob[STRIPE_COUNT];
 static int     g_laneJobs = 0;
+#ifdef CINDERLIFT_LANE_POOL
 static volatile LONG g_laneNext = 0;
+#else
+static int g_laneNext = 0;
+#endif
 
 /* Stripes are stolen, so a stripe does not know which THREAD will run it --
    but it does have to know which LANE, because that is where its scratch and
    its dirty plane live. Resolved by asking the pool, once, at the top of
    runStripe: the drain loop parks its own id here first. */
+#ifdef CINDERLIFT_LANE_POOL
 static __thread int t_laneId = 0;
+#else
+static int t_laneId = 0;
+#endif
 static int laneOf(int stripe) { (void)stripe; return t_laneId; }
 
 static void laneDrain(void) {
     for (;;) {
-        const LONG i = InterlockedIncrement(&g_laneNext) - 1;
+#ifdef CINDERLIFT_LANE_POOL
+        const long i = InterlockedIncrement(&g_laneNext) - 1;
+#else
+        const long i = g_laneNext++;
+#endif
         if (i >= g_laneJobs) return;
         g_laneWorld->runStripe(g_laneJob[i]);
     }
 }
 
+#ifdef CINDERLIFT_LANE_POOL
 static DWORD WINAPI laneMain(LPVOID param) {
     const int id = (int)(size_t)param;
     /* Set once for the life of the thread. Lane 0's plane belongs to whoever
@@ -3448,9 +3477,16 @@ static DWORD WINAPI laneMain(LPVOID param) {
     }
 }
 
+#endif  /* CINDERLIFT_LANE_POOL */
+
 int simWorkers(void) { return g_workerCount; }
 
 void simSetWorkers(int threads) {
+#ifndef CINDERLIFT_LANE_POOL
+    /* No pool on this target: one lane, every stripe, on the caller. */
+    (void)threads;
+    return;
+#else
     if (threads < 1) threads = 1;
     if (threads > MAX_WORKERS + 1) threads = MAX_WORKERS + 1;
     const int want = threads - 1;          /* the caller is one of them */
@@ -3485,6 +3521,7 @@ void simSetWorkers(int threads) {
         }
         ++g_workerCount;
     }
+#endif
 }
 
 /* Run one phase's stripes across the pool, and return only once every one of
@@ -3495,16 +3532,21 @@ static void laneRunPhase(World* w, const int* stripes, int count) {
     g_laneWorld = w;
     g_laneJobs = count;
     for (int i = 0; i < count; ++i) g_laneJob[i] = stripes[i];
+#ifdef CINDERLIFT_LANE_POOL
     InterlockedExchange(&g_laneNext, 0);
-
     for (int i = 0; i < g_workerCount; ++i) SetEvent(g_laneGo[i]);
+#else
+    g_laneNext = 0;
+#endif
     t_laneId = 0;
     g_lane[0].dirty = &g_dirtyLog[0];
     laneDrain();
     g_lane[0].dirty = 0;
     g_lane[0].rng = &g_rng;
+#ifdef CINDERLIFT_LANE_POOL
     for (int i = 0; i < g_workerCount; ++i)
         WaitForSingleObject(g_laneDone[i], INFINITE);
+#endif
 }
 
 void World::step() {

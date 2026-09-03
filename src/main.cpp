@@ -92,24 +92,37 @@ static int uiScaled(int px) { return imax(1, (px * uiScalePct() + 50) / 100); }
 /* How many threads the simulation scan may use. 0 means "decide from the
    machine", which is what a config that has never seen this key reads as.
 
+   Decided from the machine and then left alone -- there is no key for it,
+   because how many cores a computer has is not something a player has an
+   opinion about halfway through a game. `sim_threads` in cinderlift.cfg
+   overrides it for anyone who wants to argue, and the stats block shows what
+   it settled on.
+
    The cap is eight, which is where MAX_LANE_THREADS puts it and where the
    measurements stop improving. The scan splits the world into 32-cell
-   vertical stripes and runs every fourth one together, so the useful thread
-   count is how many stripes a busy scene lights up -- not the core count.
+   vertical stripes and runs every fourth one together, so the useful count is
+   how many stripes a busy scene lights up, not how many cores there are.
    Timed on tools/steamprof.cpp, sim milliseconds a frame:
 
                         1 thread   2      4      8
-     lava into a basin    13.5     8.2    8.0    8.0
-     screen-wide pour     65.3    36.6   23.6   19.7
+     lava into a pool     10.2     6.0    5.8    5.9
+     screen-wide pour     35.7    18.8   11.6    9.0
 
-   The basin is done at two threads and the wide pour is still gaining at
-   eight, and the difference between them is just how many stripes the work
-   covers. An earlier version used 192-cell stripes and the basin was flat
-   across every thread count, because the whole of it fell in two. */
+   Two cores already take almost all of the pool scene, because it only
+   covers a handful of stripes; the wide pour keeps gaining out to eight
+   because it covers the screen. Neither needs more than a machine sold this
+   decade has, and one core is not a broken case -- it is the same code with
+   every stripe on the caller, producing the same world. */
 static int g_simThreads = 0;
 static int simThreadsAuto(void) {
+#ifdef _WIN32
     SYSTEM_INFO si; GetSystemInfo(&si);
     return imax(1, imin(MAX_LANE_THREADS, (int)si.dwNumberOfProcessors));
+#else
+    /* The browser build has no lane pool -- see world.cpp. It still gets the
+       search budgets, which is where most of the frame came from anyway. */
+    return 1;
+#endif
 }
 static int simThreadsWanted(void) {
     return g_simThreads > 0 ? g_simThreads : simThreadsAuto();
@@ -3371,20 +3384,6 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case 'L': g_bgLayer   = !g_bgLayer;   break;   /* L for layer */
         case 'V': cycleView();                break;
         case 'K': g_lightOn = !g_lightOn;     break;   /* K for keep the lights on */
-        /* U for use every core. A straight A/B between one thread and this
-           machine's share, because feeling the same scene both ways is the
-           only way to judge it -- it is worth half the frame in a wide scene
-           and measured at nothing in a narrow one.
-
-           Flipping it mid-game is safe. The stripe decomposition and the
-           per-stripe random streams are used at every thread count, so the
-           world does not change when the count does; verified on 1, 4 and 12
-           threads over 900 frames, identical cell for cell. */
-        case 'U':
-            simSetWorkers(simWorkers() ? 1 : simThreadsWanted());
-            sprintf(g_saveMsg, "Sim threads: %d", simWorkers() + 1);
-            g_saveMsgFrames = 150;
-            break;
         /* Space jumps. Pause moved to P -- in a sandbox you are drawing in,
            space-to-pause is the obvious binding; the moment there is a
            character to control it is the obvious binding for something else,
