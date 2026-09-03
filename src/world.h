@@ -74,8 +74,8 @@ static const int CHUNK_COUNT = CHUNKS_X * CHUNKS_Y;
    The inventory, in cells, largest sideways write distance from the cell
    taking its turn (reads never go further than writes in any of these):
 
-     liquid levelling       64   SUBMERGED_LEVEL_REACH; its sink is vertical
-     gas pocket ray         64   GAS_PRESSURE_POCKET_RAY_H, sideways only
+     liquid levelling       40   SUBMERGED_LEVEL_REACH; its sink is vertical
+     gas pocket ray         40   GAS_PRESSURE_POCKET_RAY_H, sideways only
      gas pocket flood       32   receiver inside a 32-radius pocket
      heat long-range hop    28   max heatSpread in MATS (Graphene)
      gas bent-outlet BFS    16   the liquid path, inside a 16-radius box
@@ -84,40 +84,63 @@ static const int CHUNK_COUNT = CHUNKS_X * CHUNKS_Y;
      gas expansion burst     3
      fluid convection        3
 
-   Two rules tie at 64, so both would have to come down to move the bound.
-   That is the next lever if more parallelism is ever wanted -- halving it
-   halves the stripe and doubles the stripe count -- but SUBMERGED_LEVEL_REACH
-   changes how a mound of dense liquid relaxes, and tests/liquid_layering.cpp
-   is what would have to agree.
+   The top two were 64 apiece, and bringing them to 40 is what let the
+   stripes go from 192 cells wide to 32. Both are "how far in one frame"
+   rather than "whether at all": a mound of dense liquid still levels and a
+   flat pocket still finds its vent, each just taking another frame or two
+   when the distance is over forty. Going lower stops helping -- the pocket
+   flood's own 32 takes over as the bound -- so 40 is the end of the useful
+   range rather than a halfway house.
 
    Anything added to updateCell that writes further sideways than this MUST
    raise it.
    ------------------------------------------------------------------------ */
-static const int RULE_WRITE_REACH_X = 65;   /* 64, plus the one-cell outlet */
+static const int RULE_WRITE_REACH_X = 41;   /* 40, plus the one-cell outlet */
 
 /* ------------------------------------------------------------------------
-   The stripes themselves.
+   The stripes themselves: one chunk wide, four colours.
 
-   Six chunks, and six is a derived number rather than a chosen one. Two
-   stripes running at the same time are separated by exactly one stripe, so
-   with a stripe of W chunks:
+   The rule is that two stripes of the same colour must be far enough apart
+   that neither can reach what the other touches. With C colours they sit
+   C-1 stripes apart, so:
 
-     the left one dirties chunks out to    W + (REACH+1)/CHUNK  =  W + 2
-     the right one dirties chunks back to  2W - (REACH+2)/CHUNK =  2W - 3
+     (STRIPE_COLOURS - 1) * STRIPE_W  >=  2 * RULE_WRITE_REACH_X
 
-   and they must not meet, so W + 2 < 2W - 3, so W >= 6. That is a stronger
-   condition than the cell reach alone (which would allow 5) because the
-   dirty rectangles are recorded per CHUNK: two lanes can write cells that
-   never touch and still both want to widen the same chunk's rectangle.
-   Rounding that up here is much cheaper than giving every lane its own
-   36,864-entry dirty plane to merge.
+   All of this geometry follows from one measurement. Timing the lava-into-
+   water scene one 32-cell column at a time, the work is eleven columns wide
+   and eight of them cost 1.5 to 1.7 ms each -- about as evenly divisible as
+   work ever gets. The first version used 192-cell stripes, which gathered
+   that into two lumps; the lumps were adjacent, so they were different
+   colours, so the frame was two lumps run one after the other and threading
+   it gained five percent.
+
+   Narrow and few-coloured is what wins, and those pull against each other.
+   Predicted from those column timings on four threads:
+
+     192 cells, 2 colours   12.75 ms   1.05x   <- what the first version did
+      96 cells, 3 colours   12.64 ms   1.06x
+      64 cells, 4 colours   11.96 ms   1.11x
+      32 cells, 6 colours    9.68 ms   1.38x   <- needs no reach change
+      32 cells, 4 colours    6.53 ms   2.04x   <- needs REACH <= 48
+
+   More colours is not more parallelism: every colour is another phase that
+   must finish before the next may start, so a sixth of the stripes running
+   at a time beats a quarter of them only while the stripes are still too
+   wide to divide the work.
    ------------------------------------------------------------------------ */
-static const int STRIPE_CHUNKS = 6;
-static const int STRIPE_W      = STRIPE_CHUNKS * CHUNK;    /* 192 cells */
-static const int STRIPE_COUNT  = (CHUNKS_X + STRIPE_CHUNKS - 1) / STRIPE_CHUNKS;
-static_assert(STRIPE_CHUNKS + (RULE_WRITE_REACH_X + 1) / CHUNK
-              < 2 * STRIPE_CHUNKS - (RULE_WRITE_REACH_X + 2 + CHUNK - 1) / CHUNK,
-              "stripes one apart can dirty the same chunk -- widen STRIPE_CHUNKS");
+static const int STRIPE_CHUNKS  = 1;
+static const int STRIPE_COLOURS = 4;
+static const int STRIPE_W       = STRIPE_CHUNKS * CHUNK;   /* 32 cells */
+static const int STRIPE_COUNT   = (CHUNKS_X + STRIPE_CHUNKS - 1) / STRIPE_CHUNKS;
+static_assert((STRIPE_COLOURS - 1) * STRIPE_W >= 2 * RULE_WRITE_REACH_X,
+              "same-colour stripes can reach each other -- widen the stripe "
+              "or add a colour");
+
+/* The ceiling on lanes, and it is a memory number as much as a scheduling
+   one: every lane carries its own dirty plane, which is 442 KB. Eight is
+   already past where this decomposition stops gaining -- measured, four
+   threads and twelve threads finish the same scene within noise. */
+static const int MAX_LANE_THREADS = 8;
 
 /* How many threads the scan may use. 0 or 1 runs every stripe on the calling
    thread, and that is not a special case in the code: the stripe order and

@@ -50,6 +50,60 @@ static void clearDirty(Chunk* c) {
     }
 }
 
+/* ======================================================================
+   Per-lane dirty rectangles
+   ----------------------------------------------------------------------
+   Two lanes running at once can want to widen the SAME chunk's rectangle
+   even when the cells they wrote are nowhere near each other, because a
+   rectangle is recorded per chunk and a chunk is 32 cells wide. That, and
+   not the physics reach, was what forced stripes to be six chunks across --
+   and six-chunk stripes are why threading did nothing for anything smaller
+   than the screen.
+
+   So each lane accumulates into its own plane and they are unioned into
+   next[] once the scan is done. Union of min/max is commutative and
+   associative, so merge order cannot change the answer -- which is why
+   these are per THREAD, cheaply, where sprouts and felled chunks have to be
+   per stripe.
+
+   `touched` is what makes the merge affordable: without it every merge
+   would sweep 36,864 entries per lane per frame, which is exactly the kind
+   of whole-grid pass world.h forbids. A rectangle that is empty is not in
+   the list, so emptiness IS the membership test and no epoch is needed.
+   ====================================================================== */
+struct DirtyLog {
+    Chunk rect[CHUNK_COUNT];
+    i32   touched[CHUNK_COUNT];
+    int   n;
+};
+static DirtyLog g_dirtyLog[MAX_LANE_THREADS];
+
+/* 0 means "write straight to next[]", which is what everything outside the
+   parallel scan does -- worldgen, the brush, devices, entities. */
+static __thread DirtyLog* t_dirty = 0;
+
+/* The planes start as bss, so every rectangle reads minX 0, maxX 0 -- and
+   that is NOT empty, it is a one-cell rectangle in the corner of the world.
+   Emptiness is the membership test for `touched`, so an uninitialised plane
+   silently absorbs every update and offers none of them to the merge.
+   Measured, that looks exactly like the simulation switching itself off:
+   0.18 ms a frame and ten live chunks in a scene that should have three
+   hundred. */
+static void dirtyLogInit(void) {
+    static bool done = false;
+    if (done) return;
+    for (int i = 0; i < MAX_LANE_THREADS; ++i) clearDirty(g_dirtyLog[i].rect);
+    done = true;
+}
+
+static void dirtyLogClear(DirtyLog& d) {
+    for (int i = 0; i < d.n; ++i) {
+        Chunk& c = d.rect[d.touched[i]];
+        c.minX = SIM_W; c.minY = SIM_H; c.maxX = -1; c.maxY = -1;
+    }
+    d.n = 0;
+}
+
 /* Mark a span and the ring of cells around it as needing simulation next
    frame. The margin matters: when a cell moves away, whatever was resting on
    it has to get another look. The box can straddle several chunks, so each
@@ -64,12 +118,19 @@ void World::dirtyArea(int x0, int y0, int x1, int y1) {
     int cx0 = x0 >> CHUNK_SHIFT, cx1 = x1 >> CHUNK_SHIFT;
     int cy0 = y0 >> CHUNK_SHIFT, cy1 = y1 >> CHUNK_SHIFT;
 
+    /* Fetched once for the whole rectangle rather than once per chunk:
+       thread-local is a function call on this toolchain, and this is one of
+       the most-called functions in the engine. */
+    DirtyLog* const log = t_dirty;
+
     for (int cy = cy0; cy <= cy1; ++cy) {
         for (int cx = cx0; cx <= cx1; ++cx) {
-            Chunk& c = next[cy * CHUNKS_X + cx];
+            const int idx = cy * CHUNKS_X + cx;
             int bx0 = cx << CHUNK_SHIFT, by0 = cy << CHUNK_SHIFT;
             int ax0 = imax(x0, bx0),               ay0 = imax(y0, by0);
             int ax1 = imin(x1, bx0 + CHUNK - 1),   ay1 = imin(y1, by0 + CHUNK - 1);
+            Chunk& c = log ? log->rect[idx] : next[idx];
+            if (log && c.minX > c.maxX) log->touched[log->n++] = idx;
             if (ax0 < c.minX) c.minX = ax0;
             if (ay0 < c.minY) c.minY = ay0;
             if (ax1 > c.maxX) c.maxX = ax1;
@@ -126,7 +187,7 @@ static const int GAS_PRESSURE_VERTICAL_REACH = 512;
 static const int GAS_PRESSURE_LIQUID_RADIUS  = 16;
 static const int GAS_PRESSURE_POWDER_REACH   = 8;
 static const int GAS_PRESSURE_POCKET_RAY_V   = 512;
-static const int GAS_PRESSURE_POCKET_RAY_H   = 64;
+static const int GAS_PRESSURE_POCKET_RAY_H   = 40;
 static const int GAS_PRESSURE_POCKET_RADIUS  = 32;
 static const int GAS_PRESSURE_POCKET_NODES   = 2048;
 static const int GAS_PRESSURE_POCKET_BUDGET  = 128;
@@ -200,7 +261,12 @@ static inline int gasRiseRun(u8 mat) {
 static const int FLUID_CONVECTION_REACH       = 3;
 static const int WAX_CONVECTION_REACH         = 1;
 static const int FLUID_CONVECTION_DELTA       = 2;
-static const int SUBMERGED_LEVEL_REACH         = 64;
+/* Forty rather than sixty-four, and the reason is the parallel scan rather
+   than the physics: this is one of the two longest SIDEWAYS writes in the
+   engine, and the stripe width has to clear it. See RULE_WRITE_REACH_X in
+   world.h. A mound still levels -- a very wide one takes another frame or
+   two about it. */
+static const int SUBMERGED_LEVEL_REACH         = 40;
 static const int SUBMERGED_SINK_REACH          = 8;
 
 /* Divide a heat transfer by 2^shift to get the temperature change a material of
@@ -3225,7 +3291,7 @@ static StripeFrame g_sf;
    nothing a lane accumulates is merged in completion order. See the lane
    block at the top of this file.
    ====================================================================== */
-static const int MAX_WORKERS = 31;
+static const int MAX_WORKERS = MAX_LANE_THREADS - 1;
 static HANDLE  g_laneThread[MAX_WORKERS];
 static HANDLE  g_laneGo[MAX_WORKERS];
 static HANDLE  g_laneDone[MAX_WORKERS];
@@ -3247,6 +3313,9 @@ static void laneDrain(void) {
 
 static DWORD WINAPI laneMain(LPVOID param) {
     const int id = (int)(size_t)param;
+    /* Set once for the life of the thread. Lane 0's plane belongs to whoever
+       calls step(), which works as one of the lanes too. */
+    t_dirty = &g_dirtyLog[id + 1];
     for (;;) {
         WaitForSingleObject(g_laneGo[id], INFINITE);
         if (g_laneQuit) return 0;
@@ -3305,12 +3374,15 @@ static void laneRunPhase(World* w, const int* stripes, int count) {
     InterlockedExchange(&g_laneNext, 0);
 
     for (int i = 0; i < g_workerCount; ++i) SetEvent(g_laneGo[i]);
+    t_dirty = &g_dirtyLog[0];
     laneDrain();
+    t_dirty = 0;
     for (int i = 0; i < g_workerCount; ++i)
         WaitForSingleObject(g_laneDone[i], INFINITE);
 }
 
 void World::step() {
+    dirtyLogInit();
     /* Pocket sharing is the only pressure operation that searches farther than
        its immediate material path. Bound it across the whole world, not per
        chunk, so a pathological mass-boil drains over several frames instead of
@@ -3398,10 +3470,28 @@ void World::step() {
     memset(g_stripeFelledN, 0, sizeof(g_stripeFelledN));
     memset(g_stripeActive,  0, sizeof(g_stripeActive));
 
-    for (int phase = 0; phase < 2; ++phase) {
+    for (int phase = 0; phase < STRIPE_COLOURS; ++phase) {
         int list[STRIPE_COUNT], n = 0;
-        for (int st = phase; st < STRIPE_COUNT; st += 2) list[n++] = st;
+        for (int st = phase; st < STRIPE_COUNT; st += STRIPE_COLOURS) list[n++] = st;
         laneRunPhase(this, list, n);
+    }
+
+    /* Union every lane's dirty plane into next[]. Only the chunks a lane
+       actually touched are visited, so this costs what happened rather than
+       what the world is -- the whole-grid pass world.h forbids would undo
+       the point of the chunk system entirely. */
+    for (int lane = 0; lane < MAX_LANE_THREADS; ++lane) {
+        DirtyLog& d = g_dirtyLog[lane];
+        for (int i = 0; i < d.n; ++i) {
+            const int idx = d.touched[i];
+            const Chunk& c = d.rect[idx];
+            Chunk& n = next[idx];
+            if (c.minX < n.minX) n.minX = c.minX;
+            if (c.minY < n.minY) n.minY = c.minY;
+            if (c.maxX > n.maxX) n.maxX = c.maxX;
+            if (c.maxY > n.maxY) n.maxY = c.maxY;
+        }
+        dirtyLogClear(d);
     }
 
     /* The lanes trampled this thread's copy of the stream while it was
