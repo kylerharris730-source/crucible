@@ -146,7 +146,38 @@ static const int GAS_PRESSURE_POCKET_RAY_V   = 512;
 static const int GAS_PRESSURE_POCKET_RAY_H   = 40;
 static const int GAS_PRESSURE_POCKET_RADIUS  = 32;
 static const int GAS_PRESSURE_POCKET_NODES   = 2048;
-static const int GAS_PRESSURE_POCKET_BUDGET  = 128;
+/* --- what a stripe may SEARCH in one frame ---------------------------------
+   Two budgets, both per stripe per frame, and both on the same two rules:
+   the ones a compressed gas cell reaches for when it cannot see an outlet.
+
+   They are the whole cost of a boil. Timed over the peak of the transient --
+   frames 250 to 350 of lava into a pool, where the steam is forming fastest
+   and the frame is worst -- out of a 34 ms step:
+
+     bent-outlet BFS     1,606 calls    7.43 ms     16,184 cycles each
+     pocket route          544 calls    5.56 ms     35,814 cycles each
+     everything else in gas pressure    1.53 ms
+
+   Thirteen milliseconds of searching, nearly all of it failing, because
+   during formation most of the steam is in the middle of more steam and
+   there is genuinely nowhere for it to go yet. The searches are not wrong;
+   asking every cell to do one every frame is.
+
+   Budgeted, the ones that miss out simply wait a frame, which is what the
+   pocket route has always done. Measured on the whole transient at eight
+   threads: 9.30 ms a frame becomes 6.03, and the share of frames missing 60
+   fps goes from 13.7% to nothing at all. The basin also ends with LESS
+   pressure stuck in it than before (37 units against 49), because a search
+   that would have failed this frame tends to succeed a frame later once the
+   steam around it has moved.
+
+   PER STRIPE, and that matters: it makes the total budget scale with how
+   much of the world is actually boiling rather than being one world-wide
+   cap that a big enough boil saturates. Thirty-two was picked off a sweep --
+   at 12 the frame is no faster and pressure starts backing up (379 units
+   stuck), at 128 the searching is unbudgeted in all but name. */
+static const int GAS_PRESSURE_POCKET_BUDGET  = 32;
+static const int GAS_PRESSURE_BFS_BUDGET     = 32;
 static const int GAS_PRESSURE_EXPANSION_BURST = 5;
 
 /* Every scratch buffer the gas rules use, in one thread-local object.
@@ -163,6 +194,7 @@ static const int GAS_PRESSURE_EXPANSION_BURST = 5;
    from two different functions, and one fetch each is cheaper than three. */
 struct LaneScratch {
     int pressureRoutes;
+    int bfsSearches;
     u16 pocketSeen[(GAS_PRESSURE_POCKET_RADIUS * 2 + 1) *
                    (GAS_PRESSURE_POCKET_RADIUS * 2 + 1)];
     i16 pocketQueue[GAS_PRESSURE_POCKET_NODES];
@@ -1978,7 +2010,8 @@ bool World::updateGasPressure(Lane& L, int x, int y) {
         if (MATS[cells[ny * SIM_W + nx].mat].kind == KIND_LIQUID) anyLiquidFace = true;
     }
 
-    if (anyLiquidFace) {
+    if (anyLiquidFace && L.scratch.bfsSearches > 0) {
+        --L.scratch.bfsSearches;
         /* parent[] is STAMPED rather than cleared, exactly as the pocket flood
            above stamps its `seen`. Clearing it was 1,089 stores on every call
            whatever the search then cost -- 1.70 ms/frame of the 4.28, spent
@@ -3640,6 +3673,7 @@ void World::runStripe(int stripe) {
        that a busy region never hit it, so making it per stripe changes the
        worst case on paper and nothing at all in practice. */
     L.scratch.pressureRoutes = GAS_PRESSURE_POCKET_BUDGET;
+    L.scratch.bfsSearches    = GAS_PRESSURE_BFS_BUDGET;
     int active = 0;
 
     for (int cy = CHUNKS_Y - 1; cy >= 0; --cy) {
