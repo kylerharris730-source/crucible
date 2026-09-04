@@ -1914,6 +1914,33 @@ static void initPassable() {
     g_matPassable[MAT_OAK_SAPLING]   = 1;
     g_matPassable[MAT_BIRCH_SAPLING] = 1;
 
+    /* --- the crafting stations ------------------------------------------
+       Furniture, and the same argument as the open door: a bench is something
+       you stand AT, not something you climb over.
+
+       This only became a problem when stations stopped being single cells. One
+       cell of workbench was a pebble you stepped over without noticing; a
+       fourteen-by-fourteen device (see DEV_WORKBENCH) is a block taller than
+       the character, so a workshop with its stations lined up is a wall with no
+       door in it, and every one of them has to be walked around to reach the
+       next. Measured on a flat floor: a two-hundred-frame walk that covers 240
+       cells covered 5 with a bench in the way.
+
+       KIND is untouched, so all of this stays true: sand still piles on a
+       bench, a bench still seals a room, and mining one still gives it back.
+       It is the character, and only the character, that stops colliding. */
+    g_matPassable[MAT_STATION_BENCH]    = 1;
+    g_matPassable[MAT_STATION_ANVIL]    = 1;
+    g_matPassable[MAT_STATION_CHEM]     = 1;
+    g_matPassable[MAT_STATION_ASSEMBLY] = 1;
+    /* The furnace included, deliberately. It is hotter-looking than the rest
+       and the temptation is to leave it solid for flavour, but it is reached
+       and used exactly like the other four, and one station in five that
+       blocks you is worse than either rule applied evenly -- it reads as a
+       bug rather than as a distinction. It has no tick and no heat of its own
+       (see the DEV_FORGE row), so there is nothing here to walk into. */
+    g_matPassable[MAT_STATION_FORGE]    = 1;
+
     /* --- the canopy ------------------------------------------------------
        Leaves and pods, and NOT wood. That split is the whole answer to "a
        forest you cannot walk through", and it is worth being precise about why

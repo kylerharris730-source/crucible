@@ -268,9 +268,22 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
 
        Faster than the Shambler and much lighter (52 hp against 96), because a
        wide hitbox that also soaked damage would be unfightable in a corridor.
-       Lower per-touch damage for the same reason: it lands more often. */
+       Lower per-touch damage for the same reason: it lands more often.
+
+       THE BURST BEATS A WALK, and it has to. At 0.66 it did not: the character
+       walks at 1.2, and with a third of the cycle spent standing still the
+       average came to 0.45 -- so neither half of the cadence could catch
+       anybody, and a player retreating at two thirds of walking pace OPENED the
+       gap from 200 cells to 544. The scuttle was a story the code told about a
+       creature that was simply slower than you in every phase.
+
+       1.45 is above walking pace and the duty cycle keeps the average below it,
+       which is the shape a scuttler wants: every burst gains on you, and running
+       flat out without stopping still gets away. Accel went up with it, because
+       a burst that spends a third of itself accelerating is a lunge nobody can
+       read as one. */
     { "Thresher", THRESHER_SPR_W, THRESHER_SPR_H, 52, 22, 30,
-      0.66f, 0.095f, false, 2, false,
+      1.45f, 0.16f, false, 2, false,
       0, 0, 0.0f, 0.0f, false,
       ITEM_ICHOR, 1, 3, ITEM_NONE, 0, SPR_NONE, 0x9A5F94,
       ITEM_EGG_THRESHER, false, false, 0 },
@@ -1295,7 +1308,13 @@ static void shamblerTick(const World& w, Entity& e, const Player& p) {
    Nothing here touches the gait. The legs measure ground covered, so the wave
    speeds up during a burst and stills during a pause on its own -- which is
    exactly the property distance-driven animation was added for. */
-static const int THRESHER_BURST = 46;
+/* 60 and 22. The burst lengthened rather than the pause shortening, when the
+   speed went up and the creature still could not close: it is the DUTY CYCLE
+   that sets the average, and there were two ways to raise it. Cutting the pause
+   was the wrong one -- the stop is the tell, and a tell you cannot see in a
+   third of a second is not a tell. A longer burst also commits the creature
+   further, which is the half of the trade the player gets back. */
+static const int THRESHER_BURST = 60;
 static const int THRESHER_PAUSE = 22;
 
 static void thresherTick(const World& w, Entity& e, const Player& p) {
