@@ -205,6 +205,150 @@ void initItems() {
     ITEMS[ITEM_MULTITOOL2].energyRecharge = 2;
     ITEMS[ITEM_MULTITOOL2].sprite    = SPR_TOOL2;
 
+    /* --- Multitool Mk III --------------------------------------------------
+       Six slots against Mk II's five, and the extra slot is not the point --
+       the MODIFIERS are, and they arrive with it. Mk I to Mk II is three
+       sockets to five, which is more room for the same decision; Mk II to
+       Mk III is the tier where a socket can hold something that is not a shot,
+       so the same five spells can be arranged into different weapons.
+
+       Faster and deeper than Mk II in proportion to the step before it
+       (18 -> 11 -> 8 frames, 120 -> 300 -> 640 charge), and the battery matters
+       more here than on either earlier tier: the good modifiers are priced in
+       energy rather than in delay, so a chassis that cannot hold a volley's
+       worth of charge cannot use them at all. */
+    ITEMS[ITEM_MULTITOOL3].name      = "Multitool Mk III";
+    ITEMS[ITEM_MULTITOOL3].kind      = ITEMK_TOOL;
+    ITEMS[ITEM_MULTITOOL3].maxStack  = 1;
+    ITEMS[ITEM_MULTITOOL3].colour    = 0xF0E4B8;
+    ITEMS[ITEM_MULTITOOL3].toolSlots = 6;
+    ITEMS[ITEM_MULTITOOL3].baseDelay = 8;
+    ITEMS[ITEM_MULTITOOL3].energyCapacity = 640;
+    ITEMS[ITEM_MULTITOOL3].energyRecharge = 4;
+    ITEMS[ITEM_MULTITOOL3].sprite    = SPR_TOOL3;
+
+    /* --- the modifiers ------------------------------------------------------
+       None of these has power, damage, pierce or a shot colour, and that is not
+       an omission: a modifier fires nothing. What it has is a modKind, a span,
+       and a price. See ModKind in item.h.
+
+       They are priced almost entirely in ENERGY rather than in delay, which is
+       the deliberate difference between a modifier and a spell. A spell that
+       costs delay makes the whole wand slower forever; a modifier that costs
+       charge makes a POWERFUL VOLLEY expensive and leaves a plain one cheap, so
+       the decision is how much of your battery one pull is worth. That is the
+       decision worth having. */
+
+    /* Doubling. Cheap, because what it does is fire two spells you already
+       own -- their own costs are still paid, so a double in front of two
+       expensive spells is expensive by arithmetic rather than by a number here.
+       Its own price is for the convenience of them arriving together. */
+    ITEMS[ITEM_MOD_DOUBLE].name       = "Double Shot";
+    ITEMS[ITEM_MOD_DOUBLE].kind       = ITEMK_MODULE;
+    ITEMS[ITEM_MOD_DOUBLE].maxStack   = 1;
+    ITEMS[ITEM_MOD_DOUBLE].colour     = 0x9CE0FF;
+    ITEMS[ITEM_MOD_DOUBLE].modKind    = MODK_DOUBLE;
+    ITEMS[ITEM_MOD_DOUBLE].modSpan    = 2;
+    ITEMS[ITEM_MOD_DOUBLE].addDelay   = 2;
+    ITEMS[ITEM_MOD_DOUBLE].energyCost = 18;
+    ITEMS[ITEM_MOD_DOUBLE].sprite     = SPR_MOD_DOUBLE;
+
+    /* Fire trail. One spell, and the cheapest thing here, because what it
+       actually buys is situational: a line of flame down a corridor is a wall
+       to anything that walks, and nothing at all in an open cavern. It is also
+       the one modifier that can hurt the person holding it. */
+    ITEMS[ITEM_MOD_TRAIL_FIRE].name       = "Fire Trail";
+    ITEMS[ITEM_MOD_TRAIL_FIRE].kind       = ITEMK_MODULE;
+    ITEMS[ITEM_MOD_TRAIL_FIRE].maxStack   = 1;
+    ITEMS[ITEM_MOD_TRAIL_FIRE].colour     = 0xFF8A2A;
+    ITEMS[ITEM_MOD_TRAIL_FIRE].modKind    = MODK_TRAIL_FIRE;
+    ITEMS[ITEM_MOD_TRAIL_FIRE].modSpan    = 1;
+    ITEMS[ITEM_MOD_TRAIL_FIRE].addDelay   = 1;
+    ITEMS[ITEM_MOD_TRAIL_FIRE].energyCost = 14;
+    ITEMS[ITEM_MOD_TRAIL_FIRE].sprite     = SPR_MOD_TRAIL;
+
+    /* The two arcs. They double AND string a line between the pair, so they are
+       a Double Shot that also does something, and they are priced above one.
+
+       Lightning is damage and nothing else; fire lays flame along the span and
+       does less on impact for it. The difference is what they leave behind:
+       lightning is over the instant the shots drift apart, and fire is still
+       burning when you have moved on. */
+    ITEMS[ITEM_MOD_ARC_LIGHTNING].name       = "Lightning Arc";
+    ITEMS[ITEM_MOD_ARC_LIGHTNING].kind       = ITEMK_MODULE;
+    ITEMS[ITEM_MOD_ARC_LIGHTNING].maxStack   = 1;
+    ITEMS[ITEM_MOD_ARC_LIGHTNING].colour     = 0x9CE0FF;
+    ITEMS[ITEM_MOD_ARC_LIGHTNING].modKind    = MODK_ARC_LIGHTNING;
+    ITEMS[ITEM_MOD_ARC_LIGHTNING].modSpan    = 2;
+    ITEMS[ITEM_MOD_ARC_LIGHTNING].addDelay   = 4;
+    ITEMS[ITEM_MOD_ARC_LIGHTNING].energyCost = 70;
+    ITEMS[ITEM_MOD_ARC_LIGHTNING].sprite     = SPR_MOD_ARC_L;
+
+    ITEMS[ITEM_MOD_ARC_FIRE].name       = "Fire Arc";
+    ITEMS[ITEM_MOD_ARC_FIRE].kind       = ITEMK_MODULE;
+    ITEMS[ITEM_MOD_ARC_FIRE].maxStack   = 1;
+    ITEMS[ITEM_MOD_ARC_FIRE].colour     = 0xFF9A3C;
+    ITEMS[ITEM_MOD_ARC_FIRE].modKind    = MODK_ARC_FIRE;
+    ITEMS[ITEM_MOD_ARC_FIRE].modSpan    = 2;
+    ITEMS[ITEM_MOD_ARC_FIRE].addDelay   = 4;
+    ITEMS[ITEM_MOD_ARC_FIRE].energyCost = 62;
+    ITEMS[ITEM_MOD_ARC_FIRE].sprite     = SPR_MOD_ARC_F;
+
+    /* --- the two ways of not missing ---------------------------------------
+       These are the pair the whole pricing scheme is built to justify, and they
+       are deliberately not a good one and a cheap one.
+
+       SEEKING finds a target for you. It is the expensive thing in this file --
+       130 charge is a fifth of a full Mk III battery for one shot -- because it
+       removes aiming from the game for as long as it is fitted, and something
+       that removes a skill has to be rationed rather than balanced.
+
+       POINT SEEKING bends the shot toward where you are POINTING. It cannot
+       find anything: it fixes a bad lead and does nothing whatever about a
+       creature you have not seen. That is a fifth of the price because it is
+       the difference between help aiming and not having to aim. */
+    ITEMS[ITEM_MOD_SEEK].name       = "Seeking";
+    ITEMS[ITEM_MOD_SEEK].kind       = ITEMK_MODULE;
+    ITEMS[ITEM_MOD_SEEK].maxStack   = 1;
+    ITEMS[ITEM_MOD_SEEK].colour     = 0xD59CFF;
+    ITEMS[ITEM_MOD_SEEK].modKind    = MODK_SEEK;
+    ITEMS[ITEM_MOD_SEEK].modSpan    = 1;
+    ITEMS[ITEM_MOD_SEEK].addDelay   = 3;
+    ITEMS[ITEM_MOD_SEEK].energyCost = 130;
+    ITEMS[ITEM_MOD_SEEK].shotHoming = 0.10f;
+    ITEMS[ITEM_MOD_SEEK].sprite     = SPR_MOD_SEEK;
+
+    ITEMS[ITEM_MOD_SEEK_MOUSE].name       = "Point Seeking";
+    ITEMS[ITEM_MOD_SEEK_MOUSE].kind       = ITEMK_MODULE;
+    ITEMS[ITEM_MOD_SEEK_MOUSE].maxStack   = 1;
+    ITEMS[ITEM_MOD_SEEK_MOUSE].colour     = 0xA88ADF;
+    ITEMS[ITEM_MOD_SEEK_MOUSE].modKind    = MODK_SEEK_MOUSE;
+    ITEMS[ITEM_MOD_SEEK_MOUSE].modSpan    = 1;
+    ITEMS[ITEM_MOD_SEEK_MOUSE].addDelay   = 1;
+    ITEMS[ITEM_MOD_SEEK_MOUSE].energyCost = 26;
+    ITEMS[ITEM_MOD_SEEK_MOUSE].shotHoming = 0.07f;
+    ITEMS[ITEM_MOD_SEEK_MOUSE].sprite     = SPR_MOD_SEEKM;
+
+    /* Quicken. The only modifier whose addDelay is the effect rather than the
+       price, and the one place in this file where a NEGATIVE delay is bought
+       outright instead of being a light shot's compensation.
+
+       160 charge, which is more than Seeking, and it should look absurd next to
+       what it does. It is not: delay compounds. Everything else here makes one
+       volley better, and this makes EVERY volley more frequent for as long as
+       the battery holds -- so its real cost is that a Mk III recharging at 4 a
+       frame sustains roughly one quickened shot every forty, and the tool
+       spends the rest of its life empty. Fitting it is a decision to burst. */
+    ITEMS[ITEM_MOD_QUICKEN].name       = "Quicken";
+    ITEMS[ITEM_MOD_QUICKEN].kind       = ITEMK_MODULE;
+    ITEMS[ITEM_MOD_QUICKEN].maxStack   = 1;
+    ITEMS[ITEM_MOD_QUICKEN].colour     = 0x72E09A;
+    ITEMS[ITEM_MOD_QUICKEN].modKind    = MODK_QUICKEN;
+    ITEMS[ITEM_MOD_QUICKEN].modSpan    = 1;
+    ITEMS[ITEM_MOD_QUICKEN].addDelay   = -7;
+    ITEMS[ITEM_MOD_QUICKEN].energyCost = 160;
+    ITEMS[ITEM_MOD_QUICKEN].sprite     = SPR_MOD_QUICKEN;
+
     /* The starting module. Power STR_LOOSE means it clears sand and dirt and is
        stopped dead by stone -- which is the entire tech gate, expressed as one
        number.
@@ -1584,6 +1728,22 @@ void initItems() {
     ITEMS[ITEM_TITANIUM_SUIT].description = "Advanced body armour built for severe heat, cold, and combat.";
     ITEMS[ITEM_FORGE_CORE].description = "A Brood Queen relic used to construct a Blast Furnace.";
     ITEMS[ITEM_WIDOW_CALL].description = "Consume to summon the Widow nearby.";
+    ITEMS[ITEM_MULTITOOL3].description =
+        "Six sockets, and the first chassis that can hold a modifier.";
+    ITEMS[ITEM_MOD_DOUBLE].description =
+        "Modifier. The next two shots leave the muzzle together.";
+    ITEMS[ITEM_MOD_TRAIL_FIRE].description =
+        "Modifier. The next shot lays fire along its own flight path.";
+    ITEMS[ITEM_MOD_ARC_LIGHTNING].description =
+        "Modifier. Fires the next two together with a killing arc strung between them.";
+    ITEMS[ITEM_MOD_ARC_FIRE].description =
+        "Modifier. Fires the next two together and sets alight what lies between.";
+    ITEMS[ITEM_MOD_SEEK].description =
+        "Modifier. The next shot hunts. Costs a fifth of a full battery.";
+    ITEMS[ITEM_MOD_SEEK_MOUSE].description =
+        "Modifier. The next shot bends toward where you pointed. It finds nothing on its own.";
+    ITEMS[ITEM_MOD_QUICKEN].description =
+        "Modifier. The next shot comes far sooner, and empties the battery to do it.";
     ITEMS[ITEM_SILK_GLAND].description = "Cut from the Widow. The spinneret of a thing that made its own walls.";
 
     ITEMS[ITEM_LIGHT_DRONE].description = "Follows you and illuminates nearby terrain.";
@@ -2057,6 +2217,18 @@ ToolShot toolResolve(const ItemStack& st) {
     s.colour = 0xFFFFFF; s.payloadMat = MAT_EMPTY;
     s.speed = SHOT_SPEED_DEFAULT; s.gravity = PROJ_GRAVITY; s.homing = 0.0f;
     s.effect = PROJ_EFFECT_NONE;
+    /* The modifier half, cleared explicitly beside everything else rather than
+       by a memset over the struct -- the fields above are set one at a time on
+       purpose, and a half-memset half-assignment constructor is how one of them
+       eventually gets missed. */
+    s.trail = MAT_EMPTY; s.seekMouse = false; s.link = MODK_NONE;
+    s.second.used = false;
+    s.second.power = 0; s.second.damage = 0; s.second.pierce = 0;
+    s.second.blast = 0; s.second.life = 90; s.second.bounces = 0;
+    s.second.colour = 0xFFFFFF; s.second.speed = SHOT_SPEED_DEFAULT;
+    s.second.gravity = PROJ_GRAVITY; s.second.homing = 0.0f;
+    s.second.effect = PROJ_EFFECT_NONE; s.second.trail = MAT_EMPTY;
+    s.second.seekMouse = false;
     if (st.empty() || ITEMS[st.item].kind != ITEMK_TOOL) return s;
 
     const ItemDef& tool = ITEMS[st.item];
@@ -2110,26 +2282,123 @@ ToolShot toolResolve(const ItemStack& st) {
     if (!ti.payload.empty() && ITEMS[ti.payload.item].kind == ITEMK_MATERIAL)
         s.payloadMat = (u8)ti.payload.item;
 
+    /* --- modifiers first, then the spell or spells they cover -------------
+
+       The socket order is a SEQUENCE, and the cursor is where in it we are. A
+       modifier is not a turn: it is read, remembered, and applied to the next
+       spell the walk reaches. So this is two passes over one circular walk --
+       collect the run of modifiers under the cursor, then take the one or two
+       spells they cover.
+
+       Two spells, never three, and the reach comes from the modifiers rather
+       than being fixed here: whichever pending modifier reaches furthest
+       decides how many spells leave the muzzle together. See ItemDef::modSpan.
+
+       A tool holding nothing but modifiers fires nothing, and that is the right
+       answer rather than an edge case to paper over -- a wand of modifiers has
+       no spell to modify, and a shot conjured out of one would be a shot with
+       no source. The walk simply finds no spell and canFire stays false. */
     const int n = imin(tool.toolSlots, TOOL_SLOTS_MAX);
-    const int start = n ? ti.shotCursor % n : 0;
-    for (int offset = 0; offset < n; ++offset) {
-        const int i = (start + offset) % n;
+    if (n <= 0) return s;
+    const int start = ti.shotCursor % n;
+
+    /* Collected from the modifier run. Held as plain values rather than as a
+       list of module ids, because what the spell needs is the RESULT: two
+       seeking modifiers in a row should not home twice as hard. */
+    int   modDelay   = 0;
+    int   modEnergy  = 0;
+    int   span       = 1;
+    float modHoming  = 0.0f;
+    bool  modSeekMouse = false;
+    u8    modTrail   = MAT_EMPTY;
+    u8    modLink    = MODK_NONE;
+
+    int at = 0;                       /* how far the walk has gone */
+    for (; at < n; ++at) {
+        const ItemId m = ti.slot[(start + at) % n];
+        if (m == ITEM_NONE || ITEMS[m].kind != ITEMK_MODULE) continue;
+        const ItemDef& d = ITEMS[m];
+        if (d.modKind == MODK_NONE) break;            /* a spell: stop reading */
+
+        modDelay  += d.addDelay;
+        modEnergy += d.energyCost;
+        if (d.modSpan > span) span = d.modSpan;
+        switch (d.modKind) {
+        case MODK_TRAIL_FIRE:    modTrail = MAT_FIRE; break;
+        /* LARGEST, not summed -- the same rule the accessories resolve on and
+           for the same reason. Two homing modules stacking to 0.17 a frame is
+           a shot that turns corners, which is not a stronger version of homing,
+           it is a different and much worse projectile. */
+        case MODK_SEEK:          if (d.shotHoming > modHoming) modHoming = d.shotHoming;
+                                 break;
+        case MODK_SEEK_MOUSE:    if (d.shotHoming > modHoming) modHoming = d.shotHoming;
+                                 modSeekMouse = true;
+                                 break;
+        case MODK_ARC_LIGHTNING:
+        case MODK_ARC_FIRE:      modLink = d.modKind; break;
+        default: break;                               /* DOUBLE: span alone */
+        }
+    }
+
+    /* Now the spells. `at` is sitting on the first non-modifier. */
+    int taken = 0;
+    int lastSlot = -1;
+    for (int scanned = 0; scanned < n && taken < span; ++scanned, ++at) {
+        const int i = (start + at) % n;
         const ItemId m = ti.slot[i];
         if (m == ITEM_NONE || ITEMS[m].kind != ITEMK_MODULE) continue;
-        /* One socket is one shot in the firing sequence. Advancing happens
-           only after a successful spawn, so a full projectile pool or empty
-           battery cannot silently eat a turn in the configured order. */
         const ItemDef& d = ITEMS[m];
-        s.canFire = true; s.moduleSlot = i;
-        s.power = d.power; s.damage = d.damage; s.pierce = d.pierce;
-        s.blast = d.blast; s.colour = d.shotColour;
-        s.delay = imax(3, (int)tool.baseDelay + (int)d.addDelay);
-        s.energyCost = d.energyCost;
-        s.life = d.shotLife ? d.shotLife : 90;
-        s.bounces = d.shotBounces; s.homing = d.shotHoming; s.effect = d.shotEffect;
-        resolveFlight(d, s);
-        break;
+        if (d.modKind != MODK_NONE) continue;         /* another modifier: skip */
+
+        lastSlot = i;
+        if (taken == 0) {
+            s.canFire = true; s.moduleSlot = i;
+            s.power = d.power; s.damage = d.damage; s.pierce = d.pierce;
+            s.blast = d.blast; s.colour = d.shotColour;
+            s.energyCost = d.energyCost + modEnergy;
+            s.life = d.shotLife ? d.shotLife : 90;
+            s.bounces = d.shotBounces;
+            s.effect = d.shotEffect;
+            s.homing = modHoming > 0.0f ? modHoming : d.shotHoming;
+            s.seekMouse = modSeekMouse;
+            s.trail = modTrail;
+            resolveFlight(d, s);
+            /* One delay for the whole volley, from the FIRST spell. Summing the
+               two would make a doubling modifier a downgrade -- twice the shots
+               at half the rate is the same damage and a worse weapon. */
+            s.delay = imax(3, (int)tool.baseDelay + (int)d.addDelay + modDelay);
+        } else {
+            ToolShot::Companion& c = s.second;
+            c.used = true;
+            c.power = d.power; c.damage = d.damage; c.pierce = d.pierce;
+            c.blast = d.blast; c.colour = d.shotColour;
+            c.life = d.shotLife ? d.shotLife : 90;
+            c.bounces = d.shotBounces;
+            c.effect = d.shotEffect;
+            c.homing = modHoming > 0.0f ? modHoming : d.shotHoming;
+            c.seekMouse = modSeekMouse;
+            c.trail = modTrail;
+            /* The companion's own flight, resolved through the same helper, so
+               a lobbed grenade paired with a flat bolt keeps both handlings.
+               Routed through a scratch ToolShot because resolveFlight speaks
+               ToolShot and there is no second version of it worth having. */
+            ToolShot tmp = s;
+            resolveFlight(d, tmp);
+            c.speed = tmp.speed; c.gravity = tmp.gravity;
+            s.energyCost += d.energyCost;
+        }
+        ++taken;
     }
+
+    /* The arc needs two ends. One spell under an arcing modifier is a plain
+       shot rather than a broken one -- saying so here means nothing downstream
+       has to check whether the partner exists. */
+    s.link = (s.second.used && (modLink == MODK_ARC_LIGHTNING ||
+                                modLink == MODK_ARC_FIRE)) ? modLink : MODK_NONE;
+    /* The cursor lands past everything this volley consumed, modifiers
+       included, so the next pull starts at the next unread socket rather than
+       reading the same modifier run again. */
+    if (lastSlot >= 0) s.moduleSlot = lastSlot;
     return s;
 }
 

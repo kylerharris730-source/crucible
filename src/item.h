@@ -26,6 +26,24 @@
 
 typedef u16 ItemId;
 
+/* --- what a modifier does --------------------------------------------------
+   See ItemDef::modKind. Each of these changes the spell in front of it and has
+   no shot of its own; a module with MODK_NONE is an ordinary spell.
+
+   The DOUBLE and the two ARCs reach two spells and fire them together, which is
+   the one structural thing modifiers do to the firing sequence -- everything
+   else is a number changed on a shot that was going to happen anyway. */
+enum ModKind {
+    MODK_NONE = 0,
+    MODK_DOUBLE,       /* the next two spells leave the muzzle together */
+    MODK_TRAIL_FIRE,   /* the shot lays fire along its own flight path */
+    MODK_ARC_LIGHTNING,/* two together, with a damaging arc strung between them */
+    MODK_ARC_FIRE,     /* the same, and the arc sets what it crosses alight */
+    MODK_SEEK,         /* homes on creatures; the expensive one */
+    MODK_SEEK_MOUSE,   /* homes on where you are POINTING; the cheap one */
+    MODK_QUICKEN       /* shorter delay, paid for in charge */
+};
+
 static const ItemId ITEM_NONE = MAT_EMPTY;   /* both are 0 */
 
 enum {
@@ -307,6 +325,28 @@ enum {
     ITEM_WIDOW_CALL,
     ITEM_EGG_WIDOW,
     ITEM_SILK_GLAND,
+
+    /* --- Mk III, and the modifiers it exists to hold ----------------------
+       The third chassis, and the first one whose extra slots are not simply
+       more room for the same thing. Every module up to here IS a shot: it goes
+       in a socket, its turn comes round, it fires. A MODIFIER is not a shot --
+       it changes the shot or shots in front of it, and does nothing at all on
+       its own.
+
+       That is why they arrive together. Six slots of spells is a longer list of
+       the same decision; six slots where three of them can be modifiers is a
+       different object, and it is what makes a loadout a build. See
+       ItemDef::modKind.
+
+       Appended, like everything. */
+    ITEM_MULTITOOL3,
+    ITEM_MOD_DOUBLE,
+    ITEM_MOD_TRAIL_FIRE,
+    ITEM_MOD_ARC_LIGHTNING,
+    ITEM_MOD_ARC_FIRE,
+    ITEM_MOD_SEEK,
+    ITEM_MOD_SEEK_MOUSE,
+    ITEM_MOD_QUICKEN,
     ITEM_COUNT
 };
 
@@ -557,6 +597,24 @@ struct ItemDef {
        the other half of their sustained-fire balance. */
     i16  addDelay;
     u16  energyCost;  /* charge spent only when a projectile actually spawns */
+
+    /* --- a MODIFIER, which is a module that is not a shot ---------------
+       MODK_NONE, which is zero, means this module is an ordinary spell: it
+       fires, and everything below about power and damage is about the thing it
+       fires. Anything else means it fires NOTHING and instead changes the spell
+       or spells that come after it in the socket order.
+
+       modSpan is how many of those it reaches, and it is STATED rather than
+       derived from the kind. Deriving would work today -- doubles and arcs
+       reach two, the rest reach one -- and it is exactly the shape of
+       derivation that has been wrong twice in this file already (see eggItem,
+       and the note on `summons`). A modifier that wants to cover three spells
+       later should be a number here, not a new branch somewhere else.
+
+       Zero for every module that predates this, which is what makes it safe to
+       add: an old module reads as MODK_NONE and behaves exactly as it did. */
+    u8   modKind;
+    u8   modSpan;
     /* --- power is TERRAIN, damage is COMBAT ---------------------------
        Two numbers, and keeping them apart is what lets the game have a
        progression at all.
@@ -1051,6 +1109,38 @@ struct ToolShot {
        the shot. Count is NOT checked here; the caller decrements it and
        must confirm there was actually something to spend before firing. */
     u8     payloadMat;
+
+    /* --- what the modifiers in front of this one did to it ---------------
+       Everything above describes the PRIMARY shot, and every existing reader --
+       the energy bar, the bench panel, the held-item line -- goes on reading it
+       unchanged. That is deliberate: a modifier should not make the UI relearn
+       what a shot is.
+
+       What a modifier can add is here. `trail` is a MatId laid along the flight
+       path. `homing` above is reused by the seeking modifiers, and `seekMouse`
+       says to steer at the aim point instead of at a creature. */
+    u8     trail;
+    bool   seekMouse;
+
+    /* --- the companion ---------------------------------------------------
+       A volley is one shot or TWO, never more, and that is a statement about
+       the modifiers rather than an array size picked for comfort: the doubling
+       and arcing modifiers reach exactly two spells because an arc has two
+       ends. If a modifier ever wants three, this becomes an array and the note
+       on modSpan is where the reach already lives.
+
+       `used` rather than a count, because there is only ever one of them. */
+    struct Companion {
+        bool  used;
+        int   power, damage, pierce, blast, life, bounces;
+        u32   colour;
+        float speed, gravity, homing;
+        u8    effect, trail;
+        bool  seekMouse;
+    } second;
+    /* Which arc, if any, is strung between the two. ARC kinds only; MODK_NONE
+       for a plain double and for every single shot. */
+    u8     link;
 };
 ToolShot toolResolve(const ItemStack& st);
 bool toolShotEnergyAvailable(const ItemStack& st, const ToolShot& shot);

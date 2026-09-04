@@ -465,6 +465,43 @@ const Recipe RECIPES[] = {
        Mk III and the disruptor the true top of their ladders. */
     { { { (ItemId)MAT_STEEL, 4 }, { (ItemId)MAT_GOLD, 2 }, { ITEM_NONE, 0 } },
       ITEM_MULTITOOL2, 1, "Multitool Mk II", STATION_ASSEMBLY },
+
+    /* --- Mk III, and the modifiers ------------------------------------------
+       Titanium and a Silk Gland, which is the pair the comment above already
+       promised titanium would be half of. The gland is the Widow's drop, so
+       this tier is on the far side of layer 2's boss exactly as the Blast
+       Furnace is on the far side of layer 1's -- and for the same reason:
+       the reward for a boss should be a capability, not a stack of something.
+
+       The MODIFIERS are behind Mk III rather than beside it, by costing the
+       one thing only Mk III can hold: they are useless in a Mk II. That is
+       stated in the ingredients rather than in a gate, because silk is what
+       makes them and silk comes off the same creature. */
+    { { { (ItemId)MAT_TITANIUM, 6 }, { ITEM_SILK_GLAND, 1 }, { (ItemId)MAT_GOLD, 4 } },
+      ITEM_MULTITOOL3, 1, "Multitool Mk III", STATION_ASSEMBLY },
+
+    /* Cheap, because doubling spends the spells' own energy rather than its
+       own -- see the note on the item. */
+    { { { (ItemId)MAT_WEB, 6 }, { (ItemId)MAT_GOLD, 2 }, { ITEM_NONE, 0 } },
+      ITEM_MOD_DOUBLE, 1, "Double Shot", STATION_ASSEMBLY },
+    { { { (ItemId)MAT_WEB, 4 }, { (ItemId)MAT_COAL, 6 }, { (ItemId)MAT_GLASS, 2 } },
+      ITEM_MOD_TRAIL_FIRE, 1, "Fire Trail", STATION_ASSEMBLY },
+    /* The arcs need the conductor, and graphene is the one that survives being
+       run hot -- which is what an arc is. */
+    { { { (ItemId)MAT_WEB, 8 }, { (ItemId)MAT_GRAPHENE, 3 }, { (ItemId)MAT_GOLD, 4 } },
+      ITEM_MOD_ARC_LIGHTNING, 1, "Lightning Arc", STATION_ASSEMBLY },
+    { { { (ItemId)MAT_WEB, 8 }, { (ItemId)MAT_GRAPHENE, 2 }, { (ItemId)MAT_FUEL, 6 } },
+      ITEM_MOD_ARC_FIRE, 1, "Fire Arc", STATION_ASSEMBLY },
+    /* Seeking costs a second Silk Gland, which is the most expensive thing any
+       recipe asks for: it means a second Widow. The module removes aiming from
+       the game while it is fitted, and something that removes a skill should
+       cost a fight rather than a shopping list. */
+    { { { ITEM_SILK_GLAND, 1 }, { (ItemId)MAT_TITANIUM, 3 }, { (ItemId)MAT_GLASS, 4 } },
+      ITEM_MOD_SEEK, 1, "Seeking", STATION_ASSEMBLY },
+    { { { (ItemId)MAT_WEB, 4 }, { (ItemId)MAT_GLASS, 4 }, { (ItemId)MAT_GOLD, 2 } },
+      ITEM_MOD_SEEK_MOUSE, 1, "Point Seeking", STATION_ASSEMBLY },
+    { { { (ItemId)MAT_TITANIUM, 4 }, { (ItemId)MAT_GRAPHENE, 4 }, { (ItemId)MAT_WEB, 4 } },
+      ITEM_MOD_QUICKEN, 1, "Quicken", STATION_ASSEMBLY },
     { { { (ItemId)MAT_GOLD, 2 }, { (ItemId)MAT_CHITIN, 4 }, { (ItemId)MAT_GLASS, 1 } },
       ITEM_MOD_HOMING, 1, "Homing Module", STATION_ASSEMBLY },
     { { { (ItemId)MAT_TITANIUM, 3 }, { (ItemId)MAT_GOLD, 2 }, { ITEM_NONE, 0 } },

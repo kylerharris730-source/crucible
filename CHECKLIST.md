@@ -146,6 +146,13 @@ Released: **v0.4.5**. Two commits sit past it (see *Ship it* below).
 What *done* looks like -- bosses, populating all three layers, the rocket, and
 the bees-and-wax idea -- lives in [ROADMAP.md](ROADMAP.md).
 
+- [ ] **Aqua regia, wax and web have no survival source.** All three exist only
+      in the creative palette. Web is the newest and the most awkward: the
+      Widow's silk decays a few seconds after it lands, so a player cannot even
+      collect it from the fight it comes from -- and it is an ingredient in six
+      of the seven shot-modifier recipes. Either the modifiers need a different
+      ingredient or silk needs to stop rotting where it is mined.
+
 ## Known and deliberate
 
 Not bugs, and not scheduled — written down so they stop being rediscovered.

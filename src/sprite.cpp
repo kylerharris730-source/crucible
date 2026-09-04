@@ -322,6 +322,100 @@ static const char* ART_MOD_HOMING[SPR_H] = {
     "..............", "..............",
 };
 
+
+/* Mk III. The same screwdriver, longer in the shaft and heavier in the grip,
+   with the collar doubled -- the ladder's whole visual argument is that it is
+   one tool getting bigger, so a third silhouette would say "different object"
+   about a thing that is not one. 'T' at the tip is the working edge, as on
+   both tiers below it. */
+static const char* ART_TOOL3[SPR_H] = {
+    "...........TTT",
+    "..........TTTT",
+    ".........SSSS.",
+    "........SSSS..",
+    ".......SSSS...",
+    "......SSSS....",
+    ".....GGGG.....",
+    "....GGGG......",
+    "...JJJJJ......",
+    "..JJJJJJ......",
+    ".JJJJJJ.......",
+    ".JJJJJ........",
+    ".GGG..........",
+    ".GG...........",
+};
+
+/* --- the modifier chips -----------------------------------------------------
+   Same chip silhouette as every module, and a DARK RIM instead of the bright
+   one. That single difference is the whole point of drawing them this way: a
+   modifier and a spell go in the same sockets and do completely different
+   things, so the socket panel has to say which is which before you read a
+   symbol, let alone a name. Bright rim fires; dark rim changes what fires.
+
+   Symbols are borrowed from the palette the existing modules established --
+   cyan is a shot, orange is fire, purple is homing, green is speed -- so a
+   player who knows the Shot Module reads "two of those" without a caption. */
+
+/* Double: two bars, side by side. */
+static const char* ART_MOD_DOUBLE[SPR_H] = {
+    "..............", ".GGGGGGGGGGGG.", ".GBBBBBBBBBBG.", ".GBBKKBBKKBBG.",
+    ".GBBKKBBKKBBG.", ".GBBKKBBKKBBG.", ".GBBKKBBKKBBG.", ".GBBKKBBKKBBG.",
+    ".GBBKKBBKKBBG.", ".GBBBBBBBBBBG.", ".GBBBBBBBBBBG.", ".GGGGGGGGGGGG.",
+    "..............", "..............",
+};
+
+/* Fire trail: a head with a tail streaming off it. */
+static const char* ART_MOD_TRAIL[SPR_H] = {
+    "..............", ".GGGGGGGGGGGG.", ".GBBBBBBBBBBG.", ".GBBBBBBBBLLG.",
+    ".GBBBBBBBLLLG.", ".GBBBBBBLLLBG.", ".GBBBBLLLBBBG.", ".GBBLLLBBBBBG.",
+    ".GBLLLBBBBBBG.", ".GBLBBBBBBBBG.", ".GBBBBBBBBBBG.", ".GGGGGGGGGGGG.",
+    "..............", "..............",
+};
+
+/* Lightning arc: two anchors with a hard zigzag strung between them. */
+static const char* ART_MOD_ARC_L[SPR_H] = {
+    "..............", ".GGGGGGGGGGGG.", ".GBBBBBBBBBBG.", ".GKKBBBBBBKKG.",
+    ".GKKBBBBBBKKG.", ".GBBKBBBBKBBG.", ".GBBBKBBKBBBG.", ".GBBBBKKBBBBG.",
+    ".GBBBKBBKBBBG.", ".GBBBBBBBBBBG.", ".GBBBBBBBBBBG.", ".GGGGGGGGGGGG.",
+    "..............", "..............",
+};
+
+/* Fire arc: the same two anchors, and a sagging line instead of a jagged one --
+   fire falls, lightning does not. */
+static const char* ART_MOD_ARC_F[SPR_H] = {
+    "..............", ".GGGGGGGGGGGG.", ".GBBBBBBBBBBG.", ".GLLBBBBBBLLG.",
+    ".GLLBBBBBBLLG.", ".GBLBBBBBBLBG.", ".GBBLBBBBLBBG.", ".GBBBLBBLBBBG.",
+    ".GBBBBLLBBBBG.", ".GBBBBBBBBBBG.", ".GBBBBBBBBBBG.", ".GGGGGGGGGGGG.",
+    "..............", "..............",
+};
+
+/* Seeking: a ring closing on a centre. The expensive one, and the one that
+   looks like a lock. */
+static const char* ART_MOD_SEEK[SPR_H] = {
+    "..............", ".GGGGGGGGGGGG.", ".GBBBBBBBBBBG.", ".GBBB@@@@BBBG.",
+    ".GBB@BBBB@BBG.", ".GB@BB@@BB@BG.", ".GB@BB@@BB@BG.", ".GBB@BBBB@BBG.",
+    ".GBBB@@@@BBBG.", ".GBBBBBBBBBBG.", ".GBBBBBBBBBBG.", ".GGGGGGGGGGGG.",
+    "..............", "..............",
+};
+
+/* Point seeking: an arrow bending toward a mark. No ring -- it does not lock
+   onto anything, and the icon should not promise that it does. */
+static const char* ART_MOD_SEEKM[SPR_H] = {
+    "..............", ".GGGGGGGGGGGG.", ".GBBBBBBBBBBG.", ".GBBBBBBBB@BG.",
+    ".GBBBBBBB@@BG.", ".GBBBBBB@@@BG.", ".GBB@@@@@@BBG.", ".GB@BBBB@BBBG.",
+    ".G@BBBBBBBBBG.", ".GBBBBBBBBBBG.", ".GBBBBBBBBBBG.", ".GGGGGGGGGGGG.",
+    "..............", "..............",
+};
+
+/* Quicken: a double chevron, which is what fast-forward looks like everywhere
+   and there is no reason to invent a second sign for it. */
+static const char* ART_MOD_QUICKEN[SPR_H] = {
+    "..............", ".GGGGGGGGGGGG.", ".GBBBBBBBBBBG.", ".GB?BBB?BBBBG.",
+    ".GB??BB??BBBG.", ".GB.??B.??BBG.", ".GB.??B.??BBG.", ".GB??BB??BBBG.",
+    ".GB?BBB?BBBBG.", ".GBBBBBBBBBBG.", ".GBBBBBBBBBBG.", ".GGGGGGGGGGGG.",
+    "..............", "..............",
+};
+
 /* --- the warp wand ---------------------------------------------------------
    A rod held on the diagonal with the split-space colour burning at the tip.
 
@@ -2259,6 +2353,14 @@ void initSprites() {
     expand(SPR_MOD_BOUNCE, ART_MOD_BOUNCE);
     expand(SPR_MOD_HOMING, ART_MOD_HOMING);
     expand(SPR_MOD_TELEPORT, ART_MOD_TELEPORT);
+    expand(SPR_TOOL3,        ART_TOOL3);
+    expand(SPR_MOD_DOUBLE,   ART_MOD_DOUBLE);
+    expand(SPR_MOD_TRAIL,    ART_MOD_TRAIL);
+    expand(SPR_MOD_ARC_L,    ART_MOD_ARC_L);
+    expand(SPR_MOD_ARC_F,    ART_MOD_ARC_F);
+    expand(SPR_MOD_SEEK,     ART_MOD_SEEK);
+    expand(SPR_MOD_SEEKM,    ART_MOD_SEEKM);
+    expand(SPR_MOD_QUICKEN,  ART_MOD_QUICKEN);
     expand(SPR_WARP_WAND, ART_WARP_WAND);
     expand(SPR_SPARK, ART_SPARK);
     expandMetal(SPR_ARMOUR_DRONE_VISOR,   ART_ARMOUR_HELM,    0x6FAFBE, 0x3D6C78);

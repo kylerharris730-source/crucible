@@ -34,6 +34,30 @@ static float trailRandom() {
     return (float)(g_trailRandom & 0xffffu) / 65535.0f;
 }
 
+/* How far apart the two ends of an arc may drift before it breaks. Sixty cells
+   is a little under the width of the view, so an arc you can see is an arc that
+   is working -- and one that has stretched off screen has already stopped. */
+static const float ARC_MAX_SPAN = 60.0f;
+
+/* One mote of an arc. Short lived on purpose: the arc is redrawn from scratch
+   every frame, so it follows its two ends instead of leaving a smear where they
+   used to be. */
+static void arcMote(float x, float y, u32 colour) {
+    int slot = g_trailMoteCursor;
+    for (int scanned = 0; scanned < MAX_TRAIL_MOTES; ++scanned) {
+        const int candidate = (g_trailMoteCursor + scanned) % MAX_TRAIL_MOTES;
+        if (!g_trailMotes[candidate].alive) { slot = candidate; break; }
+    }
+    TrailMote& m = g_trailMotes[slot];
+    m.x = x + (trailRandom() - 0.5f) * 1.4f;
+    m.y = y + (trailRandom() - 0.5f) * 1.4f;
+    m.vx = 0.0f; m.vy = 0.0f;
+    m.colour = colour;
+    m.life = m.fullLife = 3;
+    m.alive = true;
+    g_trailMoteCursor = (slot + 1) % MAX_TRAIL_MOTES;
+}
+
 static void trailMoteEmit(const Projectile& p) {
     const float speed = sqrtf(p.vx * p.vx + p.vy * p.vy);
     if (speed < 0.001f) return;
@@ -317,10 +341,22 @@ void projClear() {
     g_glowAfterglowCursor = 0;
 }
 
+static int g_lastSpawned = -1;
+int projLastSpawnedIndex() { return g_lastSpawned; }
+
+void projLink(int a, int b, u8 linkKind) {
+    if (a < 0 || b < 0 || a >= MAX_PROJ || b >= MAX_PROJ || a == b) return;
+    if (!g_proj[a].alive || !g_proj[b].alive) return;
+    g_proj[a].link = (i16)b; g_proj[a].linkKind = linkKind;
+    g_proj[b].link = (i16)a; g_proj[b].linkKind = linkKind;
+}
+
 bool projSpawn(float x, float y, float vx, float vy,
                int power, int pierce, int life, u32 colour, int blast,
                int payload, int damage, bool hostile, float gravity, int effect,
-               int bounces, float homing, u8 owner, int trailLife) {
+               int bounces, float homing, u8 owner, int trailLife,
+               int trailMat, bool seekPoint, float seekX, float seekY) {
+    g_lastSpawned = -1;
     for (int i = 0; i < MAX_PROJ; ++i) {
         if (g_proj[i].alive) continue;
         Projectile& p = g_proj[i];
@@ -330,6 +366,10 @@ bool projSpawn(float x, float y, float vx, float vy,
         p.colour = colour; p.payload = (u8)payload; p.damage = damage;
         p.hostile = hostile; p.gravity = gravity; p.effect = (u8)effect;
         p.owner = owner; p.trailLife = (u8)trailLife; p.alive = true;
+        p.trailMat = (u8)trailMat;
+        p.link = -1; p.linkKind = MODK_NONE;
+        p.seekPoint = seekPoint; p.seekX = seekX; p.seekY = seekY;
+        g_lastSpawned = i;
         return true;
     }
     /* Full: drop it. Silently, because the alternative -- replacing the oldest
@@ -530,7 +570,24 @@ int projUpdate(World& w) {
             continue;
         }
 
-        if (!p.hostile && p.homing > 0.0f) {
+        /* Steering at a POINT rather than at a creature -- the cheap seeking
+           modifier. It is a different weapon from the expensive one and not a
+           weaker copy of it: this one cannot find anything for you, it only
+           bends the shot toward where you were pointing, so it fixes a bad lead
+           and does nothing at all about a target you never saw. Which is why it
+           costs a fraction of what MODK_SEEK costs. */
+        if (!p.hostile && p.homing > 0.0f && p.seekPoint) {
+            const float dx = p.seekX - p.x, dy = p.seekY - p.y;
+            const float dist = sqrtf(dx * dx + dy * dy);
+            const float speed = sqrtf(p.vx * p.vx + p.vy * p.vy);
+            /* Stops steering once it is basically there, or a shot that
+               overflies the cursor turns round and comes back at you. */
+            if (dist > 2.0f && speed > 0.001f) {
+                p.vx += (dx * speed / dist - p.vx) * p.homing;
+                p.vy += (dy * speed / dist - p.vy) * p.homing;
+            }
+        }
+        if (!p.hostile && p.homing > 0.0f && !p.seekPoint) {
             int target = -1;
             float best = 120.0f * 120.0f;
             for (int e = 0; e < MAX_ENTITIES; ++e) {
@@ -555,6 +612,69 @@ int projUpdate(World& w) {
         }
 
         trailMoteEmit(p);
+
+        /* --- the fire trail ---------------------------------------------
+           Laid into the cell the shot is IN, and only if that cell is empty.
+           Only into empty, because a trail that overwrote what it flew through
+           would be a mining tool with a different name -- and this modifier is
+           supposed to leave a line of flame behind a shot, not dig with it.
+
+           One cell a frame rather than every cell of the traversal below: at
+           these speeds that is a dashed line, which is what a trail should look
+           like, and it also means a fast shot does not lay ten times the fire a
+           slow one does for the same distance covered. */
+        if (p.trailMat != MAT_EMPTY) {
+            const int tx = (int)p.x, ty = (int)p.y;
+            if (tx > PLAY_X0 && tx < PLAY_X1 && ty > PLAY_Y0 && ty < PLAY_Y1 &&
+                w.at(tx, ty).mat == MAT_EMPTY)
+                w.setCell(tx, ty, p.trailMat);
+        }
+
+        /* --- the arc ------------------------------------------------------
+           Strung between the two shots of a doubled volley. Applied by the
+           LOWER-indexed partner only, so a two-ended effect happens once a
+           frame instead of twice -- which is not a tidiness point: it is the
+           difference between the stated damage and double it.
+
+           The arc is a SEGMENT, so it hits what is between the shots rather
+           than what either of them hit. That is the whole appeal of the
+           modifier: the two projectiles are the anchors and the dangerous part
+           is the space in between, so spreading them is the skill. */
+        if (p.linkKind != MODK_NONE && p.link >= 0 && p.link < MAX_PROJ &&
+            i < p.link && g_proj[p.link].alive) {
+            const Projectile& q = g_proj[p.link];
+            const float ax = p.x, ay = p.y, bx = q.x, by = q.y;
+            const float dx = bx - ax, dy = by - ay;
+            const float len = sqrtf(dx * dx + dy * dy);
+            /* Bounded. Two shots that have flown apart across half a cavern
+               should not still be joined by a wire that kills everything on the
+               way -- past this the arc breaks, which is also the readable thing
+               for it to do. */
+            if (len > 1.0f && len < ARC_MAX_SPAN) {
+                u8 mask = 0;
+                entHitSegment(ax, ay, bx, by, ax, ay,
+                              imax(1, p.damage / 3), 0.0f, &mask);
+                const int steps = imin(24, (int)len);
+                for (int k = 0; k <= steps; ++k) {
+                    const float t = steps ? (float)k / (float)steps : 0.0f;
+                    const float mx = ax + dx * t, my = ay + dy * t;
+                    /* Drawn as trail motes, which is the wake system this file
+                       already has rather than a second overlay: they are short
+                       lived, so the arc is redrawn every frame and follows the
+                       two ends instead of smearing behind them. */
+                    arcMote(mx, my, p.linkKind == MODK_ARC_FIRE
+                                    ? 0xFF9A3C : 0x9CE0FF);
+                    if (p.linkKind == MODK_ARC_FIRE) {
+                        const int cx = (int)mx, cy = (int)my;
+                        if (cx > PLAY_X0 && cx < PLAY_X1 &&
+                            cy > PLAY_Y0 && cy < PLAY_Y1 &&
+                            w.at(cx, cy).mat == MAT_EMPTY &&
+                            (trailRandom() < 0.18f))
+                            w.setCell(cx, cy, MAT_FIRE);
+                    }
+                }
+            }
+        }
 
         /* --- grid traversal, not point sampling --------------------------
            This walks EVERY cell the frame's path passes through, using the

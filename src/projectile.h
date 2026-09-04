@@ -98,6 +98,30 @@ struct Projectile {
        an arcing glob wants a sparse trail that says "something passed", and a
        beam wants a line that says "this is where it went". */
     u8    trailLife;
+
+    /* --- what a shot MODIFIER added -------------------------------------
+       See ModKind in item.h. Both are zero on every shot that has no modifier
+       in front of it, which is every shot fired before these existed.
+
+       `trailMat` is laid into the empty cells the shot flies through, as
+       opposed to `payload`, which is placed in the ONE cell it stops in. Two
+       fields rather than one flag on payload, because a shot can honestly want
+       both -- a fire-trailing grenade lays flame on the way and its cargo where
+       it lands. */
+    u8    trailMat;
+    /* The other end of an arc: an index into g_proj, or -1. The arc is applied
+       by the LOWER-indexed partner only, so a two-ended effect happens once a
+       frame rather than twice. `linkKind` is a ModKind, MODK_NONE for none. */
+    i16   link;
+    u8    linkKind;
+    /* Where the player was pointing when this was fired, for MODK_SEEK_MOUSE.
+       Carried on the shot rather than read from the live aim, and the
+       difference is the whole feel of it: steering at the CURRENT cursor makes
+       a shot you drag around like a marionette, which is a different weapon
+       from one you can lead a target with. */
+    bool  seekPoint;
+    float seekX, seekY;
+
     bool  alive;
 };
 
@@ -131,7 +155,22 @@ bool projSpawn(float x, float y, float vx, float vy,
                int bounces = 0, float homing = 0.0f,
                u8 owner = 0xff,
                /* See Projectile::trailLife. Zero keeps the ordinary sparkle. */
-               int trailLife = 0);
+               int trailLife = 0,
+               /* Modifier extras -- see the fields they set. All defaulted, so
+                  every existing call site fires exactly the shot it always
+                  did. */
+               int trailMat = MAT_EMPTY,
+               bool seekPoint = false, float seekX = 0.0f, float seekY = 0.0f);
+
+/* Ties two live projectiles together with an arc of `linkKind` (a ModKind).
+   Separate from projSpawn because a link needs BOTH indices and a spawn only
+   knows its own -- the caller fires the pair, then strings the arc between
+   them. Silently does nothing if either index is not a live shot. */
+void projLink(int a, int b, u8 linkKind);
+/* Which slot the last projSpawn used, or -1 if it was refused. The pool is
+   fixed and reuses slots, so a caller that wants to link two shots has to be
+   told where they went. */
+int  projLastSpawnedIndex();
 
 /* Blows a hole, sets fire to the middle of it and heats the lot. Exposed
    because an explosion is a world event rather than a projectile one -- the

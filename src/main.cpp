@@ -610,7 +610,15 @@ static void drawCircuitSignalIcon(HDC hdc, const RECT& r, int signal) {
 static void itemTooltipStats(const ItemDef& d, char* out, int cap) {
     if (!out || cap < 1) return;
     out[0] = 0;
-    if (d.kind == ITEMK_MODULE) {
+    if (d.kind == ITEMK_MODULE && d.modKind != MODK_NONE) {
+        /* A modifier has no damage, so the ordinary module line reads "0
+           damage" and looks like a broken module rather than a different kind
+           of one. What matters about a modifier is what it reaches and what it
+           costs. */
+        snprintf(out, cap, "modifier  |  %u energy  |  affects %u shot%s",
+                 (unsigned)d.energyCost, (unsigned)d.modSpan,
+                 d.modSpan == 1 ? "" : "s");
+    } else if (d.kind == ITEMK_MODULE) {
         snprintf(out, cap, "%u energy  |  %d damage  |  %d frame delay",
                  (unsigned)d.energyCost, d.damage, (int)d.addDelay);
     } else if (d.kind == ITEMK_TOOL && d.energyCapacity) {
@@ -2248,7 +2256,17 @@ static void layoutCreative() {
         }
         equipW += pad * 2;
     }
-    const int w = imax(paletteW, equipW);
+    /* The bench row states its own width too, for exactly the reason the note
+       above gives. It was left out while the widest tool held five modules and
+       the equipment strip happened to be wider than five sockets anyway -- a
+       coincidence, not a margin. Mk III holds six, plus the payload slot, which
+       is seven squares at 52px and comfortably past what the strip guarantees.
+       The slot rects are laid out from this same origin, so a panel narrower
+       than its own bench puts the last socket outside the frame it is drawn
+       in. */
+    const int benchW = (signalPicker || g_toolPackSlot < 0)
+                     ? 0 : pad * 2 + (g_toolSlotCount + 1) * 52 - 6;
+    const int w = imax(imax(paletteW, equipW), benchW);
     const int h = pad + 56 + paletteH + 10 + packH + equipH + droneModuleH + benchH + 38;
     const int cx = PANEL_W + VIEW_W / 2, cy = VIEW_H / 2;
     const int x0 = cx - w / 2, y0 = cy - h / 2;
@@ -4701,6 +4719,13 @@ static int g_digCool = 0;
    through the player. So the crosshair always points where the shot goes, even
    though the shot itself is not limited by reach -- a thrown thing does not care
    how far your arm is. */
+/* How far apart a doubled volley's two shots leave the muzzle, as a fraction of
+   shot speed. Wider than the twin-shot charm's 0.10, and the reason is the ARC:
+   the interesting part of an arcing volley is the span between the two
+   projectiles, and at a tenth they overlap for the first second of flight and
+   the arc has nowhere to be. */
+static const float VOLLEY_FAN = 0.16f;
+
 static void fireToolFor(Player& player, Inventory& inventory, const Aim& aim) {
     ItemStack& h = inventory.held();
     if (h.empty() || ITEMS[h.item].kind != ITEMK_TOOL || h.inst == 0) return;
@@ -4766,8 +4791,43 @@ static void fireToolFor(Player& player, Inventory& inventory, const Aim& aim) {
     const bool fired = projSpawn(pcx + dx * MUZZLE, pcy + dy * MUZZLE, vx, vy,
                                  s.power, s.pierce, shotLife, s.colour, s.blast,
                                  payload, shotDamage, false, s.gravity, s.effect,
-                                 s.bounces, s.homing, owner);
+                                 s.bounces, s.homing, owner, 0,
+                                 s.trail, s.seekMouse,
+                                 (float)aim.x, (float)aim.y);
     if (!fired) return;
+    const int firstIndex = projLastSpawnedIndex();
+
+    /* --- the companion, when a modifier doubled the volley ----------------
+       Fanned rather than launched along the same line, and by enough to be two
+       shots instead of one thick one. It matters more here than it does for the
+       twin-shot charm below: an ARC is strung between these two, and two
+       projectiles on top of each other have no space between them for the arc
+       to be the point of.
+
+       The payload is NOT spent twice. One pull of the trigger consumes one unit
+       of whatever is loaded, and a doubling modifier duplicates the SHOT rather
+       than the ammunition -- otherwise the modifier would quietly halve the
+       life of every payload in the tool, which is a cost nothing tells you
+       about. */
+    if (s.second.used) {
+        const ToolShot::Companion& c = s.second;
+        int cDamage = accessoryShotDamage(inventory, c.damage);
+        if (rangedDamagePct > 0)
+            cDamage = imax(cDamage + 1, cDamage + cDamage * rangedDamagePct / 100);
+        const float cSpeed = accessoryShotSpeed(inventory, c.speed);
+        const int   cLife  = c.life + c.life * rangedRangePct / 100;
+        const float fanX = -dy * VOLLEY_FAN, fanY = dx * VOLLEY_FAN;
+        const bool second = projSpawn(pcx + dx * MUZZLE - fanX * 3.0f,
+                                      pcy + dy * MUZZLE - fanY * 3.0f,
+                                      dx * cSpeed + fanX, dy * cSpeed + fanY,
+                                      c.power, c.pierce, cLife, c.colour, c.blast,
+                                      MAT_EMPTY, cDamage, false, c.gravity,
+                                      c.effect, c.bounces, c.homing, owner, 0,
+                                      c.trail, c.seekMouse,
+                                      (float)aim.x, (float)aim.y);
+        if (second && s.link != MODK_NONE)
+            projLink(firstIndex, projLastSpawnedIndex(), s.link);
+    }
 
     toolCommitShot(h, s, accessoryShotDelay(inventory, s.delay));
     if (payload != MAT_EMPTY && --ti.payload.count == 0) {

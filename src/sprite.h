@@ -200,6 +200,18 @@ enum SpriteId {
     /* The Widow's pair, appended for the same reason everything is. */
     SPR_WIDOW_CALL,
     SPR_SILK_GLAND,
+    /* Mk III and its modifiers, appended for the same reason as everything
+       else here. The seven chips share the module silhouette with a DARK rim
+       -- see the note on their art -- so the socket panel says "changes a
+       shot" before you have read a symbol. */
+    SPR_TOOL3,
+    SPR_MOD_DOUBLE,
+    SPR_MOD_TRAIL,
+    SPR_MOD_ARC_L,
+    SPR_MOD_ARC_F,
+    SPR_MOD_SEEK,
+    SPR_MOD_SEEKM,
+    SPR_MOD_QUICKEN,
     SPR_LENS,
     SPR_RELAY,
     SPR_BREAD,
