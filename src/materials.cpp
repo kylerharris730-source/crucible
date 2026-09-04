@@ -998,6 +998,16 @@ MatInfo MATS[MAT_COUNT] = {
      Lighter and more orange than coal ember, because at a glance the
      difference that matters is which one you are looking at. */
   { "Wax Ember", KIND_STATIC, 255, 0, 0, 0, 0, 0, 0, 180, 3, 0, degC(120), degC(50), MAT_EMPTY, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, 0xE08A2A, 0x9A5010, 0xE08A2A, 0x9A5010, 0 },
+  /* Aqua regia. Slightly denser and a touch thicker than ordinary acid, so a
+     mixed pool layers with the strong stuff underneath and it crawls rather
+     than sheets -- a liquid that converts what it touches wants to be watched
+     arriving. Orange, because every other corrosive down here is green and the
+     one thing a player must never do is mistake which pool is which.
+
+     No phase transitions on purpose: acid boils to a vapour that corrodes on
+     the same terms, and a transmuting VAPOUR would put the reaction into the
+     air where nothing contains it. This one stays a liquid you have to pour. */
+  { "AquaRegia", KIND_LIQUID, 108, 0, 0, 5, 60, 0, 0, 40, 0, 0, 0, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, 0xE8801C, 0xA85008, 0xE8801C, 0xA85008, 0 },
 };
 
 u32 g_colorLut[MAT_COUNT * 256];
@@ -1020,6 +1030,7 @@ u8  g_matDropsAs[MAT_COUNT];
 u8  g_matSmeltYield[MAT_COUNT];
 u8  g_matStation[MAT_COUNT];
 u8  g_matDissolvedBy[MAT_COUNT];
+u8  g_matTransmutedBy[MAT_COUNT];
 bool  g_matCorrodes[MAT_COUNT];
 u16   g_matVolatility[MAT_COUNT];
 u32   g_matCondenseChance[MAT_COUNT];
@@ -1732,6 +1743,43 @@ static void initAcid() {
     };
     for (unsigned i = 0; i < sizeof(DISSOLVES) / sizeof(DISSOLVES[0]); ++i)
         g_matDissolvedBy[DISSOLVES[i]] = MAT_ACID;
+
+    /* --- what aqua regia turns into acid ---------------------------------
+       Everything ordinary acid already eats, PLUS the metals and their ores
+       and melts, MINUS glass.
+
+       The metals are the whole point: acid is described above as "the chemical
+       route past what the thermal route cannot reach", and metal was the one
+       thing it could not reach. This reaches it, including GOLD -- real aqua
+       regia is the acid that dissolves gold, and that is precisely why the
+       game's acid-proof container mechanic keeps glass and loses gold here. A
+       glass flask still holds it; a gold vault no longer protects anything.
+
+       Glass, refractory and aluminium nitride are the exceptions, and they are
+       the same three the furnace lining is made of -- so the material you build
+       a crucible out of is the material that survives what you put in it,
+       which is one rule rather than two. */
+    for (int m = 0; m < MAT_COUNT; ++m) g_matTransmutedBy[m] = 0;
+    for (unsigned i = 0; i < sizeof(DISSOLVES) / sizeof(DISSOLVES[0]); ++i)
+        g_matTransmutedBy[DISSOLVES[i]] = MAT_AQUA_REGIA;
+    static const MatId TRANSMUTES[] = {
+        MAT_IRON, MAT_COPPER, MAT_TIN, MAT_BRONZE, MAT_STEEL,
+        MAT_GOLD, MAT_TITANIUM, MAT_TUNGSTEN,
+        MAT_IRON_ORE, MAT_COPPER_ORE, MAT_TIN_ORE,
+        MAT_GOLD_ORE, MAT_TITANIUM_ORE, MAT_TUNGSTEN_ORE,
+        MAT_IRON_MELT, MAT_COPPER_MELT, MAT_TIN_MELT, MAT_BRONZE_MELT,
+        MAT_STEEL_MELT, MAT_GOLD_MELT, MAT_TITANIUM_MELT, MAT_TUNGSTEN_MELT,
+        MAT_SLAG, MAT_CERAMIC,
+    };
+    for (unsigned i = 0; i < sizeof(TRANSMUTES) / sizeof(TRANSMUTES[0]); ++i)
+        g_matTransmutedBy[TRANSMUTES[i]] = MAT_AQUA_REGIA;
+    /* Never, whatever the lists above say. */
+    g_matTransmutedBy[MAT_GLASS]            = 0;
+    g_matTransmutedBy[MAT_GLASS_MELT]       = 0;
+    g_matTransmutedBy[MAT_REFRACTORY]       = 0;
+    g_matTransmutedBy[MAT_ALUMINUM_NITRIDE] = 0;
+    g_matTransmutedBy[MAT_ACID]             = 0;
+    g_matTransmutedBy[MAT_AQUA_REGIA]       = 0;
 
     /* Both phases corrode, and they corrode the same list. Naming the pair here
        rather than testing for MAT_ACID inside the rule is what lets the vapour

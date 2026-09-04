@@ -255,6 +255,7 @@ static const BrushDef BRUSHES[] = {
     { MAT_COLDFIRE,"Cold Fire"},
     { MAT_NITROGEN,"Liquid N2"},
     { MAT_ACID,    "Acid"     },
+    { MAT_AQUA_REGIA, "Aqua Regia" },
     { MAT_GLOWFLUID,"Glowfluid"},
     { MAT_WAX,     "Wax"      },
     { MAT_INERT_FLUID, "Inert Fluid" },

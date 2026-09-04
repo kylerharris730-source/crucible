@@ -456,6 +456,12 @@ static const int FIRE_SPREAD    = 34;  /* chance/255 per frame that a flammable
    in a little over two seconds on average -- long enough to watch it happen,
    short enough that acid is worth carrying. */
 static const int ACID_DISSOLVE_CHANCE = 20;
+/* Aqua regia works slower than ordinary acid, out of 255, and the gap is the
+   read: metal should visibly take a while to go. It is also the safety margin
+   -- see the rule in world.cpp, where each cell converts at most one neighbour
+   and is spent doing it, so a slower gate means a smaller front rather than a
+   longer-lived one. */
+static const int AQUA_TRANSMUTE_CHANCE = 9;
 
 /* How readily a spring pushes water into an empty neighbour, out of 255. Slow
    on purpose: a spring that filled at the rate water flows would be a burst

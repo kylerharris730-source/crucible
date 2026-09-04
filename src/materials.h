@@ -416,6 +416,23 @@ enum MatId {
        materials.cpp. Appended, like every material id. */
     MAT_WAX_EMBER,
 
+    /* --- aqua regia -------------------------------------------------------
+       The strong acid, and it works by TRANSMUTATION rather than destruction:
+       what it touches becomes ordinary acid, and the aqua regia that did it is
+       spent. See the rule in world.cpp for why that shape and not the obvious
+       one.
+
+       It eats METALS, which ordinary acid deliberately cannot -- acid is "the
+       chemical route past what the thermal route cannot reach", and this is
+       the route past metal. It does NOT eat glass, and that is not an
+       arbitrary exception: real aqua regia dissolves gold and is stored in
+       glass, so the game's existing acid-proof container mechanic keeps half
+       its rule (glass) and loses the other half (gold) exactly where the
+       chemistry says it should. A gold vault is no longer a safe vault.
+
+       Appended, like every material id, because it is written into saves. */
+    MAT_AQUA_REGIA,
+
     MAT_COUNT
 };
 
@@ -951,6 +968,15 @@ extern u8 g_matDissolvedBy[MAT_COUNT];
 
    Both spend themselves on the cell they eat, so both are finite. */
 extern bool g_matCorrodes[MAT_COUNT];
+
+/* What AQUA REGIA turns into acid, and what shrugs it off.
+
+   A separate table from g_matDissolvedBy rather than a second value in it,
+   because the two reactions differ in kind and not only in list: ordinary acid
+   DESTROYS its victim and is neutralised, aqua regia CONVERTS its victim into
+   acid and is neutralised. One table per reaction keeps "what does this eat"
+   answerable by reading one list. */
+extern u8 g_matTransmutedBy[MAT_COUNT];
 
 /* --- how hard a liquid fumes -----------------------------------------------
    The base chance, out of 65536 per frame, that an exposed surface cell

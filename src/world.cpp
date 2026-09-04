@@ -3265,6 +3265,45 @@ void World::updateCell(Lane& L, int x, int y) {
         if (moreToDo) dirtyPoint(L, x, y);
     }
 
+    /* --- aqua regia: TRANSMUTE, do not multiply --------------------------
+       The obvious way to write "an acid that converts what it touches into
+       acid" is the one the note above has already measured and thrown away:
+       eat a cell, make two cells of acid, and a pocket generated inside stone
+       turns 16,823 cells into 551,506 in three thousand frames and never
+       stops.
+
+       This converts the victim AND SPENDS ITSELF in the same move, which is
+       the same bound ordinary acid uses, arrived at from the other side. N
+       cells of aqua regia convert at most N cells, and what they leave behind
+       is ORDINARY acid -- which is itself bounded, because it is neutralised
+       by the next thing it eats. So the whole reaction is finite twice over
+       and the front cannot outrun the amount you poured.
+
+       It is also why the product is acid rather than more aqua regia: making
+       more of itself is exactly the chain reaction there is nothing on the
+       other side of. Downgrading is what makes "it converts things into acid"
+       a mechanic instead of a map-eater.
+
+       Same self-dirtying pattern as the corrosion rule, and for the identical
+       reason -- see the long note there about why this is checked from the
+       ACID's side rather than the victim's. */
+    if (c.mat == MAT_AQUA_REGIA) {
+        bool moreToDo = false;
+        for (int k = 0; k < 4; ++k) {
+            const int nx = x + NB_DX[k], ny = y + NB_DY[k];
+            const u8 nm = cells[ny * SIM_W + nx].mat;
+            if (g_matTransmutedBy[nm] != MAT_AQUA_REGIA) continue;
+            moreToDo = true;
+            if (!lchance(L, AQUA_TRANSMUTE_CHANCE)) continue;
+            const u8 give = g_matDissolveHeat[nm];
+            convert(L, nx, ny, MAT_ACID);      /* what it touched becomes acid */
+            convert(L, x, y, MAT_EMPTY);       /* and this cell is spent */
+            if (give) heat(nx, ny, 1, (int)give);
+            return;
+        }
+        if (moreToDo) dirtyPoint(L, x, y);
+    }
+
     /* Machines act on their neighbours and never move; nothing below applies. */
     if (c.mat == MAT_HEATER || c.mat == MAT_COOLER) {
         /* The whole machine, and it deliberately does no work on its
