@@ -1556,10 +1556,20 @@ static const int BEE_ARRIVE      = 3;    /* cells that count as `there` */
    on it should mean landing on it; a hive is a fourteen-cell box the bee
    cannot enter, so `home` has to mean `at the door`. */
 static const int BEE_HOME_ARRIVE = 8;
-/* Soot needed to change species. Roughly a second and a half of continuous
-   contact, so brushing past a coal seam does nothing and standing a hive in
-   a coal chute converts the whole colony. */
-static const int BEE_SOOT_FULL   = 90;
+/* Soot needed to change species -- a fifth of a second of contact.
+
+   It was 90, a second and a half, on the reasoning that brushing past a seam
+   should not count. Combined with a scan that only saw cells the body actually
+   overlapped, that made sootying a bee something you had to engineer rather
+   than something that happened: the bee had to be inside the coal, and stay
+   there. Asked for as "make bees easier to sprinkle with coal, basically if
+   coal touches them at all", so contact now means contact.
+
+   The wearing-off below still runs at one a frame, so twelve frames of contact
+   are undone by twelve frames away from it. A bee that genuinely only brushed
+   past still comes out clean; one that is working a coal-dusted flower patch
+   turns. */
+static const int BEE_SOOT_FULL   = 12;
 
 static bool beeFindFlower(const World& w, Entity& e) {
     const int cx = (int)e.centreX(), cy = (int)e.centreY();
@@ -1583,8 +1593,13 @@ static bool beeFindFlower(const World& w, Entity& e) {
    far; the shape is a lookup rather than an if-chain because the next dust
    to mean something only needs a line here and a species beside ENT_COAL_BEE. */
 static u8 beeDustAt(const World& w, const Entity& e) {
-    for (int y = e.top(); y <= e.bottom(); ++y)
-        for (int x = e.left(); x <= e.right(); ++x) {
+    /* One cell of margin around the body, so TOUCHING counts rather than
+       overlapping. A bee is four cells square and coal is a settled powder it
+       cannot fly into, so the old body-only scan meant a bee could sit against
+       a coal face all day and never once register it -- the only reliable way
+       to sooty one was to bury it. Asked for as "if coal touches them at all". */
+    for (int y = e.top() - 1; y <= e.bottom() + 1; ++y)
+        for (int x = e.left() - 1; x <= e.right() + 1; ++x) {
             if (x < PLAY_X0 || x > PLAY_X1 || y < PLAY_Y0 || y > PLAY_Y1) continue;
             const u8 m = w.at(x, y).mat;
             if (m == MAT_COAL) return MAT_COAL;
@@ -1647,6 +1662,11 @@ static void beeTick(World& w, Entity& e) {
         const float dx = hx - e.centreX(), dy = hy - e.centreY();
         if (dx * dx + dy * dy <= (float)(BEE_HOME_ARRIVE * BEE_HOME_ARRIVE)) {
             if (e.phase == 1) hiveDeliver(g_devices[e.home], e.type == ENT_COAL_BEE);
+            /* The hive has to be TOLD what went in, because going in destroys
+               the entity -- and without this the colony forgot overnight. A
+               coal bee turned in at dusk and an ordinary bee came out at dawn,
+               so a hive you had deliberately sootied reverted every morning. */
+            hiveAdmit(g_devices[e.home], e.type == ENT_COAL_BEE);
             e.type = ENT_NONE;
             e.hp   = 0;
         }

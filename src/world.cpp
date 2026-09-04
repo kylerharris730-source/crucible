@@ -2356,19 +2356,28 @@ void World::updateHeat(Lane& L, int x, int y) {
        and is also what makes heat pool under a roof instead of leaking
        through it. */
     if (cells[i].mat == MAT_EMPTY && y > PLAY_Y0) {
-        const int up = i - SIM_W;
-        if (cells[up].mat == MAT_EMPTY) {
+        /* Climb for the HIGHEST air cell within reach that is still cooler
+           than this one, and hand the surplus to that rather than to the cell
+           immediately above. Stopping at the first cell that is not air, or
+           that is not cooler, is what keeps a ceiling a ceiling and stops warm
+           air shoving past air that is already warmer. */
+        int up = -1;
+        for (int d = 1; d <= AIR_CONVECT_REACH && y - d >= PLAY_Y0; ++d) {
+            const int c = i - d * SIM_W;
+            if (cells[c].mat != MAT_EMPTY) break;
+            if ((int)temp[i] - (int)temp[c] < AIR_CONVECT_MIN) break;
+            up = c;
+        }
+        if (up >= 0) {
             const int here = (int)temp[i], there = (int)temp[up];
             const int diff = here - there;
-            if (diff >= AIR_CONVECT_MIN) {
-                int move = diff >> AIR_CONVECT_SHIFT;
-                if (move < 1) move = 1;
-                if (there + move > 255) move = 255 - there;
-                if (move > 0) {
-                    temp[i]  = (u8)(here - move);
-                    temp[up] = (u8)(there + move);
-                    dirtyPoint(L, x, y - 1);
-                }
+            int move = diff >> AIR_CONVECT_SHIFT;
+            if (move < 1) move = 1;
+            if (there + move > 255) move = 255 - there;
+            if (move > 0) {
+                temp[i]  = (u8)(here - move);
+                temp[up] = (u8)(there + move);
+                dirtyPoint(L, x, up / SIM_W);
             }
         }
     }

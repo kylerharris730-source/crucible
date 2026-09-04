@@ -1463,6 +1463,20 @@ void hiveDeliver(Device& d, bool coal) {
     else      { if (d.count  < 64) ++d.count;  }
 }
 
+/* Coal bees currently indoors, kept in `mat2`.
+
+   A spare byte on the Device rather than a new field, and that is the same
+   trade the miner's box depth and filter already make here: Device is written
+   to saves as a raw sized struct, so adding a member reshapes every existing
+   world. A hive uses `count` and `count2` for its deliveries and has no use at
+   all for the two material slots, so one of them carries this. */
+static int hiveCoalIndoors(const Device& d) { return (int)d.mat2; }
+
+void hiveAdmit(Device& d, bool coal) {
+    if (d.type != DEV_HIVE) return;
+    if (coal && d.mat2 < 255) ++d.mat2;
+}
+
 static int hiveBeeCount(int index) {
     int n = 0;
     for (int i = 0; i < MAX_ENTITIES; ++i) {
@@ -1671,8 +1685,14 @@ static void devHive(World& w, Device& d, int index) {
                edge is outside the box, and is where hiveTarget sends it
                back to. */
             float bx, by; hiveTarget(w, d, &bx, &by);
-            const int slot = entSpawn(w, ENT_BEE, bx, by);
+            /* Coal bees first, and only as many as went in. The colony that
+               comes out at dawn is the colony that went to bed: without this
+               the hive replaced every resident with an ordinary bee and a
+               sootied hive quietly reverted overnight. */
+            const bool coal = hiveCoalIndoors(d) > 0;
+            const int slot = entSpawn(w, coal ? ENT_COAL_BEE : ENT_BEE, bx, by);
             if (slot >= 0) {
+                if (coal) --d.mat2;
                 g_entities[slot].home = (i16)index;
                 g_entities[slot].phase = 0;
             }

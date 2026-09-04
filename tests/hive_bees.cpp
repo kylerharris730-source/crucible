@@ -296,6 +296,57 @@ int main() {
         check(g_entities[slot].type == ENT_COAL_BEE, "sustained coal makes a coal bee");
     }
 
+    /* --- 3b. coal only has to TOUCH it ------------------------------------
+       Asked for as "make bees easier to sprinkle with coal, basically if coal
+       touches them at all". Coal is a settled powder a bee cannot fly into, so
+       a scan of only the cells the body OVERLAPS meant the reliable way to
+       sooty one was to bury it. This lays coal beside the bee and never on it. */
+    {
+        buildApiary(0);
+        const int slot = entSpawn(g_world, ENT_BEE, (float)HX, (float)(HY - 20));
+        if (slot < 0) { fprintf(stderr, "could not spawn a test bee\n"); return 3; }
+        g_entities[slot].home = -1;
+
+        for (int i = 0; i < 200 && g_entities[slot].type == ENT_BEE; ++i) {
+            Entity& e = g_entities[slot];
+            /* A ring one cell outside the body, and the body's own cells left
+               deliberately clear -- if this converts, adjacency is what did it. */
+            for (int y = e.top() - 1; y <= e.bottom() + 1; ++y)
+                for (int x = e.left() - 1; x <= e.right() + 1; ++x) {
+                    const bool inside = x >= e.left() && x <= e.right() &&
+                                        y >= e.top()  && y <= e.bottom();
+                    if (inside) { if (g_world.at(x, y).mat == MAT_COAL)
+                                      g_world.setCell(x, y, MAT_EMPTY); }
+                    else if (g_world.at(x, y).mat == MAT_EMPTY)
+                        g_world.setCell(x, y, MAT_COAL);
+                }
+            entTick(g_world, g_p, g_testInv);
+        }
+        check(g_entities[slot].type == ENT_COAL_BEE,
+              "coal touching a bee converts it, without burying it");
+    }
+
+    /* --- 3c. the colony that goes to bed is the colony that gets up --------
+       Going in for the night DESTROYS the entity, so the hive has to remember
+       what went in. It did not: a coal bee turned in at dusk and an ordinary
+       bee came out at dawn, so a hive you had deliberately sootied reverted
+       every single morning. */
+    {
+        Device* d = buildApiary(0);
+        if (!d) { fprintf(stderr, "could not build the apiary\n"); return 3; }
+        const int index = (int)(d - g_devices);
+        hiveAdmit(*d, true);          /* one coal bee went inside */
+
+        int coal = 0;
+        for (int i = 0; i < 4000 && !coal; ++i) {
+            devTick(g_world);
+            for (int k = 0; k < MAX_ENTITIES; ++k)
+                if (g_entities[k].alive() && g_entities[k].home == (i16)index &&
+                    g_entities[k].type == ENT_COAL_BEE) { coal = 1; break; }
+        }
+        check(coal == 1, "a coal bee that went in at dusk comes back out coal");
+    }
+
     /* --- 4. coal wax boils back down to coal ------------------------------ */
     {
         g_world.reset();

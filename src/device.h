@@ -500,6 +500,11 @@ static const int HEAT_LAMP_MAX_CELLS = 2048;
 void hiveTarget(const World& w, const Device& d, float* x, float* y);
 void hiveDeliver(Device& d, bool coal);
 
+/* One bee has gone inside for the night. The hive remembers how many of them
+   were COAL bees, because going in destroys the entity and dawn has to bring
+   back the colony that went to bed rather than a fresh ordinary one. */
+void hiveAdmit(Device& d, bool coal);
+
 u16  pedestalItem(const Device& d);
 int  pedestalCount(const Device& d);
 void pedestalSet(Device& d, u16 item, int count);

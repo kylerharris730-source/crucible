@@ -314,6 +314,36 @@ static const int HEAT_MIN_DIFF  = 2;   /* below this no conduction happens, so
    floor the last degree shuffles upward forever and the field never
    settles. */
 static const int AIR_CONVECT_SHIFT = 1;   /* half the surplus moves up */
+/* How far up a parcel of warm air can carry its surplus in one frame.
+
+   One cell was DIFFUSION, not convection. Heat moved a cell a frame while
+   AIR_COOL bled it toward ambient faster than it climbed, so the two fought and
+   the drift won: a floor held at 200 C under a 200-cell chimney warmed the
+   bottom forty cells and stopped. Measured over twenty seconds, the 40 C front
+   stalled at 42 cells and the ceiling never left ambient at all.
+
+   Reaching makes it TRANSPORT, and the plume outruns the drift instead of
+   losing to it. Swept in that chimney:
+
+       reach  1   40 C front  42 cells   ceiling 20 C   0.277 ms/frame
+       reach  4               81                 20     0.381
+       reach  6              101                 20     0.433
+       reach 10              134                 20     0.472
+       reach 16              200                 50     0.531
+
+   Sixteen is where a plume actually reaches a ceiling two hundred cells up
+   rather than fading somewhere below it.
+
+   That millisecond column is the WORST case and not the real one: the chimney
+   is a live window of nothing but air, so every cell pays the full scan. In a
+   generated world the loop breaks on rock almost at once, and the whole world
+   step goes 0.217 -> 0.237 ms/frame between reach 1 and 16 -- about nine
+   percent, for a plume that travels five times as far.
+
+   It stops at the first cell that is not air or is not cooler, so a ceiling
+   still caps a plume, heat still pools under a roof, and warm air does not
+   shove past air that is already warmer than it is. */
+static const int AIR_CONVECT_REACH = 16;
 static const int AIR_CONVECT_MIN   = 2;   /* below this, nothing rises */
 /* How many points along a long-range conduction run get checked before the hop
    is taken. See the fast path in updateHeat.
