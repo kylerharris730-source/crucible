@@ -482,6 +482,10 @@ struct StalkSpec {
    must then be skipped. Returns false during the drift phase, which is the
    caller's to fill however its archetype likes; a moth steers up the heat
    gradient, and something else might do anything at all. */
+/* True while the Wisp is winding up its beam. Published so the renderer and
+   the harnesses read the same counter the shot does. */
+bool wispCharging(const Entity& e);
+
 bool stalkTick(Entity& e, const Player& p, const StalkSpec& spec);
 
 /* How long a boss stays committed to a charge. Long enough to see it start,

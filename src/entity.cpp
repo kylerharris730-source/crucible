@@ -44,6 +44,16 @@ static const float ENT_MAX_FALL = 6.0f;
    every creature here except the bees -- stated rather than left to
    zero-fill so that adding a field is a compile error somewhere obvious
    rather than a silent default nobody chose. */
+/* The Wisp's beam. Up here rather than beside wispBeam() because the def table
+   below names WISP_BEAM_EVERY, and the table comes first in this file. */
+static const int   WISP_BEAM_EVERY  = 260;    /* frames between beams, ~4.3 s */
+static const int   WISP_BEAM_CHARGE = 34;     /* wind-up, a little over half a second */
+static const float WISP_BEAM_RANGE  = 150.0f;
+
+/* Defined beside the beam it belongs to; declared here because both the def
+   table's neighbours and entityPixelMotion come earlier in this file. */
+bool wispCharging(const Entity& e);
+
 const EntityDef ENT_DEFS[ENT_COUNT] = {
     /* name       w   h  hp dmg  cd   speed accel  fly layers night | shotEvery dmg spd standOff boss | drop min max charm 1-in sprite egg | eggItem indestructible */
     { "none",      0,  0,  0,   0,   0, 0.00f, 0.00f, false, 0,  false,   0, 0, 0.0f, 0.0f, false, ITEM_NONE,        0, 0, ITEM_NONE,            0, SPR_NONE,  0x000000, ITEM_NONE,          false, false, 0 },
@@ -189,6 +199,27 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
        and would eventually get there if you left something burning it. */
     { "Crash Dummy", PLAYER_W, PLAYER_H, 100, 0, 60, 0.62f, 0.09f, false, 0, false, 0, 0, 0.0f, 0.0f, false, ITEM_NONE, 0, 0, ITEM_NONE, 0, SPR_DUMMY, 0xE8C233, ITEM_EGG_DUMMY, true, false, 0 },
 
+    /* --- how hard layer 2 hits ---------------------------------------------
+       Every creature below the first seal does DOUBLE what it first shipped
+       with: Shambler 16 -> 32, Stooper 14 -> 28, Thresher 11 -> 22, Culverin
+       9 -> 18 on contact and 8 -> 16 a shot, Wisp 8 -> 16.
+
+       Reported from play as simply "not impressive", and the arithmetic says
+       why. Armour SUBTRACTS -- see the contact block in entTickMode -- so it
+       is measured against a flat number rather than a fraction, and the
+       titanium set a player reaches layer 2 in is worth 14. At the old
+       figures that left the Thresher, the Culverin and the Wisp all landing
+       for the floor value of ONE, a hundred touches to empty a 100-point bar,
+       and the Shambler on two. The creatures were not weak so much as
+       cancelled.
+
+       Doubling is therefore worth far more than double where it matters: the
+       Shambler goes from 2 a touch through titanium to 18, and from fifty
+       touches to six. That leverage is the thing to watch if these ever need
+       tuning again -- a small change to the raw number is a large change to
+       what actually lands, and the two get further apart the better the
+       player's armour is. */
+
     /* --- the Shambler, layer 2 --------------------------------------------
        The first ordinary enemy below the first seal and the first creature
        rendered by the armature rather than a hand-authored 14x14 decal. Big,
@@ -200,7 +231,7 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
        spawn: seeing one is the unmistakable announcement that the player has
        entered the second tier. Ichor is a pickup component rather than a world
        cell; see entDie for why that distinction is save-safe. */
-    { "Shambler", SHAMBLER_SPR_W, SHAMBLER_SPR_H, 96, 16, 38,
+    { "Shambler", SHAMBLER_SPR_W, SHAMBLER_SPR_H, 96, 32, 38,
       0.32f, 0.045f, false, 2, false,
       0, 0, 0.0f, 0.0f, false,
       ITEM_ICHOR, 2, 4, ITEM_NONE, 0, SPR_NONE, 0x6F8062,
@@ -222,7 +253,7 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
        Faster than the Shambler and much lighter (52 hp against 96), because a
        wide hitbox that also soaked damage would be unfightable in a corridor.
        Lower per-touch damage for the same reason: it lands more often. */
-    { "Thresher", THRESHER_SPR_W, THRESHER_SPR_H, 52, 11, 30,
+    { "Thresher", THRESHER_SPR_W, THRESHER_SPR_H, 52, 22, 30,
       0.66f, 0.095f, false, 2, false,
       0, 0, 0.0f, 0.0f, false,
       ITEM_ICHOR, 1, 3, ITEM_NONE, 0, SPR_NONE, 0x9A5F94,
@@ -238,9 +269,9 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
        Slow and armoured, because a volley shooter that could also reposition
        would have no losing position at all. It holds its ground and makes you
        come to it. */
-    { "Culverin", 12, 11, 70, 9, 34,
+    { "Culverin", 12, 11, 70, 18, 34,
       0.16f, 0.03f, false, 2, false,
-      12, 8, 4.4f, 108.0f, false,
+      12, 16, 4.4f, 108.0f, false,
       ITEM_ICHOR, 1, 3, ITEM_NONE, 0, SPR_CULVERIN, 0x86A86A,
       ITEM_EGG_CULVERIN, false, false, 0 },
     /* --- the Wisp, layer 2 --------------------------------------------------
@@ -251,9 +282,9 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
        clock. Two of them in a dead end is the real threat.
 
        Low health to match: it is a pressure creature, not a wall. */
-    { "Wisp", 10, 10, 26, 8, 44,
+    { "Wisp", 10, 10, 26, 16, 44,
       0.26f, 0.012f, true, 2, false,
-      0, 0, 0.0f, 0.0f, false,
+      WISP_BEAM_EVERY, 14, 6.2f, 0.0f, false,
       ITEM_ICHOR, 1, 2, ITEM_NONE, 0, SPR_WISP, 0xC98BB8,
       ITEM_EGG_WISP, false, false, 0 },
     /* --- the Stooper, layer 2 -----------------------------------------------
@@ -265,7 +296,7 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
        Its speed is the DIVE speed, and it only reaches it while diving -- see
        stooperTick, where the climb and the hold are deliberately slower than
        anything else in the air. */
-    { "Stooper", 12, 10, 34, 14, 40,
+    { "Stooper", 12, 10, 34, 28, 40,
       0.95f, 0.05f, true, 2, false,
       0, 0, 0.0f, 0.0f, false,
       ITEM_ICHOR, 1, 2, ITEM_NONE, 0, SPR_STOOPER, 0x5A7048,
@@ -506,6 +537,15 @@ int entSpawn(const World& w, int type, float cx, float cy) {
            second of nothing, in the one moment the encounter most needs to
            announce itself. */
         if (d.isBoss) e.actTimer = 90 + BOSS_WINDUP;
+        /* And a shooter ARRIVES before it shoots, for the same reason. Left at
+           zero the clock is already expired on the first tick, so a Wisp
+           appeared and released a beam with no wind-up at all -- measured, the
+           first of its shots was the one shot with no charging frame in front
+           of it, which is the one a player would swear came from nowhere.
+
+           A full interval rather than just the charge window, so the creature
+           is something you notice before it is something you dodge. */
+        if (d.shotEvery > 0) e.shotTimer = d.shotEvery;
         return i;
     }
     return -1;   /* pool full */
@@ -1295,6 +1335,72 @@ static void culverinTick(World& w, Entity& e, const Player& p) {
 
    Deliberately no terrain handling. It is a flier, so walls do not stop it
    accelerating toward you; what they do is make it arrive late. */
+/* --- the Wisp's beam --------------------------------------------------------
+
+   The Wisp was the one layer-2 creature with no answer at range, and the one
+   that most wanted one: it never stops coming and it ignores terrain, so a
+   player who simply backed away was safe indefinitely while it closed. Now
+   backing away costs something.
+
+   It CHARGES first, and that is the attack. The heading is taken on the frame
+   it FIRES rather than when the charge starts -- the same rule the moth's
+   stalk uses, and for the same reason: aiming early turns a wind-up into a
+   thing you watch instead of a thing you act on. The beam goes exactly where
+   you were when it let go.
+
+   Gravity ZERO, which is what makes it a beam rather than another glob. The
+   Spitter and the Culverin both lob, and the arc IS their counterplay -- you
+   read the landing point and step off it. A flat shot cannot be read that way,
+   so it gets a visible charge instead. One creature, one kind of tell.
+
+   Line of sight is sampled exactly as the Spitter samples it. The Wisp ignores
+   terrain when it MOVES, deliberately, but one that also shot through rock
+   would be a creature you cannot take cover from -- and cover is the only
+   counterplay a flat beam leaves. */
+/* Winding up, for the renderer. Reads the same counter the firing does, so the
+   tell cannot drift out of step with the shot. */
+bool wispCharging(const Entity& e) {
+    return e.type == ENT_WISP && e.shotTimer > 0 && e.shotTimer <= WISP_BEAM_CHARGE;
+}
+
+static void wispBeam(const World& w, Entity& e, const Player& p) {
+    const EntityDef& d = ENT_DEFS[e.type];
+    if (e.shotTimer > 0) {
+        /* Fires on the frame the counter REACHES zero, not the frame after.
+           Resting at zero for a frame left one frame between the end of the
+           charge and the shot, so the tell stopped an instant before the beam
+           -- measured, none of the shots were preceded by a charging frame,
+           which is exactly the gap a player would feel as "it fired with no
+           warning". */
+        if (--e.shotTimer > 0) return;
+    }
+
+    float dx = p.centreX() - e.centreX(), dy = p.centreY() - e.centreY();
+    const float dist = sqrtf(dx * dx + dy * dy);
+    /* Too far to bother, or close enough that its body is already the threat.
+       Holding fire leaves the timer at zero, so it fires the instant you step
+       back into the band rather than waiting out another full cooldown. */
+    if (dist > WISP_BEAM_RANGE || dist < 12.0f) return;
+
+    for (int k = 1; k <= 6; ++k) {
+        const int sx = (int)(e.centreX() + dx * (float)k / 7.0f);
+        const int sy = (int)(e.centreY() + dy * (float)k / 7.0f);
+        if (sx < 0 || sx >= SIM_W || sy < 0 || sy >= SIM_H) return;
+        if (playerSolid(w, sx, sy)) return;      /* behind cover: hold fire */
+    }
+
+    const float inv = dist > 0.001f ? 1.0f / dist : 0.0f;
+    const float ux = dx * inv, uy = dy * inv;
+    e.facing = dx > 0.0f ? 1 : -1;
+    /* STR_NOTHING for the reason the Spitter's glob has it: a creature that
+       could excavate at range would rewrite the terrain of every fight. */
+    projSpawn(e.centreX() + ux * 7.0f, e.centreY() + uy * 7.0f,
+              ux * d.shotSpeed, uy * d.shotSpeed,
+              STR_NOTHING, 1, 200, 0xE0A8FF, 0, MAT_EMPTY, d.shotDamage, true,
+              0.0f);
+    e.shotTimer = d.shotEvery;
+}
+
 static void wispTick(const World& w, Entity& e, const Player& p) {
     (void)w;
     const EntityDef& d = ENT_DEFS[e.type];
@@ -1314,6 +1420,8 @@ static void wispTick(const World& w, Entity& e, const Player& p) {
     const float sp = sqrtf(e.vx * e.vx + e.vy * e.vy);
     if (sp > d.speed) { e.vx = e.vx / sp * d.speed; e.vy = e.vy / sp * d.speed; }
     if (e.vx > 0.05f) e.facing = 1; else if (e.vx < -0.05f) e.facing = -1;
+
+    wispBeam(w, e, p);
 }
 
 /* --- the Stooper: climb, hold, fall ----------------------------------------
@@ -2404,6 +2512,24 @@ static void entityPixelMotion(const Entity& e, int entityIndex, int sx, int sy,
         static const int ring[4] = { 0, 1, 0, -1 };
         const int cx = sx - 6, cy = sy - 5;
         const bool halo = cx * cx + cy * cy > 9;
+        if (wispCharging(e)) {
+            /* Winding up: the halo stops breathing and CONTRACTS onto the core,
+               hard and fast, so the tell is a shape change rather than a
+               brightness change -- brightness is what the light field already
+               does to this creature and would not read as intent.
+
+               Read off the same counter that fires the beam (see wispBeam), so
+               the picture cannot promise a shot the logic does not take. */
+            if (halo) {
+                *dx -= cx > 0 ? 1 : -1;
+                *dy -= cy > 0 ? 1 : -1;
+                if ((tick & 1u) == 0u) {
+                    *dx -= cx > 0 ? 1 : -1;
+                    *dy -= cy > 0 ? 1 : -1;
+                }
+            }
+            break;
+        }
         if (halo) {
             *dx += cx > 0 ? ring[pulse] : -ring[pulse];
             *dy += cy > 0 ? ring[pulse] : -ring[pulse];
