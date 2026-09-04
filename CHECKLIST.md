@@ -148,10 +148,17 @@ the bees-and-wax idea -- lives in [ROADMAP.md](ROADMAP.md).
 
 - [ ] **Aqua regia, wax and web have no survival source.** All three exist only
       in the creative palette. Web is the newest and the most awkward: the
-      Widow's silk decays a few seconds after it lands, so a player cannot even
-      collect it from the fight it comes from -- and it is an ingredient in six
-      of the seven shot-modifier recipes. Either the modifiers need a different
-      ingredient or silk needs to stop rotting where it is mined.
+      Widow's silk is the awkward one, and not for the reason it first looks:
+      mining it DOES bank it (g_matDropsAs is identity), so a web can be
+      collected -- but it decays with a mean life around 255 frames, so the
+      window is roughly four seconds, mid-boss-fight, and the recipes want four
+      to eight cells each across six of the seven modifiers. That is a
+      collection minigame nobody asked for rather than an impossibility.
+
+      Worth deciding rather than tuning: either silk stops decaying once it has
+      been mined into a pack (it is an ITEM at that point, not a cell, so this
+      is free), or the modifiers are made of something else and silk stays a
+      pure hazard.
 
 ## Known and deliberate
 
