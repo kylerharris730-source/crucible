@@ -197,6 +197,9 @@ enum SpriteId {
     /* The one-offs: two boss items, two components, and lunch. */
     SPR_FORGE_CORE,
     SPR_BROOD_CALL,
+    /* The Widow's pair, appended for the same reason everything is. */
+    SPR_WIDOW_CALL,
+    SPR_SILK_GLAND,
     SPR_LENS,
     SPR_RELAY,
     SPR_BREAD,
@@ -323,5 +326,16 @@ static const int THRESHER_IDLE_FRAMES = 2;
 static const int THRESHER_WALK_FRAMES = 8;
 extern u32 g_thresherIdle[THRESHER_IDLE_FRAMES][THRESHER_SPR_W * THRESHER_SPR_H];
 extern u32 g_thresherWalk[THRESHER_WALK_FRAMES][THRESHER_SPR_W * THRESHER_SPR_H];
+
+/* --- the Widow, layer 2's boss ----------------------------------------------
+   The biggest thing drawn from a rig, and deliberately WIDER than it is tall:
+   a spider is a low shape with a lot of horizontal reach, and a boss whose
+   silhouette is a tall rectangle is another Brood Mother. See rigSpider. */
+static const int WIDOW_SPR_W = 40;
+static const int WIDOW_SPR_H = 32;
+static const int WIDOW_IDLE_FRAMES = 2;
+static const int WIDOW_WALK_FRAMES = 8;
+extern u32 g_widowIdle[WIDOW_IDLE_FRAMES][WIDOW_SPR_W * WIDOW_SPR_H];
+extern u32 g_widowWalk[WIDOW_WALK_FRAMES][WIDOW_SPR_W * WIDOW_SPR_H];
 
 void initSprites();

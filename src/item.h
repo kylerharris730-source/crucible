@@ -294,6 +294,19 @@ enum {
     ITEM_HEAT_LAMP,
     /* Appended: item ids are serialized directly. */
     ITEM_EGG_SKIRMISHER,
+
+    /* --- the Widow -------------------------------------------------------
+       Layer 2's boss, her summon, her egg, and what she drops.
+
+       The SILK GLAND is the reward, and it is shaped like the Forge Core one
+       layer up: a single object, dropped once, that gates the next tier of
+       tools. Killing a boss should hand you a capability rather than a stack
+       of a material you already had.
+
+       Appended, like everything above it. */
+    ITEM_WIDOW_CALL,
+    ITEM_EGG_WIDOW,
+    ITEM_SILK_GLAND,
     ITEM_COUNT
 };
 

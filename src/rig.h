@@ -88,6 +88,46 @@ extern const u32 RIG_THRESHER[TENT_SHADES];
 void rigTentacled(Bone* bone, RigDef* rig, const char* name,
                   int w, int h, const u32* shade);
 
+/* --- the spider ------------------------------------------------------------
+
+   The layer 2 boss, and the third skeleton shape. It is not the tentacled rig
+   with a bigger number: a tentacle HANGS and a spider leg ARCHES -- up and out
+   from the body to a knee above the back, then down to the ground. That arch is
+   the single feature that says "spider" at any size, and it is a property of
+   the rest pose rather than of the gait, so it belongs in the builder.
+
+   Three body bones rather than the tentacled rig's two, and the abdomen is the
+   one that earns its place: a spider read from a distance is a big rear bulb
+   with legs in front of it, and without one this is a crab.
+
+   Bones are leg-major after the body, exactly as the tentacled rig lays its
+   own out, so a gait can address one limb by index arithmetic. */
+static const int SPIDER_LEGS = 8;
+static const int SPIDER_SEGS = 4;
+static const int SPIDER_BODY    = 0;   /* the cephalothorax: the root */
+static const int SPIDER_ABDOMEN = 1;   /* the bulb behind it */
+static const int SPIDER_HEAD    = 2;   /* the small front, where the fangs are */
+static const int SPIDER_FIRST_LEG = 3;
+static const int SPIDER_BONES = SPIDER_FIRST_LEG + SPIDER_LEGS * SPIDER_SEGS;
+
+/* Segment `s` of leg `t`. */
+static inline int spiderBone(int t, int s) {
+    return SPIDER_FIRST_LEG + t * SPIDER_SEGS + s;
+}
+
+static const int SPIDER_SHADES = 6;
+extern const u32 RIG_SPIDER[SPIDER_SHADES];
+
+void rigSpider(Bone* bone, RigDef* rig, const char* name,
+               int w, int h, const u32* shade);
+
+/* The spider's gait, generated for the same reason the tentacled one is: eight
+   limbs of four segments is 32 angles a frame, and nobody maintains that by
+   hand. The phasing is the part that differs -- see the note in rig.cpp. */
+void rigSpiderWalk(PoseKey* keys, int count, int lift);
+extern const Clip RIG_SPIDER_WALK;
+extern const Clip RIG_SPIDER_IDLE;
+
 /* --- the gait, GENERATED rather than authored -------------------------------
 
    The humanoid clips above are hand-written keyframe tables, which is right for

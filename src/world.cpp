@@ -3126,9 +3126,29 @@ void World::updateCell(Lane& L, int x, int y) {
        to cool itself to death the way fire does. See g_matDecay in materials.h.
        The check is a single load against a MAT_COUNT-byte table that is 0 for
        everything else, so it costs nothing for materials that do not opt in. */
-    if (g_matDecay[c.mat] && lchance(L, g_matDecay[c.mat])) {
-        convert(L, x, y, MAT_EMPTY);
-        return;
+    if (g_matDecay[c.mat]) {
+        if (lchance(L, g_matDecay[c.mat])) {
+            convert(L, x, y, MAT_EMPTY);
+            return;
+        }
+        /* KEEP ITSELF AWAKE, which is the same `moreToDo` pattern acid and
+           grass use above and for exactly the reason the acid note spells out:
+           a cell whose chunk has gone quiet is never handed to updateCell
+           again, so a chance that is only re-rolled here is only ever rolled
+           once.
+
+           It did not matter while cold fire and the embers were the only
+           materials on this table, because all three are HOT -- their
+           temperature moves every frame, that dirties the chunk, and the timer
+           got its re-roll as a side effect of something else. The first COLD
+           material to want a lifetime found the bug immediately: 820 cells of
+           spider silk left alone for 2000 frames lost 5 of themselves, against
+           a mean life of 255 frames that should have cleared nearly all of it.
+
+           The cost is bounded by the thing itself -- a decaying cell is awake
+           only as long as it exists, and a material on this table exists for a
+           few seconds by construction. */
+        dirtyPoint(L, x, y);
     }
     /* --- a leaf that has been condemned --------------------------------
        Only the countdown lives here; the DECISION lives in treeAudit, because

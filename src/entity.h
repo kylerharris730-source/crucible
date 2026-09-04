@@ -106,6 +106,21 @@ enum EntityType {
        where it belongs by meaning, because EntityType indexes g_bossesBeaten
        and inserting above anything would move which bit means what. */
     ENT_SKIRMISHER,
+
+    /* --- the Widow, layer 2's boss ---------------------------------------
+       Eight legs, and the legs are the creature: it is forty cells across and
+       most of that is limb, so the danger is the SPREAD -- the same lesson the
+       Thresher teaches at half the size, taught again by something that cannot
+       be walked around.
+
+       And it spits silk, which is the half that makes it a boss rather than a
+       big Thresher. A melee creature you can only ever answer by backing off
+       is a creature that loses to a corridor; webs are how it makes the ground
+       you retreated to cost something. See MAT_WEB.
+
+       Appended, like every creature, because EntityType indexes
+       g_bossesBeaten. */
+    ENT_WIDOW,
     ENT_COUNT
 };
 
@@ -114,6 +129,18 @@ enum EntityType {
    being transient. One bit per boss, saved as a single u32. */
 extern u32 g_bossesBeaten;
 static const u32 BOSS_LAYER1 = 1u << 0;
+static const u32 BOSS_LAYER2 = 1u << 1;
+
+/* Which bit a boss owns, stated in one switch rather than derived from its
+   EntityType. Derived would be tidier right up to the first time a creature is
+   appended between two bosses, at which point every existing save would quietly
+   change its mind about which fight the player had won. This is the same
+   reasoning that put EntityDef::eggItem in a table instead of in arithmetic.
+
+   Returns 0 for anything that is not a boss. A creature with isBoss set and no
+   bit here would beat you and not be recorded, which is the worst outcome a
+   boss fight has -- so hive_bosses asserts the two lists agree. */
+u32 bossBitOf(int entityType);
 
 /* 96 rather than a round 128, and the number is a budget rather than a limit
    anyone should be hitting: the spawner caps live creatures far below this (see

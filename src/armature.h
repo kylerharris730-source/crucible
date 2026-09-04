@@ -48,7 +48,13 @@
    cell, and the character would read as being from a different game. */
 
 static const int ARM_SS = 4;          /* subsamples per cell, each axis */
-static const int ARM_MAX_BONES = 24;
+/* 40, and the number is a ceiling on the biggest SKELETON rather than a budget
+   anybody is spending. The humanoid is 17 bones and the tentacled rig 18; the
+   spider is 8 legs of 4 segments plus a body, an abdomen and a head, which is
+   35 and is what moved this off 24. The cost is a wider PoseKey -- clips are
+   static tables built once at startup -- and two more stack arrays in armBake,
+   so raising it further is cheap if a bigger creature ever wants it. */
+static const int ARM_MAX_BONES = 40;
 
 /* A bone is a tapered capsule from its parent's tip, at an angle relative to
    the parent's direction. Lengths and widths are in SUBSAMPLES, so the numbers

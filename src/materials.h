@@ -433,6 +433,29 @@ enum MatId {
        Appended, like every material id, because it is written into saves. */
     MAT_AQUA_REGIA,
 
+    /* --- spider silk ------------------------------------------------------
+       What the Widow spits. A shot with this as its payload (see
+       Projectile::payload) plants a cell of it wherever the shot came to rest,
+       so "it spits webs" is a projectile field and a material row rather than
+       an attack system.
+
+       Three properties, and each of them is doing a job:
+
+         PASSABLE, so a web is an obstacle you walk INTO rather than a wall.
+         A boss that can build walls at range can seal you in a pocket of its
+         own making, which is not a fight.
+
+         CONTACT DAMAGE, which is the "that hurt" half. Small -- a fifth of
+         acid's -- because you are meant to be able to cross one, swearing.
+
+         DECAYS, so an arena does not end the fight full of silk. A boss that
+         permanently redecorates the room punishes a long fight for being long.
+
+       KIND_STATIC and it BURNS, which together are the interesting bit: silk
+       holds still like a solid, so it stacks where it lands, and a torch or a
+       thrown flame clears a curtain of it in seconds. */
+    MAT_WEB,
+
     MAT_COUNT
 };
 

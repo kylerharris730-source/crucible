@@ -467,8 +467,222 @@ static const Clip TENT_IDLE = { "tentidle", g_tentIdleKeys, 2, 2, true, true };
 const Clip RIG_TENT_WALK = TENT_WALK;
 const Clip RIG_TENT_IDLE = TENT_IDLE;
 
+/* --- the spider ------------------------------------------------------------ */
+
+const u32 RIG_SPIDER[SPIDER_SHADES] = {
+    0x241C2C,   /* 0 far leg    -- nearly black; it is meant to recede */
+    0x4A3A52,   /* 1 body       -- the middle of the ladder */
+    0x6E5578,   /* 2 near leg   -- clearly above the body it crosses */
+    0x322740,   /* 3 abdomen    -- darker than the body, so the bulk reads */
+    0x8A6A90,   /* 4 head */
+    0xD4433C,   /* 5 the eyes -- the one warm colour on the whole creature */
+};
+
+void rigSpider(Bone* b, RigDef* rig, const char* name,
+               int w, int h, const u32* shade) {
+    const int H = h * ARM_SS, W = w * ARM_SS;
+
+    /* The body sits high in the box because everything below it is leg, and it
+       is SHORT and wide -- a spider's cephalothorax is a plate, not a trunk. */
+    const int bodyLen = (H * 18) / 100;
+    /* 9%, and the first version's 15% is why this number has a note. Widths in
+       a rig are HALF-widths in subsamples, so 15% of a 48-cell box is a body
+       SEVEN CELLS to each side -- fourteen across -- and the legs at the time
+       were five cells long. Every limb was inside the body, and the creature
+       baked as a featureless blob. A spider is mostly leg; the body is a hub
+       the legs meet at, and it has to be narrow enough that they leave it. */
+    const int bodyW   = (W * 11) / 100;
+
+    /* THE LEGS ARE THE BIGGEST THING ON IT, which is the other half of the same
+       correction. A leg has to arch up over the back and still reach the floor
+       out at the edge of a box that is wider than it is tall, so the four
+       segments together come to most of the whole height. The arch spends a
+       good part of that: a straightened leg would stick out past the box, and a
+       bent one lands inside it -- which also means the figure grows fast in
+       this number, and 110% put the knees clean off the top of the canvas. */
+    const int reach = (H * 78) / 100;
+    const int segLen[SPIDER_SEGS] = { (reach * 32) / 100, (reach * 30) / 100,
+                                      (reach * 22) / 100, (reach * 16) / 100 };
+    /* Thin. Eight of them crossing each other at this size turn into a solid
+       mass if they are anywhere near the body's width, and the gaps BETWEEN
+       the legs are most of what makes a spider legible. */
+    const int segW[SPIDER_SEGS + 1] = { (W * 3) / 100, (W * 2) / 100,
+                                        (W * 2) / 100, (W * 1) / 100,
+                                        (W * 1) / 100 };
+
+    /* Same convention the tentacled rig documents: rest 0 points DOWN, and a
+       child's rest is measured from its parent's direction. The body has no
+       parent, so 180 is absolute up. */
+    b[SPIDER_BODY] = mk(-1, 180, bodyLen, bodyW, bodyW * 9 / 10, 1, 2, 0);
+    /* The abdomen hangs BACKWARD off the body's base and is the biggest single
+       shape on the creature. Rooted at the base (at 0) rather than the tip, so
+       it sits behind the plate instead of on top of it. */
+    /* Sign convention, established by the humanoid's visor: NEGATIVE rotates
+       toward the front. So the head is negative and the abdomen positive, and
+       the creature faces the way everything else in this file faces. */
+    b[SPIDER_ABDOMEN] = mk(SPIDER_BODY, 82, (H * 46) / 100,
+                           bodyW * 12 / 10, bodyW * 6 / 10, 3, 0, 0);
+    /* And a small head off the front, tilted down: the fangs end of it. */
+    b[SPIDER_HEAD] = mk(SPIDER_BODY, -98, (H * 16) / 100,
+                        bodyW * 7 / 10, bodyW * 4 / 10, 4, 4, 128);
+
+    /* --- the arch ---------------------------------------------------------
+       The whole reason this is not rigTentacled with an 8 in it. A leg goes UP
+       and OUT to a knee above the creature's back, then turns and comes back
+       DOWN to the floor. That arch is the single feature that says "spider" at
+       any size, and it lives in the rest pose rather than in the gait.
+
+       THE FAN IS FRONT-TO-BACK, NOT LEFT-TO-RIGHT, and getting that wrong is
+       worth recording because it bakes into something that still looks like a
+       creature. This is a side view: near and far are DEPTH, and depth in a
+       two-dimensional silhouette is a shade, not a direction. A first version
+       signed the splay by side, so all four near legs pointed backward and all
+       four far legs forward, and the result was a clump with no stance in it.
+       Both sides fan the same way; the sides differ only in shading, in draw
+       order, and by a few degrees so they do not sit exactly on top of one
+       another.
+
+       Angles accumulate down the chain, so these read as one continuous turn:
+       start pointing up and out, then keep rotating the SAME way until the
+       foot points at the floor. The front pair sweeps forward and the back pair
+       backward, which is what puts the creature in a stance rather than a
+       huddle. Negative is toward the front -- see the note on the head. */
+    /* Biased FORWARD: three of the four pairs are in front of the hub and only
+       one trails. Fanned evenly it read as a spider seen head-on rather than
+       from the side, because a symmetric stance under a centred body has no
+       front to it. Weighting the legs forward leaves the back of the box for
+       the abdomen, which is the shape that says which way it is pointing. */
+    static const int base[SPIDER_LEGS / 2] = { -88, -52, -18, 44 };
+    /* The front and back pairs reach furthest, the way they do on the animal --
+       the middle two are the ones carrying weight. */
+    static const int legScale[SPIDER_LEGS / 2] = { 112, 94, 90, 104 };
+    /* Nearly all of the turn in ONE joint. Spread evenly down the chain it
+       comes out as a smooth spiral -- four segments each bending a bit is a
+       curl, and the legs read as hooks. A spider has a KNEE: a long straight
+       reach out, one hard angle, and a long straight drop. */
+    static const int bend[SPIDER_SEGS]     = {   0,  86, 16,  8 };
+
+    for (int t = 0; t < SPIDER_LEGS; ++t) {
+        /* Legs 0..3 far, 4..7 near -- four contiguous limbs each rather than
+           the tentacled rig's alternation, which at eight would read as one row
+           of legs with a shading fault instead of as two sides of a body. */
+        const bool nearSide = t >= SPIDER_LEGS / 2;
+        const int  pair  = t % (SPIDER_LEGS / 2);
+        const int  sh    = nearSide ? 2 : 0;
+        const int  layer = nearSide ? 3 : 1;
+        /* Which way this leg curls: the way it already points. */
+        const int  turn  = base[pair] < 0 ? -1 : 1;
+        /* The near set stands a little wider, so eight legs are eight legs
+           rather than four drawn twice. */
+        const int  offset = nearSide ? turn * 9 : 0;
+
+        for (int s = 0; s < SPIDER_SEGS; ++s) {
+            const int idx = spiderBone(t, s);
+            const int parent = s == 0 ? SPIDER_BODY : idx - 1;
+            const int rest = s == 0 ? base[pair] + offset : turn * bend[s];
+            /* Segment 0 hangs off the middle of the body rather than its tip,
+               so the legs come out of the sides of the plate instead of
+               sprouting from its nose. */
+            const int at = s == 0 ? 128 : 255;
+            b[idx] = mk(parent, rest, (segLen[s] * legScale[pair]) / 100,
+                        segW[s], segW[s + 1], sh, layer, at);
+        }
+    }
+
+    rig->name  = name;
+    rig->bone  = b;
+    rig->bones = SPIDER_BONES;
+    rig->shade = shade;
+    rig->w = w; rig->h = h;
+    rig->rootX = (i16)(W / 2);
+    /* Where the legs meet the body, as a fraction of the box rather than as
+       `H - reach` the way the tentacled rig computes it. That subtraction works
+       when the limbs are shorter than the box and hang straight down; here they
+       are LONGER than it and arch, so it goes negative and puts the whole
+       creature above the canvas -- which is exactly what it did, baking two
+       rows of leg tips along the bottom edge and nothing else. A spider is
+       low-slung, so the hub sits high and the arch spends the extra length. */
+    rig->rootY = (i16)((H * 38) / 100);
+}
+
+/* --- the spider's gait ------------------------------------------------------
+   Generated, like the tentacled one, because 8 legs x 4 segments is 32 angles a
+   frame. What differs is the PHASING, and it is the whole character of the
+   walk: a spider does not run a travelling wave down one side, it moves in two
+   alternating sets of four -- legs 1 and 3 on one side with 2 and 4 on the
+   other -- so it is always standing on a stable four-point stance. Phase is
+   therefore a function of (which side, which pair) rather than of leg index,
+   and it takes exactly two values half a cycle apart.
+
+   The knee is where the lift happens. Swinging segment 0 alone slides the foot
+   along the ground; curling the knee on the recovery half is what picks it up,
+   which is the difference between walking and skating. */
+void rigSpiderWalk(PoseKey* keys, int count, int lift) {
+    memset(keys, 0, sizeof(PoseKey) * (size_t)count);
+    for (int k = 0; k < count; ++k) {
+        PoseKey& p = keys[k];
+        int bodyRise = 0;
+        for (int t = 0; t < SPIDER_LEGS; ++t) {
+            const bool nearSide = t >= SPIDER_LEGS / 2;
+            const int  pair  = t % (SPIDER_LEGS / 2);
+            const int  sign  = nearSide ? 1 : -1;
+            /* The alternating tetrapod: a leg is in the first set if its pair
+               index and its side disagree. */
+            const bool setA = ((pair & 1) != 0) != nearSide;
+            const int phase = (k * 360) / count + (setA ? 0 : 180);
+
+            const int swing = isin1024(phase);        /* fore and aft */
+            const int curl  = isin1024(phase + 90);   /* lift on recovery */
+
+            for (int s = 0; s < SPIDER_SEGS; ++s) {
+                int a;
+                if (s == 0) {
+                    /* Fore and aft, in the plane of travel. Modest: a leg that
+                       swings far is a leg that has visibly left its socket. */
+                    a = (swing * 18) / 1024;
+                } else {
+                    /* Curl the knee and everything past it, and only on the
+                       recovery half -- a planted leg holds its shape while the
+                       body travels over it. Signed by side so both sides fold
+                       the same way relative to the body. */
+                    const int c = curl > 0 ? curl : 0;
+                    a = -sign * (c * lift) / (1024 * s);
+                }
+                p.angle[spiderBone(t, s)] = (i16)a;
+            }
+            if (curl > 0) bodyRise += curl;
+        }
+        /* Two sets land per cycle, so the body bobs at twice the leg rate. */
+        p.angle[SPIDER_BODY] = (i16)((isin1024((k * 720) / count) * 3) / 1024);
+        p.rootDY = (i16)(-(bodyRise * ARM_SS) / (2 * 1024 * SPIDER_LEGS));
+    }
+}
+
+static PoseKey g_spiderWalkKeys[8];
+static PoseKey g_spiderIdleKeys[2];
+
+static void buildSpiderClips() {
+    rigSpiderWalk(g_spiderWalkKeys, 8, 34);
+    /* Idle keeps the legs planted and lets only the body breathe. A spider
+       standing still is famously STILL -- that stillness is most of why one on
+       a wall is unsettling -- so this is the one creature whose idle should not
+       be a shallow version of its walk. */
+    rigSpiderWalk(g_spiderIdleKeys, 2, 0);
+    for (int k = 0; k < 2; ++k)
+        for (int t = 0; t < SPIDER_LEGS; ++t)
+            for (int s = 0; s < SPIDER_SEGS; ++s)
+                g_spiderIdleKeys[k].angle[spiderBone(t, s)] = 0;
+    g_spiderIdleKeys[1].angle[SPIDER_BODY] = 2;
+    g_spiderIdleKeys[1].rootDY = -ARM_SS / 2;
+}
+
+static const Clip SPIDER_WALK = { "spiderwalk", g_spiderWalkKeys, 8, 8, true, true };
+static const Clip SPIDER_IDLE = { "spideridle", g_spiderIdleKeys, 2, 2, true, true };
+const Clip RIG_SPIDER_WALK = SPIDER_WALK;
+const Clip RIG_SPIDER_IDLE = SPIDER_IDLE;
+
 /* Built on first use, for the same reason the humanoid clips are: static
    initialisation order across translation units is not something to bet a
    creature on. */
-struct TentClipInit { TentClipInit() { buildTentClips(); } };
+struct TentClipInit { TentClipInit() { buildTentClips(); buildSpiderClips(); } };
 static TentClipInit g_tentClipInit;

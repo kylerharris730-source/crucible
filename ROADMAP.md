@@ -9,14 +9,16 @@ you can build to win.
 
 ---
 
-## 1. Bosses — 1 of 3–4
+## 1. Bosses — 2 of 3–4
 
 Today there is exactly one: the **Brood Mother** (900 hp, summoned with
 `ITEM_BROOD_CALL`, drops `ITEM_FORGE_CORE`). She is not spawned, only called,
 and that pattern is worth keeping — a boss that wanders into you is an ambush,
 a boss you summon is a decision.
 
-- [ ] **A layer-2 boss.** Layer 2 has five ordinary enemies and no capstone.
+- [x] **A layer-2 boss.** The Widow: an eight-legged spider, 40x32, that
+      scuttles like a Thresher and spits volleys of silk. Killing it opens the
+      layer 2 stratum, the way the Brood Mother opens layer 1.
 - [ ] **A layer-3 boss** — see §2; there is nothing down there at all yet.
 - [ ] **Optionally a fourth, at the rocket.** A final fight gated behind the
       win condition rather than behind a depth, so the ending is something you

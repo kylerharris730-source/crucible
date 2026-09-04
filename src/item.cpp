@@ -1485,6 +1485,22 @@ void initItems() {
     ITEMS[ITEM_BROOD_CALL].colour   = 0xC85A44;
     ITEMS[ITEM_BROOD_CALL].sprite   = SPR_BROOD_CALL;
 
+    /* The Widow's summon, on exactly the same terms. */
+    ITEMS[ITEM_WIDOW_CALL].name     = "Widow Call";
+    ITEMS[ITEM_WIDOW_CALL].kind     = ITEMK_EGG;
+    ITEMS[ITEM_WIDOW_CALL].summons  = ENT_WIDOW;
+    ITEMS[ITEM_WIDOW_CALL].maxStack = 4;
+    ITEMS[ITEM_WIDOW_CALL].colour   = 0xB8AEC4;
+    ITEMS[ITEM_WIDOW_CALL].sprite   = SPR_WIDOW_CALL;
+
+    /* And what she drops. A component: carried, never placed, exactly like the
+       Forge Core the layer above hands you. */
+    ITEMS[ITEM_SILK_GLAND].name     = "Silk Gland";
+    ITEMS[ITEM_SILK_GLAND].kind     = ITEMK_COMPONENT;
+    ITEMS[ITEM_SILK_GLAND].maxStack = 16;
+    ITEMS[ITEM_SILK_GLAND].colour   = 0xD4433C;
+    ITEMS[ITEM_SILK_GLAND].sprite   = SPR_SILK_GLAND;
+
     ITEMS[ITEM_TITANIUM_HELMET].name       = "Titanium Helmet";
     ITEMS[ITEM_TITANIUM_HELMET].kind       = ITEMK_WORN;
     ITEMS[ITEM_TITANIUM_HELMET].equipSlot  = EQ_HEAD;
@@ -1567,6 +1583,8 @@ void initItems() {
     ITEMS[ITEM_TITANIUM_HELMET].description = "Advanced headgear with heavy armour and temperature resistance.";
     ITEMS[ITEM_TITANIUM_SUIT].description = "Advanced body armour built for severe heat, cold, and combat.";
     ITEMS[ITEM_FORGE_CORE].description = "A Brood Queen relic used to construct a Blast Furnace.";
+    ITEMS[ITEM_WIDOW_CALL].description = "Consume to summon the Widow nearby.";
+    ITEMS[ITEM_SILK_GLAND].description = "Cut from the Widow. The spinneret of a thing that made its own walls.";
 
     ITEMS[ITEM_LIGHT_DRONE].description = "Follows you and illuminates nearby terrain.";
     ITEMS[ITEM_ATTACK_DRONE].description = "Follows you and fires bolts at enemies with a clear line of sight.";

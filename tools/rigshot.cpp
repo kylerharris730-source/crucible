@@ -74,6 +74,10 @@ int main(void) {
                THRESHER_IDLE_FRAMES, THRESHER_SPR_W, THRESHER_SPR_H);
     writeStrip("artifacts/visual/rig-shambler-walk.ppm", g_shamblerWalk[0],
                SHAMBLER_WALK_FRAMES, SHAMBLER_SPR_W, SHAMBLER_SPR_H);
+    writeStrip("artifacts/visual/rig-widow-walk.ppm", g_widowWalk[0],
+               WIDOW_WALK_FRAMES, WIDOW_SPR_W, WIDOW_SPR_H);
+    writeStrip("artifacts/visual/rig-widow-idle.ppm", g_widowIdle[0],
+               WIDOW_IDLE_FRAMES, WIDOW_SPR_W, WIDOW_SPR_H);
 
     /* The hand-drawn creatures too. Same reason: character art is typed in as
        a grid of letters, and a letter in the wrong column is invisible in the

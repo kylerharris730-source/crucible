@@ -1008,6 +1008,14 @@ MatInfo MATS[MAT_COUNT] = {
      the same terms, and a transmuting VAPOUR would put the reaction into the
      air where nothing contains it. This one stays a liquid you have to pour. */
   { "AquaRegia", KIND_LIQUID, 108, 0, 0, 5, 60, 0, 0, 40, 0, 0, 0, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, 0xE8801C, 0xA85008, 0xE8801C, 0xA85008, 0 },
+  /* Spider silk. Shaped on Rope, which is the other inert strung-up solid, and
+     it ignites LOWER -- 60 C against rope's 90. Silk going up faster than a
+     hemp line is both true and the reason a torch is worth carrying into the
+     Widow's fight.
+
+     Near-white and low contrast against the dark of layer 2 on purpose: a web
+     you cannot see is a trap, and a web you can see is a decision. */
+  { "Web",   KIND_STATIC, 255,   0,    0,   0,   0,   0,  0,  110,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY, degC(60), MAT_FIRE,   0,  0xD8DCE4, 0xA8AEBC, 0xD8DCE4, 0xA8AEBC, 0 },
 };
 
 u32 g_colorLut[MAT_COUNT * 256];
@@ -1078,6 +1086,10 @@ static void initStrength() {
         if (MATS[m].kind == KIND_LIQUID) g_matStrength[m] = STR_FLUID;
 
     g_matStrength[MAT_SAND]        = STR_LOOSE;
+    /* Silk is the flimsiest thing in the game. Anything that shoots clears it,
+       which is the counterplay: you should never be stuck behind a web you
+       cannot get through, only slowed by one. */
+    g_matStrength[MAT_WEB]         = STR_LOOSE;
     g_matStrength[MAT_DIRT]        = STR_LOOSE;
     g_matStrength[MAT_GRASS]       = STR_LOOSE;
 
@@ -1824,6 +1836,11 @@ static void initAcid() {
     for (int m = 0; m < MAT_COUNT; ++m) g_matContactDamage[m] = 0.0f;
     g_matContactDamage[MAT_ACID]       = 2.2f;
     g_matContactDamage[MAT_ACID_VAPOR] = 1.4f;
+    /* Silk. A fifth of acid, and the low number is the design: crossing a web
+       is meant to cost you something and be worth doing anyway. At acid's rate
+       a boss that lays webs faster than you can burn them would simply kill
+       you for standing in its arena. */
+    g_matContactDamage[MAT_WEB]        = 0.45f;
 }
 
 /* See g_bgRetain in materials.h. Ceramic is the reason this table exists: a
@@ -1883,6 +1900,11 @@ static void initBurnLife() {
     g_matDecay[MAT_EMBER]    = 1;
     /* Spends faster than coal: there is less in a cell of wax. */
     g_matDecay[MAT_WAX_EMBER] = 3;
+    /* Silk rots away. 1 in 255 a frame is a mean life around four seconds --
+       long enough to matter during an exchange, short enough that the arena is
+       clear again by the time the fight moves. Without it a long fight ends
+       with the room full of a hazard nobody can walk through. */
+    g_matDecay[MAT_WEB]       = 1;
     g_matDecay[MAT_FUELFIRE] = 1;
 }
 
@@ -1940,6 +1962,10 @@ static void initPassable() {
        bug rather than as a distinction. It has no tick and no heat of its own
        (see the DEV_FORGE row), so there is nothing here to walk into. */
     g_matPassable[MAT_STATION_FORGE]    = 1;
+
+    /* Spider silk. See MAT_WEB: a web is something you push through, not a
+       wall the boss can build around you. */
+    g_matPassable[MAT_WEB] = 1;
 
     /* --- the canopy ------------------------------------------------------
        Leaves and pods, and NOT wood. That split is the whole answer to "a

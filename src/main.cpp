@@ -258,6 +258,7 @@ static const BrushDef BRUSHES[] = {
     { MAT_AQUA_REGIA, "Aqua Regia" },
     { MAT_GLOWFLUID,"Glowfluid"},
     { MAT_WAX,     "Wax"      },
+    { MAT_WEB,     "Web"      },
     { MAT_INERT_FLUID, "Inert Fluid" },
     /* Mercury only. Its vapour and frozen forms are still fully simulated -- a
        mercury pool boiled past 150 C still gives off vapour, and chilled past

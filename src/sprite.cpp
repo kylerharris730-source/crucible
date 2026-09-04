@@ -14,6 +14,8 @@ u32 g_shamblerJump[SHAMBLER_SPR_W * SHAMBLER_SPR_H];
 u32 g_shamblerFall[SHAMBLER_SPR_W * SHAMBLER_SPR_H];
 u32 g_thresherIdle[THRESHER_IDLE_FRAMES][THRESHER_SPR_W * THRESHER_SPR_H];
 u32 g_thresherWalk[THRESHER_WALK_FRAMES][THRESHER_SPR_W * THRESHER_SPR_H];
+u32 g_widowIdle[WIDOW_IDLE_FRAMES][WIDOW_SPR_W * WIDOW_SPR_H];
+u32 g_widowWalk[WIDOW_WALK_FRAMES][WIDOW_SPR_W * WIDOW_SPR_H];
 
 /* One palette shared by every sprite, so a colour means the same thing
    everywhere: T is always a highlight, S is always steel, and the two handle
@@ -203,6 +205,20 @@ static u32 paletteOf(char c) {
     case '[': return 0xC89A5A;     /* bread crust */
     case ']': return 0xE8D2A2;     /* bread crumb */
     case '{': return 0x2A2620;     /* egg speckle, dark on every shell */
+    /* --- the palette is FULL, and the Widow's two icons are what proved it ---
+       Ninety-two of the ninety-four printable characters are taken. Adding four
+       more for one creature would have spent half of what is left on colours
+       that already exist under other names: silk wanted 0xE2E6EE and 0xA8AEBC,
+       which are within two values of 'W' and 'S'; a dark carapace and a warm
+       gland are 'n' and 'i' near enough to see no difference at fourteen
+       pixels.
+
+       So they are reused, and the reuse is the point rather than a compromise.
+       The rule the suit's block states -- a shared palette is only worth having
+       while the colours mean the same thing -- is about MEANING, and "the
+       lightest neutral" and "a warm accent" are meanings, not object names. If
+       a genuinely new colour is ever needed, this is the note that says the
+       next one costs a wider mechanism and not another letter. */
     /* The crash dummy. ONE colour, in three values -- it was hazard yellow on
        black and read as a warning sign rather than as a body: the stripes were
        the loudest thing on screen and the silhouette was the thing you actually
@@ -710,6 +726,18 @@ static void buildThresherFrames() {
                  THRESHER_SPR_W, THRESHER_SPR_H, RIG_THRESHER);
     armBake(&rig, &RIG_TENT_WALK, g_thresherWalk[0]);
     armBake(&rig, &RIG_TENT_IDLE, g_thresherIdle[0]);
+}
+
+/* The Widow. Same machinery again, at eight limbs instead of four -- which is
+   the point of the armature: a new creature is a builder and a palette, not a
+   sheet of frames somebody drew. See rigSpider for what a spider needs that
+   the tentacled rig cannot give it. */
+static void buildWidowFrames() {
+    static Bone bone[SPIDER_BONES];
+    RigDef rig;
+    rigSpider(bone, &rig, "widow", WIDOW_SPR_W, WIDOW_SPR_H, RIG_SPIDER);
+    armBake(&rig, &RIG_SPIDER_WALK, g_widowWalk[0]);
+    armBake(&rig, &RIG_SPIDER_IDLE, g_widowIdle[0]);
 }
 
 
@@ -2017,6 +2045,49 @@ static const char* ART_BROOD_CALL[SPR_H] = {
 
 /* Focusing lens. A rimmed disc with a bright centre, which is the one shape
    that says "optics" at fourteen pixels without any glint trickery. */
+/* Widow call. A knot of silk wound round a shed leg -- the leg is the straight
+   dark diagonal, the silk is what is wrapped over it.
+
+   Deliberately NOT another two-pronged horn. The Brood Call earned that shape
+   by being the only icon with a hole in it, and a second one would throw away
+   exactly what makes the first readable in a row of amulets. This one is
+   readable by TEXTURE instead: a bound bundle, light over dark. */
+static const char* ART_WIDOW_CALL[SPR_H] = {
+    "..............",
+    ".....nn.......",
+    "....nWWn......",
+    "...nWSSWn.....",
+    "..nWSWWSWn....",
+    "..nSWnnWSn....",
+    "..nWSnnSWn....",
+    "..nWSWWSWn....",
+    "...nWSSWn.....",
+    "....nWWn......",
+    "...n.SS.n.....",
+    "..n..SS..n....",
+    ".n...SS...n...",
+    "..............",
+};
+
+/* Silk gland. A sac with the thread coming off it, which is the whole object:
+   the bulb says organ, the two strands say what it makes. */
+static const char* ART_SILK_GLAND[SPR_H] = {
+    "..............",
+    "....nnnnnn....",
+    "...niiiiiin...",
+    "..niiiiiiiin..",
+    "..niiWWWWiin..",
+    "..niWWiiWWin..",
+    "..niiWWWWiin..",
+    "...niiiiiin...",
+    "....nnSSnn....",
+    "......SS......",
+    ".....SS.......",
+    "....SS........",
+    "...SS.........",
+    "..............",
+};
+
 static const char* ART_LENS[SPR_H] = {
     "..............",
     ".....GGGG.....",
@@ -2258,6 +2329,8 @@ void initSprites() {
     expand(SPR_DRONE_SHIELD, ART_DRONE_SHIELD);
     expand(SPR_FORGE_CORE,   ART_FORGE_CORE);
     expand(SPR_BROOD_CALL,   ART_BROOD_CALL);
+    expand(SPR_WIDOW_CALL,   ART_WIDOW_CALL);
+    expand(SPR_SILK_GLAND,   ART_SILK_GLAND);
     expand(SPR_LENS,         ART_LENS);
     expand(SPR_RELAY,        ART_RELAY);
     expand(SPR_BREAD,        ART_BREAD);
@@ -2353,4 +2426,5 @@ void initSprites() {
     buildPlayerFrames();
     buildShamblerFrames();
     buildThresherFrames();
+    buildWidowFrames();
 }

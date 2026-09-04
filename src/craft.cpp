@@ -179,6 +179,20 @@ const Recipe RECIPES[] = {
     { { { (ItemId)MAT_CHITIN, 12 }, { (ItemId)MAT_IRON, 6 }, { (ItemId)MAT_BRONZE, 4 } },
       ITEM_BROOD_CALL, 1, "Brood Call", STATION_ANVIL },
 
+    /* --- calling the second one ---------------------------------------------
+       The same idea one layer down, and deliberately the same SHAPE: what the
+       place is made of, assembled at a station the place has taught you to
+       build. Ichor is what everything in layer 2 drops, steel is the metal the
+       Forge Core unlocked, and the Forge Core itself is the receipt for having
+       beaten the layer above -- so the Widow cannot be called by anyone who
+       skipped the Brood Mother, without a single line of gating code.
+
+       At the ASSEMBLY table rather than the anvil. The Brood Call is early-game
+       metalwork; this is a lure built out of a creature, and the tier you need
+       for it is the one layer 2 is for. */
+    { { { ITEM_ICHOR, 16 }, { (ItemId)MAT_STEEL, 8 }, { ITEM_FORGE_CORE, 1 } },
+      ITEM_WIDOW_CALL, 1, "Widow Call", STATION_ASSEMBLY },
+
     /* --- the bench --------------------------------------------------------
        Wood, stone and the earliest metal: everything a workbench can put
        together with hand tools. This is also where the mining ladder's

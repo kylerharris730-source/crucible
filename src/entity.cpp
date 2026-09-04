@@ -13,14 +13,19 @@
 Entity g_entities[MAX_ENTITIES];
 Pickup g_pickups[MAX_PICKUPS];
 
-/* The first boss opens the first geological seal everywhere, not merely at the
-   arena. A cleared local hole would turn progression into remembering where a
-   particular fight happened; defeating her should make layer two part of the
-   world from that point on. The first band wobbles by under 60 cells, so this
-   generous local-stone window clears it without touching the layer-two seal. */
-static void unlockLayerTwo(World& w) {
+/* A boss opens a geological seal everywhere, not merely at the arena. A
+   cleared local hole would turn progression into remembering where a particular
+   fight happened; defeating the thing that guards a layer should make the next
+   one part of the world from that point on. A band wobbles by under 60 cells,
+   so this generous local-stone window clears one without touching the other.
+
+   Taken as a DEPTH rather than being written twice, now that there are two
+   seals and two bosses. The Brood Mother opens the layer 1 band and the Widow
+   the layer 2 one; the code is identical and the only honest difference is
+   which number goes in. */
+static void unlockSeal(World& w, int depth) {
     for (int x = PLAY_X0; x <= PLAY_X1; ++x) {
-        const int mid = g_stoneY[x] + LAYER1_DEPTH;
+        const int mid = g_stoneY[x] + depth;
         for (int y = imax(PLAY_Y0, mid - 100); y <= imin(PLAY_Y1, mid + 100); ++y) {
             if (w.at(x, y).mat == MAT_STRATUM) w.setCell(x, y, MAT_EMPTY);
             if ((w.bgAt(x, y) & BG_MAT_MASK) == MAT_STRATUM) w.clearBg(x, y);
@@ -65,6 +70,42 @@ static const int   WISP_BEAM_TRAIL  = 44;     /* frames the wake lingers */
 static const float SKIRM_KEEP    =  78.0f;   /* range it tries to hold */
 static const float SKIRM_PANIC   =  40.0f;   /* inside this it backs off hard */
 static const int   SKIRM_BLOCKED =  22;      /* frames of no progress = cornered */
+
+/* --- the Widow ------------------------------------------------------------
+   Two rhythms laid over each other, which is most of what makes a boss feel
+   different from a big ordinary creature: it SCUTTLES like the Thresher, in
+   bursts with stops between, and independently of that it stops to SPIT.
+
+   The spit is a volley in a fan rather than one aimed glob. A single web at a
+   moving player is a coin flip that mostly misses and reads as the creature
+   being bad at throwing; a fan lands some of itself wherever you went, so the
+   attack is about the GROUND rather than about you, which is what a web should
+   be about. The middle glob is aimed and the rest are spread either side.
+
+   Wounded, it does all of it faster and throws one more strand. Nothing new
+   appears in the second half on purpose -- a boss whose fight changes shape
+   halfway is two fights, and this one is meant to be a place you get pushed
+   out of, steadily, until you deal with it. */
+/* Nine strands every 110 frames, and both numbers come out of the same
+   arithmetic. A glob deposits ONE cell where it lands (see the payload note in
+   projectile.cpp), and silk decays with a mean life of about 255 frames, so the
+   amount on the floor settles at roughly strands * 255 / interval. At five
+   strands every 150 frames that is eight cells -- measured, four -- which is a
+   thread, not a web. At nine every 110 it is around twenty, and past forty once
+   it is wounded, which is enough ground to have to think about.
+
+   Raising the LIFETIME instead was the other lever and it is the wrong one: it
+   buys the same density by making every strand outlast the exchange that
+   produced it, and the arena stops clearing between engagements. */
+static const int   WIDOW_SPIT_EVERY  = 110;  /* frames between volleys */
+static const int   WIDOW_SPIT_WINDUP = 30;   /* it rears before it throws */
+static const int   WIDOW_STRANDS     = 9;    /* globs in a volley */
+static const float WIDOW_SPREAD      = 0.13f;/* radians between strands */
+static const float WIDOW_SPIT_RANGE  = 170.0f;
+/* Its own scuttle, slower and longer than the Thresher's: at forty cells wide
+   a short burst would be a twitch, and this creature is meant to arrive. */
+static const int   WIDOW_BURST       = 90;
+static const int   WIDOW_PAUSE       = 34;
 
 /* Defined beside the beam it belongs to; declared here because both the def
    table's neighbours and entityPixelMotion come earlier in this file. */
@@ -374,7 +415,46 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
       74, 12, 4.6f, SKIRM_KEEP, false,
       ITEM_ICHOR, 1, 3, ITEM_NONE, 0, SPR_SKIRMISHER, 0xB8A05A,
       ITEM_EGG_SKIRMISHER, false, false, 0 },
+
+    /* --- the Widow, layer 2's boss -----------------------------------------
+       Big, and big in the axis that matters: 40 by 32 against the Brood
+       Mother's 34 by 24, and WIDER than it is tall, which is the shape a
+       spider has and the shape neither boss-sized creature had before. A tall
+       boss is something you stand back from; a wide one is something you
+       cannot get past.
+
+       THE BOX IS THE REACH, with the same honest caveat the Thresher's row
+       makes: the collision box is the sprite, so the splayed legs are covered
+       and so are the upper corners where there is nothing but air. On a
+       creature that is mostly leg that approximation errs toward the player
+       being hit by a gap, and it is the price of not running eight per-limb
+       tests a frame on the one creature that would need them.
+
+       1400 hp against the Brood Mother's 900, and 34 contact damage against
+       her 16 -- layer 2 hits about twice as hard as layer 1 across the board
+       (see the note above the Shambler), so a boss that did not would read as
+       a step backwards from the fight before it.
+
+       It SHOOTS, which she does not, and that is the real difference between
+       them rather than the numbers. She is a charge you dodge in an open room;
+       backing away from her works and is supposed to. This one makes the
+       ground you backed into cost something. */
+    { "Widow", WIDOW_SPR_W, WIDOW_SPR_H, 1400, 34, 26,
+      0.62f, 0.075f, false, 0, false,
+      WIDOW_SPIT_EVERY, 14, 2.6f, 0.0f, true,
+      ITEM_SILK_GLAND, 1, 1, ITEM_NONE, 0, SPR_NONE, 0x6E5578,
+      ITEM_EGG_WIDOW, false, false, 0 },
 };
+
+/* See the note in entity.h. One switch, and hive_bosses asserts it covers
+   every creature whose row says isBoss. */
+u32 bossBitOf(int entityType) {
+    switch (entityType) {
+        case ENT_BROOD: return BOSS_LAYER1;
+        case ENT_WIDOW: return BOSS_LAYER2;
+        default:        return 0;
+    }
+}
 
 /* Not saved with the creatures -- see entity.h. Written by save.cpp as one u32
    because "which bosses have you beaten" is the one fact about them that has to
@@ -620,9 +700,11 @@ static void entDie(World& w, Entity& e) {
        beaten her -- the loot is on the floor either way, and "you won but the
        game did not notice" is the worst possible outcome of a boss fight. */
     if (d.isBoss) {
-        const bool firstWin = (g_bossesBeaten & BOSS_LAYER1) == 0;
-        g_bossesBeaten |= BOSS_LAYER1;
-        if (firstWin) unlockLayerTwo(w);
+        const u32 bit = bossBitOf(e.type);
+        const bool firstWin = bit != 0 && (g_bossesBeaten & bit) == 0;
+        g_bossesBeaten |= bit;
+        if (firstWin)
+            unlockSeal(w, bit == BOSS_LAYER1 ? LAYER1_DEPTH : LAYER2_DEPTH);
     }
     /* --- the charm, before the ordinary drop ---------------------------
        First because the ordinary path can RETURN -- chitin leaves through
@@ -2223,6 +2305,148 @@ static void broodTick(World& w, Entity& e, const Player& p) {
     }
 }
 
+
+/* --- the Widow: scuttle, and spit silk over the ground you backed onto ------
+
+   Two counters that do not know about each other, which is deliberate. actTimer
+   runs the scuttle (burst, then pause, exactly as the Thresher's does, counting
+   down through zero into the negatives so one counter carries both halves) and
+   shotTimer runs the volley. Because they are independent and their periods do
+   not divide, the creature never settles into a repeating bar of music -- it
+   spits mid-burst, then while stopped, then mid-burst again, and the fight does
+   not become a pattern you can stand in one place and read.
+
+   The one place they DO meet is the wind-up: it plants itself to throw. A boss
+   that spat while charging would be throwing an attack you cannot dodge from
+   an attack you cannot dodge, and the telegraph is the whole reason either of
+   them is fair. */
+
+static void widowSpit(World& w, Entity& e, const Player& p) {
+    const EntityDef& d = ENT_DEFS[e.type];
+    const bool wounded = e.hp * 2 <= d.hp;
+
+    float dx = p.centreX() - e.centreX(), dy = p.centreY() - e.centreY();
+
+    /* The same closed-form ballistic solve the Spitter uses, and for the same
+       reason -- see the long note in lobAtPlayer. A slow shot over a long
+       distance is the worst case for aiming, and a web glob at 2.6 is slow.
+       Out of range means hold fire rather than throw something that cannot
+       arrive. */
+    const float v = d.shotSpeed, g = PROJ_GRAVITY;
+    const float b = g * dy + v * v;
+    const float disc = b * b - g * g * (dx * dx + dy * dy);
+    if (disc < 0.0f) return;
+    const float T = 2.0f * (b - sqrtf(disc)) / (g * g);
+    if (T <= 0.0001f) return;
+    const float t = sqrtf(T);
+    const float vx = dx / t;
+    const float vy = (dy - 0.5f * g * T) / t;
+
+    e.facing = dx > 0.0f ? 1 : -1;
+
+    /* The fan. Strands are numbered outward from the aimed one, so an odd
+       count is symmetric about the solved arc and the middle strand is the one
+       that would have hit. Rotating the solved VELOCITY rather than re-solving
+       per strand is what keeps them a fan: they all leave at the same speed and
+       differ only in launch angle, so they land spread along the ground instead
+       of bunched at one radius. */
+    const int strands = WIDOW_STRANDS + (wounded ? 2 : 0);
+    for (int k = 0; k < strands; ++k) {
+        const int off = k - strands / 2;
+        const float a = (float)off * WIDOW_SPREAD;
+        const float ca = cosf(a), sa = sinf(a);
+        const float sx = vx * ca - vy * sa;
+        const float sy = vx * sa + vy * ca;
+
+        const float mlen = sqrtf(sx * sx + sy * sy);
+        const float mx = (mlen > 0.001f) ? sx / mlen : 1.0f;
+        const float my = (mlen > 0.001f) ? sy / mlen : 0.0f;
+        /* Muzzle well clear of a forty-cell body, along the launch heading, so
+           a strand does not appear to start inside the creature's own legs. */
+        projSpawn(e.centreX() + mx * 20.0f, e.centreY() + my * 20.0f, sx, sy,
+                  /* STR_NOTHING: it throws silk, it does not excavate. A boss
+                     that could dig at range would rewrite the arena. */
+                  STR_NOTHING, 1, 300, 0xD8DCE4, 0, MAT_WEB,
+                  d.shotDamage, true, PROJ_GRAVITY);
+    }
+    e.shotTimer = wounded ? (d.shotEvery * 2) / 3 : d.shotEvery;
+}
+
+static void widowTick(World& w, Entity& e, const Player& p) {
+    const EntityDef& d = ENT_DEFS[e.type];
+    const bool wounded = e.hp * 2 <= d.hp;
+
+    /* --- the volley clock ------------------------------------------------
+       Counts down to zero and then holds NEGATIVE through the wind-up, which
+       is the same one-counter-two-phases shape the Thresher's burst uses. */
+    --e.shotTimer;
+    const bool winding = e.shotTimer <= 0 && e.shotTimer > -WIDOW_SPIT_WINDUP;
+    const bool throwing = e.shotTimer <= -WIDOW_SPIT_WINDUP;
+
+    /* Only bothers if you are close enough to be worth silk, and only if it
+       can see you -- webbing a wall you are standing behind teaches nothing.
+       Sampled rather than walked, as everywhere else in this file. */
+    bool inSight = false;
+    {
+        const float sx = p.centreX() - e.centreX(), sy = p.centreY() - e.centreY();
+        if (sx * sx + sy * sy < WIDOW_SPIT_RANGE * WIDOW_SPIT_RANGE) {
+            inSight = true;
+            for (int k = 1; k <= 6; ++k) {
+                const int px = (int)(e.centreX() + sx * (float)k / 7.0f);
+                const int py = (int)(e.centreY() + sy * (float)k / 7.0f);
+                if (px < 0 || px >= SIM_W || py < 0 || py >= SIM_H ||
+                    playerSolid(w, px, py)) { inSight = false; break; }
+            }
+        }
+    }
+
+    if (throwing) {
+        if (inSight) widowSpit(w, e, p);
+        else e.shotTimer = d.shotEvery / 2;   /* try again sooner, not never */
+        e.telegraph = 0;
+        return;
+    }
+
+    if (winding && inSight) {
+        /* Planted. It sheds speed rather than stopping dead, so the rear-up
+           reads as a creature gathering itself, and telegraph drives the same
+           flash the Brood Mother's charge uses -- one visual language for "it
+           is about to do something", across both bosses. */
+        e.vx *= 0.74f;
+        e.telegraph = -e.shotTimer;
+        return;
+    }
+    if (winding && !inSight) e.shotTimer = d.shotEvery / 2;
+    e.telegraph = 0;
+
+    /* --- the scuttle ------------------------------------------------------ */
+    --e.actTimer;
+    if (e.actTimer < -WIDOW_PAUSE) e.actTimer = WIDOW_BURST;
+    const bool bursting = e.actTimer > 0;
+
+    /* Wounded, it stops less. The pause is the window you fight in, so taking
+       some of it away is the cheapest possible way to make the second half
+       harder without giving the creature a new move nobody has seen. */
+    const float pace = bursting ? (wounded ? 1.25f : 1.0f) : 0.0f;
+
+    bool climb = false;
+    groundChase(e, p, d.speed * pace, d.accel * (bursting ? 1.0f : 0.4f),
+                0.0f, &climb);
+
+    /* Eight legs climb what two cannot -- the Thresher's rule, and a spider has
+       more claim to it than anything else in the game. Only while bursting, so
+       a planted Widow does not levitate. */
+    if (bursting && e.onGround && climb) {
+        const int probeX = e.facing > 0 ? e.right() + 1 : e.left() - 1;
+        if (probeX > PLAY_X0 && probeX < PLAY_X1) {
+            bool low = false;
+            for (int y = e.bottom(); y > e.bottom() - 4 && y > PLAY_Y0; --y)
+                if (playerSolid(w, probeX, y, SOLID_ANY)) { low = true; break; }
+            if (low) e.vy = -2.0f;
+        }
+    }
+}
+
 static void entTickMode(World& w, Player& fallbackPlayer, Inventory& fallbackInv,
                         bool multiplayer) {
     /* One search for the whole roster, before anybody moves. Seeded from every
@@ -2325,6 +2549,7 @@ static void entTickMode(World& w, Player& fallbackPlayer, Inventory& fallbackInv
         case ENT_BAT:     batTick(w, e, p);     break;
         case ENT_SPITTER: spitterTick(w, e, p); break;
         case ENT_BROOD:   broodTick(w, e, p);   break;
+        case ENT_WIDOW:   widowTick(w, e, p);   break;
         case ENT_DUMMY:   dummyTick(w, e, p);   break;
         case ENT_SHAMBLER: shamblerTick(w, e, p); break;
         case ENT_THRESHER: thresherTick(w, e, p); break;
@@ -2948,6 +3173,11 @@ static bool rigArtFor(u8 type, RigArt* out) {
         out->idle = g_thresherIdle[0]; out->idleFrames = THRESHER_IDLE_FRAMES;
         out->walk = g_thresherWalk[0]; out->walkFrames = THRESHER_WALK_FRAMES;
         out->w = THRESHER_SPR_W; out->h = THRESHER_SPR_H;
+        return true;
+    case ENT_WIDOW:
+        out->idle = g_widowIdle[0]; out->idleFrames = WIDOW_IDLE_FRAMES;
+        out->walk = g_widowWalk[0]; out->walkFrames = WIDOW_WALK_FRAMES;
+        out->w = WIDOW_SPR_W; out->h = WIDOW_SPR_H;
         return true;
     default:
         return false;
