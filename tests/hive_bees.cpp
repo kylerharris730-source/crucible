@@ -165,8 +165,17 @@ int main() {
     /* The whole point of the upgrade. A hive fed by coal bees must produce the
        coal variants, because those are what boil back down into coal -- see
        check 4. If this delivered plain wax the coal bee would be cosmetic. */
+    /* NO flower, which is the whole trick to reading this cleanly. The
+       question is what the hive does with a coal delivery, and a flower within
+       reach adds a second, ordinary source of deliveries that races it: this
+       block used to plant one forty cells away and pass only because a bee
+       could not get there and back inside six hundred frames. Improving the
+       door and the bees' steering made the trip fit, plain wax appeared, and a
+       check named "and not the ordinary kind" started reporting on flight
+       speed. With no flower the four coal loads below are the only deliveries
+       there are, and the check says what it claims to. */
     {
-        Device* d = buildApiary(40);
+        Device* d = buildApiary(0);
         if (!d) return 2;
         d->value = 1;
         for (int i = 0; i < 4; ++i) hiveDeliver(*d, true);

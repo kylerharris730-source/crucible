@@ -1571,9 +1571,37 @@ static const int BEE_HOME_ARRIVE = 8;
    turns. */
 static const int BEE_SOOT_FULL   = 12;
 
+/* Can a bee see this from where it is? Sampled, like every other sight line in
+   this file. */
+static bool beeSees(const World& w, float cx, float cy, int tx, int ty) {
+    const float dx = (float)tx - cx, dy = (float)ty - cy;
+    for (int k = 1; k <= 10; ++k) {
+        const int sx = (int)(cx + dx * (float)k / 11.0f);
+        const int sy = (int)(cy + dy * (float)k / 11.0f);
+        if (sx < PLAY_X0 || sx > PLAY_X1 || sy < PLAY_Y0 || sy > PLAY_Y1) return false;
+        if (playerSolid(w, sx, sy)) return false;
+    }
+    return true;
+}
+
+/* Nearest flower it can SEE, falling back to nearest at all.
+
+   The fallback matters as much as the preference. Sight is the cheap stand-in
+   for reachability and it is wrong in both directions -- a flower round a
+   gentle corner is reachable and unseen, and one across a chasm is seen and
+   not reachable -- so it decides which flower to PREFER and never which to
+   forbid. A bee with only unseen flowers still goes and tries, and the local
+   avoidance in beeHeading gets it round most of what is in the way.
+
+   What this fixes is fixation: without it a bee locks onto whatever is
+   nearest in a straight line, and if that one is behind a wall it will keep
+   choosing it every time it re-aims, forever, while a perfectly good flower
+   sits twenty cells further off. */
 static bool beeFindFlower(const World& w, Entity& e) {
     const int cx = (int)e.centreX(), cy = (int)e.centreY();
     int bestD2 = BEE_SEARCH_R * BEE_SEARCH_R + 1, bx = 0, by = 0;
+    int seenD2 = BEE_SEARCH_R * BEE_SEARCH_R + 1, sx2 = 0, sy2 = 0;
+    bool seen = false;
     bool found = false;
     for (int y = cy - BEE_SEARCH_R; y <= cy + BEE_SEARCH_R; y += BEE_SEARCH_STEP) {
         if (y < PLAY_Y0 || y > PLAY_Y1) continue;
@@ -1581,11 +1609,18 @@ static bool beeFindFlower(const World& w, Entity& e) {
             if (x < PLAY_X0 || x > PLAY_X1) continue;
             if (w.at(x, y).mat != MAT_FLOWER) continue;
             const int dx = x - cx, dy = y - cy, d2 = dx * dx + dy * dy;
+            /* The sight test runs only when a candidate is closer than the
+               best SEEN one so far, so it costs a handful of rays over the
+               whole scan rather than one per flower. */
+            if (d2 < seenD2 && beeSees(w, e.centreX(), e.centreY(), x, y)) {
+                seenD2 = d2; sx2 = x; sy2 = y; seen = true;
+            }
             if (d2 >= bestD2) continue;
             bestD2 = d2; bx = x; by = y; found = true;
         }
     }
-    if (found) { e.aimX = (float)bx; e.aimY = (float)by; }
+    if (seen)       { e.aimX = (float)sx2; e.aimY = (float)sy2; return true; }
+    if (found)      { e.aimX = (float)bx;  e.aimY = (float)by;  }
     return found;
 }
 
@@ -1607,11 +1642,77 @@ static u8 beeDustAt(const World& w, const Entity& e) {
     return MAT_EMPTY;
 }
 
-static void beeSteer(Entity& e, float tx, float ty) {
-    const EntityDef& d = ENT_DEFS[e.type];
+/* --- flying round things -----------------------------------------------------
+
+   A bee used to steer straight at its target and nothing else, which works
+   until something is in the way and then does not work at all: pressed against
+   a wall, it pushed for as long as the flower stayed its nearest one.
+   Measured with a flower ninety cells off behind a wall -- never arrived,
+   closest approach fifty-one cells, and 1,462 frames of three thousand with no
+   horizontal movement whatsoever.
+
+   This is local avoidance rather than a route. A bee gets a short look-ahead
+   and a fan of headings either side of the one it wants, and takes the least
+   deflected heading that stays clear; if every heading is blocked it takes the
+   longest. That handles a wall, a pillar, a lip and the hive's own body, which
+   is what is actually between a bee and a flower. It does NOT solve a spiral,
+   and it is not supposed to -- the flower search below prefers targets it can
+   see, so a bee in a genuinely enclosed pocket looks for different work rather
+   than solving a maze.
+
+   Deliberately not the navigation flow field: that is seeded from the PLAYERS
+   and answers "which way to a person", and a bee wants "which way to that
+   flower". Seeding a second field per bee per target would cost more than
+   every bee in the world put together. */
+static const int BEE_LOOK = 16;      /* cells of look-ahead */
+
+/* How far a ray from (x,y) runs before it hits something, capped at BEE_LOOK. */
+static float beeClearRun(const World& w, float x, float y, float ux, float uy) {
+    for (int s = 1; s <= BEE_LOOK; ++s) {
+        const int cx = (int)(x + ux * (float)s), cy = (int)(y + uy * (float)s);
+        if (cx < PLAY_X0 || cx > PLAY_X1 || cy < PLAY_Y0 || cy > PLAY_Y1)
+            return (float)s;
+        if (playerSolid(w, cx, cy)) return (float)s;
+    }
+    return (float)(BEE_LOOK + 1);
+}
+
+/* The heading a bee should actually fly to get toward (tx, ty). */
+static void beeHeading(const World& w, const Entity& e, float tx, float ty,
+                       float* ox, float* oy) {
     float ax = tx - e.centreX(), ay = ty - e.centreY();
     const float len = sqrtf(ax * ax + ay * ay);
-    if (len > 0.01f) { ax /= len; ay /= len; }
+    if (len > 0.01f) { ax /= len; ay /= len; } else { *ox = 0.0f; *oy = 0.0f; return; }
+
+    const float cx = e.centreX(), cy = e.centreY();
+    /* Straight there, if straight there is clear. The common case, and it costs
+       one ray. */
+    if (beeClearRun(w, cx, cy, ax, ay) > (float)BEE_LOOK) { *ox = ax; *oy = ay; return; }
+
+    /* Otherwise fan out, nearest deflection first, and take the first heading
+       that is clear all the way. Both signs of each angle are tried before the
+       angle widens, so a bee prefers whichever way round is straighter rather
+       than always turning the same way -- which is what stops two bees meeting
+       an obstacle from filing along the same side of it. */
+    static const float FAN[] = { 0.45f, 0.90f, 1.35f, 1.80f, 2.25f };
+    float bestX = ax, bestY = ay, bestRun = beeClearRun(w, cx, cy, ax, ay);
+    for (int i = 0; i < 5; ++i) {
+        for (int sign = 0; sign < 2; ++sign) {
+            const float a = sign ? -FAN[i] : FAN[i];
+            const float c = cosf(a), sn = sinf(a);
+            const float hx = ax * c - ay * sn, hy = ax * sn + ay * c;
+            const float run = beeClearRun(w, cx, cy, hx, hy);
+            if (run > (float)BEE_LOOK) { *ox = hx; *oy = hy; return; }
+            if (run > bestRun) { bestRun = run; bestX = hx; bestY = hy; }
+        }
+    }
+    *ox = bestX; *oy = bestY;
+}
+
+static void beeSteer(const World& w, Entity& e, float tx, float ty) {
+    const EntityDef& d = ENT_DEFS[e.type];
+    float ax, ay;
+    beeHeading(w, e, tx, ty, &ax, &ay);
     e.vx += ax * d.accel;
     e.vy += ay * d.accel;
     /* The wingbeat. Small, and on the vertical only, so a bee bobs along its
@@ -1658,7 +1759,7 @@ static void beeTick(World& w, Entity& e) {
        with no hive to go to just keeps flying; it has nowhere to be. */
     if (isNight() && hive) {
         float hx, hy; hiveTarget(w, *hive, &hx, &hy);
-        beeSteer(e, hx, hy);
+        beeSteer(w, e, hx, hy);
         const float dx = hx - e.centreX(), dy = hy - e.centreY();
         if (dx * dx + dy * dy <= (float)(BEE_HOME_ARRIVE * BEE_HOME_ARRIVE)) {
             if (e.phase == 1) hiveDeliver(g_devices[e.home], e.type == ENT_COAL_BEE);
@@ -1677,7 +1778,7 @@ static void beeTick(World& w, Entity& e) {
         /* Carrying. Home is a fixed point, so no searching is needed. */
         if (!hive) { e.phase = 0; e.aimHold = 0; return; }
         float hx, hy; hiveTarget(w, *hive, &hx, &hy);
-        beeSteer(e, hx, hy);
+        beeSteer(w, e, hx, hy);
         const float dx = hx - e.centreX(), dy = hy - e.centreY();
         if (dx * dx + dy * dy <= (float)(BEE_HOME_ARRIVE * BEE_HOME_ARRIVE)) {
             hiveDeliver(g_devices[e.home], e.type == ENT_COAL_BEE);
@@ -1710,7 +1811,7 @@ static void beeTick(World& w, Entity& e) {
         e.aimHold = 30 + (int)(rngNext() % 30u);
     }
 
-    beeSteer(e, e.aimX, e.aimY);
+    beeSteer(w, e, e.aimX, e.aimY);
 
     /* Arrived at something that is still a flower. Checked rather than
        assumed: the target was chosen up to a second ago and the world is

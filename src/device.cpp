@@ -1422,17 +1422,61 @@ static const int HIVE_WAX_LIFT = 20;
    buried because it is defined as the first cell that is NOT buried. As the
    wax stacks, the landing pad rises with it.
 
-   Falls back around the sides for a hive with a ceiling on it, and finally
-   to just above the hive so a walled-in colony still has somewhere to aim
-   rather than a target inside solid rock. */
+   Falls back over the top and then around the sides, and finally to just
+   below the hive so a walled-in colony still has somewhere to aim rather than
+   a target inside solid rock. */
+/* Where a bee enters and leaves. THE BOTTOM, and that is the whole reason this
+   moved: wax extrudes from the top face and honey from the sides, so the door
+   used to be cut through the hive's own product. A colony spent its day
+   shouldering past the wax it had just made.
+
+   A bee is four cells across and has to FIT where it is sent, so a landing pad
+   is the first cell with a bee's worth of clear air -- not merely the first
+   empty cell. Without the clearance the door sat flush against the hive, every
+   spawn was refused for want of room, and the colony never appeared at all.
+
+   The sides and then the top remain as FALLBACKS rather than being removed. A
+   hive standing on the ground has no room underneath it, and there are saved
+   worlds full of hives standing on the ground: making the bottom mandatory
+   would silently stop every one of them. Preferred, not required. */
 void hiveTarget(const World& w, const Device& d, float* x, float* y) {
     const int ix = d.x + DEV_W / 2;
-    /* A bee is four cells across and has to FIT where it is sent, so the
-       landing pad is the first cell with a bee's worth of clear air above it
-       -- not merely the first empty cell. Without the clearance the door sat
-       flush on the hive, every spawn was refused for want of room, and the
-       colony never appeared at all. */
     const int CLEAR = 5;
+
+    /* Below, first, and the run of clear air must be CONTIGUOUS with the hive.
+
+       Searching onward past an obstruction is what the old upward version did,
+       and it was harmless there only because the sky above a hive is usually
+       open. Downward it is catastrophic: a hive standing on a one-cell stone
+       floor has open air under the floor, so the scan stepped over the floor,
+       found that void, and put the door in it. Bees were then spawned beneath
+       the world in a sealed pocket and the colony never foraged again --
+       measured, five bees alive, zero deliveries in two thousand frames. */
+    {
+        int clear = 0;
+        for (int down = 1; down <= HIVE_WAX_LIFT + 8; ++down) {
+            const int sy = d.y + DEV_H - 1 + down;
+            if (sy > PLAY_Y1) break;
+            if (w.at(ix, sy).mat != MAT_EMPTY || w.blocksCell(ix, sy)) break;
+            if (++clear >= CLEAR) {
+                *x = (float)ix + 0.5f;
+                *y = (float)(sy - CLEAR + 3) + 0.5f;
+                return;
+            }
+        }
+    }
+
+    /* Then the top, where the wax is -- searching PAST an obstruction here
+       rather than stopping at it, which is the opposite of the rule above and
+       deliberately so.
+
+       What blocks the top of a hive is almost always the hive's own wax cap,
+       and open sky sits above that; a colony walled in by its own product has
+       to keep working, which is a case this file's harness tests by name. What
+       blocks the BOTTOM is the ground, and the open space under the ground is a
+       sealed void -- so skipping past it there put the door beneath the world
+       and stranded the whole colony. Same search, opposite answer, because the
+       thing on the far side of the obstruction is not the same thing. */
     for (int up = 1; up <= HIVE_WAX_LIFT + 8; ++up) {
         const int sy = d.y - up;
         if (sy - CLEAR < PLAY_Y0) break;
@@ -1443,15 +1487,34 @@ void hiveTarget(const World& w, const Device& d, float* x, float* y) {
         *x = (float)ix + 0.5f; *y = (float)(sy - 2) + 0.5f;
         return;
     }
-    const int sides[2] = { d.x - 2, d.x + DEV_W + 1 };
+
+    /* The sides LAST, and they need the same clearance test as the other two
+       faces -- they never had one, because they used to be reached almost
+       never: a single empty cell satisfied them, a bee was sent somewhere it
+       does not fit, every spawn was refused, and the hive produced nothing.
+
+       Last, and not second, because a side door is the worst of the three. It
+       opens beside the hive body with the hive between the bee and half the
+       world, and local avoidance only looks sixteen cells ahead -- so a
+       buried-in-wax hive whose flower was on the other side had its colony
+       spend eight thousand frames milling about on the wrong side of its own
+       building. Measured: zero honey. Over the top of the wax, forty. */
+    const int sides[2] = { d.x - 3, d.x + DEV_W + 2 };
     for (int k = 0; k < 2; ++k) {
         const int sx = sides[k], sy = d.y + DEV_H / 2;
-        if (sx < PLAY_X0 || sx > PLAY_X1) continue;
-        if (w.at(sx, sy).mat != MAT_EMPTY) continue;
+        if (sx - 2 < PLAY_X0 || sx + 2 > PLAY_X1) continue;
+        if (sy - 2 < PLAY_Y0 || sy + 2 > PLAY_Y1) continue;
+        bool room = true;
+        for (int ay = -2; ay <= 2 && room; ++ay)
+            for (int ax = -2; ax <= 2 && room; ++ax)
+                room = w.at(sx + ax, sy + ay).mat == MAT_EMPTY &&
+                       !w.blocksCell(sx + ax, sy + ay);
+        if (!room) continue;
         *x = (float)sx + 0.5f; *y = (float)sy + 0.5f;
         return;
     }
-    *x = (float)ix + 0.5f; *y = (float)(d.y - 2);
+
+    *x = (float)ix + 0.5f; *y = (float)(d.y + DEV_H + 1);
 }
 
 void hiveDeliver(Device& d, bool coal) {
