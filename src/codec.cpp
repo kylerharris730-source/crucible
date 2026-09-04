@@ -81,7 +81,8 @@ void codecProjectile(Blob& b, Projectile& p) {
     b.i32f(p.power); b.i32f(p.damage); b.boolf(p.hostile);
     b.i32f(p.pierce); b.i32f(p.life); b.i32f(p.blast);
     b.i16f(p.bounces); b.f32f(p.homing);
-    b.u32f(p.colour); b.u8f(p.payload); b.u8f(p.effect); b.u8f(p.owner); b.boolf(p.alive);
+    b.u32f(p.colour); b.u8f(p.payload); b.u8f(p.effect); b.u8f(p.owner);
+    b.u8f(p.trailLife); b.boolf(p.alive);
 }
 
 void codecDevice(Blob& b, Device& d) {

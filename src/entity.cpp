@@ -49,6 +49,22 @@ static const float ENT_MAX_FALL = 6.0f;
 static const int   WISP_BEAM_EVERY  = 260;    /* frames between beams, ~4.3 s */
 static const int   WISP_BEAM_CHARGE = 34;     /* wind-up, a little over half a second */
 static const float WISP_BEAM_RANGE  = 150.0f;
+static const int   WISP_BEAM_TRAIL  = 44;     /* frames the wake lingers */
+
+/* The Skirmisher. It withdraws only while it can SEE you, so losing sight is
+   what stops the retreat and lets it be caught -- see skirmisherTick.
+
+   KEEP has to sit well inside the creature's own ballistic reach, and that is
+   not obvious from either number alone: a lobbed shot's maximum range is
+   v*v/g regardless of aim, so at shotSpeed 4.6 this one cannot throw further
+   than 118 cells. Held at 110 it spent its life at the very edge of that and
+   lobAtPlayer refused most shots as out of range -- measured, two shots in 900
+   frames where the interval says twelve. Seventy-eight is two thirds of the
+   reach, which leaves room for the player to be above or below as well as
+   away. */
+static const float SKIRM_KEEP    =  78.0f;   /* range it tries to hold */
+static const float SKIRM_PANIC   =  40.0f;   /* inside this it backs off hard */
+static const int   SKIRM_BLOCKED =  22;      /* frames of no progress = cornered */
 
 /* Defined beside the beam it belongs to; declared here because both the def
    table's neighbours and entityPixelMotion come earlier in this file. */
@@ -322,6 +338,29 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
       0, 0, 0.0f, 0.0f, false,
       ITEM_NONE, 0, 0, ITEM_NONE, 0, SPR_COAL_BEE, 0x6E6A60,
       ITEM_NONE, false, true, degC(110) },
+
+    /* --- the Skirmisher, layer 2 -------------------------------------------
+       The kiter, and the third shooter down here on purpose: the Culverin holds
+       its ground and the Wisp closes, so both of them let the player pick the
+       range. This one takes that choice away by walking backwards while it
+       fires, which makes "back off and plink at it" -- the answer to every
+       other shooter in the game -- the one thing that does not work.
+
+       FRAGILE, and that is the balance. 44 hp against the Culverin's 70, and
+       the lightest contact damage of any layer 2 creature: it is not supposed
+       to survive being caught, only to make catching it the whole problem.
+       Cornering it is the counterplay, and a corridor is where you want to
+       meet one.
+
+       A steady drip rather than a volley or a charge, so the three shooters
+       differ in RHYTHM and not only in numbers: the Culverin is helpless
+       between bursts, the Wisp is rare and telegraphed, and this one never
+       stops and never spikes. */
+    { "Skirmisher", 11, 13, 44, 8, 32,
+      0.58f, 0.075f, false, 2, false,
+      74, 12, 4.6f, SKIRM_KEEP, false,
+      ITEM_ICHOR, 1, 3, ITEM_NONE, 0, SPR_SKIRMISHER, 0xB8A05A,
+      ITEM_EGG_SKIRMISHER, false, false, 0 },
 };
 
 /* Not saved with the creatures -- see entity.h. Written by save.cpp as one u32
@@ -1307,6 +1346,7 @@ static void thresherTick(const World& w, Entity& e, const Player& p) {
    beside the layer-1 ones. Moving either would separate a creature from its
    neighbours to satisfy the compiler, which is the wrong thing to optimise. */
 static void spitterTick(World& w, Entity& e, const Player& p);
+static void skirmisherTick(const World& w, Entity& e, const Player& p);
 
 static const int CULVERIN_VOLLEY = 3;
 static const int CULVERIN_RELOAD = 120;
@@ -1394,10 +1434,15 @@ static void wispBeam(const World& w, Entity& e, const Player& p) {
     e.facing = dx > 0.0f ? 1 : -1;
     /* STR_NOTHING for the reason the Spitter's glob has it: a creature that
        could excavate at range would rewrite the terrain of every fight. */
+    /* The long wake is what makes this read as a BEAM rather than a fast dot.
+       At 6.2 cells a frame the shot crosses its 150-cell range in about 24
+       frames, so a 44-frame wake means the whole path is still lit when the
+       head arrives and fades a moment after -- a line you can see, and see
+       where it came from. See Projectile::trailLife. */
     projSpawn(e.centreX() + ux * 7.0f, e.centreY() + uy * 7.0f,
               ux * d.shotSpeed, uy * d.shotSpeed,
               STR_NOTHING, 1, 200, 0xE0A8FF, 0, MAT_EMPTY, d.shotDamage, true,
-              0.0f);
+              0.0f, PROJ_EFFECT_NONE, 0, 0.0f, 0xff, WISP_BEAM_TRAIL);
     e.shotTimer = d.shotEvery;
 }
 
@@ -1698,25 +1743,17 @@ static void batTick(const World& w, Entity& e, const Player& p) {
     if (e.vx > 0.05f) e.facing = 1; else if (e.vx < -0.05f) e.facing = -1;
 }
 
-static void spitterTick(World& w, Entity& e, const Player& p) {
+/* Lob a glob at the player, leading the arc, and set the reload.
+
+   Split out of spitterTick when the Skirmisher wanted the same shot: the
+   ballistic solution below is the fiddly part of this file and having two of
+   it would be two things to get wrong. The caller owns the DECISION to fire --
+   range bands, line of sight, whether it is retreating -- and this owns the
+   aim. */
+static void lobAtPlayer(const World& w, Entity& e, const Player& p) {
     const EntityDef& d = ENT_DEFS[e.type];
-    groundChase(e, p, d.speed, d.accel, d.standOff);
-
-    if (e.shotTimer > 0) { --e.shotTimer; return; }
+    (void)w;
     float dx = p.centreX() - e.centreX(), dy = p.centreY() - e.centreY();
-    const float dist = sqrtf(dx * dx + dy * dy);
-    if (dist > d.standOff * 2.2f || dist < 8.0f) return;
-
-    /* Line of sight, SAMPLED rather than walked -- the same reasoning as the
-       conduction probes: a handful of checks answers "is there a wall in the
-       way" well enough, and this runs for a couple of creatures rather than for
-       every cell in the world. */
-    for (int k = 1; k <= 6; ++k) {
-        const int sx = (int)(e.centreX() + dx * (float)k / 7.0f);
-        const int sy = (int)(e.centreY() + dy * (float)k / 7.0f);
-        if (sx < 0 || sx >= SIM_W || sy < 0 || sy >= SIM_H) return;
-        if (playerSolid(w, sx, sy)) return;   /* blocked: hold fire */
-    }
 
     /* --- aim ABOVE, because the glob falls ---------------------------------
        Once shots obey gravity this creature stops being a threat unless it is
@@ -1777,6 +1814,111 @@ static void spitterTick(World& w, Entity& e, const Player& p) {
               STR_NOTHING, 1, 240, 0xC8E060, 0, MAT_EMPTY, d.shotDamage, true,
               PROJ_GRAVITY);
     e.shotTimer = d.shotEvery;
+}
+
+static void spitterTick(World& w, Entity& e, const Player& p) {
+    const EntityDef& d = ENT_DEFS[e.type];
+    groundChase(e, p, d.speed, d.accel, d.standOff);
+
+    if (e.shotTimer > 0) { --e.shotTimer; return; }
+    const float dx = p.centreX() - e.centreX(), dy = p.centreY() - e.centreY();
+    const float dist = sqrtf(dx * dx + dy * dy);
+    if (dist > d.standOff * 2.2f || dist < 8.0f) return;
+
+    /* Line of sight, SAMPLED rather than walked -- the same reasoning as the
+       conduction probes: a handful of checks answers "is there a wall in the
+       way" well enough, and this runs for a couple of creatures rather than for
+       every cell in the world. */
+    for (int k = 1; k <= 6; ++k) {
+        const int sx = (int)(e.centreX() + dx * (float)k / 7.0f);
+        const int sy = (int)(e.centreY() + dy * (float)k / 7.0f);
+        if (sx < 0 || sx >= SIM_W || sy < 0 || sy >= SIM_H) return;
+        if (playerSolid(w, sx, sy)) return;   /* blocked: hold fire */
+    }
+    lobAtPlayer(w, e, p);
+}
+
+/* --- the Skirmisher: shoot while walking backwards ---------------------------
+
+   The other two layer-2 shooters both hand the player the range. The Culverin
+   plants itself and makes you come; the Wisp closes on you regardless. Backing
+   away beats one and buys time against the other. This one walks backwards
+   while it fires, so backing away buys nothing at all -- the range simply
+   travels with you -- and the fight only starts when you take the distance
+   away from it.
+
+   THREE THINGS KEEP IT FAIR, and they are all about being catchable.
+
+   It retreats only while it can SEE you. Break line of sight and it stops
+   withdrawing, which is what makes a corner or a doorway a tool rather than
+   scenery. Without that clause it would reverse away down a corridor forever
+   and the encounter would have no end state.
+
+   It notices when it is CORNERED. A creature pressed against rock that keeps
+   trying to walk into it is a creature standing still and looking stupid; this
+   one gives up on the retreat after SKIRM_BLOCKED frames of no ground gained
+   and holds its position instead, which reads as turning to fight.
+
+   And it is fragile. 44 hp, the lightest touch damage down here -- being
+   caught is supposed to end it quickly, because otherwise a creature that
+   cannot be escaped and cannot be killed is just a tax. */
+static void skirmisherTick(const World& w, Entity& e, const Player& p) {
+    const EntityDef& d = ENT_DEFS[e.type];
+
+    const float dx = p.centreX() - e.centreX();
+    const float dy = p.centreY() - e.centreY();
+    const float dist = sqrtf(dx * dx + dy * dy);
+    const float toward = dx > 0.0f ? 1.0f : -1.0f;
+
+    /* Sampled exactly as the Spitter and the Wisp sample it, so all three
+       shooters agree about what counts as cover. */
+    bool sees = dist > 1.0f;
+    for (int k = 1; k <= 6 && sees; ++k) {
+        const int sx = (int)(e.centreX() + dx * (float)k / 7.0f);
+        const int sy = (int)(e.centreY() + dy * (float)k / 7.0f);
+        if (sx < 0 || sx >= SIM_W || sy < 0 || sy >= SIM_H) sees = false;
+        else if (playerSolid(w, sx, sy)) sees = false;
+    }
+
+    /* Cornered? Measured as ground actually covered, not as a collision test:
+       a creature wedged on a lip, in a doorway or against another body is
+       equally stuck, and only the outcome matters. actTimer carries the count
+       because nothing else on this creature uses it. */
+    const float moved = e.x - e.prevX;
+    if (moved > 0.05f || moved < -0.05f) e.actTimer = 0;
+    else if (e.actTimer < SKIRM_BLOCKED) ++e.actTimer;
+    const bool cornered = e.actTimer >= SKIRM_BLOCKED;
+
+    float want = 0.0f;
+    if (sees && !cornered) {
+        /* Hold the band. Inside PANIC it commits to retreating; between there
+           and KEEP it drifts back gently; beyond KEEP it closes, because a
+           kiter that also ran from a distant player would never engage. */
+        if (dist < SKIRM_PANIC)      want = -toward;
+        else if (dist < SKIRM_KEEP)  want = -toward * 0.55f;
+        else                         want = toward;
+    } else if (!sees) {
+        /* Lost sight: come and look. This is what stops a broken-off fight
+           from ending with the creature quietly leaving the world. */
+        want = toward;
+    }
+
+    e.vx += want * d.accel;
+    if (e.vx >  d.speed) e.vx =  d.speed;
+    if (e.vx < -d.speed) e.vx = -d.speed;
+
+    /* It FACES the player the whole time, whichever way it is walking. That is
+       the entire read of the creature: a thing moving one way and aiming the
+       other is unmistakably backing off, where one that turned to run would
+       look like it had given up. */
+    e.facing = toward > 0.0f ? 1 : -1;
+
+    /* A hop, so a retreat is not ended by the first pebble behind it. */
+    if (e.onGround && e.vx == 0.0f && want != 0.0f && !cornered) e.vy = -2.2f;
+
+    if (e.shotTimer > 0) { --e.shotTimer; return; }
+    if (!sees || dist > SKIRM_KEEP * 1.6f || dist < 10.0f) return;
+    lobAtPlayer(w, e, p);
 }
 
 /* --- the boss ---------------------------------------------------------------
@@ -1853,8 +1995,8 @@ static void broodTick(World& w, Entity& e, const Player& p) {
        Sampled against her own previous position, and read only while she is
        trying to walk: a boss holding still through a wind-up has not failed to
        move, she has decided not to. */
+    /* prevX/prevY are maintained by entTickMode now -- see the note there. */
     const float moved = fabsf(e.x - e.prevX) + fabsf(e.y - e.prevY);
-    e.prevX = e.x; e.prevY = e.y;
 
     /* actTimer counts down to the next charge; while it is NEGATIVE the charge
        is in progress and the creature is committed. Committing is what makes a
@@ -2048,11 +2190,24 @@ static void entTickMode(World& w, Player& fallbackPlayer, Inventory& fallbackInv
         case ENT_THRESHER: thresherTick(w, e, p); break;
         case ENT_CULVERIN: culverinTick(w, e, p); break;
         case ENT_WISP:     wispTick(w, e, p); break;
+        case ENT_SKIRMISHER: skirmisherTick(w, e, p); break;
         case ENT_STOOPER:  stooperTick(w, e, p); break;
         case ENT_BEE:
         case ENT_COAL_BEE: beeTick(w, e); break;
         default: break;
         }
+
+        /* Where it was a frame ago, for anything that needs to know whether it
+           actually got anywhere -- the boss's stuck recovery and the
+           Skirmisher's cornered check both do.
+
+           Updated HERE, after the behaviour has read it and before the frame's
+           movement, so the delta a tick sees always covers exactly one
+           moveAxis. It used to live inside broodTick, which meant every other
+           creature's prevX sat frozen at its spawn position: the Skirmisher
+           read a hundred-cell delta every frame and never once registered as
+           cornered. */
+        e.prevX = e.x; e.prevY = e.y;
 
         /* `weightless` is a per-frame decision a creature makes about itself,
            not a property of its species like `flies` -- the boss is a walker
@@ -2502,6 +2657,23 @@ static void entityPixelMotion(const Entity& e, int entityIndex, int sx, int sy,
         const bool primed = e.shotTimer < 14;
         if (sy <= 5 && sx >= 7) *dy -= primed ? 1 : 0;
         if (sy <= 4) *dx += (int)((tick / 20u) & 1u);      /* barrel settle */
+        break;
+    }
+    case ENT_SKIRMISHER: {
+        /* Legs stride, and the BARREL settles between shots. The two are read
+           off different clocks on purpose: the walk is continuous while the
+           gun is the thing with a rhythm, so the recoil says "it just fired"
+           without the legs stuttering to agree with it. */
+        const int gait = (int)((tick / 5u) & 1u);
+        if (moving && sy >= 10)
+            *dx += (sx < SPR_W / 2) == (gait != 0) ? 1 : -1;
+        /* Rows 5-6 are the barrel. Kicked back along its own length for a few
+           frames after a shot -- shotTimer is reset to shotEvery on firing, so
+           a HIGH value means recently fired. */
+        if (sy >= 5 && sy <= 6 && sx >= 8) {
+            const int since = ENT_DEFS[e.type].shotEvery - e.shotTimer;
+            if (since >= 0 && since < 6) *dx -= 1;
+        }
         break;
     }
     case ENT_WISP: {

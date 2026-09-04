@@ -41,8 +41,15 @@ static void trailMoteEmit(const Projectile& p) {
     const float sideX = -forwardY, sideY = forwardX;
     /* One guaranteed mote makes even a quick close-range shot leave a readable
        wake; the occasional second mote supplies density without becoming a
-       continuous line again. */
-    const int count = trailRandom() < 0.45f ? 2 : 1;
+       continuous line again.
+
+       A BEAM wants the opposite of that last clause. Where trailLife is set the
+       wake is the point -- it has to outlive the flight and stay on the line --
+       so it emits more per frame and barely drifts. Everything else keeps the
+       sparse, wandering sparkle, because for an arcing glob a continuous line
+       would read as a laser and it is not one. */
+    const bool beam = p.trailLife > 0;
+    const int count = beam ? 3 : (trailRandom() < 0.45f ? 2 : 1);
     for (int n = 0; n < count; ++n) {
         int slot = g_trailMoteCursor;
         for (int scanned = 0; scanned < MAX_TRAIL_MOTES; ++scanned) {
@@ -50,19 +57,40 @@ static void trailMoteEmit(const Projectile& p) {
             if (!g_trailMotes[candidate].alive) { slot = candidate; break; }
         }
         TrailMote& m = g_trailMotes[slot];
-        const float behind = 0.5f + 2.4f * trailRandom();
-        const float aside = (trailRandom() - 0.5f) * 1.5f;
+        /* Spread ALONG the flight rather than around it, so three motes a
+           frame lay a continuous rod instead of a clump. The lateral scatter
+           shrinks to almost nothing for the same reason: a beam that frayed
+           sideways would look like smoke. */
+        const float behind = beam ? (0.4f + 2.0f * (float)n + 2.0f * trailRandom())
+                                  : (0.5f + 2.4f * trailRandom());
+        const float aside = (trailRandom() - 0.5f) * (beam ? 0.5f : 1.5f);
         m.x = p.x - forwardX * behind + sideX * aside;
         m.y = p.y - forwardY * behind + sideY * aside;
-        const float driftBack = 0.015f + 0.045f * trailRandom();
-        const float driftSide = (trailRandom() - 0.5f) * 0.12f;
+        const float driftBack = beam ? 0.0f : (0.015f + 0.045f * trailRandom());
+        const float driftSide = (trailRandom() - 0.5f) * (beam ? 0.02f : 0.12f);
         m.vx = -forwardX * driftBack + sideX * driftSide;
         m.vy = -forwardY * driftBack + sideY * driftSide;
         m.colour = p.colour;
-        m.life = m.fullLife = (i16)(11 + (int)(10.0f * trailRandom()));
+        m.life = m.fullLife = beam
+            ? (i16)((int)p.trailLife - (int)(4.0f * trailRandom()))
+            : (i16)(11 + (int)(10.0f * trailRandom()));
         m.alive = true;
         g_trailMoteCursor = (slot + 1) % MAX_TRAIL_MOTES;
     }
+}
+
+int projTrailMotesAlive() {
+    int n = 0;
+    for (int i = 0; i < MAX_TRAIL_MOTES; ++i) if (g_trailMotes[i].alive) ++n;
+    return n;
+}
+
+int projTrailLongestLife() {
+    int best = 0;
+    for (int i = 0; i < MAX_TRAIL_MOTES; ++i)
+        if (g_trailMotes[i].alive && g_trailMotes[i].fullLife > best)
+            best = g_trailMotes[i].fullLife;
+    return best;
 }
 
 static void trailMotesTick() {
@@ -292,7 +320,7 @@ void projClear() {
 bool projSpawn(float x, float y, float vx, float vy,
                int power, int pierce, int life, u32 colour, int blast,
                int payload, int damage, bool hostile, float gravity, int effect,
-               int bounces, float homing, u8 owner) {
+               int bounces, float homing, u8 owner, int trailLife) {
     for (int i = 0; i < MAX_PROJ; ++i) {
         if (g_proj[i].alive) continue;
         Projectile& p = g_proj[i];
@@ -301,7 +329,7 @@ bool projSpawn(float x, float y, float vx, float vy,
         p.bounces = (i16)bounces; p.homing = homing;
         p.colour = colour; p.payload = (u8)payload; p.damage = damage;
         p.hostile = hostile; p.gravity = gravity; p.effect = (u8)effect;
-        p.owner = owner; p.alive = true;
+        p.owner = owner; p.trailLife = (u8)trailLife; p.alive = true;
         return true;
     }
     /* Full: drop it. Silently, because the alternative -- replacing the oldest

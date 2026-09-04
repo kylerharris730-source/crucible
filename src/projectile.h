@@ -88,6 +88,16 @@ struct Projectile {
        Glowflare is specifically the ampoule that bursts into revealing motes. */
     u8    effect;
     u8    owner;     /* PlayerId for owner-specific effects such as teleport */
+    /* How long this shot's wake lingers, in frames, or 0 for the ordinary
+       short-lived sparkle.
+
+       A wake that outlives the flight stops being a wake and becomes the SHOT
+       ITSELF: set long enough, the whole path is still lit when the head
+       arrives, so a fast flat shot reads as a beam with a body rather than as
+       a dot that got there. That is the only reason this is per-projectile --
+       an arcing glob wants a sparse trail that says "something passed", and a
+       beam wants a line that says "this is where it went". */
+    u8    trailLife;
     bool  alive;
 };
 
@@ -119,7 +129,9 @@ bool projSpawn(float x, float y, float vx, float vy,
                float gravity = PROJ_GRAVITY,
                int effect = PROJ_EFFECT_NONE,
                int bounces = 0, float homing = 0.0f,
-               u8 owner = 0xff);
+               u8 owner = 0xff,
+               /* See Projectile::trailLife. Zero keeps the ordinary sparkle. */
+               int trailLife = 0);
 
 /* Blows a hole, sets fire to the middle of it and heats the lot. Exposed
    because an explosion is a world event rather than a projectile one -- the
@@ -136,6 +148,12 @@ extern int projExplosionsThisFrame;
 int  projUpdate(World& w);
 /* Register the glow carried by live flares and their non-colliding impact
    motes. Called after lightClearDynamic() and before lightUpdate(). */
+/* How many trail motes are currently alive, and the longest life any of them
+   was given. Diagnostics for the harnesses: a beam's wake is the difference
+   between a fast dot and a line, and nothing else can see it from outside. */
+int  projTrailMotesAlive();
+int  projTrailLongestLife();
+
 void projRegisterLights();
 void projDraw(u32* px, int camX, int camY);
 int  projCount();

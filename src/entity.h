@@ -94,6 +94,18 @@ enum EntityType {
        one they do not exist. See `tame`. */
     ENT_BEE,
     ENT_COAL_BEE,
+
+    /* --- the Skirmisher, layer 2 -----------------------------------------
+       The kiter. Layer 2's other two shooters both let you choose the range:
+       the Culverin plants itself and makes you come, and the Wisp closes on
+       you whatever you do. This one WITHDRAWS while it fires, so backing off
+       -- the answer to every other shooter in the game -- is the one thing
+       that does not work on it.
+
+       Appended after the hive rather than beside the other layer 2 creatures,
+       where it belongs by meaning, because EntityType indexes g_bossesBeaten
+       and inserting above anything would move which bit means what. */
+    ENT_SKIRMISHER,
     ENT_COUNT
 };
 

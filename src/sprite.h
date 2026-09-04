@@ -102,6 +102,7 @@ enum SpriteId {
     SPR_CULVERIN,
     SPR_WISP,
     SPR_STOOPER,
+    SPR_SKIRMISHER,
     /* The boss. Drawn from the same 14x14 canvas as everything else and then
        SCALED UP by its collision box -- see entDraw -- rather than given a
        larger grid of its own. Fourteen pixels of shape blown up to 34 cells
@@ -187,7 +188,11 @@ enum SpriteId {
        Sixteen is slack, not a plan. initSprites() checks it against ENT_COUNT
        rather than trusting it. */
     SPR_EGG_FIRST,
-    SPR_EGG_LAST = SPR_EGG_FIRST + 15,
+    /* Widened from 16 to 24. The roster reached exactly sixteen creatures with
+       the Skirmisher, so the next one added would have tripped the check in
+       initSprites rather than silently overflowing -- which is the check
+       working, and also a warning worth acting on before it fires. */
+    SPR_EGG_LAST = SPR_EGG_FIRST + 23,
 
     /* The one-offs: two boss items, two components, and lunch. */
     SPR_FORGE_CORE,

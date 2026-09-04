@@ -34,7 +34,7 @@ int main() {
     /* ..., then the two bees. Their wingbeat is the fastest cycle in the
        game at 0.55 radians a frame, so six frames is most of a flap. */
     const int later[ENT_COUNT] = { 0, 5, 6, 9, 7, 4, 6, 6, 6, 8, 6, 21, 12, 6,
-                                   6, 6 };
+                                   6, 6, 5};
 
     for (int type = ENT_NONE + 1; type < ENT_COUNT; ++type) {
         if (later[type] == 0) {

@@ -191,6 +191,40 @@ int main() {
         }
     }
 
+    /* --- 2b. and it leaves a WAKE that outlives the flight ---------------
+       Asked for directly: "make the particles it leaves behind last longer, so
+       it leaves a sort of substantive beam too". Without this the shot is a
+       fast dot; with it, the whole path is still lit when the head arrives.
+
+       Checked as the longest mote lifetime rather than a count, because a
+       count only says "there are sparks" and the whole point is that they
+       LAST -- an ordinary glob's wake tops out around 21 frames. */
+    {
+        const int e = setup(w, 90);
+        pin(e);
+        int longest = 0, mostAlive = 0;
+        for (int f = 0; f < 400; ++f) {
+            run(w, 1);
+            const int l = projTrailLongestLife();
+            if (l > longest) longest = l;
+            const int a = projTrailMotesAlive();
+            if (a > mostAlive) mostAlive = a;
+        }
+        printf("beam wake: longest mote life %d frames, most alive at once %d\n",
+               longest, mostAlive);
+        if (longest < 30) {
+            fprintf(stderr, "FAIL: the longest mote lived %d frames -- an ordinary "
+                            "shot's wake already reaches 21, so this is not a "
+                            "beam, it is a dot with sparks\n", longest);
+            ++failures;
+        }
+        if (mostAlive < 20) {
+            fprintf(stderr, "FAIL: only %d motes alive at once -- too sparse to "
+                            "read as a line\n", mostAlive);
+            ++failures;
+        }
+    }
+
     /* --- 3. rock stops it ------------------------------------------------- */
     {
         const int e = setup(w, 90);

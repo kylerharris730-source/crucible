@@ -2140,6 +2140,32 @@ static const char* ART_ICHOR[SPR_H] = {
     "..............",
 };
 
+/* --- the Skirmisher ---------------------------------------------------------
+   A low, braced figure leaning AWAY from its own gun: the barrel points one
+   way and the body weight is already going the other, which is the whole
+   creature in one silhouette. Everything else down here is either planted (the
+   Culverin) or coming at you (the Wisp), so the read has to be "leaving".
+
+   The barrel is deliberately the brightest thing on it and sits high, so that
+   at hotbar size and at fighting distance the part you track is the part that
+   is aimed at you. */
+static const char* ART_SKIRMISHER[SPR_H] = {
+    "..............",
+    "....DDDD......",
+    "...DEEEED.....",
+    "...DE::ED.....",
+    "...DEEEED.....",
+    "..DDDDDDSSSSS.",
+    "..DdddddSSSSS.",
+    "..DdEEddD.....",
+    "..DdEEddD.....",
+    "...DddddD.....",
+    "...Dd..dD.....",
+    "..DD....DD....",
+    "..DD....DD....",
+    "..............",
+};
+
 void initSprites() {
     memset(g_sprite, 0, sizeof(g_sprite));
     expand(SPR_MITE,      ART_MITE);
@@ -2147,6 +2173,7 @@ void initSprites() {
     expand(SPR_BAT,       ART_BAT);
     expand(SPR_CULVERIN,  ART_CULVERIN);
     expand(SPR_WISP,      ART_WISP);
+    expand(SPR_SKIRMISHER, ART_SKIRMISHER);
     expand(SPR_STOOPER,   ART_STOOPER);
     expand(SPR_SPITTER,   ART_SPITTER);
     expand(SPR_BROOD,     ART_BROOD);

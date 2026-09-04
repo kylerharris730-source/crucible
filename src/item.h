@@ -292,6 +292,8 @@ enum {
     ITEM_HONEY_POTION,
     ITEM_FLOWER_SEED,
     ITEM_HEAT_LAMP,
+    /* Appended: item ids are serialized directly. */
+    ITEM_EGG_SKIRMISHER,
     ITEM_COUNT
 };
 
