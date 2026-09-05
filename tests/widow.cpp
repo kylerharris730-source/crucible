@@ -58,12 +58,17 @@ static void fill(World& w, int x0, int y0, int x1, int y1, u8 m) {
 }
 
 /* An arena: flat floor, the player at the left, the Widow `gap` to the right. */
-static int arena(World& w, int gap) {
+/* `back` is how much floor to lay BEHIND the player. Zero for the cases that
+   pin somebody; the kite case needs more than the player can cover, or it walks
+   off the end of the arena, the creature cannot follow onto ground that is not
+   there, and the harness reports a boss that gave up when what actually
+   happened is that the test ran out of world. */
+static int arena(World& w, int gap, int back = 200) {
     w.reset();
     projClear();
-    fill(w, CX - 200, CY - 90, CX + gap + 260, FLOOR + 40, MAT_STONE);
-    fill(w, CX - 180, CY - 60, CX + gap + 240, FLOOR,      MAT_EMPTY);
-    w.setLiveWindow(CX - 220, CY - 110, CX + gap + 280, FLOOR + 60);
+    fill(w, CX - back - 40, CY - 90, CX + gap + 260, FLOOR + 40, MAT_STONE);
+    fill(w, CX - back - 20, CY - 60, CX + gap + 240, FLOOR,      MAT_EMPTY);
+    w.setLiveWindow(CX - back - 60, CY - 110, CX + gap + 280, FLOOR + 60);
 
     Player& p = g_player;
     p.reset((float)CX, (float)(FLOOR - PLAYER_H));
@@ -242,7 +247,7 @@ int main() {
        is what this does: retreat to a hundred cells, stop, and see whether the
        fight follows. */
     {
-        const int e = arena(w, 40);
+        const int e = arena(w, 40, 1400);
         if (e < 0) return 2;
         Player& p = g_player;
         resetShots();
@@ -267,45 +272,104 @@ int main() {
     }
 
     /* --- 3d. a shot it cannot make must not hang it ----------------------
-       The regression for the uglier half of the same report. widowSpit gives up
-       when the ballistic solve has no answer, and it used to give up WITHOUT
+       The regression for the uglier half of the first report. widowSpit gives
+       up when the ballistic solve has no answer, and it used to give up WITHOUT
        resetting the volley clock -- which left the creature in its throwing
        state, returning from its tick every frame, neither walking nor leaping.
        A hung boss looks exactly like a passive one.
 
-       Held just outside its spit range, where the solve is refused every time,
-       the creature must still be a creature. */
+       The hard part is reaching that state on purpose now that the reach is
+       set properly. Out of RANGE will not do it: the creature simply stops
+       seeing you and walks. What fails is a target that is in sight and still
+       unreachable by any arc, which is a player ABOVE it -- height eats
+       ballistic range fast. A hundred and fifty cells up and a hundred across
+       is 180 away, inside the 180-cell sight, and the discriminant is negative.
+       Which is not a contrived position either: standing on a ledge shooting
+       down at a boss is the first thing anybody tries. */
     {
-        const int e = arena(w, 150);
+        w.reset();
+        projClear();
+        fill(w, CX - 300, CY - 250, CX + 300, FLOOR + 40, MAT_EMPTY);
+        fill(w, CX - 300, FLOOR, CX + 300, FLOOR + 40, MAT_STONE);
+        w.setLiveWindow(CX - 320, CY - 270, CX + 320, FLOOR + 60);
+        entReset();
+        const int e = entSpawn(w, ENT_WIDOW, (float)(CX + 100),
+                               (float)(FLOOR - 20));
+        if (e < 0) return 2;
+        Entity& widow = g_entities[e];
+        Player& p = g_player;
+
+        /* Both held, so what is measured is whether the creature keeps trying
+           to do anything at all. Movement over the LAST stretch, not the whole
+           run: a creature that hangs still coasts to a stop on the velocity it
+           had when it hung, and over four hundred frames that carried the
+           broken one 67 cells -- enough to pass a naive "did it move" test
+           while being exactly the bug. */
+        float travelled = 0.0f;
+        float px = widow.centreX(), py = widow.centreY();
+        for (int f = 0; f < 400; ++f) {
+            p.x = (float)CX; p.y = (float)(FLOOR - 150);
+            p.alive = true; p.hp = PLAYER_HP_MAX;
+            entTick(w, p, g_inv);
+            projUpdate(w);
+            /* PATH LENGTH, not net displacement, and the difference is the
+               whole check. A creature that cannot reach a ledge leaps at it,
+               falls back, and leaps again -- ending each two hundred frames
+               roughly where it started, which a displacement test reads as
+               frozen. What separates hung from busy is whether it moved AT
+               ALL, so this sums every frame's step. */
+            if (f >= 100) {
+                travelled += fabsf(widow.centreX() - px) +
+                             fabsf(widow.centreY() - py);
+            }
+            px = widow.centreX(); py = widow.centreY();
+        }
+        const float late = travelled;
+        printf("in sight on a ledge it cannot arc to: %.0f cells of travel "
+               "over frames 100-400\n", late);
+        check(late > 40.0f,
+              "a shot it cannot make does not freeze it where it stands");
+    }
+
+    /* --- 3e. YOU CANNOT KITE IT FOREVER ----------------------------------
+       Reported twice. The first time I read "it just lets me stand and shoot
+       it" as being about standing, fixed the range and the hang, and argued
+       that outrunning a boss in a straight line is something nothing in this
+       game can prevent and nothing should. That was wrong, and the second
+       report -- "you can just kite forever" -- is the correction.
+
+       It is wrong because the two cases are not the same. A player sprinting
+       away from an ORDINARY creature is escaping an encounter, which is a
+       legitimate move and the thing the Thresher harness deliberately protects.
+       A player walking backwards from a summoned boss in its own arena is not
+       escaping anything -- there is nowhere to escape to, the fight is the
+       whole reason they are there, and a boss that can be held at arm's length
+       by one held key is not a fight, it is a health bar with extra steps.
+
+       So this is a boss-only requirement, and the number is a BOUND rather
+       than a demand that it keep exact pace: the creature has to stay in the
+       fight and go on attacking, not win the footrace. */
+    {
+        const int e = arena(w, 60, 1400);   /* more floor than the retreat covers */
         if (e < 0) return 2;
         Player& p = g_player;
-        Entity& widow = g_entities[e];
-        /* Measured over the LAST two hundred frames, not the whole run. A
-           creature that hangs still coasts to a stop on whatever velocity it
-           had when it hung, and over four hundred frames that carried the
-           broken one 67 cells -- enough to pass a naive "did it move at all"
-           test while being exactly the bug. What separates hung from walking is
-           whether it is STILL moving once the momentum is spent: measured over
-           frames 200-400, the fixed creature covers 64 cells and the broken one
-           covers none. */
-        for (int f = 0; f < 200; ++f) {
-            p.x = (float)CX; p.y = (float)(FLOOR - PLAYER_H);
+        resetShots();
+        float worst = 0.0f;
+        for (int f = 0; f < 900; ++f) {
+            p.x -= 1.2f;                        /* flat out, and never stopping */
+            p.y = (float)(FLOOR - PLAYER_H);
             p.alive = true; p.hp = PLAYER_HP_MAX;
             entTick(w, p, g_inv);
             projUpdate(w);
+            countShots();
+            const float gap = g_entities[e].centreX() - p.centreX();
+            if (gap > worst) worst = gap;
         }
-        const float mid = widow.centreX();
-        for (int f = 0; f < 200; ++f) {
-            p.x = (float)CX; p.y = (float)(FLOOR - PLAYER_H);
-            p.alive = true; p.hp = PLAYER_HP_MAX;
-            entTick(w, p, g_inv);
-            projUpdate(w);
-        }
-        const float late = mid - widow.centreX();
-        printf("held out past its reach: moved %.0f cells over frames 200-400\n",
-               late);
-        check(late > 20.0f,
-              "a shot it cannot make does not freeze it where it stands");
+        const float gap = g_entities[e].centreX() - p.centreX();
+        printf("kited at full sprint for 900 frames: gap %.0f, worst %.0f, "
+               "%d shots fired\n", gap, worst, g_hostileSeen);
+        check(gap < 260.0f, "a straight-line sprint does not leave it behind");
+        check(g_hostileSeen > 10, "and it keeps shooting the whole way");
     }
 
     /* --- 4. a web is never a wall ----------------------------------------- */

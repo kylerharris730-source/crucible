@@ -118,7 +118,7 @@ static const float WIDOW_SPREAD      = 0.13f;/* radians between strands */
    spit and still visibly a lob -- over 120 cells the flight takes about
    twenty-one frames and the glob falls forty, which is an arc you can watch
    coming and step out of. */
-static const float WIDOW_SPIT_RANGE  = 120.0f;
+static const float WIDOW_SPIT_RANGE  = 180.0f;
 
 /* --- the pounce ---------------------------------------------------------
    The other half of the same report. A boss that cannot outpace a walking
@@ -137,9 +137,19 @@ static const float WIDOW_SPIT_RANGE  = 120.0f;
    overshoots someone close and falls short of someone far. Capped, because a
    solve with no ceiling turns a distant player into a forty-cell creature
    crossing the room in one frame. */
-static const int   WIDOW_POUNCE_EVERY = 150;  /* frames between leaps */
+/* The interval and the reach are what decide whether kiting works, and both
+   are set against the character's 1.2 rather than picked to feel right. A leap
+   is airborne 2*UP/gravity = 36 frames and covers up to MAXVX * 36 = 122 cells;
+   at one every hundred frames that is 1.22 cells a frame from leaping alone,
+   with the scuttle on top. Under a hundred and the creature is airborne more
+   often than not, which stops reading as a pounce; over about a hundred and
+   forty it loses the footrace and the fight is a walk backwards. */
+static const int   WIDOW_POUNCE_EVERY = 100;  /* frames between leaps */
 static const int   WIDOW_POUNCE_WIND  = 24;   /* it gathers first */
 static const float WIDOW_POUNCE_MIN   = 30.0f;/* nearer than this, just walk */
+/* Its own reach, and far beyond the spit's. A boss that stops chasing the
+   moment you are out of spitting range is a boss you walk away from. */
+static const float WIDOW_POUNCE_RANGE = 280.0f;
 static const float WIDOW_POUNCE_UP    = 3.2f;
 static const float WIDOW_POUNCE_MAXVX = 3.4f;
 /* Its own scuttle, slower and longer than the Thresher's: at forty cells wide
@@ -481,7 +491,7 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
        ground you backed into cost something. */
     { "Widow", WIDOW_SPR_W, WIDOW_SPR_H, 1400, 34, 26,
       0.62f, 0.075f, false, 0, false,
-      WIDOW_SPIT_EVERY, 14, 5.8f, 0.0f, true,
+      WIDOW_SPIT_EVERY, 14, 7.0f, 0.0f, true,
       ITEM_SILK_GLAND, 1, 1, ITEM_NONE, 0, SPR_NONE, 0x6E5578,
       ITEM_EGG_WIDOW, false, false, 0 },
 };
@@ -2429,19 +2439,36 @@ static void widowTick(World& w, Entity& e, const Player& p) {
     /* Only bothers if you are close enough to be worth silk, and only if it
        can see you -- webbing a wall you are standing behind teaches nothing.
        Sampled rather than walked, as everywhere else in this file. */
-    bool inSight = false;
+    /* Line of sight FIRST, and range second, as two separate questions.
+
+       They used to be one, and the bug that made was the whole of the second
+       kiting report. The spit's range is 180; the leap's is 280; and with a
+       single `inSight` flag gated on the shorter of them, a player who backed
+       past 180 cells could never be leapt at again -- so the creature dropped
+       to a walk it can never catch anybody with and simply fell out of the
+       fight. Measured: kited at a flat sprint the gap went to 920 cells and it
+       fired NOTHING in nine hundred frames.
+
+       A creature that can see you should not stop chasing because you are too
+       far away to spit at. */
+    float sightDist = 0.0f;
+    bool  los = false;
     {
         const float sx = p.centreX() - e.centreX(), sy = p.centreY() - e.centreY();
-        if (sx * sx + sy * sy < WIDOW_SPIT_RANGE * WIDOW_SPIT_RANGE) {
-            inSight = true;
-            for (int k = 1; k <= 6; ++k) {
-                const int px = (int)(e.centreX() + sx * (float)k / 7.0f);
-                const int py = (int)(e.centreY() + sy * (float)k / 7.0f);
-                if (px < 0 || px >= SIM_W || py < 0 || py >= SIM_H ||
-                    playerSolid(w, px, py)) { inSight = false; break; }
-            }
+        sightDist = sqrtf(sx * sx + sy * sy);
+        los = true;
+        /* Sampled rather than walked, as everywhere else in this file. More
+           samples than the six a short-range check needed, because the line is
+           now up to 280 cells long and six points across that is a probe every
+           forty-six cells -- which sees through most walls in the game. */
+        for (int k = 1; k <= 14; ++k) {
+            const int px = (int)(e.centreX() + sx * (float)k / 15.0f);
+            const int py = (int)(e.centreY() + sy * (float)k / 15.0f);
+            if (px < 0 || px >= SIM_W || py < 0 || py >= SIM_H ||
+                playerSolid(w, px, py)) { los = false; break; }
         }
     }
+    const bool inSight = los && sightDist < WIDOW_SPIT_RANGE;
 
     if (throwing) {
         /* THE CLOCK IS RESET WHETHER OR NOT IT THREW, and that is the whole
@@ -2458,20 +2485,49 @@ static void widowTick(World& w, Entity& e, const Player& p) {
         if (!inSight || !widowSpit(w, e, p))
             e.shotTimer = d.shotEvery / 2;    /* try again sooner, not never */
         e.telegraph = 0;
-        return;
+        /* NOT a return. It throws on the move, and keeping the creature's legs
+           going through its own attack is what makes the fight a chase rather
+           than a series of poses -- see the note below. */
     }
 
-    if (winding && inSight) {
-        /* Planted. It sheds speed rather than stopping dead, so the rear-up
-           reads as a creature gathering itself, and telegraph drives the same
-           flash the Brood Mother's charge uses -- one visual language for "it
-           is about to do something", across both bosses. */
-        e.vx *= 0.74f;
+    if (winding) {
+        /* Telegraphed but NOT planted, which is the difference between this and
+           the leap below, and it is what decides whether the creature can be
+           kited.
+
+           It used to plant: shed its speed and return, thirty frames a volley.
+           Add the leap's own twenty-four-frame gather and the creature stood
+           still for more than half of every cycle -- so a player walking
+           backwards at 1.2 pulled away from a creature that spent most of its
+           life winding up. Measured, the gap went from 61 cells to 920 with the
+           creature never once catching up.
+
+           Only one of the two attacks needs a plant. The leap keeps it, because
+           a leap you cannot see coming is a leap you cannot dodge and the
+           creature crosses the whole arena with it. A thrown web arrives on a
+           visible arc from up to 180 cells away, which is its own warning. */
         e.telegraph = -e.shotTimer;
+        if (!inSight) e.shotTimer = d.shotEvery / 2;
+    } else {
+        e.telegraph = 0;
+    }
+
+    /* --- committed, while the leap is in the air --------------------------
+       The scuttle below calls groundChase, which sets vx toward the player at a
+       WALKING pace -- so without this the frame after a leap overwrote the
+       leap. Measured before it existed: a jump solved to cover 121 cells moved
+       the creature thirteen in the following fifty frames, and the trace showed
+       it leaving the ground with vy = -3.2 and vx = -0.62.
+
+       It is also the right behaviour rather than only the fix. A pounce that
+       can be steered mid-air is a pounce that cannot be dodged, which is the
+       same rule the Brood Mother's charge and the Stooper's dive are both
+       written to: commit on the way out, and the wind-up is where the decision
+       was made. */
+    if (!e.onGround && e.aimHold > WIDOW_POUNCE_EVERY - 45) {
+        if (e.vx > 0.05f) e.facing = 1; else if (e.vx < -0.05f) e.facing = -1;
         return;
     }
-    if (winding && !inSight) e.shotTimer = d.shotEvery / 2;
-    e.telegraph = 0;
 
     /* --- the pounce -------------------------------------------------------
        Its answer to being kited. Runs on its OWN clock (aimHold) rather than
@@ -2488,7 +2544,10 @@ static void widowTick(World& w, Entity& e, const Player& p) {
         const float dx = p.centreX() - e.centreX();
         const float dy = p.centreY() - e.centreY();
         const float dist = sqrtf(dx * dx + dy * dy);
-        const bool worth = inSight && dist > WIDOW_POUNCE_MIN;
+        /* The LEAP's range, not the spit's -- see the note on the sight test
+           above. This is the one that keeps it in the fight. */
+        const bool worth = los && dist > WIDOW_POUNCE_MIN &&
+                           dist < WIDOW_POUNCE_RANGE;
 
         if (e.aimHold <= 0 && worth && e.onGround) {
             /* Airborne for 2*v/g frames, so the horizontal speed that lands it
