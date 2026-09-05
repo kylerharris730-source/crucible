@@ -89,6 +89,21 @@ static void run(World& w, int frames, bool holdPlayer = true) {
     }
 }
 
+/* Hostile shots FIRED, counted as they appear rather than by looking at the
+   floor afterwards. Silk on the ground is a second-hand measure of attacking:
+   it decays, it lands where the arc took it, and it moves when the creature
+   does -- so a change in muzzle speed alters it without the creature attacking
+   any more or less. What the report is about is how often the thing shoots. */
+static int g_hostileSeen = 0;
+static int g_hostilePrev = 0;
+static void countShots() {
+    int n = 0;
+    for (int i = 0; i < MAX_PROJ; ++i) if (g_proj[i].alive && g_proj[i].hostile) ++n;
+    if (n > g_hostilePrev) g_hostileSeen += n - g_hostilePrev;
+    g_hostilePrev = n;
+}
+static void resetShots() { g_hostileSeen = 0; g_hostilePrev = 0; }
+
 static int countMat(const World& w, u8 m) {
     int n = 0;
     for (int y = CY - 90; y <= FLOOR + 10; ++y)
@@ -161,17 +176,136 @@ int main() {
            level this settles at, not the number standing at one arbitrary
            frame. */
         int silk = 0;
-        for (int t = 0; t < 900; t += 15) {
-            run(w, 15);
+        resetShots();
+        for (int t = 0; t < 900; ++t) {
+            run(w, 1);
+            countShots();
             const int n = countMat(w, MAT_WEB);
             if (n > silk) silk = n;
         }
-        printf("after 900 frames at 80 cells: silk peaked at %d cells\n", silk);
-        check(silk > 12, "it spits enough web to be worth walking round");
+        printf("after 900 frames at 80 cells: %d shots fired, silk peaked at %d\n",
+               g_hostileSeen, silk);
+        check(g_hostileSeen > 20, "it spits, repeatedly");
+        check(silk > 4, "and the silk reaches the ground");
         check(g_matContactDamage[MAT_WEB] > 0.0f, "and standing in one hurts");
         /* It must not be free damage at any range. Silk that arrives through a
            wall is not an attack, it is weather. */
         check(ENT_DEFS[ENT_WIDOW].shotEvery > 0, "on a clock, not every frame");
+    }
+
+    /* --- 3b. IT MUST FIGHT AT RANGE --------------------------------------
+       Reported from play: "the widow doesnt attack enough it just lets me
+       stand and shoot it, unless im really close."
+
+       Check 3 above did not catch this and could not have: the creature closes
+       to contact, so by the time it spat anything it was standing on top of the
+       player, and the harness measured silk without ever asking WHERE it was
+       thrown from. Pinning the creature is the only way to ask the question.
+
+       This is the second time this exact bug has been written in this file --
+       see SKIRM_KEEP, whose note spells out that a lobbed shot cannot go
+       further than v*v/g whatever it aims at, and which held its distance
+       outside its own reach and fired twice in nine hundred frames. */
+    {
+        const int e = arena(w, 100);
+        if (e < 0) return 2;
+        Entity& widow = g_entities[e];
+        const float wx = widow.centreX();
+        Player& p = g_player;
+        int silk = 0;
+        for (int f = 0; f < 900; ++f) {
+            /* BOTH pinned, at a range a player would actually plink from. */
+            widow.x = wx - (float)ENT_DEFS[ENT_WIDOW].w * 0.5f;
+            widow.y = (float)(FLOOR - ENT_DEFS[ENT_WIDOW].h);
+            widow.vx = 0.0f;
+            p.x = (float)CX; p.y = (float)(FLOOR - PLAYER_H);
+            p.alive = true; p.hp = PLAYER_HP_MAX;
+            entTick(w, p, g_inv);
+            projUpdate(w);
+            const int n = countMat(w, MAT_WEB);
+            if (n > silk) silk = n;
+        }
+        printf("pinned 100 cells apart: silk peaked at %d cells\n", silk);
+        check(silk > 0, "it fights a player standing well back from it");
+    }
+
+    /* --- 3c. and backing off to a comfortable range does not make it safe --
+       The other half of the report, and it took one wrong version to state
+       properly. The obvious test -- sprint away in a straight line forever and
+       check the creature keeps up -- is a test nothing in this game can pass
+       and nothing SHOULD: the character's top speed is 1.2, layer 1's boss
+       does not manage it either, and a creature that ran a player down on open
+       ground with no counterplay would be the opposite complaint.
+
+       What "it just lets me stand and shoot it" actually describes is backing
+       off to a comfortable plinking distance and then STANDING there. So that
+       is what this does: retreat to a hundred cells, stop, and see whether the
+       fight follows. */
+    {
+        const int e = arena(w, 40);
+        if (e < 0) return 2;
+        Player& p = g_player;
+        resetShots();
+        int hits = 0;
+        for (int f = 0; f < 900; ++f) {
+            const float gap = g_entities[e].centreX() - p.centreX();
+            if (gap < 100.0f) p.x -= 1.2f;      /* back off, then hold */
+            p.y = (float)(FLOOR - PLAYER_H);
+            p.alive = true;
+            const int hp = p.hp;
+            entTick(w, p, g_inv);
+            projUpdate(w);
+            countShots();
+            if (p.hp < hp) ++hits;
+            p.hp = PLAYER_HP_MAX;               /* measuring the creature, not the fight */
+        }
+        const float gap = g_entities[e].centreX() - p.centreX();
+        printf("held at plinking range: %d shots fired, %d damaging frames, "
+               "final gap %.0f\n", g_hostileSeen, hits, gap);
+        check(g_hostileSeen > 10, "standing back does not stop it attacking");
+        check(gap < 140.0f, "and it does not simply fall out of the fight");
+    }
+
+    /* --- 3d. a shot it cannot make must not hang it ----------------------
+       The regression for the uglier half of the same report. widowSpit gives up
+       when the ballistic solve has no answer, and it used to give up WITHOUT
+       resetting the volley clock -- which left the creature in its throwing
+       state, returning from its tick every frame, neither walking nor leaping.
+       A hung boss looks exactly like a passive one.
+
+       Held just outside its spit range, where the solve is refused every time,
+       the creature must still be a creature. */
+    {
+        const int e = arena(w, 150);
+        if (e < 0) return 2;
+        Player& p = g_player;
+        Entity& widow = g_entities[e];
+        /* Measured over the LAST two hundred frames, not the whole run. A
+           creature that hangs still coasts to a stop on whatever velocity it
+           had when it hung, and over four hundred frames that carried the
+           broken one 67 cells -- enough to pass a naive "did it move at all"
+           test while being exactly the bug. What separates hung from walking is
+           whether it is STILL moving once the momentum is spent: measured over
+           frames 200-400, the fixed creature covers 64 cells and the broken one
+           covers none. */
+        for (int f = 0; f < 200; ++f) {
+            p.x = (float)CX; p.y = (float)(FLOOR - PLAYER_H);
+            p.alive = true; p.hp = PLAYER_HP_MAX;
+            entTick(w, p, g_inv);
+            projUpdate(w);
+        }
+        const float mid = widow.centreX();
+        for (int f = 0; f < 200; ++f) {
+            p.x = (float)CX; p.y = (float)(FLOOR - PLAYER_H);
+            p.alive = true; p.hp = PLAYER_HP_MAX;
+            entTick(w, p, g_inv);
+            projUpdate(w);
+        }
+        const float late = mid - widow.centreX();
+        printf("held out past its reach: moved %.0f cells over frames 200-400\n",
+               late);
+        check(late > 20.0f,
+              "a shot it cannot make does not freeze it where it stands");
     }
 
     /* --- 4. a web is never a wall ----------------------------------------- */

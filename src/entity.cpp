@@ -101,7 +101,47 @@ static const int   WIDOW_SPIT_EVERY  = 110;  /* frames between volleys */
 static const int   WIDOW_SPIT_WINDUP = 30;   /* it rears before it throws */
 static const int   WIDOW_STRANDS     = 9;    /* globs in a volley */
 static const float WIDOW_SPREAD      = 0.13f;/* radians between strands */
-static const float WIDOW_SPIT_RANGE  = 170.0f;
+/* --- reach, and the arithmetic that decides it --------------------------
+   A lobbed shot cannot travel further than v*v/g however it aims, and this
+   creature was written asking for 170 cells at a muzzle speed of 2.6 -- which
+   is a reach of THIRTY-EIGHT. Past that the closed-form solve in widowSpit
+   returns a negative discriminant and holds fire, so the boss stood in front of
+   a player at any sane plinking distance and did nothing at all. Reported from
+   play as "it just lets me stand and shoot it, unless im really close".
+
+   This is the second time in this file. See SKIRM_KEEP, whose note states the
+   same formula, for the same bug caught the same way. The rule both of them
+   now follow: the engagement range is roughly two thirds of the ballistic
+   reach, which leaves room for the player to be above or below as well as away.
+
+   5.8 gives a reach of 187, so 120 is comfortably inside it. It is fast for a
+   spit and still visibly a lob -- over 120 cells the flight takes about
+   twenty-one frames and the glob falls forty, which is an arc you can watch
+   coming and step out of. */
+static const float WIDOW_SPIT_RANGE  = 120.0f;
+
+/* --- the pounce ---------------------------------------------------------
+   The other half of the same report. A boss that cannot outpace a walking
+   player can be kited in a straight line forever, and this one could not:
+   0.62 top speed with a third of the cycle stopped averages under half the
+   character's 1.2. Measured, a steady retreat took the gap from 70 cells to
+   920 in nine hundred frames -- it was not losing the fight, it was not in it.
+
+   Layer 1's boss answers this with a charge. A spider gets a LEAP, which is
+   the same idea and the right one for the animal: committed, telegraphed, and
+   aimed where you are rather than where you will be, so it is dodged by moving
+   after the wind-up starts.
+
+   The horizontal speed is solved from the airtime rather than fixed, so the
+   leap LANDS on the player instead of being a jump of one length that
+   overshoots someone close and falls short of someone far. Capped, because a
+   solve with no ceiling turns a distant player into a forty-cell creature
+   crossing the room in one frame. */
+static const int   WIDOW_POUNCE_EVERY = 150;  /* frames between leaps */
+static const int   WIDOW_POUNCE_WIND  = 24;   /* it gathers first */
+static const float WIDOW_POUNCE_MIN   = 30.0f;/* nearer than this, just walk */
+static const float WIDOW_POUNCE_UP    = 3.2f;
+static const float WIDOW_POUNCE_MAXVX = 3.4f;
 /* Its own scuttle, slower and longer than the Thresher's: at forty cells wide
    a short burst would be a twitch, and this creature is meant to arrive. */
 static const int   WIDOW_BURST       = 90;
@@ -441,7 +481,7 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
        ground you backed into cost something. */
     { "Widow", WIDOW_SPR_W, WIDOW_SPR_H, 1400, 34, 26,
       0.62f, 0.075f, false, 0, false,
-      WIDOW_SPIT_EVERY, 14, 2.6f, 0.0f, true,
+      WIDOW_SPIT_EVERY, 14, 5.8f, 0.0f, true,
       ITEM_SILK_GLAND, 1, 1, ITEM_NONE, 0, SPR_NONE, 0x6E5578,
       ITEM_EGG_WIDOW, false, false, 0 },
 };
@@ -2321,7 +2361,9 @@ static void broodTick(World& w, Entity& e, const Player& p) {
    an attack you cannot dodge, and the telegraph is the whole reason either of
    them is fair. */
 
-static void widowSpit(World& w, Entity& e, const Player& p) {
+/* Returns whether it actually threw. The caller MUST reset the clock either
+   way -- see the note there. */
+static bool widowSpit(World& w, Entity& e, const Player& p) {
     const EntityDef& d = ENT_DEFS[e.type];
     const bool wounded = e.hp * 2 <= d.hp;
 
@@ -2335,9 +2377,9 @@ static void widowSpit(World& w, Entity& e, const Player& p) {
     const float v = d.shotSpeed, g = PROJ_GRAVITY;
     const float b = g * dy + v * v;
     const float disc = b * b - g * g * (dx * dx + dy * dy);
-    if (disc < 0.0f) return;
+    if (disc < 0.0f) return false;
     const float T = 2.0f * (b - sqrtf(disc)) / (g * g);
-    if (T <= 0.0001f) return;
+    if (T <= 0.0001f) return false;
     const float t = sqrtf(T);
     const float vx = dx / t;
     const float vy = (dy - 0.5f * g * T) / t;
@@ -2370,6 +2412,7 @@ static void widowSpit(World& w, Entity& e, const Player& p) {
                   d.shotDamage, true, PROJ_GRAVITY);
     }
     e.shotTimer = wounded ? (d.shotEvery * 2) / 3 : d.shotEvery;
+    return true;
 }
 
 static void widowTick(World& w, Entity& e, const Player& p) {
@@ -2401,8 +2444,19 @@ static void widowTick(World& w, Entity& e, const Player& p) {
     }
 
     if (throwing) {
-        if (inSight) widowSpit(w, e, p);
-        else e.shotTimer = d.shotEvery / 2;   /* try again sooner, not never */
+        /* THE CLOCK IS RESET WHETHER OR NOT IT THREW, and that is the whole
+           reason widowSpit reports back.
+
+           It used to return silently when the ballistic solve failed -- out of
+           range, or a target it cannot arc to -- leaving shotTimer where it
+           was. Which leaves `throwing` true, so this branch returns again next
+           frame, and again: the creature stops walking, stops pouncing, and
+           stands in one place retrying a shot it has already worked out it
+           cannot make. Reported from play as the boss letting you stand and
+           shoot it, and it is the more embarrassing half of that report -- not
+           a creature that attacks too little, a creature that has hung. */
+        if (!inSight || !widowSpit(w, e, p))
+            e.shotTimer = d.shotEvery / 2;    /* try again sooner, not never */
         e.telegraph = 0;
         return;
     }
@@ -2418,6 +2472,55 @@ static void widowTick(World& w, Entity& e, const Player& p) {
     }
     if (winding && !inSight) e.shotTimer = d.shotEvery / 2;
     e.telegraph = 0;
+
+    /* --- the pounce -------------------------------------------------------
+       Its answer to being kited. Runs on its OWN clock (aimHold) rather than
+       sharing the volley's, so the two attacks drift against each other and the
+       fight does not settle into a bar of music you can stand in one place and
+       read -- the same reasoning as the scuttle and the spit below.
+
+       Checked after the spit, so a creature part-way through a throw finishes
+       it rather than cancelling into a leap. Winding up two attacks at once
+       would make the telegraph mean nothing, and the telegraph is the whole
+       reason either of them is fair. */
+    --e.aimHold;
+    {
+        const float dx = p.centreX() - e.centreX();
+        const float dy = p.centreY() - e.centreY();
+        const float dist = sqrtf(dx * dx + dy * dy);
+        const bool worth = inSight && dist > WIDOW_POUNCE_MIN;
+
+        if (e.aimHold <= 0 && worth && e.onGround) {
+            /* Airborne for 2*v/g frames, so the horizontal speed that lands it
+               on the player is simply the gap over that. Capped both ways. */
+            const float air = 2.0f * WIDOW_POUNCE_UP / ENT_GRAVITY;
+            float vx = dx / air;
+            if (vx >  WIDOW_POUNCE_MAXVX) vx =  WIDOW_POUNCE_MAXVX;
+            if (vx < -WIDOW_POUNCE_MAXVX) vx = -WIDOW_POUNCE_MAXVX;
+            e.vx = vx;
+            e.vy = -WIDOW_POUNCE_UP;
+            e.facing = dx > 0.0f ? 1 : -1;
+            e.aimHold = WIDOW_POUNCE_EVERY;
+            e.telegraph = 0;
+            /* The scuttle restarts from its pause, so it lands and gathers
+               rather than sprinting out of the leap. */
+            e.actTimer = -WIDOW_PAUSE / 2;
+            return;
+        }
+        /* Gathering. It plants and shows the wind-up, and does NOT walk while
+           it does -- a leap that begins out of a run is one you cannot read the
+           start of. */
+        if (e.aimHold <= WIDOW_POUNCE_WIND && worth && e.onGround) {
+            e.vx *= 0.70f;
+            e.telegraph = e.aimHold;
+            return;
+        }
+        /* Nothing to leap at: hold the clock at the wind-up boundary rather
+           than letting it run to a huge negative, or the first moment the
+           player comes into view the creature leaps with no telegraph at all. */
+        if (!worth && e.aimHold < WIDOW_POUNCE_WIND)
+            e.aimHold = WIDOW_POUNCE_WIND;
+    }
 
     /* --- the scuttle ------------------------------------------------------ */
     --e.actTimer;
