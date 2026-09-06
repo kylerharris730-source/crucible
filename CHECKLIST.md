@@ -5,7 +5,7 @@ chat, which meant it was re-derived from memory every session and quietly lost
 things. `HANDOFF.md` is **not** this file: it is gitignored scratch, is usually
 stale, and should not be trusted for release state.
 
-Released: **v0.4.5**. Two commits sit past it (see *Ship it* below).
+Released: **v0.4.5**. Thirty-seven commits sit past it (see *Ship it* below).
 
 ---
 
@@ -26,11 +26,18 @@ Released: **v0.4.5**. Two commits sit past it (see *Ship it* below).
 
 ## Ship it
 
-- [ ] **Cut v0.4.6.** Unreleased on `main`:
+- [ ] **Cut v0.4.6.** Thirty-seven commits unreleased on `main`, and the list
+      has outgrown the two fixes it started as. The headline items:
       - the flint striker fix (a mouse button released outside the window is no
         longer held forever) — worth a Windows build on its own, since it is
         the bug you actually hit
       - the clean-checkout-is-not-dirty fix for the version label
+      - the hive, bees, flowers, wax and honey (see *Ship it, second wave*)
+      - **the Widow**, layer 2's boss, and with her the layer 2 seal opening
+      - **Multitool Mk III and the seven shot modifiers**
+      - bare-hand mining doubled, and the whole tool ladder with it
+      - **discovered space is drawn bright** — the biggest visible change in
+        the lot, and the one most worth a fresh pair of eyes before a release
 
 ## Beginner friendliness
 
@@ -77,7 +84,7 @@ Released: **v0.4.5**. Two commits sit past it (see *Ship it* below).
 
 ## Engineering debt
 
-- [x] **A way to run the tests.** `mingw32-make test` builds and runs all 39,
+- [x] **A way to run the tests.** `mingw32-make test` builds and runs all 50,
       or `mingw32-make test T=melee_test` for one. Work lives in
       `scripts/run_tests.sh`; objects are shared and rebuilt only when stale.
       Build failures are reported separately from test failures, because a
@@ -147,10 +154,10 @@ What *done* looks like -- bosses, populating all three layers, the rocket, and
 the bees-and-wax idea -- lives in [ROADMAP.md](ROADMAP.md).
 
 - [ ] **Aqua regia, wax and web have no survival source.** All three exist only
-      in the creative palette. Web is the newest and the most awkward: the
-      Widow's silk is the awkward one, and not for the reason it first looks:
-      mining it DOES bank it (g_matDropsAs is identity), so a web can be
-      collected -- but it decays with a mean life around 255 frames, so the
+      in the creative palette. Web is the newest and the most awkward, and not
+      for the reason it first looks: mining it DOES bank it (g_matDropsAs is
+      identity), so a web can be collected -- but it decays with a mean life
+      around 255 frames, so the
       window is roughly four seconds, mid-boss-fight, and the recipes want four
       to eight cells each across six of the seven modifiers. That is a
       collection minigame nobody asked for rather than an impossibility.
