@@ -313,11 +313,17 @@ int main() {
         fprintf(stderr, "best carried miner was not selected\n"); return 31;
     }
     {
+        /* The whole column doubled -- bare hands and every tier with them -- on
+           a report that mining was too slow. The MULTIPLES between the rungs
+           are unchanged, which is the property that matters and which
+           mining_rate.cpp checks by measurement; these figures are here to make
+           a drift deliberate rather than accidental, so they move when the
+           table does. See the ladder note in item.cpp. */
         const ItemId miners[] = { ITEM_DRILL, ITEM_AUGER, ITEM_LANCE, ITEM_DISRUPTOR };
-        const int radius[] = { 12, 19, 29, 48 };
-        const int bite[] = { 20, 36, 72, 168 };
+        const int radius[] = { 18, 28, 42, 64 };
+        const int bite[] = { 40, 72, 144, 336 };
         const int cool[] = { 5, 5, 4, 3 };
-        if (HAND.maxRadius != 7 || HAND.cellsPerBite != 12 || HAND.cooldown != 6) {
+        if (HAND.maxRadius != 14 || HAND.cellsPerBite != 24 || HAND.cooldown != 6) {
             fprintf(stderr, "base mining stats drifted (%d/%d/%d)\n",
                     HAND.maxRadius, HAND.cellsPerBite, HAND.cooldown); return 116;
         }

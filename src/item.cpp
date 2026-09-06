@@ -92,7 +92,7 @@ void toolInstTick() {
    hands could already clear tungsten given the time. Introducing a gate is not
    an excuse to quietly re-balance the mining ladder underneath it -- the only
    material anything here cannot bite is MAT_STRATUM. */
-const ToolSpec HAND = { "Hands", 7, 12, 6, false, STR_HARD };
+const ToolSpec HAND = { "Hands", 14, 24, 6, false, STR_HARD };
 
 DiscOff g_disc[DISC_MAX_CELLS];
 int     g_discEnd[DISC_MAX_R + 1];
@@ -527,22 +527,36 @@ void initItems() {
        sells is AREA PER SECOND, and the felt difference is being able to take a
        room-sized bite in one sweep instead of forty.
 
-       Throughput against bare hands, which move 120 cells a second:
+       Throughput against bare hands, which move 240 cells a second:
 
-         Hand Drill      r12   20 / 5f  =  240/s    2x
-         Rock Auger      r19   36 / 5f  =  432/s    3.6x
-         Thermal Lance   r29   72 / 4f  = 1080/s    9x
-         Disruptor       r48  168 / 3f  = 3360/s   28x
+         Hand Drill      r18   40 / 5f  =  480/s    2x
+         Rock Auger      r28   72 / 5f  =  864/s    3.6x
+         Thermal Lance   r42  144 / 4f  = 2160/s    9x
+         Disruptor       r64  336 / 3f  = 6720/s   28x
 
-       The top of the ladder clears a full radius-48 disc -- 7213 cells -- in
-       under two seconds, which is the "basically whatever size you want" end
-       of it. Nothing here touches placement: see ITEMK_MINING in item.h. */
-    struct MineTier { ItemId id; const char* name; u8 r, bite, cool; u32 col; u8 spr; };
+       EVERY ROW HERE DOUBLED WITH THE BASELINE, and the multiples on the right
+       are the reason. Bare hands were doubled because mining was reported as
+       too slow overall -- but the whole ladder is priced against them, and the
+       first rung was 2x at a radius of 12. Against a doubled hand it would have
+       been the same throughput with less reach: strictly worse than carrying
+       nothing at all, which is not a nerfed tool, it is deleted content.
+
+       So the multiples are what is being held fixed, and the absolute numbers
+       follow. The alternative -- move only the rung that broke -- pushes the
+       Drill past the Auger, and then the Auger past the Lance, one rung at a
+       time all the way up. Doubling the column is the smaller change.
+
+       The top of the ladder clears a full radius-64 disc -- 12868 cells -- in
+       under two seconds, the same "basically whatever size you want" it always
+       was, and 64 is DISC_MAX_R and the brush clamp both. There is no room
+       above this tier, which is worth knowing before a fifth one is designed.
+       Nothing here touches placement: see ITEMK_MINING in item.h. */
+    struct MineTier { ItemId id; const char* name; u8 r; u16 bite; u8 cool; u32 col; u8 spr; };
     static const MineTier MINE[] = {
-        { ITEM_DRILL,     "Hand Drill",     12,  20, 5, 0xB07848, SPR_MINE1 },
-        { ITEM_AUGER,     "Rock Auger",     19,  36, 5, 0x9AA6B4, SPR_MINE2 },
-        { ITEM_LANCE,     "Thermal Lance",  29,  72, 4, 0xE0B048, SPR_MINE3 },
-        { ITEM_DISRUPTOR, "Disruptor",      48, 168, 3, 0xB070E8, SPR_MINE4 },
+        { ITEM_DRILL,     "Hand Drill",     18,  40, 5, 0xB07848, SPR_MINE1 },
+        { ITEM_AUGER,     "Rock Auger",     28,  72, 5, 0x9AA6B4, SPR_MINE2 },
+        { ITEM_LANCE,     "Thermal Lance",  42, 144, 4, 0xE0B048, SPR_MINE3 },
+        { ITEM_DISRUPTOR, "Disruptor",      64, 336, 3, 0xB070E8, SPR_MINE4 },
     };
     for (int i = 0; i < (int)(sizeof(MINE) / sizeof(MINE[0])); ++i) {
         const MineTier& t = MINE[i];

@@ -1061,7 +1061,11 @@ static int  g_paletteScroll = 0;
 static int  g_paletteMaxScroll = 0;
 static const int BRUSH_RADIUS_MIN = 1;
 static const int BRUSH_RADIUS_MAX = 64;
-static int  g_brushRadius = 6;
+/* 12, doubled with the hands it is clamped against. The brush is not saved, so
+   this is the size every session actually starts at -- and leaving it at 6
+   against a hand reach of 14 would have made the whole "size" half of that
+   change invisible until the player thought to scroll the wheel. */
+static int  g_brushRadius = 12;
 static bool g_sizeDragging = false;
 static bool g_paused = false;
 

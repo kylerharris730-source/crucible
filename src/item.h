@@ -566,7 +566,12 @@ struct ItemDef {
     /* --- ITEMK_MINING only -------------------------------------------
        Zero means "not a mining tool", which is what every other item is. */
     u8   mineRadius;
-    u8   mineBite;      /* cells per action */
+    /* Cells per action. u16, and it had to widen: the top of the mining ladder
+       moved to 336 when the whole column doubled, and as a u8 that truncates to
+       80 -- a Disruptor slower than a Hand Drill, from a table that reads
+       correctly. ItemDef is a startup-built runtime table and is not
+       serialized, so widening a field here costs nothing. */
+    u16  mineBite;
     u8   mineCooldown;  /* frames between actions */
     /* The hardest g_matStrength this tool will bite, the same threshold a shot's
        `power` means -- so "what can break this" is one question with one answer
@@ -1184,12 +1189,22 @@ struct ToolSpec {
     int power;          /* hardest material it bites; see ItemDef::minePower */
 };
 
-/* Hands. Slow and small on purpose: this is the baseline every tool is measured
-   against, and if bare hands were comfortable no tool would feel like progress.
-   12 cells every 6 frames is 120 cells a second -- a 7-wide tunnel advances
-   about a body length every second, which is workable for getting somewhere and
-   genuinely tiresome for undoing a mistake. That last part is the design: it is
-   what makes a precision tool worth building rather than a luxury. */
+/* Hands. The baseline every tool is measured against -- see the ladder table in
+   item.cpp, whose whole right-hand column is multiples of this row.
+
+   DOUBLED, from 12 cells every 6 frames at radius 7 to 24 at radius 14, on a
+   report that mining was too slow overall. The old note argued the other way:
+   that bare hands should be tiresome so a precision tool feels like progress.
+   That argument was about the TOOL LADDER, and it survives -- every rung was
+   doubled with this row, so a Hand Drill is still exactly twice a hand. What it
+   was not about, and what the doubling actually fixes, is the hours before the
+   first tool exists, where the slowness is not a contrast with anything.
+
+   The radius half matters as much as the rate and is easier to overlook:
+   digRadius() clamps the player's brush to this number, so it is the ceiling on
+   how much of the world a bare hand can work at once. Doubling it without also
+   doubling main.cpp's starting brush would have changed nothing anybody
+   sees. */
 extern const ToolSpec HAND;
 /* What you are digging with right now: the held item's own numbers if it is a
    mining tool, otherwise HAND. Resolved on demand rather than cached, so
