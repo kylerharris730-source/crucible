@@ -4116,7 +4116,19 @@ static void applyPlayerUses(PlayerSession& session, const PlayerCommand& command
     for (int mat = 0; mat < MAT_COUNT; ++mat)
         digFilter[mat] = (command.digFilter[mat >> 3] & (1u << (mat & 7))) != 0;
 
-    if (left && !right && (command.brush == TOOL_HEAT || command.brush == TOOL_COOL)) {
+    /* The diagnostic brushes, and ONLY WITH AN EMPTY HAND. They stay reachable
+       in survival deliberately -- they consume nothing and there is nothing for
+       them to take -- but they must not outrank what the character is holding.
+
+       command.brush is the SANDBOX palette's selection and it survives the
+       character being switched on, so before this check a player who had picked
+       Heat with the character off could not place anything afterwards: this
+       branch caught every left click, and the palette that would let them
+       choose something else is not on screen while the character is up. There
+       was no way out of it from inside the game. Reported as being stuck using
+       "the player off material you had selected before". */
+    if (left && !right && held.empty() &&
+        (command.brush == TOOL_HEAT || command.brush == TOOL_COOL)) {
         g_world.heat(aim.x, aim.y, radius, command.brush == TOOL_HEAT ? HEAT_STEP : -HEAT_STEP);
     } else if (left && !right && !held.empty() && ITEMS[held.item].kind == ITEMK_THROWABLE) {
         if (pressed & PCMD_USE_LEFT) {
@@ -5119,9 +5131,17 @@ static void applyBrush() {
             /* Digging never reaches here -- it returned above. What is left is
                building, which is limited by what is in the pack rather than by
                a rate, and the two diagnostic brushes. */
-            if (g_brushMat == TOOL_HEAT)      g_world.heat(px, py, g_brushRadius,  HEAT_STEP);
-            else if (g_brushMat == TOOL_COOL) g_world.heat(px, py, g_brushRadius, -HEAT_STEP);
-            else                              placeFrom(g_world, g_inv, px, py, buildRadius());
+            /* Empty-handed only, exactly as the command path decides it --
+               see the long note there. Two copies of this rule is already one
+               too many; they are kept in step because the local path and the
+               command path have to agree about what a left click does. */
+            const bool emptyHand = g_inv.held().empty();
+            if (emptyHand && g_brushMat == TOOL_HEAT)
+                g_world.heat(px, py, g_brushRadius,  HEAT_STEP);
+            else if (emptyHand && g_brushMat == TOOL_COOL)
+                g_world.heat(px, py, g_brushRadius, -HEAT_STEP);
+            else
+                placeFrom(g_world, g_inv, px, py, buildRadius());
         } else {
             if (undoable) undoCaptureDisc(LOCAL_PLAYER_ID, px, py, g_brushRadius);
             if (sel == TOOL_HEAT)      g_world.heat(px, py, g_brushRadius,  HEAT_STEP);
@@ -7929,6 +7949,47 @@ static int runLocalCommandSmoke() {
     updatePlayerFromCommand(0, g_playerSessions[0], command, false);
     if (g_world.at(command.lineStartX, command.lineStartY).mat != MAT_STONE ||
         g_world.at(command.aimX, command.aimY).mat != MAT_STONE) return 206;
+
+    /* --- the sandbox brush must not survive turning the character ON -------
+       Reported from play: "theres a glitch when turning character on and off
+       where you will have character on but you wont be able to place from
+       inventory and youll just use the player off material you had selected
+       before."
+
+       g_brushMat is the SANDBOX palette's selection and it persists across the
+       toggle, which is fine for every value it can hold except two: the heat
+       and cool brushes are checked before anything else in this function and
+       fire whatever the character is holding. So selecting Heat with the
+       character off and then switching it on left the player unable to place
+       anything at all -- and unable to fix it, because the palette that would
+       let them pick something else is not on screen while the character is up.
+
+       Held stone, brush set to Heat, one left click. Stone must appear. */
+    g_world.reset();
+    g_inv.clear(); g_inv.add((ItemId)MAT_STONE, 100); g_inv.selected = 0;
+    memset(&command, 0, sizeof(command));
+    command.player = LOCAL_PLAYER_ID; command.generation = g_playerSessions[0].generation;
+    command.bits = command.pressed = PCMD_USE_LEFT; command.selected = 0;
+    command.brushRadius = 1; command.brush = TOOL_HEAT;
+    command.aimX = (int)g_player.centreX() + 26; command.aimY = (int)g_player.centreY();
+    updatePlayerFromCommand(0, g_playerSessions[0], command, false);
+    if (g_world.at(command.aimX, command.aimY).mat != MAT_STONE) return 230;
+
+    /* And with an EMPTY hand it still heats, because the diagnostic brushes are
+       meant to stay reachable in survival -- see the note beside them. What
+       changed is only which of the two wins when both could apply. */
+    g_world.reset();
+    g_inv.clear(); g_inv.selected = 0;
+    memset(&command, 0, sizeof(command));
+    command.player = LOCAL_PLAYER_ID; command.generation = g_playerSessions[0].generation;
+    command.bits = command.pressed = PCMD_USE_LEFT; command.selected = 0;
+    command.brushRadius = 3; command.brush = TOOL_HEAT;
+    command.aimX = (int)g_player.centreX() + 26; command.aimY = (int)g_player.centreY();
+    {
+        const u8 before = g_world.temp[command.aimY * SIM_W + command.aimX];
+        updatePlayerFromCommand(0, g_playerSessions[0], command, false);
+        if (g_world.temp[command.aimY * SIM_W + command.aimX] <= before) return 231;
+    }
 
     /* A joined peer can deliver the discrete interaction edge beside a stale
        held-right bit. That packet still represents one click and must toggle a
