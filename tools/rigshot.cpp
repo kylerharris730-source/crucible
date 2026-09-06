@@ -78,6 +78,8 @@ int main(void) {
                WIDOW_WALK_FRAMES, WIDOW_SPR_W, WIDOW_SPR_H);
     writeStrip("artifacts/visual/rig-widow-idle.ppm", g_widowIdle[0],
                WIDOW_IDLE_FRAMES, WIDOW_SPR_W, WIDOW_SPR_H);
+    writeStrip("artifacts/visual/rig-censer-walk.ppm", g_censerWalk[0],
+               CENSER_WALK_FRAMES, CENSER_SPR_W, CENSER_SPR_H);
 
     /* The hand-drawn creatures too. Same reason: character art is typed in as
        a grid of letters, and a letter in the wrong column is invisible in the

@@ -16,6 +16,8 @@ u32 g_thresherIdle[THRESHER_IDLE_FRAMES][THRESHER_SPR_W * THRESHER_SPR_H];
 u32 g_thresherWalk[THRESHER_WALK_FRAMES][THRESHER_SPR_W * THRESHER_SPR_H];
 u32 g_widowIdle[WIDOW_IDLE_FRAMES][WIDOW_SPR_W * WIDOW_SPR_H];
 u32 g_widowWalk[WIDOW_WALK_FRAMES][WIDOW_SPR_W * WIDOW_SPR_H];
+u32 g_censerIdle[CENSER_IDLE_FRAMES][CENSER_SPR_W * CENSER_SPR_H];
+u32 g_censerWalk[CENSER_WALK_FRAMES][CENSER_SPR_W * CENSER_SPR_H];
 
 /* One palette shared by every sprite, so a colour means the same thing
    everywhere: T is always a highlight, S is always steel, and the two handle
@@ -525,6 +527,77 @@ static const char* ART_CINDER_HEART[SPR_H] = {
     "..............",
 };
 
+
+/* --- the Censer's parts ------------------------------------------------------
+   The body is a rig (see buildCenserFrames); these are the three things around
+   it that are not. */
+
+/* A limb. A hanging vessel with a coal in it -- the shape is a bowl on a short
+   chain, which is what says "this is attached to something above" without
+   drawing the something. Bright, because four of these have to be findable
+   against a boss that is itself on fire. */
+static const char* ART_CENSER_LIMB[SPR_H] = {
+    "......kk......",
+    "......kk......",
+    ".....kkkk.....",
+    "....&&&&&&....",
+    "...&&LLLL&&...",
+    "..&&L****L&&..",
+    "..&L**ii**L&..",
+    "..&L**ii**L&..",
+    "..&&L****L&&..",
+    "...&&LLLL&&...",
+    "....&&&&&&....",
+    ".....&&&&.....",
+    "......kk......",
+    "..............",
+};
+
+/* The Censer Call. A hook of chain with a coal hanging off it: you are ringing
+   for the thing, and what you ring with is a piece of one.
+
+   Deliberately not another two-pronged horn or another wrapped bundle -- the
+   Brood Call owns the hole-in-the-middle silhouette and the Widow Call owns the
+   bound texture, so this one is read by its DIAGONAL, which neither has. */
+static const char* ART_CENSER_CALL[SPR_H] = {
+    "..............",
+    "..kkk.........",
+    ".k...k........",
+    ".k....k.......",
+    "......k.......",
+    ".....k........",
+    "....k.........",
+    "...k..........",
+    "..&&&.........",
+    ".&LLL&........",
+    ".&L*i&........",
+    ".&LLL&........",
+    "..&&&.........",
+    "..............",
+};
+
+/* The Pyre Core. The third in the Forge Core's line, and drawn as one on
+   purpose: a shell with light inside it is what "a layer paid out" looks like
+   in this game now. What differs is that this one is CRACKED -- the light is
+   getting out, which is the difference between the thing that lets you build a
+   furnace and the thing that will let you build a rocket. */
+static const char* ART_PYRE_CORE[SPR_H] = {
+    "..............",
+    "......kk......",
+    "....kk&&kk....",
+    "...k&&LL&&k...",
+    "..k&L*ii*L&k..",
+    "..k&L*ii*L&k..",
+    "..k&&L**L&&k..",
+    "..k&L*ii*L&k..",
+    "..k&L*ii*L&k..",
+    "...k&&LL&&k...",
+    "....kk&&kk....",
+    "......kk......",
+    "..............",
+    "..............",
+};
+
 /* --- the warp wand ---------------------------------------------------------
    A rod held on the diagonal with the split-space colour burning at the tip.
 
@@ -941,6 +1014,16 @@ static void buildWidowFrames() {
     rigSpider(bone, &rig, "widow", WIDOW_SPR_W, WIDOW_SPR_H, RIG_SPIDER);
     armBake(&rig, &RIG_SPIDER_WALK, g_widowWalk[0]);
     armBake(&rig, &RIG_SPIDER_IDLE, g_widowIdle[0]);
+}
+
+/* The Censer. The Widow's builder, its clips and its bake, at a larger size and
+   in a different palette -- which is the entire cost of layer 3's boss art. */
+static void buildCenserFrames() {
+    static Bone bone[SPIDER_BONES];
+    RigDef rig;
+    rigSpider(bone, &rig, "censer", CENSER_SPR_W, CENSER_SPR_H, RIG_CENSER);
+    armBake(&rig, &RIG_SPIDER_WALK, g_censerWalk[0]);
+    armBake(&rig, &RIG_SPIDER_IDLE, g_censerIdle[0]);
 }
 
 
@@ -2475,6 +2558,9 @@ void initSprites() {
     expand(SPR_SLAGMAW,      ART_SLAGMAW);
     expand(SPR_CINDERLING,   ART_CINDERLING);
     expand(SPR_CINDER_HEART, ART_CINDER_HEART);
+    expand(SPR_CENSER_LIMB,  ART_CENSER_LIMB);
+    expand(SPR_CENSER_CALL,  ART_CENSER_CALL);
+    expand(SPR_PYRE_CORE,    ART_PYRE_CORE);
     expand(SPR_WARP_WAND, ART_WARP_WAND);
     expand(SPR_SPARK, ART_SPARK);
     expandMetal(SPR_ARMOUR_DRONE_VISOR,   ART_ARMOUR_HELM,    0x6FAFBE, 0x3D6C78);
@@ -2643,4 +2729,5 @@ void initSprites() {
     buildShamblerFrames();
     buildThresherFrames();
     buildWidowFrames();
+    buildCenserFrames();
 }

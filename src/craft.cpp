@@ -193,6 +193,15 @@ const Recipe RECIPES[] = {
     { { { ITEM_ICHOR, 16 }, { (ItemId)MAT_STEEL, 8 }, { ITEM_FORGE_CORE, 1 } },
       ITEM_WIDOW_CALL, 1, "Widow Call", STATION_ASSEMBLY },
 
+    /* --- calling the third -------------------------------------------------
+       The same shape a third time, and the chain it makes is the point: Cinder
+       Hearts are what layer 3 drops, tungsten is the ore only layer 3 has, and
+       the SILK GLAND is the Widow's -- so the Censer cannot be called by anyone
+       who has not beaten the boss above it, without one line of gating code
+       anywhere. Each summon carries the receipt for the last one. */
+    { { { ITEM_CINDER_HEART, 24 }, { (ItemId)MAT_TUNGSTEN, 8 }, { ITEM_SILK_GLAND, 1 } },
+      ITEM_CENSER_CALL, 1, "Censer Call", STATION_FORGE },
+
     /* --- the bench --------------------------------------------------------
        Wood, stone and the earliest metal: everything a workbench can put
        together with hand tools. This is also where the mining ladder's

@@ -361,6 +361,17 @@ enum {
     ITEM_EGG_EMBERWING,
     ITEM_EGG_SLAGMAW,
     ITEM_EGG_CINDERLING,
+
+    /* --- the Censer ------------------------------------------------------
+       Layer 3's boss: what calls it, its egg, and what it leaves.
+
+       The PYRE CORE is the third in the line the Forge Core started -- one
+       object, dropped once, that gates the tier after it. There is no layer 4
+       for the Censer to unseal, so this IS its reward, and it is what the
+       rocket will be built around when the rocket exists. */
+    ITEM_CENSER_CALL,
+    ITEM_EGG_CENSER,
+    ITEM_PYRE_CORE,
     ITEM_COUNT
 };
 

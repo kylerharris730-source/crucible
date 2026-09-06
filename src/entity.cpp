@@ -152,6 +152,19 @@ static const float WIDOW_POUNCE_MIN   = 30.0f;/* nearer than this, just walk */
 static const float WIDOW_POUNCE_RANGE = 280.0f;
 static const float WIDOW_POUNCE_UP    = 3.2f;
 static const float WIDOW_POUNCE_MAXVX = 3.4f;
+
+/* --- the Censer's volley -----------------------------------------------------
+   Up here rather than beside its tick because ENT_DEFS names the interval, and
+   the table comes first in this file. The same reason the Widow's are here.
+
+   Range 200 against a muzzle speed of 7.6, which is a ballistic reach of 321 --
+   62% of it, comfortably inside the two-thirds rule the Skirmisher's note lays
+   down and this file has now been caught by twice. */
+static const int   CENSER_SPIT_EVERY  = 130;
+static const int   CENSER_SPIT_WINDUP = 26;
+static const int   CENSER_STRANDS     = 7;
+static const float CENSER_SPREAD      = 0.16f;
+static const float CENSER_SPIT_RANGE  = 200.0f;
 /* Its own scuttle, slower and longer than the Thresher's: at forty cells wide
    a short burst would be a twitch, and this creature is meant to arrive. */
 static const int   WIDOW_BURST       = 90;
@@ -572,6 +585,44 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
       0, 0, 0.0f, 0.0f, false,
       ITEM_CINDER_HEART, 1, 1, ITEM_NONE, 0, SPR_CINDERLING, 0xFF8A3A,
       ITEM_EGG_CINDERLING, false, false, 230 },
+
+    /* --- the Censer, layer 3's boss ----------------------------------------
+       56 by 44 against the Widow's 40 by 32, which is the "bigger" half of the
+       request, and FOUR LIMBS, which is the half that matters. See censerTick.
+
+       2200 hp, and most of it is not the point: while a limb lives the body
+       takes a fifth of what you deal it, so the health bar is a record of
+       whether you worked out the order rather than a wall to chew through.
+
+       It spits FIRE, like its own layer's Slagmaws -- the boss fights with the
+       hazard the player has spent the whole layer learning, which is what makes
+       an arena filling up with flame read as the fight rather than as a new
+       rule arriving at the end. */
+    { "The Censer", 56, 44, 2200, 42, 26,
+      0.50f, 0.06f, false, 0, false,
+      CENSER_SPIT_EVERY, 20, 7.6f, 0.0f, true,
+      ITEM_PYRE_CORE, 1, 1, ITEM_NONE, 0, SPR_NONE, 0xE0641C,
+      ITEM_EGG_CENSER, false, false, 250 },
+
+    /* --- one of its limbs --------------------------------------------------
+       A part, not an escort, and the table says so in three places: no
+       layerMask, so nothing ever spawns one from the dark; no egg, because a
+       limb with no body to hang from is not a creature; and no drop, because
+       the fight pays out once.
+
+       isBoss is FALSE despite it being boss furniture. It is not a boss: it
+       owns no bit in g_bossesBeaten, and the Widow's harness asserts that every
+       creature claiming isBoss owns one. The cost is that limbs count toward
+       the live cap during the fight, which is the right answer anyway -- a boss
+       arena should not also be spawning ordinary creatures.
+
+       240 hp each. Four of them is 960, against a body that is barely worth
+       shooting until they are gone. */
+    { "Censer Limb", 14, 14, 240, 26, 30,
+      2.40f, 0.10f, true, 0, false,
+      90, 14, 4.6f, 0.0f, false,
+      ITEM_NONE, 0, 0, ITEM_NONE, 0, SPR_CENSER_LIMB, 0xFF8A3A,
+      ITEM_NONE, false, false, 250 },
 };
 
 /* See the note in entity.h. One switch, and hive_bosses asserts it covers
@@ -580,6 +631,7 @@ u32 bossBitOf(int entityType) {
     switch (entityType) {
         case ENT_BROOD: return BOSS_LAYER1;
         case ENT_WIDOW: return BOSS_LAYER2;
+        case ENT_CENSER: return BOSS_LAYER3;
         default:        return 0;
     }
 }
@@ -831,8 +883,17 @@ static void entDie(World& w, Entity& e) {
         const u32 bit = bossBitOf(e.type);
         const bool firstWin = bit != 0 && (g_bossesBeaten & bit) == 0;
         g_bossesBeaten |= bit;
-        if (firstWin)
-            unlockSeal(w, bit == BOSS_LAYER1 ? LAYER1_DEPTH : LAYER2_DEPTH);
+        /* Only two seals exist, so only two bosses open one. The layer 3 boss
+           has nothing below it to unseal -- its reward is what it drops, which
+           is the gate on the tier after it rather than on a place. Written as
+           an explicit "no depth" rather than falling through to LAYER2_DEPTH,
+           which is what a two-way test did and which would have had the Censer
+           re-opening a barrier the Widow had already taken down. */
+        if (firstWin) {
+            const int depth = bit == BOSS_LAYER1 ? LAYER1_DEPTH
+                            : bit == BOSS_LAYER2 ? LAYER2_DEPTH : 0;
+            if (depth) unlockSeal(w, depth);
+        }
     }
     /* --- the charm, before the ordinary drop ---------------------------
        First because the ordinary path can RETURN -- chitin leaves through
@@ -904,13 +965,40 @@ static void entDie(World& w, Entity& e) {
     e.type = ENT_NONE;
 }
 
+/* --- one place that decides how much a hit is worth --------------------------
+   Every route by which a creature can be hurt goes through here: the point
+   test, the disc, the segment and melee. It existed as four copies of
+   `e.hp -= damage` until layer 3's boss needed damage to depend on the STATE of
+   the creature rather than only on the hit, and four copies of a rule is four
+   places for it to be forgotten.
+
+   The rule so far is one: an armoured boss shrugs off most of what it takes
+   while its parts are alive. See censerArmoured. */
+static bool censerArmoured(const Entity& e);
+
+void entApplyDamage(Entity& e, int damage) {
+    if (damage <= 0) return;
+    if (censerArmoured(e)) {
+        /* A fifth, not nothing. Immunity would be the obvious reading of "kill
+           the limbs first" and it is the worse one: a boss that cannot be hurt
+           at all reads as a bug the first time somebody shoots it, and there is
+           nothing on screen to say otherwise. A hit that lands and barely
+           counts says the same thing and says it in the language the player is
+           already reading -- the health bar moves, slowly, and the limbs are
+           visibly the faster answer. */
+        damage = damage / 5;
+        if (damage < 1) damage = 1;
+    }
+    e.hp -= damage;
+    e.hurtFlash = 6;
+}
+
 bool entDamageAt(int x, int y, int damage) {
     for (int i = 0; i < MAX_ENTITIES; ++i) {
         Entity& e = g_entities[i];
         if (!e.alive()) continue;
         if (x < e.left() || x > e.right() || y < e.top() || y > e.bottom()) continue;
-        e.hp -= damage;
-        e.hurtFlash = 6;
+        entApplyDamage(e, damage);
         return true;
     }
     return false;
@@ -924,8 +1012,7 @@ int entDamageDisc(int cx, int cy, int radius, int damage) {
         if (!e.alive()) continue;
         const float dx = e.centreX() - (float)cx, dy = e.centreY() - (float)cy;
         if (dx * dx + dy * dy > (float)r2) continue;
-        e.hp -= damage;
-        e.hurtFlash = 6;
+        entApplyDamage(e, damage);
         ++hit;
     }
     return hit;
@@ -2826,6 +2913,231 @@ static void cinderlingTick(World& w, Entity& e, const Player& p) {
     }
 }
 
+
+/* --- the Censer: a boss with parts -------------------------------------------
+
+   Layer 3's capstone, and the first fight in this game with a SHAPE to it. The
+   Brood Mother is a charge you dodge and the Widow is a chase; both are one
+   target and a health bar. This is four limbs and a body, and while any limb is
+   alive the body barely notices what you do to it -- so the fight has an order,
+   and finding that order is the fight.
+
+   Multi-part costs almost nothing here because a limb is just a creature. It
+   has hp, a tick, a sprite and a `home` pointing at its parent, which is the
+   field bees already use to find their hive. What it does NOT have is
+   independence: it holds station on the body, dies with the body, and is not
+   worth a spawn egg on its own.
+
+   The legs are the rig's, at boss scale -- rigSpider with different numbers and
+   a hotter palette, which is exactly what the armature was built to make cheap.
+   Asked for "creepy... a lot of noita bosses have this creepy spidery thing
+   going on", and the spider skeleton already existed for the Widow. */
+
+/* Where the four limbs hang, as offsets from the body centre in cells. Two
+   forward and two back, low -- they hang BELOW the vessel, which is what makes
+   the silhouette read as something carried rather than something wearing
+   arms. */
+static const int   CENSER_LIMBS = 4;
+static const float CENSER_LIMB_X[CENSER_LIMBS] = { -40.0f, -18.0f, 18.0f, 40.0f };
+/* Kept inside the body's own vertical span, which is 22 cells either side of
+   its centre. The first version hung them at +26 -- below its feet -- so a
+   standing Censer held two of its four stations INSIDE THE FLOOR: entSpawn
+   refused to place a limb in rock, and the two that could not be placed took
+   the other two with them because the loop stopped at the first failure. */
+static const float CENSER_LIMB_Y[CENSER_LIMBS] = {  -4.0f,  10.0f, 10.0f, -4.0f };
+
+/* How hard a limb pulls back to its station. Soft, so the limbs SWING -- a rigid
+   offset reads as furniture bolted to the body, and the whole point of hanging
+   them is that they trail and catch up. */
+static const float CENSER_LIMB_PULL = 0.055f;
+static const float CENSER_LIMB_SPEED = 2.4f;
+
+/* Is this creature currently shrugging off damage? True only for a Censer body
+   with at least one limb still alive. Declared before entApplyDamage, which is
+   the only caller. */
+static bool censerArmoured(const Entity& e) {
+    if (e.type != ENT_CENSER) return false;
+    const int self = (int)(&e - g_entities);
+    for (int i = 0; i < MAX_ENTITIES; ++i) {
+        const Entity& l = g_entities[i];
+        if (l.type == ENT_CENSER_LIMB && l.alive() && l.home == (i16)self) return true;
+    }
+    return false;
+}
+
+static int censerLimbsAlive(int coreIndex) {
+    int n = 0;
+    for (int i = 0; i < MAX_ENTITIES; ++i) {
+        const Entity& l = g_entities[i];
+        if (l.type == ENT_CENSER_LIMB && l.alive() && l.home == (i16)coreIndex) ++n;
+    }
+    return n;
+}
+
+/* --- the body ----------------------------------------------------------------
+   It walks, it spits, and once its limbs are gone it stops being careful.
+
+   Two phases and they are the same creature: nothing new appears when the limbs
+   die, everything simply gets faster and more frequent. A boss whose second
+   half is a different fight is two fights, and this one is meant to be a
+   position you are steadily pushed out of. */
+
+static void censerSpit(World& w, Entity& e, const Player& p, bool exposed) {
+    const EntityDef& d = ENT_DEFS[e.type];
+    float dx = p.centreX() - e.centreX(), dy = p.centreY() - e.centreY();
+    const float v = d.shotSpeed, g = PROJ_GRAVITY;
+    const float b = g * dy + v * v;
+    const float disc = b * b - g * g * (dx * dx + dy * dy);
+    if (disc < 0.0f) { e.shotTimer = d.shotEvery / 2; return; }
+    const float T = 2.0f * (b - sqrtf(disc)) / (g * g);
+    if (T <= 0.0001f) { e.shotTimer = d.shotEvery / 2; return; }
+    const float t = sqrtf(T);
+    const float vx = dx / t, vy = (dy - 0.5f * g * T) / t;
+    e.facing = dx > 0.0f ? 1 : -1;
+
+    const int strands = CENSER_STRANDS + (exposed ? 4 : 0);
+    for (int k = 0; k < strands; ++k) {
+        const float a = (float)(k - strands / 2) * CENSER_SPREAD;
+        const float ca = cosf(a), sa = sinf(a);
+        const float sx = vx * ca - vy * sa, sy = vx * sa + vy * ca;
+        const float ml = sqrtf(sx * sx + sy * sy);
+        const float mx = ml > 0.001f ? sx / ml : 1.0f;
+        const float my = ml > 0.001f ? sy / ml : 0.0f;
+        /* Fire as the payload, like its Slagmaws -- the boss denies ground the
+           way its layer does, so the arena fills up with the same hazard the
+           player has spent the layer learning. */
+        projSpawn(e.centreX() + mx * 26.0f, e.centreY() + my * 26.0f, sx, sy,
+                  STR_NOTHING, 1, 300, 0xFFB03A, 0, MAT_FIRE,
+                  d.shotDamage, true, PROJ_GRAVITY);
+    }
+    e.shotTimer = exposed ? (d.shotEvery * 3) / 5 : d.shotEvery;
+}
+
+static void censerTick(World& w, Entity& e, const Player& p) {
+    const EntityDef& d = ENT_DEFS[e.type];
+    const int self = (int)(&e - g_entities);
+
+    /* Its limbs, once. partsSpawned rather than a count of living limbs,
+       because the two differ the moment one dies -- and a boss that noticed
+       that and put out a fresh one would be a boss you cannot finish. */
+    /* ONE A FRAME, and at the body's own centre rather than at the station it
+       will hold. Both halves are about not depending on the terrain: a station
+       can be inside a wall depending on where the fight happens, and a batch
+       that placed four at once had no way to report that two of them failed
+       without either wedging or double-spawning. Streaming them out and letting
+       each fly to its post makes the arrival independent of the arena, and four
+       frames is not a delay anybody sees. */
+    if (e.partsSpawned < CENSER_LIMBS) {
+        const int slot = entSpawn(w, ENT_CENSER_LIMB,
+                                  e.centreX(), e.centreY() - 6.0f);
+        if (slot >= 0) {
+            g_entities[slot].home  = (i16)self;
+            g_entities[slot].phase = e.partsSpawned;   /* which station it holds */
+            ++e.partsSpawned;
+        }
+    }
+
+    const bool exposed = censerLimbsAlive(self) == 0;
+
+    /* --- the volley --------------------------------------------------- */
+    --e.shotTimer;
+    const bool winding  = e.shotTimer <= 0 && e.shotTimer > -CENSER_SPIT_WINDUP;
+    const bool throwing = e.shotTimer <= -CENSER_SPIT_WINDUP;
+
+    bool los = false;
+    float dist = 0.0f;
+    {
+        const float sx = p.centreX() - e.centreX(), sy = p.centreY() - e.centreY();
+        dist = sqrtf(sx * sx + sy * sy);
+        los = true;
+        for (int k = 1; k <= 12; ++k) {
+            const int px = (int)(e.centreX() + sx * (float)k / 13.0f);
+            const int py = (int)(e.centreY() + sy * (float)k / 13.0f);
+            if (px < 0 || px >= SIM_W || py < 0 || py >= SIM_H ||
+                playerSolid(w, px, py)) { los = false; break; }
+        }
+    }
+    const bool inRange = los && dist < CENSER_SPIT_RANGE;
+
+    if (throwing) {
+        if (inRange) censerSpit(w, e, p, exposed);
+        else e.shotTimer = d.shotEvery / 2;
+        e.telegraph = 0;
+        /* Not a return: it throws on the move, the same decision the Widow's
+           tick records -- a boss that stops for every attack spends most of the
+           fight standing still and can be walked away from. */
+    } else if (winding) {
+        e.telegraph = -e.shotTimer;
+        if (!inRange) e.shotTimer = d.shotEvery / 2;
+    } else {
+        e.telegraph = 0;
+    }
+
+    /* --- and it walks ------------------------------------------------- */
+    /* Faster with the limbs gone, which is the whole of the second phase. */
+    bool climb = false;
+    groundChase(e, p, d.speed * (exposed ? 1.45f : 1.0f),
+                d.accel * (exposed ? 1.3f : 1.0f), 0.0f, &climb);
+    if (e.onGround && climb) {
+        const int probeX = e.facing > 0 ? e.right() + 1 : e.left() - 1;
+        if (probeX > PLAY_X0 && probeX < PLAY_X1) {
+            bool low = false;
+            for (int y = e.bottom(); y > e.bottom() - 5 && y > PLAY_Y0; --y)
+                if (playerSolid(w, probeX, y, SOLID_ANY)) { low = true; break; }
+            if (low) e.vy = -2.4f;
+        }
+    }
+}
+
+/* --- a limb ------------------------------------------------------------------
+   It holds a station on the body, swings, and spits on its own clock. It does
+   not chase, it does not path, and it cannot be led away: everything it does is
+   relative to its parent, which is what makes it a PART rather than an escort.
+
+   Dies with the body, and that is not tidiness. A limb whose parent is gone has
+   nothing to hold station on, so it would sit in the arena forever as an
+   invulnerable-looking obstacle nobody can explain. */
+static void censerLimbTick(World& w, Entity& e, const Player& p) {
+    const EntityDef& d = ENT_DEFS[e.type];
+    const int home = (int)e.home;
+    if (home < 0 || home >= MAX_ENTITIES ||
+        g_entities[home].type != ENT_CENSER || !g_entities[home].alive()) {
+        e.hp = 0;
+        return;
+    }
+    const Entity& core = g_entities[home];
+    const int k = e.phase >= 0 && e.phase < CENSER_LIMBS ? e.phase : 0;
+
+    /* Toward its station, softly, so it trails and overshoots a little rather
+       than being welded on. The body moving is what makes them swing. */
+    const float tx = core.centreX() + CENSER_LIMB_X[k];
+    const float ty = core.centreY() + CENSER_LIMB_Y[k];
+    e.vx += (tx - e.centreX()) * CENSER_LIMB_PULL;
+    e.vy += (ty - e.centreY()) * CENSER_LIMB_PULL;
+    const float sp = sqrtf(e.vx * e.vx + e.vy * e.vy);
+    if (sp > CENSER_LIMB_SPEED) {
+        e.vx = e.vx / sp * CENSER_LIMB_SPEED;
+        e.vy = e.vy / sp * CENSER_LIMB_SPEED;
+    }
+    e.facing = core.facing;
+
+    /* Its own shot clock, offset by which limb it is, so four limbs are a
+       patter rather than a volley -- four shots arriving together would read as
+       one attack from the body and the parts would stop being separate things
+       in the player's head. */
+    if (e.shotTimer > 0) { --e.shotTimer; return; }
+    const float dx = p.centreX() - e.centreX(), dy = p.centreY() - e.centreY();
+    if (dx * dx + dy * dy > 150.0f * 150.0f) return;
+    for (int s = 1; s <= 6; ++s) {
+        const int px = (int)(e.centreX() + dx * (float)s / 7.0f);
+        const int py = (int)(e.centreY() + dy * (float)s / 7.0f);
+        if (px < 0 || px >= SIM_W || py < 0 || py >= SIM_H) return;
+        if (playerSolid(w, px, py)) return;
+    }
+    lobAtPlayer(w, e, p, MAT_EMPTY, 0xFF8A3A);
+    e.shotTimer = d.shotEvery + k * 11;
+}
+
 static void entTickMode(World& w, Player& fallbackPlayer, Inventory& fallbackInv,
                         bool multiplayer) {
     /* One search for the whole roster, before anybody moves. Seeded from every
@@ -2933,6 +3245,8 @@ static void entTickMode(World& w, Player& fallbackPlayer, Inventory& fallbackInv
         case ENT_EMBERWING:  emberwingTick(w, e, p);  break;
         case ENT_SLAGMAW:    slagmawTick(w, e, p);    break;
         case ENT_CINDERLING: cinderlingTick(w, e, p); break;
+        case ENT_CENSER:      censerTick(w, e, p);      break;
+        case ENT_CENSER_LIMB: censerLimbTick(w, e, p);  break;
         case ENT_DUMMY:   dummyTick(w, e, p);   break;
         case ENT_SHAMBLER: shamblerTick(w, e, p); break;
         case ENT_THRESHER: thresherTick(w, e, p); break;
@@ -3058,8 +3372,7 @@ int entHitSegment(float x0, float y0, float x1, float y1,
         const float hw = e.width() * 0.5f, hh = e.height() * 0.5f;
         if (nx < cx - hw || nx > cx + hw || ny < cy - hh || ny > cy + hh) continue;
 
-        e.hp -= damage;
-        e.hurtFlash = 6;
+        entApplyDamage(e, damage);
         if (knockback > 0.0f) {
             float kx = cx - fromX, ky = cy - fromY;
             const float kd = sqrtf(kx * kx + ky * ky);
@@ -3087,7 +3400,7 @@ int entDamageKnockbackDisc(int cx, int cy, int radius, int damage, float knockba
         float dx = e.centreX() - (float)cx, dy = e.centreY() - (float)cy;
         const float d2 = dx * dx + dy * dy;
         if (d2 > r2) continue;
-        e.hp -= damage; e.hurtFlash = 6;
+        entApplyDamage(e, damage);
         const float len = sqrtf(d2);
         if (len > 0.01f) { e.vx += dx * knockback / len; e.vy += dy * knockback / len; }
         ++hit;
@@ -3561,6 +3874,17 @@ static void entityPixelMotion(const Entity& e, int entityIndex, int sx, int sy,
             *dy -= (int)((tick / 10u) & 1u);
         break;
     }
+    case ENT_CENSER_LIMB: {
+        /* It hangs and it SWINGS, so the animation is a pendulum rather than a
+           gait -- the whole silhouette leans, and the coal inside it glows on
+           its own faster clock. Nothing here reads the gait, because a limb
+           that is carried does not walk. */
+        const int swing = ((tick / 9u) & 3u) < 2u ? 1 : -1;
+        if (sy <= 8) *dx += swing;
+        if (sy >= 5 && sy <= 8 && sx >= 5 && sx <= 8)
+            *dy -= (int)((tick / 5u) & 1u);
+        break;
+    }
     case ENT_CINDERLING: {
         /* A coal that decided to move: the body flickers like the ember it is,
            and the three spindly legs scurry on the gait. Fast clock, because
@@ -3606,6 +3930,11 @@ static bool rigArtFor(u8 type, RigArt* out) {
         out->idle = g_widowIdle[0]; out->idleFrames = WIDOW_IDLE_FRAMES;
         out->walk = g_widowWalk[0]; out->walkFrames = WIDOW_WALK_FRAMES;
         out->w = WIDOW_SPR_W; out->h = WIDOW_SPR_H;
+        return true;
+    case ENT_CENSER:
+        out->idle = g_censerIdle[0]; out->idleFrames = CENSER_IDLE_FRAMES;
+        out->walk = g_censerWalk[0]; out->walkFrames = CENSER_WALK_FRAMES;
+        out->w = CENSER_SPR_W; out->h = CENSER_SPR_H;
         return true;
     default:
         return false;

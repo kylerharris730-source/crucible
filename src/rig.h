@@ -117,6 +117,11 @@ static inline int spiderBone(int t, int s) {
 
 static const int SPIDER_SHADES = 6;
 extern const u32 RIG_SPIDER[SPIDER_SHADES];
+/* The same skeleton in layer 3's colours. A second palette rather than a second
+   rig is the whole argument for building creatures out of proportions: the
+   Censer is a Widow's skeleton at boss scale with something burning inside
+   it. */
+extern const u32 RIG_CENSER[SPIDER_SHADES];
 
 void rigSpider(Bone* bone, RigDef* rig, const char* name,
                int w, int h, const u32* shade);

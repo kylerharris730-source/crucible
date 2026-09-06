@@ -26,7 +26,7 @@ then.
 
 ---
 
-## 1. Bosses — 2 of 4
+## 1. Bosses — 3 of 4
 
 Today there is exactly one: the **Brood Mother** (900 hp, summoned with
 `ITEM_BROOD_CALL`, drops `ITEM_FORGE_CORE`). She is not spawned, only called,
@@ -36,8 +36,10 @@ a boss you summon is a decision.
 - [x] **A layer-2 boss.** The Widow: an eight-legged spider, 40x32, that
       scuttles like a Thresher and spits volleys of silk. Killing it opens the
       layer 2 stratum, the way the Brood Mother opens layer 1.
-- [ ] **A layer-3 boss** — see §2; there is nothing down there at all yet, so
-      this one waits on the layer having something to be the capstone OF.
+- [x] **A layer-3 boss.** The Censer: 56x44, four hanging limbs, and the first
+      MULTI-PART fight in the game -- the body takes a fifth of what you deal it
+      while any limb lives, so the fight has an order rather than a health bar.
+      Drops the Pyre Core. It opens no seal, because there is nothing below it.
 - [ ] **A final boss, at the rocket.** No longer optional. A fight gated behind
       the win condition rather than behind a depth, so the ending is something
       you beat rather than something you assemble.
@@ -54,15 +56,18 @@ Measured, not guessed:
 |---|---|---|
 | 1 | 6 | Rock Mite, Cinder Moth, Drip Slime, Husk, Bat, Spitter |
 | 2 | 5 | Shambler, Thresher, Culverin, Wisp, Stooper |
-| **3** | **0** | — |
+| 3 | 4 | Ashhound, Emberwing, Slagmaw, Cinderling |
 
-- [ ] **Layer 3 has no inhabitants.** Worldgen labels the zone
-      (`ZONE_LAYER3` in `worldgen.cpp`) and `caveLayerOf` returns 2 for it, but
-      not one entity sets bit 4 in its `layerMask`, so the deep is generated
-      and then empty. This is the single biggest content hole.
-- [ ] Give layer 3 its own materials and hazards, not just tougher enemies.
-      The difficulty step between 1 and 2 is currently carried by the roster
-      alone; the deep should feel different to stand in.
+- [x] **Layer 3 has inhabitants.** Four: the Ashhound (fast ground pursuer that
+      routes and never stops), the Emberwing (fast flier that PATHFINDS -- 712
+      frames of 900 within contact range against the Bat's 306), the Slagmaw
+      (artillery whose globs leave fire where they land) and the Cinderling
+      (fast, fragile, and it sets the floor alight behind it).
+- [x] **Layer 3 has its own materials and hazards.** Brimstone that is warm to
+      stand near and BURNS at a temperature lava reaches and a torch does not;
+      brimfire that spreads through a seam and burns out into ash; fumaroles
+      that spit fire out of cave floors. All of it through the thermal model:
+      layers 1 and 2 are about what is hunting you, the deep is about the rock.
 
 ## 3. The rocket, and winning
 

@@ -142,6 +142,24 @@ enum EntityType {
     ENT_EMBERWING,
     ENT_SLAGMAW,
     ENT_CINDERLING,
+
+    /* --- the Censer, layer 3's boss --------------------------------------
+       A burning vessel carried on long legs, and the first boss in this game
+       that is not a single target.
+
+       MULTI-PART, which is the structural difference and the reason it needed
+       more than a bigger number: four limbs hang off it, each with its own
+       health and its own attack, and while any of them lives the vessel itself
+       shrugs off most of what it takes. So the fight has a shape -- clear the
+       limbs, then the body -- rather than being a longer version of shooting
+       the Widow.
+
+       The limb is a creature in its own right because that is what the engine
+       already understands: it has hp, a tick and a sprite, and it finds its
+       parent through `home`, which is the field the bees already use to find
+       their hive. Nothing here is a new system. */
+    ENT_CENSER,
+    ENT_CENSER_LIMB,
     ENT_COUNT
 };
 
@@ -151,6 +169,7 @@ enum EntityType {
 extern u32 g_bossesBeaten;
 static const u32 BOSS_LAYER1 = 1u << 0;
 static const u32 BOSS_LAYER2 = 1u << 1;
+static const u32 BOSS_LAYER3 = 1u << 2;
 
 /* Which bit a boss owns, stated in one switch rather than derived from its
    EntityType. Derived would be tidier right up to the first time a creature is
@@ -303,6 +322,11 @@ struct Entity {
        is stuck. */
     float prevX, prevY;
     int   stuck;
+    /* How many parts a multi-part boss has put out, so it does not do it twice.
+       Free to add: creatures are transient and never serialized -- see the note
+       at the top of this file about g_bossesBeaten being the only thing about
+       them that outlives a session. */
+    u8    partsSpawned;
 
     /* --- gait -------------------------------------------------------------
        GROUND COVERED, not frames elapsed, and that distinction is the whole

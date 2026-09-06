@@ -1668,6 +1668,21 @@ void initItems() {
     ITEMS[ITEM_CINDER_HEART].colour   = 0xFF8A3A;
     ITEMS[ITEM_CINDER_HEART].sprite   = SPR_CINDER_HEART;
 
+    /* Layer 3's summon and its reward, on exactly the terms the two above it
+       use -- a consumed egg by KIND, and a component you carry. */
+    ITEMS[ITEM_CENSER_CALL].name     = "Censer Call";
+    ITEMS[ITEM_CENSER_CALL].kind     = ITEMK_EGG;
+    ITEMS[ITEM_CENSER_CALL].summons  = ENT_CENSER;
+    ITEMS[ITEM_CENSER_CALL].maxStack = 4;
+    ITEMS[ITEM_CENSER_CALL].colour   = 0xE0641C;
+    ITEMS[ITEM_CENSER_CALL].sprite   = SPR_CENSER_CALL;
+
+    ITEMS[ITEM_PYRE_CORE].name     = "Pyre Core";
+    ITEMS[ITEM_PYRE_CORE].kind     = ITEMK_COMPONENT;
+    ITEMS[ITEM_PYRE_CORE].maxStack = 16;
+    ITEMS[ITEM_PYRE_CORE].colour   = 0xFFD46A;
+    ITEMS[ITEM_PYRE_CORE].sprite   = SPR_PYRE_CORE;
+
     ITEMS[ITEM_TITANIUM_HELMET].name       = "Titanium Helmet";
     ITEMS[ITEM_TITANIUM_HELMET].kind       = ITEMK_WORN;
     ITEMS[ITEM_TITANIUM_HELMET].equipSlot  = EQ_HEAD;
@@ -1753,6 +1768,9 @@ void initItems() {
     ITEMS[ITEM_WIDOW_CALL].description = "Consume to summon the Widow nearby.";
     ITEMS[ITEM_CINDER_HEART].description =
         "Still warm. Cut from something that lived in the deep.";
+    ITEMS[ITEM_CENSER_CALL].description = "Consume to summon the Censer nearby.";
+    ITEMS[ITEM_PYRE_CORE].description =
+        "Cracked, and still burning. Whatever leaves this world will be built around it.";
     ITEMS[ITEM_MULTITOOL3].description =
         "Six sockets, and the first chassis that can hold a modifier.";
     ITEMS[ITEM_MOD_DOUBLE].description =

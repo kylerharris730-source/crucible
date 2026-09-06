@@ -28,8 +28,25 @@ static inline int wrapDeg(int d) { d %= 360; return d < 0 ? d + 360 : d; }
 /* --- the canvas ------------------------------------------------------------
    One shared subsample buffer, sized for the largest rig anybody bakes. Static
    rather than allocated because baking happens at startup on one thread and a
-   96x256 byte scratch is not worth an allocator. */
-static const int MAX_SS_W = 32 * ARM_SS;
+   64 KB scratch is not worth an allocator.
+
+   THE LIMIT IS AREA, not width and height, and that is worth stating because
+   the old numbers hid it. This buffer is indexed with the RIG's own subsample
+   width as the stride -- see the drawing loop below, which uses `sw` and never
+   MAX_SS_W -- so a rig fits when w * h * ARM_SS^2 is under the total, whatever
+   shape it is. At 32 x 64 cells the total was 2048 cells, and the Widow at
+   40 x 32 = 1280 fitted comfortably despite being wider than the nominal 32.
+
+   Layer 3's boss is 56 x 44 = 2464, and it did not. It overran a static array
+   by six and a half kilobytes, which presented as the creature baking into a
+   small orange dot with no legs -- and would have presented as something far
+   less convenient the next time this file's globals moved. armBake now refuses
+   a rig it cannot hold rather than writing past the end of one.
+
+   64 x 64 cells = 4096, which is double what the biggest creature needs and is
+   still only 64 KB. */
+static const int ARM_MAX_CELLS = 64 * 64;
+static const int MAX_SS_W = 64 * ARM_SS;
 static const int MAX_SS_H = 64 * ARM_SS;
 static u8 g_ss[MAX_SS_W * MAX_SS_H];   /* 0 = empty, else shade + 1 */
 
@@ -165,6 +182,15 @@ void armPose(const RigDef* rig, const PoseKey* pose, u32* out, bool ground) {
 
 void armBake(const RigDef* rig, const Clip* clip, u32* out) {
     const int cells = rig->w * rig->h;
+    /* Refused, not clamped. A rig too big for the scratch used to write past
+       the end of it -- see the note on ARM_MAX_CELLS -- and clamping would
+       silently bake a creature with its legs cut off, which is the same class
+       of quiet wrongness. An empty sprite is at least obviously empty. */
+    if (cells > ARM_MAX_CELLS) {
+        for (int f = 0; f < clip->frames; ++f)
+            memset(out + (size_t)f * cells, 0, sizeof(u32) * (size_t)cells);
+        return;
+    }
     for (int f = 0; f < clip->frames; ++f) {
         /* Where this frame sits between keys. A looping clip wraps from the
            last key back to the first; a one-shot holds the last. */

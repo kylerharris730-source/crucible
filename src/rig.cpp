@@ -478,6 +478,32 @@ const u32 RIG_SPIDER[SPIDER_SHADES] = {
     0xD4433C,   /* 5 the eyes -- the one warm colour on the whole creature */
 };
 
+/* Layer 3's. The legs stay nearly black so the silhouette is legs-and-a-glow,
+   and the BODY is the light -- a vessel with a fire in it, carried. That
+   inversion is what makes it read as a different creature from the Widow rather
+   than as the Widow in orange: on her the body is the pale part and the legs
+   recede, and here the legs recede further and the body burns. */
+const u32 RIG_CENSER[SPIDER_SHADES] = {
+    /* The legs were 0x1C1416 and 0x4A2E28 first, on the reasoning that a
+       near-black skeleton around a burning body would read as legs-and-a-glow.
+       It read as a glow. Rendered, the creature was a small orange dot in an
+       empty 56x44 box: both leg shades were DARKER THAN THE BACKDROP, so eight
+       limbs and an abdomen drew nothing a viewer could distinguish from
+       background, and the animation harness reported the boss as not animating
+       -- which was true, because the only visible pixels were a body that does
+       not move.
+
+       A value ladder needs its bottom rung above the thing it is drawn on, and
+       the suit's note at the top of this file says so already. These are warm
+       and dark rather than black. */
+    0x5A3228,   /* 0 far leg    -- dark, and still clear of the backdrop */
+    0xC85A1C,   /* 1 body       -- the vessel, lit */
+    0x9A5636,   /* 2 near leg   -- a clear step above the far side */
+    0x7A2A12,   /* 3 abdomen    -- the coal it carries */
+    0xFFD46A,   /* 4 head       -- the brightest thing on it */
+    0xFF8A3A,   /* 5 the eyes */
+};
+
 void rigSpider(Bone* b, RigDef* rig, const char* name,
                int w, int h, const u32* shade) {
     const int H = h * ARM_SS, W = w * ARM_SS;
