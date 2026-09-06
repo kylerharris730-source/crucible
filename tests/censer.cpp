@@ -55,12 +55,16 @@ static void fill(World& w, int x0, int y0, int x1, int y1, u8 m) {
 }
 
 /* An arena big enough for a 56-cell creature and its limbs. */
-static int arena(World& w) {
+/* `back` is floor behind the player, and it has to exceed anything a fleeing
+   one can cover -- the default is fine for the pinned cases and the kiting case
+   below needs far more, or the player runs off the end of the world and the
+   boss is reported as failing to follow onto ground that is not there. */
+static int arena(World& w, int back = 400) {
     w.reset();
     projClear();
-    fill(w, CX - 400, CY - 200, CX + 400, FLOOR + 40, MAT_STONE);
-    fill(w, CX - 380, CY - 180, CX + 380, FLOOR,      MAT_EMPTY);
-    w.setLiveWindow(CX - 420, CY - 220, CX + 420, FLOOR + 60);
+    fill(w, CX - back, CY - 200, CX + 400, FLOOR + 40, MAT_STONE);
+    fill(w, CX - back + 20, CY - 180, CX + 380, FLOOR,  MAT_EMPTY);
+    w.setLiveWindow(CX - back - 20, CY - 220, CX + 420, FLOOR + 60);
     Player& p = g_player;
     p.reset((float)(CX - 200), (float)(FLOOR - PLAYER_H / 2));
     p.alive = true; p.hp = PLAYER_HP_MAX;
@@ -160,22 +164,44 @@ int main() {
     {
         core = arena(w);
         if (core < 0) return 2;
-        run(w, 200);                       /* let them arrive */
+        run(w, 60);
         Entity& body = g_entities[core];
+        /* Settle with the player ALREADY on the boss, before measuring. run()
+           pins the player three hundred cells away, so the boss spends those
+           frames charging -- and a limb capped below the charge speed trails
+           far behind it. Measuring from the instant the player is moved onto
+           the creature therefore recorded the CATCH-UP, fifty cells of it, and
+           called it bobbing. The transient is real and is not what the report
+           was about. */
+        for (int t = 0; t < 200; ++t) {
+            g_player.x = body.centreX() - PLAYER_W * 0.5f;
+            g_player.y = body.centreY() - PLAYER_H * 0.5f;
+            g_player.alive = true; g_player.hp = PLAYER_HP_MAX;
+            entTick(w, g_player, g_inv);
+            projUpdate(w);
+        }
 
         float lo[4] = { 1e9f, 1e9f, 1e9f, 1e9f };
         float hi[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
         float worstStep = 0.0f;
         float prevX[4] = {0,0,0,0}, prevY[4] = {0,0,0,0};
         bool  seen[4] = { false, false, false, false };
+        /* The boss is stilled by standing the PLAYER on it rather than by the
+           harness holding it down. Two earlier versions pinned its position
+           between ticks, and both measured the pinning: the creature moved
+           during the frame, the limbs chased where it had gone, and it snapped
+           back -- so the limbs were dragged a little further every frame and
+           read as swinging 51 cells when the damping had already fixed them.
+
+           A boss with the player at its feet has nothing to walk toward, which
+           is a state the creature itself defines rather than one imposed on
+           it. */
         for (int t = 0; t < 400; ++t) {
-            /* Pinned. A moving body is what the limbs are supposed to trail
-               behind; holding it still isolates the spring from the chase. */
-            body.vx = body.vy = 0.0f;
-            const float bx = body.centreX(), by = body.centreY();
-            run(w, 1);
-            body.x = bx - (float)ENT_DEFS[ENT_CENSER].w * 0.5f;
-            body.y = by - (float)ENT_DEFS[ENT_CENSER].h * 0.5f;
+            g_player.x = body.centreX() - PLAYER_W * 0.5f;
+            g_player.y = body.centreY() - PLAYER_H * 0.5f;
+            g_player.alive = true; g_player.hp = PLAYER_HP_MAX;
+            entTick(w, g_player, g_inv);
+            projUpdate(w);
             for (int i = 0; i < MAX_ENTITIES; ++i) {
                 const Entity& l = g_entities[i];
                 if (l.type != ENT_CENSER_LIMB || !l.alive() ||
@@ -256,6 +282,53 @@ int main() {
                   ? "it goes through a wall rather than standing at it"
                   : "and climbs a ledge rather than standing under it");
         }
+    }
+
+    /* --- 3d. there is no range you can just sit in -------------------------
+       Reported from play: "kiting is too effective, you can just sit in the
+       range where it follows without shooting forever."
+
+       A dead zone, and an arithmetic one. The spit reaches 200 cells and the
+       body walks at 0.5 against a character's 1.2 -- so anywhere past 200 it
+       can neither shoot you nor catch you, and the fight becomes free damage
+       for as long as the player cares to hold that line.
+
+       Two measurements, because the failure has two halves: it must CLOSE on
+       somebody sitting outside its reach, and it must eventually be SHOOTING
+       at them. Either alone can be satisfied by a creature that is still no
+       threat. */
+    {
+        core = arena(w, 1600);
+        if (core < 0) return 2;
+        run(w, 30);
+        Entity& body = g_entities[core];
+        Player& p = g_player;
+
+        /* FLEEING at the character's own top speed, not teleported to hold a
+           fixed gap. A first version pinned the player 260 cells from the boss
+           every frame, which is a kite no creature in any game could close --
+           it measures the test's own bookkeeping rather than the boss. What a
+           player actually does is run, and the question is whether the boss can
+           run faster. */
+        p.x = body.centreX() - 260.0f;
+        int shots = 0;
+        float best = 1e9f;
+        for (int t = 0; t < 900; ++t) {
+            p.x -= 1.2f;
+            p.y = (float)(FLOOR - PLAYER_H);
+            p.alive = true; p.hp = PLAYER_HP_MAX;
+            const int before = projCount();
+            entTick(w, p, g_inv);
+            projUpdate(w);
+            if (projCount() > before) shots += projCount() - before;
+            const float d = fabsf(body.centreX() - p.centreX());
+            if (d < best) best = d;
+            projClear();
+        }
+        printf("player fleeing flat out from 260 cells: closed to %.0f, "
+               "fired %d shots\n", best, shots);
+        check(best < 200.0f, "it closes on somebody sitting outside its reach");
+        check(shots > 0, "and gets close enough to actually shoot them");
     }
 
     /* --- 4 & 5. the armour, and losing it -------------------------------- */

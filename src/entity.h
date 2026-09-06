@@ -327,6 +327,11 @@ struct Entity {
        at the top of this file about g_bossesBeaten being the only thing about
        them that outlives a session. */
     u8    partsSpawned;
+    /* Latched "is closing the distance", for a boss whose pace depends on how
+       far off you are. A latch rather than a fresh comparison every frame
+       because the two thresholds have to differ -- see CENSER_SURGE. Free for
+       the same reason partsSpawned is: creatures are never serialized. */
+    bool  charging;
 
     /* --- gait -------------------------------------------------------------
        GROUND COVERED, not frames elapsed, and that distinction is the whole

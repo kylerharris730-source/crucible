@@ -175,6 +175,27 @@ static const float CENSER_SPIT_RANGE  = 200.0f;
    knees, which is what it takes to get onto the sort of ledge that stops it. */
 static const int   CENSER_STUCK = 22;
 static const float CENSER_HOP   = 3.6f;
+
+/* --- what it does when you back out of its reach ----------------------------
+   A multiplier on its pace, applied whenever the player is further off than it
+   can spit. Without it the fight had a DEAD ZONE and the arithmetic was not
+   subtle: the spit reaches 200 cells and the body walks at 0.5 against a
+   character's 1.2, so anywhere past 200 it could neither shoot you nor catch
+   you. Reported from play as "you can just sit in the range where it follows
+   without shooting forever", and measured -- fleeing flat out from 260 cells,
+   it closed five cells in nine hundred frames and fired nothing.
+
+   No amount of extra RANGE fixes that, which is worth stating because it is the
+   obvious lever and it is the wrong one: a lobbed shot cannot exceed v*v/g, so
+   even at this muzzle speed the reach caps around 320 and the player simply
+   stands at 350. The only thing that closes a gap held open by somebody walking
+   is walking faster.
+
+   3.4 puts the surge at 1.7 against the character's 1.2, so a flat sprint loses
+   half a cell a frame. Deliberately not faster: this is a boss the size of a
+   room that ploughs through the wall behind it, and one that also outran you
+   comfortably would leave nothing to do but die. */
+static const float CENSER_SURGE = 3.4f;
 /* Its own scuttle, slower and longer than the Thresher's: at forty cells wide
    a short burst would be a twitch, and this creature is meant to arrive. */
 static const int   WIDOW_BURST       = 90;
@@ -2987,7 +3008,12 @@ static const float CENSER_LIMB_Y[CENSER_LIMBS] = {  -4.0f,  10.0f, 10.0f, -4.0f 
    a new station drifts there instead of snapping. */
 static const float CENSER_LIMB_PULL  = 0.018f;
 static const float CENSER_LIMB_DAMP  = 0.82f;
-static const float CENSER_LIMB_SPEED = 0.90f;
+/* 2.0, which is above the body's own surge of 1.7 and is a CEILING rather than
+   a pace. What makes these move slowly is the pull and the damping -- settled,
+   they drift at about half a cell a frame -- and this only ever binds while
+   they are catching up. At 0.9 they could not: a charging body left its limbs
+   fifty cells behind and they spent the charge out of the fight entirely. */
+static const float CENSER_LIMB_SPEED = 2.00f;
 
 /* Is this creature currently shrugging off damage? True only for a Censer body
    with at least one limb still alive. Declared before entApplyDamage, which is
@@ -3128,11 +3154,37 @@ static void censerTick(World& w, Entity& e, const Player& p) {
     const float toward = p.centreX() - e.centreX();
     if (toward >  2.0f) e.facing =  1;
     else if (toward < -2.0f) e.facing = -1;
-    const float pace  = d.speed * (exposed ? 1.45f : 1.0f);
-    const float shove = d.accel * (exposed ? 1.3f : 1.0f);
-    e.vx += (float)e.facing * shove;
-    if (e.vx >  pace) e.vx =  pace;
-    if (e.vx < -pace) e.vx = -pace;
+    /* Beyond its reach it charges; inside it, it walks and spits. That is the
+       whole of the anti-kite rule, and it needs no line of sight -- this
+       creature goes through the wall you are hiding behind, so "it cannot see
+       you" is not a reason for it to slow down. */
+    /* HYSTERESIS, and it is not a refinement -- without it the creature sits on
+       the boundary. Surge on at 200 and off at 200 and the cycle is: charge,
+       cross the line, drop to a walk, get outpaced, cross back. Measured, it
+       hovered at 198 cells for the rest of the run and never once got far
+       enough inside its own reach to finish a volley -- closing the gap and
+       still firing nothing, which is the same complaint in a smaller radius.
+
+       It charges until it is WELL inside: two thirds of the range, which leaves
+       room to lose ground during the wind-up and still be able to throw. */
+    if (dist > CENSER_SPIT_RANGE) e.charging = true;
+    else if (dist < CENSER_SPIT_RANGE * 0.66f) e.charging = false;
+    const bool surging = e.charging;
+    const float pace  = d.speed * (exposed ? 1.45f : 1.0f)
+                                * (surging ? CENSER_SURGE : 1.0f);
+    const float shove = d.accel * (exposed ? 1.3f : 1.0f)
+                                * (surging ? 2.0f : 1.0f);
+    /* It stops when it is ON you. groundChase handled arrival through its
+       stand-off; a hand-rolled chase has to say so, and without it the creature
+       accelerates at its own feet forever -- shuffling back and forth across
+       the player and dragging four hanging limbs along with it. */
+    if (toward > 4.0f || toward < -4.0f) {
+        e.vx += (float)e.facing * shove;
+        if (e.vx >  pace) e.vx =  pace;
+        if (e.vx < -pace) e.vx = -pace;
+    } else {
+        e.vx *= 0.80f;
+    }
 
     /* Shears the rock in front of it across its whole face, exactly as the
        Brood Mother does and for the same reason her note gives: a creature this
@@ -3151,7 +3203,18 @@ static void censerTick(World& w, Entity& e, const Player& p) {
        prevX/prevY are maintained centrally in entTickMode, so this is reading
        the same "did it actually get anywhere" every other boss reads. */
     const float moved = fabsf(e.x - e.prevX) + fabsf(e.y - e.prevY);
-    if (moved < BOSS_STUCK_CELLS) {
+    /* Only while it is TRYING to walk, which is the same distinction the Brood
+       Mother's own wedged check makes: "a boss holding still through a wind-up
+       has not failed to move, she has decided not to."
+
+       Here the decision is arriving. A Censer standing on the player is not
+       going anywhere because there is nowhere to go, and without this it read
+       as wedged every twenty-two frames and launched itself -- bouncing on the
+       spot and dragging its four limbs up and down with it, which measured as
+       the limbs swinging fifty cells after the damping had already fixed
+       them. */
+    const bool walking = toward > 4.0f || toward < -4.0f;
+    if (walking && moved < BOSS_STUCK_CELLS) {
         if (++e.stuck >= CENSER_STUCK) {
             e.stuck = 0;
             e.vy = -CENSER_HOP;
