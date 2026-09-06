@@ -5,7 +5,7 @@ chat, which meant it was re-derived from memory every session and quietly lost
 things. `HANDOFF.md` is **not** this file: it is gitignored scratch, is usually
 stale, and should not be trusted for release state.
 
-Released: **v0.4.5**. Thirty-seven commits sit past it (see *Ship it* below).
+Released: **v0.5.0** (2026-09-06). `main` is level with it.
 
 ---
 
@@ -26,20 +26,12 @@ Released: **v0.4.5**. Thirty-seven commits sit past it (see *Ship it* below).
 
 ## Ship it
 
-- [ ] **Cut v0.5.0.** Not 0.4.6: the unreleased set outgrew a patch number
-      some time ago, and a layer-2 boss, a new tool tier and a change to how
-      the whole world is lit is a minor version. The headline items:
-      - the flint striker fix (a mouse button released outside the window is no
-        longer held forever) — worth a Windows build on its own, since it is
-        the bug you actually hit
-      - the clean-checkout-is-not-dirty fix for the version label
-      - the hive, bees, flowers, wax and honey
-      - **the Widow**, layer 2's boss, and with her the layer 2 seal opening
-      - **Multitool Mk III and the seven shot modifiers**
-      - bare-hand mining doubled, and the whole tool ladder with it
-      - **discovered space is drawn bright** — the biggest visible change in
-        the lot, and the one most worth a fresh pair of eyes before a release
-      - aqua regia removed
+- [x] **Cut v0.5.0.** Tagged 2026-09-06 from `ccfef57`, thirty-eight commits
+      past v0.4.5. Not a 0.4.6: a layer-2 boss, a new tool tier and a change to
+      how the whole world is lit is a minor version. Shipped in it -- the hive
+      and bees, the Widow, Multitool Mk III and the seven shot modifiers, the
+      mining rebalance, discovered-space lighting, the flint striker fix, and
+      aqua regia removed.
 
 ## Beginner friendliness
 
