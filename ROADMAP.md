@@ -4,12 +4,29 @@ What Cinderlift needs before it counts as finished, and the larger ideas that
 are not scheduled yet. Near-term chores live in [CHECKLIST.md](CHECKLIST.md);
 this file is the long arc.
 
-**Done means:** three or four bosses, all three layers populated, and a rocket
-you can build to win.
+**Done means:** FOUR bosses, all three layers populated and fleshed out, and a
+rocket you can build to win.
+
+Settled 2026-09-06, and the number is now four rather than "three or four": a
+layer 3 boss and then a final one. What follows is the ordering decision that
+goes with it, and it matters more than the list does.
+
+**Content first, balance after.** More accessories, more items, and a pass over
+the numbers all come AFTER the main game is roughly finished, not alongside it.
+Balancing a game that is still missing a third of its content means balancing
+against a shape that has not settled, and every number set that way has to be
+set again.
+
+And "roughly finished" is deliberately a low bar, in the sense the word has for
+this kind of game: Terraria at release was less than half of what it is now.
+The target is a complete arc that a player can start and win -- three populated
+layers, four bosses, a rocket -- not a complete GAME. Anything that reads as
+"and it should also have..." belongs after 1.0 and should be argued about
+then.
 
 ---
 
-## 1. Bosses — 2 of 3–4
+## 1. Bosses — 2 of 4
 
 Today there is exactly one: the **Brood Mother** (900 hp, summoned with
 `ITEM_BROOD_CALL`, drops `ITEM_FORGE_CORE`). She is not spawned, only called,
@@ -19,10 +36,11 @@ a boss you summon is a decision.
 - [x] **A layer-2 boss.** The Widow: an eight-legged spider, 40x32, that
       scuttles like a Thresher and spits volleys of silk. Killing it opens the
       layer 2 stratum, the way the Brood Mother opens layer 1.
-- [ ] **A layer-3 boss** — see §2; there is nothing down there at all yet.
-- [ ] **Optionally a fourth, at the rocket.** A final fight gated behind the
-      win condition rather than behind a depth, so the ending is something you
-      beat rather than something you assemble.
+- [ ] **A layer-3 boss** — see §2; there is nothing down there at all yet, so
+      this one waits on the layer having something to be the capstone OF.
+- [ ] **A final boss, at the rocket.** No longer optional. A fight gated behind
+      the win condition rather than behind a depth, so the ending is something
+      you beat rather than something you assemble.
 
 Each wants a summon item, a drop that unlocks the next tier, and — going by
 the Brood Mother — an arena big enough for a dash attack (`BOSS_DASH_SPEED`,

@@ -26,18 +26,20 @@ Released: **v0.4.5**. Thirty-seven commits sit past it (see *Ship it* below).
 
 ## Ship it
 
-- [ ] **Cut v0.4.6.** Thirty-seven commits unreleased on `main`, and the list
-      has outgrown the two fixes it started as. The headline items:
+- [ ] **Cut v0.5.0.** Not 0.4.6: the unreleased set outgrew a patch number
+      some time ago, and a layer-2 boss, a new tool tier and a change to how
+      the whole world is lit is a minor version. The headline items:
       - the flint striker fix (a mouse button released outside the window is no
         longer held forever) — worth a Windows build on its own, since it is
         the bug you actually hit
       - the clean-checkout-is-not-dirty fix for the version label
-      - the hive, bees, flowers, wax and honey (see *Ship it, second wave*)
+      - the hive, bees, flowers, wax and honey
       - **the Widow**, layer 2's boss, and with her the layer 2 seal opening
       - **Multitool Mk III and the seven shot modifiers**
       - bare-hand mining doubled, and the whole tool ladder with it
       - **discovered space is drawn bright** — the biggest visible change in
         the lot, and the one most worth a fresh pair of eyes before a release
+      - aqua regia removed
 
 ## Beginner friendliness
 
@@ -99,12 +101,6 @@ Released: **v0.4.5**. Thirty-seven commits sit past it (see *Ship it* below).
       Pages workflow could -- though the suite is Windows-only today
       (winsock, `CreateProcess`), so it would need a Windows job.
 
-## Ship it, second wave
-
-- [ ] The hive, bees, flowers, wax and honey are on `main` and
-      unreleased. Worth a release once someone has actually placed a
-      hive in a running game -- see ROADMAP.md.
-
 ## Flowers are planted the wrong way
 
 - [ ] **`Flower Seed` does not behave like `Oak Seed`, and should.** Oak is a
@@ -133,31 +129,20 @@ Released: **v0.4.5**. Thirty-seven commits sit past it (see *Ship it* below).
       directly into `MAT_FLOWER` is probably right, rather than adding a
       species to `TREE_KINDS`.
 
-## Bees cannot be picked up
-
-- [ ] **`ITEM_BEE` and `ITEM_COAL_BEE` have no way to be obtained in
-      survival.** Right-click capture was built and then removed on
-      2026-09-01: right-click is also the dig verb, so every swing near a
-      working hive pocketed a bee instead of breaking ground, and the more
-      bees the hive had the worse it got. A verb that competes with mining
-      cannot be how you pick something up.
-
-      The items still exist and still release a bee when used, so a hive can
-      be moved if you already have one -- but nothing gives you one. Whatever
-      replaces the right-click has to be a gesture that cannot fire by
-      accident. Options worth considering: a dedicated net item, or having a
-      hive hand you a bee from its own colony when you interact with it.
-
 ## The long arc
 
 What *done* looks like -- bosses, populating all three layers, the rocket, and
 the bees-and-wax idea -- lives in [ROADMAP.md](ROADMAP.md).
 
-- [ ] **Aqua regia, wax and web have no survival source.** All three exist only
-      in the creative palette. Web is the newest and the most awkward, and not
-      for the reason it first looks: mining it DOES bank it (g_matDropsAs is
-      identity), so a web can be collected -- but it decays with a mean life
-      around 255 frames, so the
+- [ ] **Wax and web have no survival source.** Both exist only in the creative
+      palette. Aqua regia used to be on this list and is not any more: it was
+      removed outright on 2026-09-06 rather than given a source, because it did
+      not feel right in play -- the transmute table and rule went with it, since
+      a mechanism with nothing using it is worse than no mechanism.
+
+      Web is the awkward one, and not for the reason it first looks: mining it
+      DOES bank it (g_matDropsAs is identity), so a web can be collected -- but
+      it decays with a mean life around 255 frames, so the
       window is roughly four seconds, mid-boss-fight, and the recipes want four
       to eight cells each across six of the seven modifiers. That is a
       collection minigame nobody asked for rather than an impossibility.
@@ -170,6 +155,14 @@ the bees-and-wax idea -- lives in [ROADMAP.md](ROADMAP.md).
 ## Known and deliberate
 
 Not bugs, and not scheduled — written down so they stop being rediscovered.
+
+- **Bees cannot be picked up, and that is fine.** `ITEM_BEE` and
+  `ITEM_COAL_BEE` have no survival source: right-click capture was built and
+  removed on 2026-09-01 because right-click is also the dig verb, so every
+  swing near a hive pocketed a bee. Closed as deliberate on 2026-09-06 -- the
+  items still release a bee if you somehow have one, and a hive is placed
+  rather than moved. A net or a hive-hands-you-one gesture is a nice-to-have,
+  not a gap.
 
 - **R-tap still teleports free in survival**, which leaves the Warp Wand with
   little reason to exist. You chose to keep the free teleport; the wand stays
