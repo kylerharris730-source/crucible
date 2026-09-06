@@ -1491,6 +1491,107 @@ static void generateSprings(World& w) {
    ever breaking: STRATUM_THICK is a minimum that the noise only ever adds to.
    A barrier with a thin spot is a barrier with a hole in it as soon as somebody
    finds the thin spot. */
+
+/* ==========================================================================
+   The deep
+   ==========================================================================
+
+   Layer 3 was generated and then left empty: the zone existed, tungsten was in
+   it, and nothing else about standing there differed from layer 2. These two
+   passes are what make it a place.
+
+   Both run only below the SECOND stratum, which is what makes them the deep's
+   own rather than a stronger version of something layers 1 and 2 already have.
+   Lava is deliberately not like this -- its own note explains that it starts
+   just past the FIRST barrier so the step into layer 2 is announced by
+   something glowing -- and brimstone is the opposite decision for the opposite
+   reason: nothing about it should be visible from above, so the difference
+   between layer 2 and layer 3 is something you walk into rather than see
+   coming. */
+
+/* Big and few rather than small and many. A brimstone mass has to be large
+   enough that you are INSIDE it -- surrounded, with the warmth on all sides --
+   because the whole point is a place that feels different to stand in, and a
+   vein you can step over is scenery. At r90 a mass is nearly two screens
+   across at this scale. */
+static const int BRIM_COUNT = 26;
+static const int BRIM_R     = 90;
+
+static void generateBrimstone(World& w) {
+    for (int i = 0; i < BRIM_COUNT; ++i) {
+        const float fx = ((float)i + 0.5f) / (float)BRIM_COUNT * (float)SIM_W
+                       + (float)(int)(hash1(i, 0x8B12u) % 420u) - 210.0f;
+        const int cx = imin(PLAY_X1 - BRIM_R - 4, imax(PLAY_X0 + BRIM_R + 4, (int)fx));
+        /* Below the layer 2 seal, with the barrier's own thickness cleared --
+           a mass that reached up into the stratum would put burnable rock in
+           the one wall that is supposed to be impassable until a boss dies. */
+        const int top = g_stoneY[cx] + LAYER2_DEPTH + STRATUM_THICK + 120;
+        const int span = (PLAY_Y1 - 100) - top;
+        if (span <= 1) continue;
+        int cy = top + (int)(hash1(i, 0x5EEDu) % (u32)span);
+        if (cy > PLAY_Y1 - BRIM_R - 30) cy = PLAY_Y1 - BRIM_R - 30;
+        if (cy < top) continue;
+
+        const int reach = BRIM_R * 3 / 2;
+        for (int y = cy - reach; y <= cy + reach; ++y) {
+            if (y < PLAY_Y0 || y > PLAY_Y1) continue;
+            for (int x = cx - reach; x <= cx + reach; ++x) {
+                if (x < PLAY_X0 || x > PLAY_X1) continue;
+                const int dx = x - cx, dy = y - cy;
+                const int d2 = dx * dx + dy * dy;
+                if (d2 > reach * reach) continue;
+                /* Wobbled like the hotspots, and for the same reason: a round
+                   pocket reads as something that was placed. */
+                const float wob = 1.0f + fbm((float)(dx + dy) / 22.0f,
+                                             0x8B12u + (u32)i, 3) * 0.40f;
+                const float rr = (float)BRIM_R * wob;
+                if ((float)d2 > rr * rr) continue;
+                /* STONE only, so this cannot eat ore, fill a cave, or touch
+                   the seal -- the same guard every late pass here uses. */
+                if (w.at(x, y).mat != MAT_STONE) continue;
+                w.setCell(x, y, MAT_BRIMSTONE);
+            }
+        }
+    }
+}
+
+/* Vents, and they go in FLOORS.
+
+   A fumarole is only a hazard where a player would walk, so this looks for the
+   floor of a cave -- solid with air above it -- rather than scattering vents
+   through rock where they would spend the game venting into stone that is not
+   there to receive it. That also makes them findable in the way the design
+   wants: you are already crossing the chamber when one goes off.
+
+   Placed in ones and twos rather than fields. A floor with a line of vents
+   across it is a wall with extra steps; a floor with two somewhere in it is a
+   floor you cross carefully. */
+static const int VENT_SITES = 900;
+
+static void generateFumaroles(World& w) {
+    for (int i = 0; i < VENT_SITES; ++i) {
+        const int x = PLAY_X0 + 8
+                    + (int)(hash1(i, 0x4E27u) % (u32)(PLAY_X1 - PLAY_X0 - 16));
+        const int top = g_stoneY[x] + LAYER2_DEPTH + STRATUM_THICK + 120;
+        const int span = (PLAY_Y1 - 60) - top;
+        if (span <= 1) continue;
+        const int y = top + (int)(hash1(i, 0x9A31u) % (u32)span);
+
+        /* A floor: this cell solid, and room above it for the fire to go and
+           for a player to be standing in. Checked over three cells of headroom
+           rather than one, because a vent under a one-cell gap erupts into a
+           space nothing can occupy and is a hazard to nobody. */
+        const u8 here = w.at(x, y).mat;
+        if (here != MAT_STONE && here != MAT_BRIMSTONE) continue;
+        bool headroom = true;
+        for (int k = 1; k <= 3 && headroom; ++k)
+            headroom = w.at(x, y - k).mat == MAT_EMPTY;
+        if (!headroom) continue;
+
+        w.setCell(x, y, MAT_FUMAROLE);
+    }
+}
+
 static void generateStrata(World& w) {
     for (int x = PLAY_X0; x <= PLAY_X1; ++x) {
         for (int band = 0; band < 2; ++band) {
@@ -1601,6 +1702,14 @@ void generateWorld(World& w) {
     /* After the pockets, because both write into stone and a spring has no
        business appearing inside somebody's acid bottle. */
     generateSprings(w);
+    /* The deep, after every pass that could have claimed the rock it writes
+       into and BEFORE the strata seal is laid -- brimstone tests for stone, so
+       running it after the seal would be harmless but running it before keeps
+       the "seal last" rule in generateStrata the only thing anybody has to
+       remember. Vents go after brimstone because they are allowed to sit in
+       it. */
+    generateBrimstone(w);
+    generateFumaroles(w);
 
     /* After every pass that carves or replaces underground material, so the
        seal cannot be cut by one of them. See generateStrata. */

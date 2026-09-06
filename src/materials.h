@@ -439,6 +439,47 @@ enum MatId {
        thrown flame clears a curtain of it in seconds. */
     MAT_WEB,
 
+    /* --- layer 3: the deep, and what makes it a different place ------------
+       Layer 3 was generated and then left empty -- the zone existed, the ore
+       existed, and nothing else about standing there differed from layer 2.
+       These four are the answer, and the thing they have in common is that
+       each of them uses the THERMAL model rather than adding a system beside
+       it. That is the layer's identity: layers 1 and 2 are about what is
+       hunting you, and the deep is about the rock itself being hostile.
+
+       Appended, like every material id, because they are written into saves. */
+
+    /* Brimstone. The bulk of the deep, and it is WARM where every other rock
+       is ambient -- so the air above it rises on its own (see the convection
+       note in world.h) and a chamber cut into it is genuinely hot to stand in
+       before anything has been lit.
+
+       And it BURNS, at a temperature a thermal lance reaches and lava passes
+       without trying. Digging in layer 3 is therefore a decision in a way that
+       digging anywhere else is not: cut into the wrong wall next to a hotspot
+       and the wall itself catches, which is a hazard nothing else in the game
+       produces because nothing else in the game is made of fuel. */
+    MAT_BRIMSTONE,
+    /* Brimstone alight. Hotter than fire and much longer lived, because a rock
+       that catches should not go out like a torch -- this is what turns one
+       careless cut into a fire you have to get away from rather than one you
+       stamp on. Cools into ash, so a burnt-out seam is visibly spent and does
+       not silently become minable stone again. */
+    MAT_BRIMFIRE,
+    /* What is left. A light powder that falls and drifts into piles, and the
+       only thing here that is not dangerous: ash is the SCENERY of the deep,
+       and it is what makes a place that has burned look like one. */
+    MAT_ASH,
+    /* A vent. Immovable, permanently hot, and it spits fire into whatever
+       empty space it can reach -- the same shape MAT_SPRING uses for water,
+       for the same reason: an emitter is four lines beside the cell that
+       emits, not a machine.
+
+       This is the hazard you plan a route around rather than fight. It cannot
+       be extinguished and it cannot be walked past, and unlike a lava pool it
+       does not sit still and glow at you: it is quiet until it is not. */
+    MAT_FUMAROLE,
+
     MAT_COUNT
 };
 
@@ -644,6 +685,21 @@ extern u8 g_matGlows[MAT_COUNT];
    delivers before it warms, and this decides how long it hangs around. Cold
    fire wants both -- a big payload and a short life. */
 extern u8 g_matDecay[MAT_COUNT];
+
+/* What a decaying material leaves behind. MAT_EMPTY for everything that does
+   not say otherwise, which is what cold fire and the two embers always did.
+
+   It exists because burning brimstone needed a lifetime AND a residue, and the
+   two are separate facts. The lifetime is the argument above: a solid mass of
+   burning rock has no thermal gradient inside it, so nothing conducts, so
+   temperature cannot end it -- measured, a seam of 1681 cells was still
+   entirely alight after four thousand frames with not one cell cooled. That is
+   the same bind cold fire is in, and it takes the same answer.
+
+   The residue is the other half. A seam that burned out to nothing would leave
+   a cavity, so the deep would slowly hollow itself; one that reverted to
+   brimstone would make the whole hazard free. Ash is neither. */
+extern u8 g_matDecaysTo[MAT_COUNT];
 
 /* --- how hard a material is to break ---------------------------------------
 

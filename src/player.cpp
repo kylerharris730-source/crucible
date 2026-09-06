@@ -281,6 +281,21 @@ static float heatCoupling(u8 mat) {
    coupling make standing on hot metal a serious hazard. */
 static const float FOOT_HEAT_CONTACT = 2.0f;
 
+/* And the same hole SIDEWAYS, which went unnoticed until there was a hot WALL
+   to notice it with.
+
+   The box stops immediately beside a wall cell exactly as it stops above a
+   floor one, so every cell the scan below reads while you stand against a
+   furnace is the air you are standing in. Reported from play, of brimstone:
+   "touching brimstone actually didnt hurt" -- and it did not, because as far
+   as the heat model was concerned nothing was being touched. Lava and fire hid
+   it because both are things you stand IN rather than beside.
+
+   Weighted at 1.0 against the sole's 2.0. A flank against a wall is a larger
+   area than a footprint but bears no weight and is not pressed into anything,
+   so it is worth an ordinary overlapped cell rather than a privileged one. */
+static const float SIDE_HEAT_CONTACT = 1.0f;
+
 /* Temperatures above 100 C are a different class of hazard from an overheated
    workshop. Add a convex tail only there: lava and fire become decisively
    lethal, while the early heat ramp keeps the tuning established above. */
@@ -325,6 +340,25 @@ static void bodyTemp(const World& w, const Player& p, u8 heatLine, u8 coldLine,
             if (t > heatLine) hotContact += FOOT_HEAT_CONTACT * heatCoupling(w.at(x, footY).mat);
         }
     }
+    /* The two flanks, row by row, using the same tapered outline the rest of
+       the body uses -- so the cell tested beside the shoulders is not the one
+       tested beside the hips, and a character wedged into a doorway is not
+       reported as touching rock its silhouette never reaches. */
+    for (int y = y0; y <= y1; ++y) {
+        const int inset = playerRowInset(y - p.top());
+        const int sides[2] = { p.left() + inset - 1, p.right() - inset + 1 };
+        const u8* row = w.temp + y * SIM_W;
+        for (int k = 0; k < 2; ++k) {
+            const int x = sides[k];
+            if (x < 0 || x >= SIM_W) continue;
+            if (!playerSolid(w, x, y)) continue;
+            const u8 t = row[x];
+            if (t > hi) hi = t;
+            if (t > heatLine)
+                hotContact += SIDE_HEAT_CONTACT * heatCoupling(w.at(x, y).mat);
+        }
+    }
+
     const float cells = (float)imax(1, (y1 - y0 + 1) * (x1 - x0 + 1));
     /* Counted against the WHOLE body, not against the cells that were over the
        line. Dividing by the affected cells would give back the maximum rule

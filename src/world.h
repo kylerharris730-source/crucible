@@ -494,6 +494,15 @@ static const int ACID_DISSOLVE_CHANCE = 20;
    at a time rather than behaving like a burst pipe. */
 static const int SPRING_FLOW_CHANCE = 24;
 
+/* How readily a fumarole spits fire, out of 255. FAR rarer than a spring
+   flows, and the gap between the two numbers is the whole difference between a
+   feature and a nuisance: a vent that erupted at a spring's rate would be a
+   permanent column of flame you can see and route around from a screen away,
+   which is a wall rather than a hazard. At 3 it is quiet most of the time, so
+   crossing the floor it is in is a gamble rather than an obstacle -- and the
+   one it catches is the player who assumed the last crossing meant anything. */
+static const int FUMAROLE_VENT_CHANCE = 3;
+
 /* Heater and cooler setpoints. These are the extremes of the u8 scale on
    purpose: the heater sits above stone's melting point (220) and so above
    every other threshold in the table, and the cooler sits below every

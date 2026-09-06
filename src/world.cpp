@@ -3128,7 +3128,9 @@ void World::updateCell(Lane& L, int x, int y) {
        everything else, so it costs nothing for materials that do not opt in. */
     if (g_matDecay[c.mat]) {
         if (lchance(L, g_matDecay[c.mat])) {
-            convert(L, x, y, MAT_EMPTY);
+            /* Into whatever it leaves behind, which is MAT_EMPTY for everything
+               that does not name something else -- see g_matDecaysTo. */
+            convert(L, x, y, g_matDecaysTo[c.mat]);
             return;
         }
         /* KEEP ITSELF AWAKE, which is the same `moreToDo` pattern acid and
@@ -3235,6 +3237,39 @@ void World::updateCell(Lane& L, int x, int y) {
             room = true;
             if (!lchance(L, SPRING_FLOW_CHANCE)) continue;
             spawnCell(L, nx, ny, MAT_WATER);
+            dirtyPoint(L, nx, ny);
+            return;
+        }
+        if (room) dirtyPoint(L, x, y);
+    }
+
+    /* --- a fumarole ------------------------------------------------------
+       The spring's shape with two differences, and both are deliberate.
+
+       UPWARD FIRST. A vent that filled its four neighbours evenly would bury
+       itself in its own flame and stop reading as a vent at all; taking the
+       cell above when there is one makes it spit rather than seep, and the
+       sideways cases are only a fallback for a vent in a floor with something
+       resting on it.
+
+       And it stays AWAKE while it has anywhere to spit, the same self-dirtying
+       every emitter and reaction in this file needs -- a settled chunk is never
+       handed back to updateCell, so a vent in a quiet cavern would erupt once
+       when it was generated and never again. That is the trap the acid rule
+       documents at length and the decay rule was caught by. */
+    if (c.mat == MAT_FUMAROLE) {
+        bool room = false;
+        /* Above, then the two sides. Never down: a vent venting into the floor
+           it is embedded in is the one direction that can do nothing. */
+        static const int VENT_DX[3] = {  0, -1, 1 };
+        static const int VENT_DY[3] = { -1,  0, 0 };
+        for (int k = 0; k < 3; ++k) {
+            const int nx = x + VENT_DX[k], ny = y + VENT_DY[k];
+            if (nx <= PLAY_X0 || nx >= PLAY_X1 || ny <= PLAY_Y0 || ny >= PLAY_Y1) continue;
+            if (cells[ny * SIM_W + nx].mat != MAT_EMPTY) continue;
+            room = true;
+            if (!lchance(L, FUMAROLE_VENT_CHANCE)) continue;
+            spawnCell(L, nx, ny, MAT_FIRE);
             dirtyPoint(L, nx, ny);
             return;
         }

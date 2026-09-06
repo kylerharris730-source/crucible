@@ -1006,6 +1006,42 @@ MatInfo MATS[MAT_COUNT] = {
      Near-white and low contrast against the dark of layer 2 on purpose: a web
      you cannot see is a trap, and a web you can see is a decision. */
   { "Web",   KIND_STATIC, 255,   0,    0,   0,   0,   0,  0,  110,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY, degC(60), MAT_FIRE,   0,  0xD8DCE4, 0xA8AEBC, 0xD8DCE4, 0xA8AEBC, 0 },
+  /* --- layer 3 --------------------------------------------------------------
+     Brimstone. spawnTemp degC(58), which is the number that makes the deep a
+     different place to stand: thirty-eight degrees over ambient, so a wall of
+     it warms the air in front of it and that air rises, and the player's own
+     heat model starts to notice long before anything catches fire.
+
+     Ignites at 140. Wood goes at 80 and coal ember runs at 185, so this sits
+     between "anything on fire touches it" and "only a real furnace" -- a
+     torch will not set a wall off, a thermal lance or a lava neighbour will.
+     That gap is the whole mechanic; too low and the layer is permanently
+     alight, too high and nothing ever happens. */
+  { "Brimstone", KIND_STATIC, 150, 0,  0,   0,   0,   0,  0,   80,  0,   0, degC(58),   0,  MAT_EMPTY,   0, MAT_EMPTY, degC(140), MAT_BRIMFIRE, 0, 0x6E2A20, 0x47180F, 0x6E2A20, 0x47180F, 0 },
+  /* Burning brimstone. Shaped on Ember rather than on Fire, and the difference
+     is the point: Fire is a GAS that cools itself to death in about ninety
+     frames, and a burning seam of rock has to outlast that or the hazard is
+     over before you have reacted. heatMassShift 4 gives it sixteen times the
+     thermal mass, so it holds its heat the way Ember does.
+
+     Cools to ASH rather than back to brimstone, so a seam you have burnt is
+     spent. Rock that repaired itself would make the whole hazard free. */
+  { "Brimfire", KIND_STATIC, 255,  0,   0,   0,   0,   0,  0,  210,  4,   0, degC(195), degC(80), MAT_ASH, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, 0xFFB03A, 0xC03408, 0xFFB03A, 0xC03408, 0 },
+  /* Ash. Lighter than sand and slides further, so it drifts into the corners
+     of a burnt chamber instead of standing in heaps -- which is what makes a
+     place look like it burned rather than like somebody poured grey sand in
+     it. Inert in every other respect on purpose: the deep has enough going on
+     without its scenery also being a threat. */
+  { "Ash",   KIND_POWDER,  90, 245,   90,   0,   0,  40,  1,   40,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0x5A5450, 0x3E3A38, 0x46403C, 0x2E2A28, 0 },
+  /* A fumarole. Deliberately the same 255 density and immovable KIND_STATIC as
+     a Spring, and deliberately hot enough to be a heat source in its own right
+     even before it emits anything -- so a vent warms a room it is in, and the
+     eruptions are what make it dangerous rather than what makes it noticeable.
+
+     Dark, and it does not glow. A vent you can see from across a cavern is a
+     vent you walk around; the point of this one is that the floor is the
+     hazard. */
+  { "Fumarole", KIND_STATIC, 255,  0,   0,   0,   0,   0,  0,  180,  4,   0, degC(150),  0,  MAT_EMPTY,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0x3A2620, 0x241612, 0x3A2620, 0x241612, 0 },
 };
 
 u32 g_colorLut[MAT_COUNT * 256];
@@ -1013,6 +1049,7 @@ u32 g_heatLut[256];
 u8  g_heatAlpha[256];
 u8  g_matGlows[MAT_COUNT];
 u8  g_matDecay[MAT_COUNT];
+u8  g_matDecaysTo[MAT_COUNT];
 u8  g_matStrength[MAT_COUNT];
 u8  g_matPassable[MAT_COUNT];
 u8  g_matUnseen[MAT_COUNT];
@@ -1142,6 +1179,16 @@ static void initStrength() {
     g_matStrength[MAT_RUBBER]      = STR_SOFT;
 
     g_matStrength[MAT_STONE]       = STR_ROCK;
+    /* The deep. Brimstone is SOFTER than stone, which is the one concession
+       the layer makes: everything else about it is worse than the rock above,
+       so it may as well come out faster once you have decided to cut it.
+       Ash is loose like every other powder, and a fumarole is as hard as the
+       hardest thing here -- it is a hazard, not a resource, and one you could
+       simply mine away would be neither. */
+    g_matStrength[MAT_BRIMSTONE]   = STR_SOFT;
+    g_matStrength[MAT_BRIMFIRE]    = STR_LOOSE;
+    g_matStrength[MAT_ASH]         = STR_LOOSE;
+    g_matStrength[MAT_FUMAROLE]    = STR_HARD;
     /* Ceramic is as hard as the rock it replaces -- a furnace you could scratch
        apart with the starting tool would not be worth firing the clay for. Clay
        and coal are loose ground you dig with anything. */
@@ -1336,6 +1383,12 @@ static void initLight() {
        matching how much hotter it is. */
     g_matLight[MAT_FUELFIRE]   = 105;
     g_matLight[MAT_EMBER]      = 75;
+    /* A burning seam lights the room it is in, and brighter than an ember does
+       -- it is a whole wall alight rather than a lump of coal. This is also the
+       only light source in layer 3 that arrives without you placing it, which
+       is worth knowing: setting a wall on fire is a way to see, and a bad
+       one. */
+    g_matLight[MAT_BRIMFIRE]   = 105;
     /* Dimmer than coal ember, and warmer in hue. A wax fire should read
        as a candle rather than as a forge. */
     g_matLight[MAT_WAX_EMBER]  = 55;
@@ -1794,6 +1847,12 @@ static void initAcid() {
        a boss that lays webs faster than you can burn them would simply kill
        you for standing in its arena. */
     g_matContactDamage[MAT_WEB]        = 0.45f;
+    /* Burning rock, and the highest contact damage in the table -- above acid,
+       because acid is something you can be standing in without noticing and
+       this is a wall that is visibly on fire. The heat model would hurt you
+       here anyway; this is what stops "walk through the flames quickly" from
+       being a free move. */
+    g_matContactDamage[MAT_BRIMFIRE]   = 3.0f;
 }
 
 /* See g_bgRetain in materials.h. Ceramic is the reason this table exists: a
@@ -1858,6 +1917,16 @@ static void initBurnLife() {
        clear again by the time the fight moves. Without it a long fight ends
        with the room full of a hazard nobody can walk through. */
     g_matDecay[MAT_WEB]       = 1;
+    /* Burning brimstone, and the residue table is set here beside the rate for
+       the same reason they belong together -- see g_matDecaysTo. 1 in 255 a
+       frame is a mean cell life around four seconds, so a lit seam burns
+       visibly for a while and is finished rather than permanent. */
+    g_matDecay[MAT_BRIMFIRE]  = 1;
+
+    /* Empty unless a material says otherwise, which preserves exactly what
+       cold fire and the embers have always done. */
+    for (int m = 0; m < MAT_COUNT; ++m) g_matDecaysTo[m] = MAT_EMPTY;
+    g_matDecaysTo[MAT_BRIMFIRE] = MAT_ASH;
     g_matDecay[MAT_FUELFIRE] = 1;
 }
 
