@@ -204,6 +204,60 @@ int main() {
         check(worstStep < 0.9f, "and moves slowly enough to read as hanging");
     }
 
+    /* --- 3c. it gets to you ------------------------------------------------
+       Reported from play: "cant hit me but isnt adjusting, should be able to
+       jump or pass through blocks if it needs to."
+
+       Two separate obstacles, and a boss this size has to beat both. A WALL is
+       in front of its face and is answered by ploughing; a LEDGE is under its
+       feet and is answered by jumping. It had neither, and it was being routed
+       by a flow field whose tallest size class is 24 cells against its own 56 --
+       so the advice it was following was about a creature less than half its
+       size.
+
+       Measured as ground covered toward a player it cannot reach by walking. */
+    {
+        struct Case { const char* what; bool wall; bool ledge; };
+        const Case cases[2] = { { "a wall in the way", true, false },
+                                { "a ledge to climb", false, true } };
+        for (int c = 0; c < 2; ++c) {
+            core = arena(w);
+            if (core < 0) return 2;
+            Player& p = g_player;
+            /* The player to the LEFT, the boss to the right, and the obstacle
+               between them. */
+            if (cases[c].wall)
+                fill(w, CX - 40, CY - 180, CX - 20, FLOOR, MAT_STONE);
+            /* STRATUM, not stone, and the choice is what makes this test the
+               HOP rather than the plough a second time. Ploughing is strength
+               gated -- it cuts stone and stops at a layer barrier -- so a stone
+               step is simply cut through and says nothing about jumping. A
+               sealed one cannot be cut at all, so the only way past it is over.
+
+               Thirty cells: inside the new hop's reach (3.6 gives v*v/2g = 36)
+               and well outside the old one's 16. An earlier version used a
+               forty-cell stone plateau and filled the boss's own spawn point
+               with it, which entombed the creature and measured nothing at
+               all -- the gap did not change by a single cell in either
+               build. */
+            if (cases[c].ledge)
+                fill(w, CX - 40, FLOOR - 30, CX - 20, FLOOR, MAT_STRATUM);
+            run(w, 30);
+            const float start = g_entities[core].centreX() - p.centreX();
+            run(w, 600);
+            const float end = g_entities[core].centreX() - p.centreX();
+            printf("with %-18s gap %.0f -> %.0f cells\n",
+                   cases[c].what, start, end);
+            /* It has to REACH them, not merely make progress. At "start - 40"
+               the wall case passed on the old build, which walked up to the
+               wall and stopped 208 cells short -- ninety cells of approach is
+               not the same as getting there. */
+            check(end < 60.0f, cases[c].wall
+                  ? "it goes through a wall rather than standing at it"
+                  : "and climbs a ledge rather than standing under it");
+        }
+    }
+
     /* --- 4 & 5. the armour, and losing it -------------------------------- */
     /* The whole point of the structure. Same hit, twice, with the only
        difference being whether the limbs are alive. */

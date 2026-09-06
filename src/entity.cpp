@@ -165,6 +165,16 @@ static const int   CENSER_SPIT_WINDUP = 26;
 static const int   CENSER_STRANDS     = 7;
 static const float CENSER_SPREAD      = 0.16f;
 static const float CENSER_SPIT_RANGE  = 200.0f;
+
+/* When a wedged Censer gives up pushing and jumps, and how hard.
+
+   Sooner than the Brood Mother's 40 frames, because she is wedged only during a
+   charge and this one can be wedged while merely walking -- forty frames of a
+   boss standing against a step is long enough to look broken. The hop is large
+   because the creature is: 3.6 lifts a 56-cell body about as far as its own
+   knees, which is what it takes to get onto the sort of ledge that stops it. */
+static const int   CENSER_STUCK = 22;
+static const float CENSER_HOP   = 3.6f;
 /* Its own scuttle, slower and longer than the Thresher's: at forty cells wide
    a short burst would be a twitch, and this creature is meant to arrive. */
 static const int   WIDOW_BURST       = 90;
@@ -3100,19 +3110,55 @@ static void censerTick(World& w, Entity& e, const Player& p) {
         e.telegraph = 0;
     }
 
-    /* --- and it walks ------------------------------------------------- */
-    /* Faster with the limbs gone, which is the whole of the second phase. */
-    bool climb = false;
-    groundChase(e, p, d.speed * (exposed ? 1.45f : 1.0f),
-                d.accel * (exposed ? 1.3f : 1.0f), 0.0f, &climb);
-    if (e.onGround && climb) {
-        const int probeX = e.facing > 0 ? e.right() + 1 : e.left() - 1;
-        if (probeX > PLAY_X0 && probeX < PLAY_X1) {
-            bool low = false;
-            for (int y = e.bottom(); y > e.bottom() - 5 && y > PLAY_Y0; --y)
-                if (playerSolid(w, probeX, y, SOLID_ANY)) { low = true; break; }
-            if (low) e.vy = -2.4f;
+    /* --- and it walks, THROUGH things --------------------------------------
+       NOT routed, and that is deliberate for the same reason the rock mite is
+       not: send a creature round the long way and the thing that makes it
+       different never happens. A mite's answer to a wall is to eat it; this
+       one's is to walk through it, and the flow field would have it politely
+       looking for a door.
+
+       It also could not use the field honestly if it wanted to. The tallest nav
+       class is 24 cells and this creature is 56 -- more than twice the height
+       the route was solved for -- so every answer the field gave it was about
+       a creature less than half its size, which is how a boss ends up standing
+       on a slope failing to adjust while the player shoots it from below.
+
+       Reported from play: "cant hit me but isnt adjusting, should be able to
+       jump or pass through blocks if it needs to." Both, now. */
+    const float toward = p.centreX() - e.centreX();
+    if (toward >  2.0f) e.facing =  1;
+    else if (toward < -2.0f) e.facing = -1;
+    const float pace  = d.speed * (exposed ? 1.45f : 1.0f);
+    const float shove = d.accel * (exposed ? 1.3f : 1.0f);
+    e.vx += (float)e.facing * shove;
+    if (e.vx >  pace) e.vx =  pace;
+    if (e.vx < -pace) e.vx = -pace;
+
+    /* Shears the rock in front of it across its whole face, exactly as the
+       Brood Mother does and for the same reason her note gives: a creature this
+       size should read as going THROUGH a wall rather than nibbling one.
+       Strength-gated, so it eats stone and soil and is stopped dead by a layer
+       barrier -- a boss that could cut the seal could leave its own arena. */
+    broodPlough(w, e, (float)e.facing, 0.0f);
+
+    /* --- and when that is not enough, it climbs --------------------------
+       Ploughing handles a wall. It does not handle a LEDGE, because the rock
+       that stops a sixty-cell creature stepping up is under its feet rather
+       than in front of its face -- so the same wedged-boss detector the Brood
+       Mother uses drives a hop here, and the hop clears its own headroom on
+       the way up.
+
+       prevX/prevY are maintained centrally in entTickMode, so this is reading
+       the same "did it actually get anywhere" every other boss reads. */
+    const float moved = fabsf(e.x - e.prevX) + fabsf(e.y - e.prevY);
+    if (moved < BOSS_STUCK_CELLS) {
+        if (++e.stuck >= CENSER_STUCK) {
+            e.stuck = 0;
+            e.vy = -CENSER_HOP;
+            broodPlough(w, e, 0.0f, -1.0f);
         }
+    } else {
+        e.stuck = 0;
     }
 }
 
