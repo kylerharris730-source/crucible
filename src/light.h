@@ -350,11 +350,32 @@ static const int SEEN_LIGHT = 40;
    table. One table and one code path: the display row simply cannot go below
    this where you have been.
 
-   76 renders as shade 150 of 255 -- 59% -- against LIGHT_MIN_SHADE's 24, which
-   is 9%. That is deliberately a long way past what the old floor ever reached,
-   because the complaint is not that explored space is dim, it is that it is
-   black, and half measures here have been tried twice. */
-static const int SEEN_MIN_LIGHT = 76;
+   13, which renders as shade 76 of 255 -- 30% -- against LIGHT_MIN_SHADE's 24,
+   which is 9%. So explored space is a bit over three times the brightness of
+   space you have never lit, which is a wide enough gap to read at a glance and
+   narrow enough that a lamp still changes the picture.
+
+   It was 76 first, which renders at 150 and is 59%. That was deliberately
+   extreme -- the request that prompted it said as much -- and it was too far:
+   "it doesnt quite look right... its too bright, so halve the brightness of
+   discovered areas". Halved is the whole of this change. Note the two numbers
+   have swapped roles in a way that is easy to misread: 76 used to be the LIGHT
+   value and is now the SHADE that comes out of it. The knob is the light. */
+static const int SEEN_MIN_LIGHT = 13;
+
+/* How far the discovered floor FADES OUT at the edge of what you have seen, in
+   light samples -- so 3 is twelve world cells each way, a transition around
+   twenty-four cells wide.
+
+   Without it the boundary is a hard step: the map is one bit per sample, so the
+   edge of explored space was a 4-cell staircase between shade 24 and shade 76,
+   and a straight edge with no counterpart in the world reads as a fault in the
+   picture. That is the same argument the light field's own note makes for
+   interpolating rather than delivering shading in blocks, and this is the same
+   fix -- the seen map is blurred and then interpolated exactly as the light is,
+   so the floor arrives as a gradient and the two blend into each other instead
+   of one cutting the other off. */
+static const int SEEN_FADE = 3;
 
 /* Has this world cell been lit at some point? */
 bool seenAt(int wx, int wy);

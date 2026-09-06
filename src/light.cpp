@@ -63,6 +63,36 @@ static inline int lightBiasedY(int vy) {
     return (g_lightViewY + vy - g_lightAnchorY) * 2 - (LIGHT_CELL - 1);
 }
 
+/* --- the discovered floor, as a FIELD ---------------------------------------
+   0..255 of "how discovered is this sample", blurred so the edge of explored
+   space arrives as a gradient rather than a 4-cell staircase. See SEEN_FADE.
+
+   Held at the light field's own resolution and indexed identically, so the
+   bilinear read below is the same arithmetic lightAt already does for light --
+   which is the point: two fields sampled the same way blend into each other,
+   and a floor that stepped where the light did not would be visible precisely
+   because it disagreed. */
+static u8 g_seenField[LIGHT_W * LIGHT_H];
+
+/* The floor to apply at one view cell, interpolated. Zero everywhere nothing
+   has been seen, which is what keeps this invisible to the tools in tools/:
+   they call lightCompute directly and never mark anything, so the field stays
+   empty and every floor comes out zero. */
+static inline int seenFloorAt(int vx, int vy) {
+    const int fx = lightBiasedX(vx), fy = lightBiasedY(vy);
+    int sx = fx >> (LIGHT_SHIFT + 1), sy = fy >> (LIGHT_SHIFT + 1);
+    const int tx = fx - (sx << (LIGHT_SHIFT + 1));
+    const int ty = fy - (sy << (LIGHT_SHIFT + 1));
+    sx = imax(0, imin(sx, LIGHT_W - 2));
+    sy = imax(0, imin(sy, LIGHT_H - 2));
+    const u8* p = g_seenField + sy * LIGHT_W + sx;
+    const int full = LIGHT_CELL * 2;
+    const int top = (int)p[0] * (full - tx) + (int)p[1] * tx;
+    const int bot = (int)p[LIGHT_W] * (full - tx) + (int)p[LIGHT_W + 1] * tx;
+    const int s = (top * (full - ty) + bot * ty) >> (2 * (LIGHT_SHIFT + 1));
+    return (SEEN_MIN_LIGHT * s) / 255;
+}
+
 u8 lightAt(int vx, int vy) {
     const int fx = lightBiasedX(vx), fy = lightBiasedY(vy);
     int sx = fx >> (LIGHT_SHIFT + 1), sy = fy >> (LIGHT_SHIFT + 1);
@@ -79,8 +109,8 @@ u8 lightAt(int vx, int vy) {
        every creature, machine and drone drawn over the world is shaded. Without
        it a husk standing in a room you have lit would be a black silhouette
        against a wall you can see perfectly well. */
-    if (l < SEEN_MIN_LIGHT &&
-        seenAt(g_lightViewX + vx, g_lightViewY + vy)) l = SEEN_MIN_LIGHT;
+    const int floorL = seenFloorAt(vx, vy);
+    if (l < floorL) l = floorL;
     return (u8)l;
 }
 
@@ -124,8 +154,8 @@ const u8* lightRow(int vy) {
            spawning anywhere the player had ever carried a torch. How dark a
            place IS and how dark it is DRAWN are separate questions, which is
            the same argument LIGHT_MIN_SHADE's own note makes. */
-        if (l < SEEN_MIN_LIGHT &&
-            seenAt(g_lightViewX + vx, g_lightViewY + vy)) l = SEEN_MIN_LIGHT;
+        const int floorL = seenFloorAt(vx, vy);
+        if (l < floorL) l = floorL;
         row[vx] = (u8)l;
     }
     return row;
@@ -1164,7 +1194,12 @@ void lightCompute(const World& w, int camX, int camY) {
    the light field's resolution rather than per cell. */
 static u8 g_seen[SEEN_BYTES];
 
-void seenReset() { memset(g_seen, 0, sizeof(g_seen)); }
+void seenReset() {
+    memset(g_seen, 0, sizeof(g_seen));
+    /* The smoothed copy too, or the frame after a reset still draws the old
+       world's floor -- the field is only rebuilt inside lightUpdate. */
+    memset(g_seenField, 0, sizeof(g_seenField));
+}
 u8*  seenData()  { return g_seen; }
 
 bool seenAt(int wx, int wy) {
@@ -1195,8 +1230,68 @@ void seenMarkVisible() {
     }
 }
 
+/* Rebuilds g_seenField for the samples the view can read.
+
+   Only that band, not the whole padded rectangle. lightRow and lightAt index
+   samples around the view only -- the 64-sample margin exists so an off-screen
+   LAMP can spill in, and a floor has nothing to spill -- so filling all of
+   LIGHT_W x LIGHT_H would be four times the work for samples nobody reads.
+
+   Separable box blur, two passes of (2R+1) taps rather than one of (2R+1)^2:
+   at R = 3 that is 14 taps a sample instead of 49, over about fourteen thousand
+   samples. A box blur twice is close enough to smooth at this size, and the
+   bilinear read afterwards softens what is left of the steps. */
+static void seenFieldBuild() {
+    static u8 tmp[LIGHT_W * LIGHT_H];
+    const int R = SEEN_FADE;
+    const int vw = VIEW_CELLS_W / LIGHT_CELL, vh = VIEW_CELLS_H / LIGHT_CELL;
+    /* The read band, plus the blur's own reach, plus a sample of slack for the
+       bilinear tap that sits one past the last cell. */
+    const int pad = R + 2;
+    const int x0 = imax(0, LIGHT_MARGIN - pad);
+    const int x1 = imin(LIGHT_W - 1, LIGHT_MARGIN + vw + pad);
+    const int y0 = imax(0, LIGHT_MARGIN - pad);
+    const int y1 = imin(LIGHT_H - 1, LIGHT_MARGIN + vh + pad);
+
+    /* Raw: 255 where the sample has been seen, 0 where it has not. */
+    for (int sy = y0; sy <= y1; ++sy) {
+        const int wy = g_lightAnchorY + (sy << LIGHT_SHIFT);
+        u8* row = g_seenField + sy * LIGHT_W;
+        for (int sx = x0; sx <= x1; ++sx) {
+            const int wx = g_lightAnchorX + (sx << LIGHT_SHIFT);
+            row[sx] = seenAt(wx, wy) ? 255 : 0;
+        }
+    }
+    /* Horizontal, into tmp. Clamped at the band edges rather than wrapping or
+       reading zero, so the fade does not appear at the edge of the screen where
+       there is no boundary in the world. */
+    for (int sy = y0; sy <= y1; ++sy) {
+        const u8* src = g_seenField + sy * LIGHT_W;
+        u8* dst = tmp + sy * LIGHT_W;
+        for (int sx = x0; sx <= x1; ++sx) {
+            int sum = 0;
+            for (int k = -R; k <= R; ++k)
+                sum += src[imax(x0, imin(x1, sx + k))];
+            dst[sx] = (u8)(sum / (2 * R + 1));
+        }
+    }
+    /* Vertical, back into the field. */
+    for (int sy = y0; sy <= y1; ++sy) {
+        u8* dst = g_seenField + sy * LIGHT_W;
+        for (int sx = x0; sx <= x1; ++sx) {
+            int sum = 0;
+            for (int k = -R; k <= R; ++k)
+                sum += tmp[imax(y0, imin(y1, sy + k)) * LIGHT_W + sx];
+            dst[sx] = (u8)(sum / (2 * R + 1));
+        }
+    }
+}
+
 void lightUpdate(const World& w, int camX, int camY) {
     lightCompute(w, camX, camY);
     lightSmooth();
     seenMarkVisible();
+    /* AFTER marking, so a place discovered this frame is drawn discovered this
+       frame rather than one frame late. */
+    seenFieldBuild();
 }

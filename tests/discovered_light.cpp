@@ -166,16 +166,65 @@ int main() {
         seenShade = drawnShade(w);
         printf("lit, then dark:   %d while lit, %d after (%d%%)\n",
                litShade, seenShade, seenShade * 100 / 255);
-        check(seenShade > darkShade * 3,
+        /* Comfortably clear of the undiscovered floor rather than a specific
+           multiple of it. The brightness has already been tuned down once --
+           59% to 30% -- so a check pinned tight against whatever it happens to
+           be would have to be edited every time it moves, and would fail for
+           the wrong reason when it did. What must stay true is that the two are
+           obviously different. */
+        check(seenShade >= darkShade * 2,
               "somewhere you have lit stays far brighter than somewhere you have not");
         /* The request, stated as a number: a blob of metal has to read as
            metal. Iron is 0xA8ADB6; at the old floor of 24 that renders 0x0F0F10,
            which is black. */
-        check(seenShade >= 120,
+        check(seenShade >= 60,
               "and bright enough to tell what the material is");
         printf("  the renderer's own row agrees: %d\n", drawnShadeViaRow());
         check(drawnShadeViaRow() == seenShade,
               "and the row the renderer walks says the same thing");
+    }
+
+    /* --- 2b. the edge of what you have seen FADES ------------------------- */
+    /* Asked for after the first version shipped: "the edges of discover to non
+       discovered should fade like dark to light."
+
+       It did not. The map is one bit per light sample, so the boundary was a
+       hard 4-cell staircase from shade 76 down to 24 -- and a straight edge
+       with no counterpart in the world reads as a fault in the picture rather
+       than as a shadow, which is the same argument the light field's own note
+       makes for interpolating instead of shading in blocks.
+
+       What is measured is the walk from inside explored space out into rock
+       nobody has lit: it has to descend, and it has to do it over several
+       distinct steps rather than in one drop. */
+    {
+        /* The chamber from buriedMetal is 61 cells wide; light it all, then
+           walk right, out through the wall and into undiscovered stone. */
+        buriedMetal(w);
+        w.setCell(CX, CY + 8, MAT_TORCH);
+        look(w);
+        w.setCell(CX, CY + 8, MAT_EMPTY);
+        look(w);
+
+        const int vy = (CY + 8) - (CY - VIEW_CELLS_H / 2);
+        int prev = 999, drops = 0, steps = 0, plateaus = 0;
+        printf("across the edge: ");
+        for (int dx = 0; dx <= 60; ++dx) {
+            const int vx = (CX + dx) - (CX - VIEW_CELLS_W / 2);
+            const int sh = (int)g_lightShade[lightAt(vx, vy)];
+            if (dx % 6 == 0) printf("%d ", sh);
+            if (prev != 999) {
+                if (sh < prev) { ++drops; ++steps; }
+                else if (sh == prev) ++plateaus;
+            }
+            prev = sh;
+        }
+        printf("\n  %d distinct decreasing steps over 60 cells\n", steps);
+        check(drops > 0, "it gets darker as you leave what you have seen");
+        /* A hard edge is ONE step. Anything that fades has many, and the count
+           is what separates the two -- not the endpoints, which are the same
+           either way. */
+        check(steps >= 8, "and does it as a gradient rather than in one jump");
     }
 
     /* --- 3. walking through the dark discovers nothing --------------------- */
