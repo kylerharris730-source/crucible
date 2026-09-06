@@ -1659,6 +1659,15 @@ void initItems() {
     ITEMS[ITEM_SILK_GLAND].colour   = 0xD4433C;
     ITEMS[ITEM_SILK_GLAND].sprite   = SPR_SILK_GLAND;
 
+    /* Layer 3's drop, on the same terms as Ichor and Chitin: the thing
+       everything in the layer leaves behind, so its recipes can be assembled
+       out of what the place is made of. */
+    ITEMS[ITEM_CINDER_HEART].name     = "Cinder Heart";
+    ITEMS[ITEM_CINDER_HEART].kind     = ITEMK_COMPONENT;
+    ITEMS[ITEM_CINDER_HEART].maxStack = 99;
+    ITEMS[ITEM_CINDER_HEART].colour   = 0xFF8A3A;
+    ITEMS[ITEM_CINDER_HEART].sprite   = SPR_CINDER_HEART;
+
     ITEMS[ITEM_TITANIUM_HELMET].name       = "Titanium Helmet";
     ITEMS[ITEM_TITANIUM_HELMET].kind       = ITEMK_WORN;
     ITEMS[ITEM_TITANIUM_HELMET].equipSlot  = EQ_HEAD;
@@ -1742,6 +1751,8 @@ void initItems() {
     ITEMS[ITEM_TITANIUM_SUIT].description = "Advanced body armour built for severe heat, cold, and combat.";
     ITEMS[ITEM_FORGE_CORE].description = "A Brood Queen relic used to construct a Blast Furnace.";
     ITEMS[ITEM_WIDOW_CALL].description = "Consume to summon the Widow nearby.";
+    ITEMS[ITEM_CINDER_HEART].description =
+        "Still warm. Cut from something that lived in the deep.";
     ITEMS[ITEM_MULTITOOL3].description =
         "Six sockets, and the first chassis that can hold a modifier.";
     ITEMS[ITEM_MOD_DOUBLE].description =

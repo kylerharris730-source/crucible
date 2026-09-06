@@ -494,6 +494,84 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
       WIDOW_SPIT_EVERY, 14, 7.0f, 0.0f, true,
       ITEM_SILK_GLAND, 1, 1, ITEM_NONE, 0, SPR_NONE, 0x6E5578,
       ITEM_EGG_WIDOW, false, false, 0 },
+
+    /* --- the Ashhound, layer 3 ---------------------------------------------
+       The one you cannot shake, and the answer to "an enemy thats like the
+       bat -- that fast persistent pathfinding".
+
+       Every other walker in the game gives you a way out. The Husk is slow, the
+       Thresher stops between bursts, the Shambler lurches, and all three of
+       them lose a footrace. This does not: 1.15 against the character's 1.2 is
+       close enough that a straight sprint barely keeps ahead, and it never
+       pauses, never overshoots and never gives up -- groundChase routes it
+       through the shared flow field, so a wall is a detour rather than an
+       escape.
+
+       Light, and that is the balance. 54 hp is under a Thresher's, so the
+       answer to one is to turn and kill it; the answer to three is to have
+       already dealt with the first two. */
+    { "Ashhound", 14, 10, 54, 26, 28,
+      1.15f, 0.14f, false, 4, false,
+      0, 0, 0.0f, 0.0f, false,
+      ITEM_CINDER_HEART, 1, 2, ITEM_NONE, 0, SPR_ASHHOUND, 0x8A3A22,
+      ITEM_EGG_ASHHOUND, false, false, 210 },
+
+    /* --- the Emberwing, layer 3 --------------------------------------------
+       The bat, done properly, and it is worth being precise about what that
+       means because the roster already has two fliers it must not be.
+
+       The BAT is fast and cannot steer: it commits to a heading, arrives where
+       you were, and sails past. The WISP steers perfectly and is slow enough to
+       walk away from. This one is fast AND routes -- flyerRouteHeading, the
+       same flow field the walkers use -- so it neither overshoots nor lets you
+       stroll out of its way. There is no aimHold here on purpose; commitment is
+       the bat's whole mechanic and removing it is what makes this a different
+       creature rather than a faster one.
+
+       And it shoots, rarely, which is what stops "get above it" from being a
+       free answer. Fragile to match: 30 hp, the lightest thing down here. */
+    { "Emberwing", 11, 9, 30, 22, 26,
+      1.50f, 0.085f, true, 4, false,
+      110, 14, 4.2f, 0.0f, false,
+      ITEM_CINDER_HEART, 1, 1, ITEM_NONE, 0, SPR_EMBERWING, 0xE8622A,
+      ITEM_EGG_EMBERWING, false, false, 210 },
+
+    /* --- the Slagmaw, layer 3 ----------------------------------------------
+       Layer 3's artillery, and the difference between it and layer 2's
+       Culverin is what it leaves behind rather than what it does on arrival.
+
+       A Culverin volley is damage you dodge and then forget. This lobs BURNING
+       globs -- the shot carries fire as its payload, so a miss is not a miss:
+       it puts a fire where you were going to stand, and in a layer whose walls
+       are fuel it can start something neither of you planned. Denying ground is
+       the whole creature.
+
+       Slow and heavy, like every planted shooter: it holds its distance and
+       makes you come, and 96 hp means coming is a commitment. */
+    { "Slagmaw", 13, 12, 96, 24, 34,
+      0.18f, 0.03f, false, 4, false,
+      96, 18, 4.6f, 96.0f, false,
+      ITEM_CINDER_HEART, 1, 2, ITEM_NONE, 0, SPR_SLAGMAW, 0xC8541C,
+      ITEM_EGG_SLAGMAW, false, false, 210 },
+
+    /* --- the Cinderling, layer 3 -------------------------------------------
+       Small, quick, and trivially killable -- and what it leaves behind is
+       none of those things. It sets the ground alight as it runs, which is the
+       Drip Slime's archetype (see slimeTick: the creature is nothing and the
+       trail is everything) moved into a layer where the FLOOR IS FUEL.
+
+       That last part is why it is here rather than being a reskin. An acid
+       trail is a puddle in a corridor; a fire trail on brimstone is a seam
+       alight, and killing one of these in the wrong place is a mistake you
+       make once. It is also the only creature in the game that can start a
+       fire the player then has to deal with as terrain.
+
+       28 hp and it dies to anything. Do not let it get behind you. */
+    { "Cinderling", 8, 7, 28, 18, 30,
+      1.30f, 0.16f, false, 4, false,
+      0, 0, 0.0f, 0.0f, false,
+      ITEM_CINDER_HEART, 1, 1, ITEM_NONE, 0, SPR_CINDERLING, 0xFF8A3A,
+      ITEM_EGG_CINDERLING, false, false, 230 },
 };
 
 /* See the note in entity.h. One switch, and hive_bosses asserts it covers
@@ -2022,7 +2100,13 @@ static void batTick(const World& w, Entity& e, const Player& p) {
    it would be two things to get wrong. The caller owns the DECISION to fire --
    range bands, line of sight, whether it is retreating -- and this owns the
    aim. */
-static void lobAtPlayer(const World& w, Entity& e, const Player& p) {
+/* `payload` is a MatId planted where the glob comes to rest, MAT_EMPTY for an
+   ordinary shot -- the same Projectile field a player's loaded multitool uses,
+   so a creature that leaves fire where it lands costs one argument rather than
+   a second shooter. `colour` is the shot's own, since a burning glob that flew
+   the Spitter's acid green would be a lie about what it does on arrival. */
+static void lobAtPlayer(const World& w, Entity& e, const Player& p,
+                        int payload = MAT_EMPTY, u32 colour = 0xC8E060) {
     const EntityDef& d = ENT_DEFS[e.type];
     (void)w;
     float dx = p.centreX() - e.centreX(), dy = p.centreY() - e.centreY();
@@ -2083,7 +2167,7 @@ static void lobAtPlayer(const World& w, Entity& e, const Player& p) {
     const float mx = (mlen > 0.001f) ? vx / mlen : 1.0f;
     const float my = (mlen > 0.001f) ? vy / mlen : 0.0f;
     projSpawn(e.centreX() + mx * 8.0f, e.centreY() + my * 8.0f, vx, vy,
-              STR_NOTHING, 1, 240, 0xC8E060, 0, MAT_EMPTY, d.shotDamage, true,
+              STR_NOTHING, 1, 240, colour, 0, payload, d.shotDamage, true,
               PROJ_GRAVITY);
     e.shotTimer = d.shotEvery;
 }
@@ -2609,6 +2693,139 @@ static void widowTick(World& w, Entity& e, const Player& p) {
     }
 }
 
+
+/* --- the Ashhound: it simply does not stop -----------------------------------
+   The whole creature is groundChase with nothing taken off it. No burst and
+   pause like the Thresher, no stand-off like a shooter, no commitment window
+   like the Bat -- it routes through the flow field every frame and runs at you.
+
+   Which means this needs almost no code, and that is the point rather than an
+   apology: what makes it frightening is a SPEED and the absence of a let-up,
+   and both of those are in the table. A tick that added a rhythm would be
+   giving the player the gap the creature exists to deny.
+
+   It does hop, because a pursuer that loses you to a one-cell step is not a
+   pursuer. Same probe the Thresher uses. */
+static void ashhoundTick(const World& w, Entity& e, const Player& p) {
+    const EntityDef& d = ENT_DEFS[e.type];
+    bool climb = false;
+    groundChase(e, p, d.speed, d.accel, 0.0f, &climb);
+    if (e.onGround && climb) {
+        const int probeX = e.facing > 0 ? e.right() + 1 : e.left() - 1;
+        if (probeX > PLAY_X0 && probeX < PLAY_X1) {
+            bool low = false;
+            for (int y = e.bottom(); y > e.bottom() - 3 && y > PLAY_Y0; --y)
+                if (playerSolid(w, probeX, y, SOLID_ANY)) { low = true; break; }
+            if (low) e.vy = -1.8f;
+        }
+    }
+}
+
+/* --- the Emberwing: fast, and it finds you -----------------------------------
+   flyerRouteHeading is the flow field for fliers, and using it at this speed is
+   the entire creature. The Bat is fast and blind; the Wisp sees and is slow;
+   this is both, which is why neither of the two answers that work on them works
+   on it -- you cannot sidestep a thing that re-routes, and you cannot walk away
+   from a thing that is faster than you.
+
+   NO aimHold. The Bat's commitment window is what makes it miss, and inheriting
+   it here would have produced a faster Bat rather than a different creature.
+
+   It shoots on the ordinary shot clock while closing, which is what stops
+   height from being a free answer to it. */
+static void emberwingTick(World& w, Entity& e, const Player& p) {
+    const EntityDef& d = ENT_DEFS[e.type];
+    float hx = 0.0f, hy = 0.0f;
+    if (!flyerRouteHeading(w, e, p.centreX(), p.centreY(), &hx, &hy)) {
+        hx = p.centreX() - e.centreX();
+        hy = p.centreY() - e.centreY();
+        const float len = sqrtf(hx * hx + hy * hy);
+        if (len > 0.01f) { hx /= len; hy /= len; }
+    }
+    e.vx += hx * d.accel;
+    e.vy += hy * d.accel;
+
+    /* A shallow wingbeat across the heading, so a routed flier does not read as
+       a cursor being dragged. Much smaller than the Bat's flutter -- that one is
+       what makes the Bat miss, and this creature is not supposed to. */
+    e.animPhase += 0.22f;
+    e.vx += -hy * cosf(e.animPhase) * 0.045f;
+    e.vy +=  hx * cosf(e.animPhase) * 0.045f;
+
+    const float sp = sqrtf(e.vx * e.vx + e.vy * e.vy);
+    if (sp > d.speed) { e.vx = e.vx / sp * d.speed; e.vy = e.vy / sp * d.speed; }
+    if (e.vx > 0.05f) e.facing = 1; else if (e.vx < -0.05f) e.facing = -1;
+
+    if (e.shotTimer > 0) { --e.shotTimer; return; }
+    const float dx = p.centreX() - e.centreX(), dy = p.centreY() - e.centreY();
+    if (dx * dx + dy * dy > 150.0f * 150.0f) return;
+    for (int k = 1; k <= 6; ++k) {
+        const int sx = (int)(e.centreX() + dx * (float)k / 7.0f);
+        const int sy = (int)(e.centreY() + dy * (float)k / 7.0f);
+        if (sx < 0 || sx >= SIM_W || sy < 0 || sy >= SIM_H) return;
+        if (playerSolid(w, sx, sy)) return;
+    }
+    lobAtPlayer(w, e, p);
+}
+
+/* --- the Slagmaw: it denies the ground ---------------------------------------
+   spitterTick's aiming and rhythm, with one field changed on the shot: the glob
+   carries MAT_FIRE as its payload, so where it lands is where a fire starts.
+
+   That one field is the creature. A Culverin's volley is damage you dodge and
+   then forget about; a miss from this one is not a miss, because the place you
+   were about to stand is now on fire -- and in a layer whose walls are fuel it
+   can start something that outlives the fight. Everything else here is the
+   shooter archetype exactly as it already worked. */
+static void slagmawTick(World& w, Entity& e, const Player& p) {
+    const EntityDef& d = ENT_DEFS[e.type];
+    groundChase(e, p, d.speed, d.accel, d.standOff);
+
+    if (e.shotTimer > 0) { --e.shotTimer; return; }
+    const float dx = p.centreX() - e.centreX(), dy = p.centreY() - e.centreY();
+    const float dist = sqrtf(dx * dx + dy * dy);
+    if (dist > d.standOff * 2.0f || dist < 12.0f) return;
+    for (int k = 1; k <= 6; ++k) {
+        const int sx = (int)(e.centreX() + dx * (float)k / 7.0f);
+        const int sy = (int)(e.centreY() + dy * (float)k / 7.0f);
+        if (sx < 0 || sx >= SIM_W || sy < 0 || sy >= SIM_H) return;
+        if (playerSolid(w, sx, sy)) return;
+    }
+    lobAtPlayer(w, e, p, MAT_FIRE, 0xFFB040);
+}
+
+/* --- the Cinderling: the trail is the creature -------------------------------
+   Deliberately the Drip Slime's shape, and deliberately much faster. The slime's
+   own note says the archetype is "the creature is trivial to kill and what it
+   leaves behind is not"; this moves that into the one layer where the floor is
+   made of fuel, so the trail does not merely sit in a corridor, it can take the
+   corridor with it.
+
+   Into EMPTY cells only, and only below the body. A trail that overwrote what
+   it crossed would be a burrowing creature; this one lights what is already
+   open and lets brimstone decide whether that becomes a seam.
+
+   Rarer than the slime's drip despite being faster, and the two together are
+   the tuning: covering more ground per second at a lower rate per frame leaves
+   a dashed line rather than a wall, which is a hazard you can cross in a hurry
+   rather than a door. */
+static const int CINDER_TRAIL_EVERY = 26;
+
+static void cinderlingTick(World& w, Entity& e, const Player& p) {
+    const EntityDef& d = ENT_DEFS[e.type];
+    bool climb = false;
+    groundChase(e, p, d.speed, d.accel, 0.0f, &climb);
+    if (e.onGround && climb) e.vy = -1.6f;
+
+    if (++e.actTimer >= CINDER_TRAIL_EVERY) {
+        e.actTimer = 0;
+        const int tx = (int)e.centreX(), ty = e.bottom();
+        if (tx > PLAY_X0 && tx < PLAY_X1 && ty > PLAY_Y0 && ty < PLAY_Y1 &&
+            w.at(tx, ty).mat == MAT_EMPTY)
+            w.setCell(tx, ty, MAT_FIRE);
+    }
+}
+
 static void entTickMode(World& w, Player& fallbackPlayer, Inventory& fallbackInv,
                         bool multiplayer) {
     /* One search for the whole roster, before anybody moves. Seeded from every
@@ -2712,6 +2929,10 @@ static void entTickMode(World& w, Player& fallbackPlayer, Inventory& fallbackInv
         case ENT_SPITTER: spitterTick(w, e, p); break;
         case ENT_BROOD:   broodTick(w, e, p);   break;
         case ENT_WIDOW:   widowTick(w, e, p);   break;
+        case ENT_ASHHOUND:   ashhoundTick(w, e, p);   break;
+        case ENT_EMBERWING:  emberwingTick(w, e, p);  break;
+        case ENT_SLAGMAW:    slagmawTick(w, e, p);    break;
+        case ENT_CINDERLING: cinderlingTick(w, e, p); break;
         case ENT_DUMMY:   dummyTick(w, e, p);   break;
         case ENT_SHAMBLER: shamblerTick(w, e, p); break;
         case ENT_THRESHER: thresherTick(w, e, p); break;
@@ -3302,6 +3523,51 @@ static void entityPixelMotion(const Entity& e, int entityIndex, int sx, int sy,
             if (sy <= 6) *dy -= (int)((tick / 18u) & 1u); /* armoured breathing */
             if (e.weightless) *dx += e.facing;             /* lean through the dash */
         }
+        break;
+    }
+    /* --- layer 3 ------------------------------------------------------- */
+    case ENT_ASHHOUND: {
+        /* Four legs on the gait clock, and the front pair opposed to the back
+           pair -- which is what a bound looks like and is the cheapest way to
+           say "this is running" at ten cells tall. The body dips on the plant.
+
+           Its own case rather than borrowing the Husk's: that one moves two
+           legs and a pair of arms, and applying it here animated nothing at all
+           because the rows it addresses are above this creature's back. */
+        const int gait = gaitStep(e);
+        if (moving) {
+            if (sy >= 8) *dx += ((sx < SPR_W / 2) == (gait != 0)) ? 1 : -1;
+            if (gait && sy >= 4 && sy <= 7) ++*dy;
+        } else if (sy <= 6) {
+            *dy -= (int)((tick / 20u) & 1u);               /* breathing, head low */
+        }
+        break;
+    }
+    case ENT_EMBERWING: {
+        /* The fastest wingbeat after the bee's, because this thing is fast and
+           a slow beat on a fast body reads as gliding. The wings are the outer
+           columns; the core between them holds still. */
+        const int beat = ((tick >> 1) & 1u) ? -1 : 0;
+        if (sx <= 4 || sx >= 9) *dy += beat;
+        break;
+    }
+    case ENT_SLAGMAW: {
+        /* It barely moves, so the animation is the MOUTH: the glow inside it
+           swells on the shot clock, which makes the wind-up readable without a
+           telegraph flag. Legs still ride the gait for the rare reposition. */
+        const int gait = gaitStep(e);
+        if (sy >= 9) *dx += (((sx / 2) + gait) & 1) ? 1 : -1;
+        if (sy >= 4 && sy <= 7 && sx >= 4 && sx <= 9)
+            *dy -= (int)((tick / 10u) & 1u);
+        break;
+    }
+    case ENT_CINDERLING: {
+        /* A coal that decided to move: the body flickers like the ember it is,
+           and the three spindly legs scurry on the gait. Fast clock, because
+           everything about this creature is. */
+        const int gait = gaitStep(e);
+        if (sy >= 8) *dx += ((sx < SPR_W / 2) == (gait != 0)) ? 1 : -1;
+        if (sy >= 3 && sy <= 7) *dy -= (int)((tick / 4u) & 1u);
         break;
     }
     default: break;

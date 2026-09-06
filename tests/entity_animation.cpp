@@ -35,8 +35,14 @@ int main() {
        game at 0.55 radians a frame, so six frames is most of a flap. */
     /* ..., and the Widow last. Its walk is an eight-key generated cycle like
        the Thresher's, so a few frames in is a different set of legs planted. */
+    /* ..., then layer 3's four. The Emberwing's 6 is not interchangeable with
+       the 5 it had first: its wingbeat runs on (tick >> 1) & 1, which is in the
+       SAME phase at frame 0 and frame 5, so the two samples were identical and
+       the creature was reported as not animating. Every entry here has to land
+       on a different phase of whatever clock its creature uses, which is the
+       whole reason the table is hand-written rather than a constant. */
     const int later[ENT_COUNT] = { 0, 5, 6, 9, 7, 4, 6, 6, 6, 8, 6, 21, 12, 6,
-                                   6, 6, 5, 6};
+                                   6, 6, 5, 6, 6, 6, 7, 5};
 
     for (int type = ENT_NONE + 1; type < ENT_COUNT; ++type) {
         if (later[type] == 0) {

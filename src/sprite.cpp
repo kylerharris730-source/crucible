@@ -416,6 +416,115 @@ static const char* ART_MOD_QUICKEN[SPR_H] = {
     "..............", "..............",
 };
 
+
+/* --- layer 3 ---------------------------------------------------------------
+   Four creatures and a drop, in the warm half of the palette that the forge
+   core and the blast module already established. Nothing new was added to
+   paletteOf for these: it is full (see the note there), and "hot" is exactly
+   the range it is not short of. */
+
+/* The Ashhound. Low and long, running -- the silhouette is a body carried
+   forward of its own legs, which is what says RUNNING at this size when there
+   is no room for a gait. The head is down. */
+static const char* ART_ASHHOUND[SPR_H] = {
+    "..............",
+    "..............",
+    "..&&&.........",
+    ".&&&&&&&......",
+    "&x&&&&&&&&&...",
+    "&&&&&&&&&&&&..",
+    ".&&&&&&&&&&&&.",
+    "..k&&kk&&kk&k.",
+    "..k..k..k..k..",
+    "..k..k..k..k..",
+    "..............",
+    "..............",
+    "..............",
+    "..............",
+};
+
+/* The Emberwing. Swept back rather than spread, because this one is not
+   fluttering -- the Bat's sprite is a wide membrane and the difference should
+   be visible before either of them has moved. A hot core between the wings. */
+static const char* ART_EMBERWING[SPR_H] = {
+    "..............",
+    "..............",
+    ".i..........i.",
+    ".ii........ii.",
+    "..iii....iii..",
+    "...iiiLLiii...",
+    "....iL**Li....",
+    "....iL**Li....",
+    "...iiiLLiii...",
+    "..iii....iii..",
+    ".ii........ii.",
+    ".i..........i.",
+    "..............",
+    "..............",
+};
+
+/* The Slagmaw. Squat and open -- it is all mouth, and the mouth is where the
+   glob comes from, so that is the part with the light in it. Planted on a
+   heavy base, which is the visual half of "it does not come to you". */
+static const char* ART_SLAGMAW[SPR_H] = {
+    "..............",
+    "..............",
+    "...&&&&&&&....",
+    "..&&&&&&&&&...",
+    ".&&&*****&&&..",
+    ".&&*LLLLL*&&..",
+    ".&&*L***L*&&..",
+    ".&&&*LLL*&&&..",
+    "..&&&&&&&&&...",
+    "..kk&&&&&kk...",
+    "..k.......k...",
+    "..............",
+    "..............",
+    "..............",
+};
+
+/* The Cinderling. Small, and mostly light: it is the thing that sets the floor
+   alight, so it should read as a coal that decided to move rather than as an
+   animal. Legs deliberately spindly and short -- there is not room for more,
+   and the sprite has to be legible at eight cells across. */
+static const char* ART_CINDERLING[SPR_H] = {
+    "..............",
+    "..............",
+    "..............",
+    "....LLL.......",
+    "...L***L......",
+    "...L*i*L......",
+    "...L***L......",
+    "....LLL.......",
+    "...k.k.k......",
+    "..............",
+    "..............",
+    "..............",
+    "..............",
+    "..............",
+};
+
+/* The Cinder Heart. What everything down there drops, and it is deliberately
+   the same READ as the Forge Core -- a shell with light inside it -- because
+   both are the thing a layer hands you when you have beaten enough of it. The
+   difference is the shape: the Core is a disc and this is a fist. */
+static const char* ART_CINDER_HEART[SPR_H] = {
+    "..............",
+    "....kk..kk....",
+    "...kiikiikk...",
+    "..kii**ii*ik..",
+    "..ki*LLL*iik..",
+    "..ki*L*L*iik..",
+    "...ki*L*ikk...",
+    "....ki*ikk....",
+    ".....kiik.....",
+    "......kk......",
+    "..............",
+    "..............",
+    "..............",
+    "..............",
+};
+
 /* --- the warp wand ---------------------------------------------------------
    A rod held on the diagonal with the split-space colour burning at the tip.
 
@@ -2361,6 +2470,11 @@ void initSprites() {
     expand(SPR_MOD_SEEK,     ART_MOD_SEEK);
     expand(SPR_MOD_SEEKM,    ART_MOD_SEEKM);
     expand(SPR_MOD_QUICKEN,  ART_MOD_QUICKEN);
+    expand(SPR_ASHHOUND,     ART_ASHHOUND);
+    expand(SPR_EMBERWING,    ART_EMBERWING);
+    expand(SPR_SLAGMAW,      ART_SLAGMAW);
+    expand(SPR_CINDERLING,   ART_CINDERLING);
+    expand(SPR_CINDER_HEART, ART_CINDER_HEART);
     expand(SPR_WARP_WAND, ART_WARP_WAND);
     expand(SPR_SPARK, ART_SPARK);
     expandMetal(SPR_ARMOUR_DRONE_VISOR,   ART_ARMOUR_HELM,    0x6FAFBE, 0x3D6C78);

@@ -347,6 +347,20 @@ enum {
     ITEM_MOD_SEEK,
     ITEM_MOD_SEEK_MOUSE,
     ITEM_MOD_QUICKEN,
+
+    /* --- layer 3 ---------------------------------------------------------
+       What the deep drops, and the eggs for its four creatures.
+
+       CINDER HEART is to layer 3 what Ichor is to layer 2 and Chitin to layer
+       1: the thing everything down there leaves behind, so the layer's own
+       recipes can be assembled out of what the place is made of rather than
+       out of a shopping list. That pattern is why deciding to fight a boss
+       arrives gradually, while you are doing something else. */
+    ITEM_CINDER_HEART,
+    ITEM_EGG_ASHHOUND,
+    ITEM_EGG_EMBERWING,
+    ITEM_EGG_SLAGMAW,
+    ITEM_EGG_CINDERLING,
     ITEM_COUNT
 };
 

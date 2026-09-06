@@ -212,6 +212,15 @@ enum SpriteId {
     SPR_MOD_SEEK,
     SPR_MOD_SEEKM,
     SPR_MOD_QUICKEN,
+
+    /* Layer 3's roster and its drop. Hand-drawn at 14x14 like every layer 2
+       creature that is not built from a rig -- four creatures is not enough
+       art to justify a fifth skeleton, and the rig is what the BOSS is for. */
+    SPR_ASHHOUND,
+    SPR_EMBERWING,
+    SPR_SLAGMAW,
+    SPR_CINDERLING,
+    SPR_CINDER_HEART,
     SPR_LENS,
     SPR_RELAY,
     SPR_BREAD,

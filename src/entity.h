@@ -121,6 +121,27 @@ enum EntityType {
        Appended, like every creature, because EntityType indexes
        g_bossesBeaten. */
     ENT_WIDOW,
+
+    /* --- layer 3 ---------------------------------------------------------
+       The deep's roster, and the first creatures to set layerMask bit 2. Until
+       these the zone generated and stayed empty, which ROADMAP called the
+       single biggest content hole in the game.
+
+       Hot, all four of them: heatTolerance well past the default, because the
+       default 60 C would kill them in their own layer -- brimstone alone runs
+       at 58 and a lit seam is far past that. A creature that cannot survive
+       where it lives is not a creature, it is a bug with a sprite.
+
+       They are also FASTER than layer 2 as a group rather than merely tougher,
+       which is the difficulty step this layer makes: layer 2 asks you to fight
+       things, and layer 3 asks whether you can get away from them.
+
+       Appended, like every creature, because EntityType indexes
+       g_bossesBeaten. */
+    ENT_ASHHOUND,
+    ENT_EMBERWING,
+    ENT_SLAGMAW,
+    ENT_CINDERLING,
     ENT_COUNT
 };
 
