@@ -710,5 +710,204 @@ const Clip RIG_SPIDER_IDLE = SPIDER_IDLE;
 /* Built on first use, for the same reason the humanoid clips are: static
    initialisation order across translation units is not something to bet a
    creature on. */
-struct TentClipInit { TentClipInit() { buildTentClips(); buildSpiderClips(); } };
+
+/* --- the harvester -----------------------------------------------------------
+   See the note in rig.h for why this is a fourth skeleton and not the spider's
+   with different numbers. The short version: a spider is carried ON its legs
+   and this hangs BENEATH them, and that is not a proportion, it is a different
+   arrangement of the same parts. */
+
+void rigHarvester(Bone* b, RigDef* rig, const char* name,
+                  int w, int h, const u32* shade) {
+    const int H = h * ARM_SS, W = w * ARM_SS;
+
+    /* SMALL. The body is the least of this creature -- it is a knot in the
+       middle of a lot of leg, and every cell spent on it is a cell not spent on
+       the gap that makes the silhouette. A quarter the relative bulk the spider
+       gives itself. */
+    const int bodyLen = (H *  9) / 100;
+    const int bodyW   = (W *  6) / 100;
+
+    /* And the legs are enormous: the four segments together come to more than
+       one and a half times the height of the box, because the arch spends most
+       of it going up and then all of it coming back down. This is the number
+       that makes a harvestman rather than a long spider. */
+    /* 120%, and the number is bounded by the CANVAS rather than chosen for
+       drama. The vertical span of one leg is the femur's rise plus the shin's
+       drop, and the floor-snap puts the foot on the bottom row -- so a span
+       taller than the box does not overflow gracefully, it slides the knees off
+       the top. At 175% the span was 75 cells in a 56-cell frame and nineteen
+       cells of every leg were simply not drawn. */
+    const int reach = (H * 120) / 100;
+    /* Front-loaded. The first two segments are the arch -- up to the knee and
+       back down -- and the last two are a thin foot that barely tapers. A leg
+       whose segments shorten evenly reads as a tentacle. */
+    /* The SHIN is longer than the femur, and that is what puts the knee at the
+       top of the animal rather than halfway up it. Even segments give a bend in
+       the middle of the leg, which is a spider; a short climb and a long drop
+       gives an apex near the top of the box with the foot far below it, which
+       is what a harvestman stands like.
+
+       Sized against the canvas, not chosen for looks: the femur has to fit the
+       gap between the hip and the top of the frame, and the shin has to cover
+       the whole way back down to the floor. The first version made them nearly
+       equal and the knees went clean off the top while the feet stopped in
+       mid-air. */
+    const int segLen[HARV_SEGS] = { (reach * 38) / 100, (reach * 50) / 100,
+                                    (reach *  8) / 100, (reach *  4) / 100 };
+    /* Thread-thin and almost untapered, which is what a leg this long has to be
+       to stay a LINE rather than a wedge. The spider's taper is wrong here: it
+       is drawn at a third of this length. */
+    const int segW[HARV_SEGS + 1] = { (W * 2) / 100, (W * 2) / 100,
+                                      (W * 1) / 100, (W * 1) / 100,
+                                      (W * 1) / 100 };
+
+    /* Same convention as everything else in this file: rest 0 points DOWN, a
+       child's rest is measured from its parent, and the body has no parent so
+       its 180 is absolute up. */
+    b[HARV_BODY] = mk(-1, 180, bodyLen, bodyW, bodyW * 8 / 10, 1, 2, 0);
+    /* SLUNG, and this is the join that says which animal it is. The abdomen
+       hangs almost straight DOWN off the body's base -- 172, nearly antiparallel
+       to the body itself -- so the mass of the creature is below the point where
+       the legs meet, with daylight above it. On the spider the same bone reaches
+       backward at 82 and the body sits on top of its legs. */
+    b[HARV_ABDOMEN] = mk(HARV_BODY, 172, (H * 24) / 100,
+                         bodyW * 14 / 10, bodyW * 5 / 10, 3, 0, 0);
+    b[HARV_HEAD] = mk(HARV_BODY, -104, (H * 8) / 100,
+                      bodyW * 7 / 10, bodyW * 4 / 10, 4, 4, 200);
+
+    /* --- the arch ---------------------------------------------------------
+       Three stations front to back, each with a near and a far leg. The first
+       segment leans out from vertical by `base` and climbs; the second folds
+       back through `fold` so the whole leg finishes pointing very nearly
+       straight down, whatever it leaned to get there.
+
+       The fold is COMPUTED rather than tabled, and that is what keeps the feet
+       on the floor: every leg has to arrive at about the same downward heading
+       or the creature stands on tiptoe at one end and its knee at the other.
+       165 is that heading -- just off vertical, on whichever side the leg
+       leaned -- and the fold is however much turning it takes to get there from
+       wherever the leg started. */
+    /* Steeper than a real harvestman's sprawl, because the box IS the hitbox
+       here: legs that lean out as far as the animal's really do would either
+       leave the canvas or force a collision box mostly made of air. */
+    static const int base[HARV_LEGS / 2] = { -40, -13, 32 };
+    static const int LAND = 165;
+
+    for (int t = 0; t < HARV_LEGS; ++t) {
+        const bool nearSide = t >= HARV_LEGS / 2;
+        const int  pair  = t % (HARV_LEGS / 2);
+        const int  sh    = nearSide ? 2 : 0;
+        const int  layer = nearSide ? 3 : 1;
+        const int  turn  = base[pair] < 0 ? -1 : 1;
+        /* The near set stands a little wider, so six legs are six and not three
+           drawn twice. */
+        const int  lean  = base[pair] + (nearSide ? turn * 11 : 0);
+        const int  fold  = turn * LAND - lean;
+
+        for (int s = 0; s < HARV_SEGS; ++s) {
+            const int idx = harvBone(t, s);
+            const int parent = s == 0 ? HARV_BODY : idx - 1;
+            int rest;
+            if      (s == 0) rest = lean;
+            else if (s == 1) rest = fold;
+            else             rest = turn * 5;     /* the foot, barely bent */
+            /* Off the body's MIDDLE, so the legs meet at the knot rather than
+               sprouting from its crown or its base. */
+            const int at = s == 0 ? 140 : 255;
+            b[idx] = mk(parent, rest, segLen[s],
+                        segW[s], segW[s + 1], sh, layer, at);
+        }
+    }
+
+    rig->name  = name;
+    rig->bone  = b;
+    rig->bones = HARV_BONES;
+    rig->shade = shade;
+    rig->w = w; rig->h = h;
+    rig->rootX = (i16)(W / 2);
+    /* Low. The legs rise from here into the top of the box and come back down
+       past it, so the knot sits well below centre and the arch has somewhere to
+       go. The spider's 38% would put the knees off the top of the canvas at
+       this leg length -- which is the same mistake the spider's own rootY note
+       records from the other direction. */
+    rig->rootY = (i16)((H * 70) / 100);
+}
+
+/* --- the tripod --------------------------------------------------------------
+   Three legs down, three lifting, alternating -- which is what six-legged
+   things do and what keeps this from being the spider's four-and-four wearing a
+   different skin. A leg is in the first tripod if its station index and its
+   side disagree, so each side carries one lifting leg between two planted ones
+   and the creature is never balanced on a single edge.
+
+   The LIFT is in the knee and nowhere else. On legs this long a swing at the
+   hip moves the foot half the width of the box, which reads as wading; folding
+   the knee picks the foot up and puts it down almost in place, which is what a
+   harvestman actually looks like -- most of the motion is vertical and the
+   creature barely seems to travel. */
+void rigHarvesterWalk(PoseKey* keys, int count, int lift) {
+    memset(keys, 0, sizeof(PoseKey) * (size_t)count);
+    for (int k = 0; k < count; ++k) {
+        PoseKey& p = keys[k];
+        int bodyRise = 0;
+        for (int t = 0; t < HARV_LEGS; ++t) {
+            const bool nearSide = t >= HARV_LEGS / 2;
+            const int  pair = t % (HARV_LEGS / 2);
+            const int  turn = pair < 2 ? -1 : 1;
+            const bool tripodA = ((pair & 1) != 0) != nearSide;
+            const int phase = (k * 360) / count + (tripodA ? 0 : 180);
+
+            const int swing = isin1024(phase);
+            const int curl  = isin1024(phase + 90);
+
+            for (int s = 0; s < HARV_SEGS; ++s) {
+                int a;
+                if (s == 0) {
+                    /* Barely anything at the hip. See above. */
+                    a = (swing * 7) / 1024;
+                } else if (s == 1) {
+                    /* The knee does the work, and only on the recovery half --
+                       a planted leg holds its shape while the body passes over
+                       it, or the creature is swimming. */
+                    const int c = curl > 0 ? curl : 0;
+                    a = -turn * (c * lift) / 1024;
+                } else {
+                    const int c = curl > 0 ? curl : 0;
+                    a = turn * (c * lift) / (3 * 1024);
+                }
+                p.angle[harvBone(t, s)] = (i16)a;
+            }
+            if (curl > 0) bodyRise += curl;
+        }
+        /* The body hangs, so it swings rather than bobbing: a slung mass lags
+           the thing carrying it. Tiny, and on the abdomen rather than the
+           body, because what a viewer sees move is the weight underneath. */
+        p.angle[HARV_ABDOMEN] = (i16)((isin1024((k * 360) / count) * 6) / 1024);
+        p.rootDY = (i16)(-(bodyRise * ARM_SS) / (3 * 1024 * HARV_LEGS));
+    }
+}
+
+static PoseKey g_harvWalkKeys[8];
+static PoseKey g_harvIdleKeys[2];
+
+static void buildHarvClips() {
+    rigHarvesterWalk(g_harvWalkKeys, 8, 46);
+    /* Idle keeps the legs where they stand and lets the hanging body drift.
+       A creature this leggy that froze completely would read as a diagram. */
+    rigHarvesterWalk(g_harvIdleKeys, 2, 0);
+    for (int k = 0; k < 2; ++k)
+        for (int t = 0; t < HARV_LEGS; ++t)
+            for (int s = 0; s < HARV_SEGS; ++s)
+                g_harvIdleKeys[k].angle[harvBone(t, s)] = 0;
+    g_harvIdleKeys[1].angle[HARV_ABDOMEN] = 4;
+    g_harvIdleKeys[1].rootDY = -ARM_SS / 2;
+}
+
+static const Clip HARV_WALK = { "harvwalk", g_harvWalkKeys, 8, 8, true, true };
+static const Clip HARV_IDLE = { "harvidle", g_harvIdleKeys, 2, 2, true, true };
+const Clip RIG_HARV_WALK = HARV_WALK;
+const Clip RIG_HARV_IDLE = HARV_IDLE;
+
+struct TentClipInit { TentClipInit() { buildTentClips(); buildSpiderClips(); buildHarvClips(); } };
 static TentClipInit g_tentClipInit;

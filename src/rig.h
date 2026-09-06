@@ -133,6 +133,51 @@ void rigSpiderWalk(PoseKey* keys, int count, int lift);
 extern const Clip RIG_SPIDER_WALK;
 extern const Clip RIG_SPIDER_IDLE;
 
+/* --- the harvester -----------------------------------------------------------
+
+   Layer 3's boss, and a fourth skeleton rather than the spider's with different
+   numbers in it. The first version of that boss WAS the spider's with different
+   numbers in it, and the verdict from play was the only one it deserved: it
+   looked lame and reused. It was.
+
+   What makes this a different animal and not a bigger one is where the mass
+   sits. A spider is a body carried ON its legs, low and wide, with the knees
+   barely above the back. A harvestman is a body SLUNG BENEATH them: six legs
+   that rise into a steep arch far over the creature, and a small dense body
+   hanging in the middle of all that empty space. The silhouette is mostly gap,
+   and the gap is the thing -- it is why a daddy-longlegs on a wall reads as
+   wrong in a way a house spider does not, and it is the Noita register the
+   request asked for.
+
+   Six legs, not eight, and each one long enough to be read individually.
+   Eight at this length is a thicket; six with air between them is a creature.
+
+   REVERSE-JOINTED, which is the other half. The knee is the highest point of
+   the animal and it bends the wrong way -- up and out, then back down past the
+   body. Asked for as "legs with like, reverse kinematics, that isnt necessary.
+   but that vibe", and the vibe is a rest pose rather than an IK solver. */
+static const int HARV_LEGS = 6;
+static const int HARV_SEGS = 4;
+static const int HARV_BODY    = 0;   /* the small slung thorax: the root */
+static const int HARV_ABDOMEN = 1;   /* what hangs under it */
+static const int HARV_HEAD    = 2;
+static const int HARV_FIRST_LEG = 3;
+static const int HARV_BONES = HARV_FIRST_LEG + HARV_LEGS * HARV_SEGS;
+
+static inline int harvBone(int t, int s) {
+    return HARV_FIRST_LEG + t * HARV_SEGS + s;
+}
+
+void rigHarvester(Bone* bone, RigDef* rig, const char* name,
+                  int w, int h, const u32* shade);
+
+/* Its gait. A hexapod alternating TRIPOD -- three legs down and three lifting,
+   which is what six-legged things actually do and what stops the walk reading
+   as the spider's four-and-four in a different costume. */
+void rigHarvesterWalk(PoseKey* keys, int count, int lift);
+extern const Clip RIG_HARV_WALK;
+extern const Clip RIG_HARV_IDLE;
+
 /* --- the gait, GENERATED rather than authored -------------------------------
 
    The humanoid clips above are hand-written keyframe tables, which is right for

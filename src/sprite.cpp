@@ -1016,14 +1016,17 @@ static void buildWidowFrames() {
     armBake(&rig, &RIG_SPIDER_IDLE, g_widowIdle[0]);
 }
 
-/* The Censer. The Widow's builder, its clips and its bake, at a larger size and
-   in a different palette -- which is the entire cost of layer 3's boss art. */
+/* The Censer, on its OWN skeleton. It was rigSpider at a bigger size first, and
+   the result looked exactly like what it was -- the Widow in orange. See
+   rigHarvester for what actually differs: six legs instead of eight, an arch
+   that rises far over the body instead of barely clearing it, and a body slung
+   underneath rather than carried on top. */
 static void buildCenserFrames() {
-    static Bone bone[SPIDER_BONES];
+    static Bone bone[HARV_BONES];
     RigDef rig;
-    rigSpider(bone, &rig, "censer", CENSER_SPR_W, CENSER_SPR_H, RIG_CENSER);
-    armBake(&rig, &RIG_SPIDER_WALK, g_censerWalk[0]);
-    armBake(&rig, &RIG_SPIDER_IDLE, g_censerIdle[0]);
+    rigHarvester(bone, &rig, "censer", CENSER_SPR_W, CENSER_SPR_H, RIG_CENSER);
+    armBake(&rig, &RIG_HARV_WALK, g_censerWalk[0]);
+    armBake(&rig, &RIG_HARV_IDLE, g_censerIdle[0]);
 }
 
 

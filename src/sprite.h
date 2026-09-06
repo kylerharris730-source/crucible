@@ -363,12 +363,16 @@ extern u32 g_widowIdle[WIDOW_IDLE_FRAMES][WIDOW_SPR_W * WIDOW_SPR_H];
 extern u32 g_widowWalk[WIDOW_WALK_FRAMES][WIDOW_SPR_W * WIDOW_SPR_H];
 
 /* --- the Censer, layer 3's boss ---------------------------------------------
-   The spider skeleton again at a larger size and in a hotter palette, which is
-   the whole reason rigSpider takes its proportions as arguments: a second
-   eight-legged creature is a builder call and a shade table, not a second rig
-   and not a sheet of frames. */
-static const int CENSER_SPR_W = 56;
-static const int CENSER_SPR_H = 44;
+   Its own skeleton -- see rigHarvester. It was the spider's at a bigger size
+   first, and that was the wrong call: the layer's capstone came out looking
+   like the Widow in orange, because that is what it was.
+
+   TALLER than it is wide, which is the shape the new rig needs and the opposite
+   of both bosses above it: the Brood Mother and the Widow are low and broad,
+   and this one is a small body hanging in the middle of a lot of vertical
+   space. */
+static const int CENSER_SPR_W = 64;
+static const int CENSER_SPR_H = 56;
 static const int CENSER_IDLE_FRAMES = 2;
 static const int CENSER_WALK_FRAMES = 8;
 extern u32 g_censerIdle[CENSER_IDLE_FRAMES][CENSER_SPR_W * CENSER_SPR_H];

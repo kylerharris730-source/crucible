@@ -587,8 +587,16 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
       ITEM_EGG_CINDERLING, false, false, 230 },
 
     /* --- the Censer, layer 3's boss ----------------------------------------
-       56 by 44 against the Widow's 40 by 32, which is the "bigger" half of the
-       request, and FOUR LIMBS, which is the half that matters. See censerTick.
+       64 by 56 against the Widow's 40 by 32, and TALLER than it is wide, which
+       neither boss above it is -- both of those are low and broad. Four limbs
+       on top of that. See censerTick, and rigHarvester for the skeleton.
+
+       The box is taken straight from the sprite, as every rig creature's is, and
+       here that approximation is at its worst: this creature is mostly leg and
+       mostly air, so the upper corners of its box are empty in a way the
+       Widow's merely are at the edges. Accepted rather than missed -- a boss
+       whose legs sweep the room should hit you with them, and per-limb tests on
+       a six-legged animal are the cost this whole rig exists to avoid.
 
        2200 hp, and most of it is not the point: while a limb lives the body
        takes a fifth of what you deal it, so the health bar is a record of
@@ -598,7 +606,7 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
        hazard the player has spent the whole layer learning, which is what makes
        an arena filling up with flame read as the fight rather than as a new
        rule arriving at the end. */
-    { "The Censer", 56, 44, 2200, 42, 26,
+    { "The Censer", CENSER_SPR_W, CENSER_SPR_H, 2200, 42, 26,
       0.50f, 0.06f, false, 0, false,
       CENSER_SPIT_EVERY, 20, 7.6f, 0.0f, true,
       ITEM_PYRE_CORE, 1, 1, ITEM_NONE, 0, SPR_NONE, 0xE0641C,
