@@ -73,8 +73,15 @@ u8 lightAt(int vx, int vy) {
     const u8* p = g_light + sy * LIGHT_W + sx;
     const int top = (int)p[0] * ((LIGHT_CELL * 2) - tx) + (int)p[1] * tx;
     const int bot = (int)p[LIGHT_W] * ((LIGHT_CELL * 2) - tx) + (int)p[LIGHT_W + 1] * tx;
-    return (u8)((top * ((LIGHT_CELL * 2) - ty) + bot * ty)
-                >> (2 * (LIGHT_SHIFT + 1)));
+    int l = (top * ((LIGHT_CELL * 2) - ty) + bot * ty) >> (2 * (LIGHT_SHIFT + 1));
+    /* The same discovered floor lightRow applies, and for the same reason it
+       has to be here too: this is what viewShade reads, and viewShade is how
+       every creature, machine and drone drawn over the world is shaded. Without
+       it a husk standing in a room you have lit would be a black silhouette
+       against a wall you can see perfectly well. */
+    if (l < SEEN_MIN_LIGHT &&
+        seenAt(g_lightViewX + vx, g_lightViewY + vy)) l = SEEN_MIN_LIGHT;
+    return (u8)l;
 }
 
 /* One view row, smoothed up once and handed to the renderer as a plain array so
@@ -108,7 +115,18 @@ const u8* lightRow(int vy) {
         sx = imax(0, imin(sx, LIGHT_W - 2));
         const int top = (int)up[sx] * (full - tx) + (int)up[sx + 1] * tx;
         const int bot = (int)dn[sx] * (full - tx) + (int)dn[sx + 1] * tx;
-        row[vx] = (u8)((top * (full - ty) + bot * ty) >> (2 * (LIGHT_SHIFT + 1)));
+        int l = (top * (full - ty) + bot * ty) >> (2 * (LIGHT_SHIFT + 1));
+        /* Discovered space has a floor under it -- see seenAt in light.h. This
+           is a DISPLAY floor and is applied here, in the row the renderer
+           walks, rather than in the field itself. The distinction is load
+           bearing: the spawner asks how dark somewhere is through
+           lightAtWorld, and lifting the measured field would stop creatures
+           spawning anywhere the player had ever carried a torch. How dark a
+           place IS and how dark it is DRAWN are separate questions, which is
+           the same argument LIGHT_MIN_SHADE's own note makes. */
+        if (l < SEEN_MIN_LIGHT &&
+            seenAt(g_lightViewX + vx, g_lightViewY + vy)) l = SEEN_MIN_LIGHT;
+        row[vx] = (u8)l;
     }
     return row;
 }
@@ -1141,7 +1159,44 @@ void lightCompute(const World& w, int camX, int camY) {
     lightSolve(w, g_lightAnchorX, g_lightAnchorY, LR_ALL);
 }
 
+/* --- the discovered map ----------------------------------------------------
+   See the note on seenAt in light.h for why this exists and why it is stored at
+   the light field's resolution rather than per cell. */
+static u8 g_seen[SEEN_BYTES];
+
+void seenReset() { memset(g_seen, 0, sizeof(g_seen)); }
+u8*  seenData()  { return g_seen; }
+
+bool seenAt(int wx, int wy) {
+    if (wx < 0 || wy < 0 || wx >= SIM_W || wy >= SIM_H) return false;
+    const int i = (wy >> SEEN_SHIFT) * SEEN_W + (wx >> SEEN_SHIFT);
+    return (g_seen[i >> 3] & (u8)(1u << (i & 7))) != 0;
+}
+
+static inline void seenMark(int sx, int sy) {
+    if (sx < 0 || sy < 0 || sx >= SEEN_W || sy >= SEEN_H) return;
+    const int i = sy * SEEN_W + sx;
+    g_seen[i >> 3] |= (u8)(1u << (i & 7));
+}
+
+void seenMarkVisible() {
+    /* THE VIEW, not the padded rectangle. The field is solved 64 samples past
+       every edge so a lamp off screen still spills onto what you can see -- but
+       a sample out in that margin is one the player has never had on screen,
+       and marking it would discover four screens of cave in every direction
+       from a torch you walked past. Discovery should mean you looked at it. */
+    const int x0 = g_lightViewX, y0 = g_lightViewY;
+    const int x1 = x0 + VIEW_CELLS_W, y1 = y0 + VIEW_CELLS_H;
+    for (int wy = y0 & ~(LIGHT_CELL - 1); wy < y1; wy += LIGHT_CELL) {
+        for (int wx = x0 & ~(LIGHT_CELL - 1); wx < x1; wx += LIGHT_CELL) {
+            if (lightAtWorld(wx, wy) < SEEN_LIGHT) continue;
+            seenMark(wx >> SEEN_SHIFT, wy >> SEEN_SHIFT);
+        }
+    }
+}
+
 void lightUpdate(const World& w, int camX, int camY) {
     lightCompute(w, camX, camY);
     lightSmooth();
+    seenMarkVisible();
 }

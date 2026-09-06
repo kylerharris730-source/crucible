@@ -462,6 +462,18 @@ bool saveWrite(const char* path, const World& w, const u8* thumbRgb) {
         fwrite(&g_bossesBeaten, sizeof(g_bossesBeaten), 1, f);
         s.end();
     }
+    {
+        /* Where you have been -- see seenAt in light.h. Somewhere you have lit
+           is drawn bright forever, and "forever" has to survive quitting or the
+           whole world goes black again on the next load.
+
+           RLE like the world planes, and it is the best case that encoding has:
+           a bitmap that is one long run of zeroes everywhere you have not been.
+           288 KB raw, a few hundred bytes for a world you have just started. */
+        SectionWriter s; s.begin(f, "SEEN", "explored");
+        u64 b; rleWrite(f, seenData(), SEEN_BYTES, &b);
+        s.end();
+    }
 
     const u32 endTag = 0;
     fwrite(&endTag, sizeof(endTag), 1, f);
@@ -579,6 +591,13 @@ bool savePeek(const char* path, SaveSlotInfo* out) {
 
 bool saveRead(const char* path, World& w) {
     g_nStats = 0; g_total = 0; g_err[0] = 0;
+    /* Cleared before anything is read, so a world loaded on top of another does
+       not inherit its explored map. Every other section overwrites what it owns
+       outright; this one is a bitmap that is only ever OR-ed into, and a save
+       written before the section existed supplies nothing at all -- so without
+       this, loading an old world after playing a new one would light up
+       wherever you had been in a completely different place. */
+    seenReset();
 
     FILE* f = fopen(path, "rb");
     if (!f) { sprintf(g_err, "no save at %s", path); return false; }
@@ -875,6 +894,15 @@ bool saveRead(const char* path, World& w) {
         } else if (tag == fourcc("TREE")) {
             if (len == sizeof(Tree) * MAX_TREES) fread(g_trees, sizeof(Tree), MAX_TREES, f);
             statAdd("growing trees", len + 12);
+        } else if (tag == fourcc("SEEN")) {
+            /* A save written before this section existed simply keeps the empty
+               map seenReset() left, so an old world starts undiscovered and
+               lights up again as you walk it -- the same graceful degradation
+               every other optional section gets. */
+            if (!rleRead(f, seenData(), SEEN_BYTES)) {
+                sprintf(g_err, "bad explored data"); fclose(f); return false;
+            }
+            statAdd("explored", len + 12);
         } else if (tag == fourcc("BOSS")) {
             if (len == sizeof(g_bossesBeaten))
                 fread(&g_bossesBeaten, sizeof(g_bossesBeaten), 1, f);

@@ -1,4 +1,5 @@
 #include "worldgen.h"
+#include "light.h"
 #include "device.h"   /* pedestals are placed as devices */
 #include "item.h"
 #include "tree.h"
@@ -1526,6 +1527,10 @@ static void generateStrata(World& w) {
 
 void generateWorld(World& w) {
     w.reset();
+    /* A new world has not been anywhere. Without this a second world generated
+       in the same session inherits the first one's explored map, and the caves
+       under it are lit before anybody has been down there. */
+    seenReset();
 
     /* --- columns --------------------------------------------------------- */
     for (int x = PLAY_X0; x <= PLAY_X1; ++x) {

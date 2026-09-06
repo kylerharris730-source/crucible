@@ -302,6 +302,72 @@ u8 lightAtWorld(int wx, int wy);
    pass over 512 bytes rather than a bilinear sample per pixel. */
 const u8* lightRow(int vy);
 
+/* --- what you have already seen --------------------------------------------
+
+   Reported from play: "everyone hates how much light gets blocked... current
+   darkness is reserved to undiscovered space, but once its discovered, max
+   darkness is way way brighter. when i draw a blob of metal, it should look
+   like a blob of metal, not a black blob."
+
+   This is the third answer to a complaint that has now been answered twice with
+   the same lever and rejected both times -- see LIGHT_MIN_SHADE, whose note is
+   a record of moving that floor to 10%, to 16%, and back down to 6%. The reason
+   raising it kept failing is written there: a higher floor makes UNEXPLORED
+   rock readable, so the ore in a wall and the shape of a cave are given away
+   before you have lit anything, and the underground ends up both murky and
+   free of surprises. The floor was doing two jobs and could only be tuned for
+   one of them.
+
+   Splitting them is what makes the bright version work. Somewhere you have
+   never lit stays as dark as it is now, so nothing is given away and a lamp is
+   still how you find out what is down there. Somewhere you HAVE lit is drawn
+   at a floor high enough to read material by, forever -- so a wall you have
+   walked past is a wall you can see, and the metal you poured into a mould is
+   the colour of metal.
+
+   Stored at the LIGHT FIELD's own resolution rather than per cell, which is
+   both cheaper and the honest granularity: discovery is a fact about lighting,
+   and lighting is already solved in 4x4 blocks. One bit per sample over the
+   whole world is 288 KB, against 4.6 MB per cell.
+
+   It is a fact about a PLACE, not about a cell, which is why it lives here
+   rather than in a spare bit of Cell::flags. Cells move -- a falling powder
+   carries its flags down the shaft with it -- and a discovered-ness that slid
+   around with the sand would light up wherever the sand went. */
+static const int SEEN_SHIFT = LIGHT_SHIFT;
+static const int SEEN_W = SIM_W >> SEEN_SHIFT;
+static const int SEEN_H = SIM_H >> SEEN_SHIFT;
+static const int SEEN_BYTES = (SEEN_W * SEEN_H + 7) / 8;
+
+/* How lit a sample must be to count as discovered. Well above the nothing an
+   unlit cave measures and well below a torch, so walking through the dark
+   discovers nothing and carrying a light discovers what it touches -- which is
+   the property the whole split exists to keep. */
+static const int SEEN_LIGHT = 40;
+
+/* What a discovered but currently unlit sample is DRAWN at, as a light value
+   fed through the ordinary g_lightShade curve rather than as a second shade
+   table. One table and one code path: the display row simply cannot go below
+   this where you have been.
+
+   76 renders as shade 150 of 255 -- 59% -- against LIGHT_MIN_SHADE's 24, which
+   is 9%. That is deliberately a long way past what the old floor ever reached,
+   because the complaint is not that explored space is dim, it is that it is
+   black, and half measures here have been tried twice. */
+static const int SEEN_MIN_LIGHT = 76;
+
+/* Has this world cell been lit at some point? */
+bool seenAt(int wx, int wy);
+/* Everything forgotten -- a new world, or a load about to supply its own. */
+void seenReset();
+/* Marks everything currently on screen and lit. Called from lightUpdate, which
+   is the frame loop's entry point; lightCompute stays a pure function of the
+   world it is handed, because the harnesses in tools/ compare two solves sample
+   for sample and a function with memory would destroy that. */
+void seenMarkVisible();
+/* The raw bitmap, for the save. */
+u8*  seenData();
+
 /* Brightness at one view cell, for things drawn ON TOP of the world after
    renderView has run -- the character, the tool in their hand. Without this
    they are the only objects in the game that ignore the light, which reads as
