@@ -2957,8 +2957,27 @@ static const float CENSER_LIMB_Y[CENSER_LIMBS] = {  -4.0f,  10.0f, 10.0f, -4.0f 
 /* How hard a limb pulls back to its station. Soft, so the limbs SWING -- a rigid
    offset reads as furniture bolted to the body, and the whole point of hanging
    them is that they trail and catch up. */
-static const float CENSER_LIMB_PULL = 0.055f;
-static const float CENSER_LIMB_SPEED = 2.4f;
+/* A DAMPED spring, and the damping is the part that was missing. Pull alone is
+   acceleration proportional to displacement with nothing taking energy out of
+   the system, which is the textbook definition of something that oscillates
+   forever: a limb arrives at its post carrying all the speed it built up
+   getting there, sails past, and comes back. Measured before the damping
+   existed, with the body held still: each limb swung through 19.7 cells and
+   moved at up to 3.33 cells a frame, which is the "they bob around a lot" the
+   report describes.
+
+   0.018 and 0.82 are close to critical for a discrete spring of this stiffness
+   -- roughly 1 - 2*sqrt(k) -- so a limb slides to its station and stops rather
+   than ringing. The pull came down with the damping because the two set the
+   settling TIME together, and the point of the change is that these hang
+   slowly.
+
+   The speed cap is the third of it, and it is what makes the motion readable
+   rather than merely stable: 0.9 is under a walking pace, so a limb crossing to
+   a new station drifts there instead of snapping. */
+static const float CENSER_LIMB_PULL  = 0.018f;
+static const float CENSER_LIMB_DAMP  = 0.82f;
+static const float CENSER_LIMB_SPEED = 0.90f;
 
 /* Is this creature currently shrugging off damage? True only for a Censer body
    with at least one limb still alive. Declared before entApplyDamage, which is
@@ -3122,6 +3141,8 @@ static void censerLimbTick(World& w, Entity& e, const Player& p) {
     const float ty = core.centreY() + CENSER_LIMB_Y[k];
     e.vx += (tx - e.centreX()) * CENSER_LIMB_PULL;
     e.vy += (ty - e.centreY()) * CENSER_LIMB_PULL;
+    e.vx *= CENSER_LIMB_DAMP;
+    e.vy *= CENSER_LIMB_DAMP;
     const float sp = sqrtf(e.vx * e.vx + e.vy * e.vy);
     if (sp > CENSER_LIMB_SPEED) {
         e.vx = e.vx / sp * CENSER_LIMB_SPEED;
@@ -3887,10 +3908,15 @@ static void entityPixelMotion(const Entity& e, int entityIndex, int sx, int sy,
            gait -- the whole silhouette leans, and the coal inside it glows on
            its own faster clock. Nothing here reads the gait, because a limb
            that is carried does not walk. */
-        const int swing = ((tick / 9u) & 3u) < 2u ? 1 : -1;
+        /* Slow, and slower than it was. The limb's own steering was damped down
+           from swinging 19.7 cells to about 5, so a sprite still swaying on a
+           nine-frame clock would put the jitter back at the pixel level after
+           it had just been taken out of the physics -- the two have to agree
+           about how heavy this thing is. */
+        const int swing = ((tick / 16u) & 3u) < 2u ? 1 : -1;
         if (sy <= 8) *dx += swing;
         if (sy >= 5 && sy <= 8 && sx >= 5 && sx <= 8)
-            *dy -= (int)((tick / 5u) & 1u);
+            *dy -= (int)((tick / 11u) & 1u);
         break;
     }
     case ENT_CINDERLING: {

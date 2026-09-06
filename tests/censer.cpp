@@ -143,6 +143,67 @@ int main() {
               "and they stay with it rather than wandering off");
     }
 
+    /* --- 3b. and they hang STEADILY ---------------------------------------
+       Reported from play: "make the orbs around the censer move more smoothly
+       and slowly, they bob around a lot now."
+
+       They did, and by construction: the steering was a pure spring --
+       acceleration proportional to displacement, with nothing taking energy out
+       -- which is the textbook definition of a thing that oscillates forever. A
+       limb pulled toward its station arrives with all the speed it built up
+       getting there, sails past, and comes back.
+
+       Measured as the SPREAD of each limb's distance to its post once the boss
+       has settled: a damped limb sits at a roughly constant offset, and a
+       springy one swings through a range. The body is held still for this, so
+       what is measured is the limb's own behaviour and not the boss walking. */
+    {
+        core = arena(w);
+        if (core < 0) return 2;
+        run(w, 200);                       /* let them arrive */
+        Entity& body = g_entities[core];
+
+        float lo[4] = { 1e9f, 1e9f, 1e9f, 1e9f };
+        float hi[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+        float worstStep = 0.0f;
+        float prevX[4] = {0,0,0,0}, prevY[4] = {0,0,0,0};
+        bool  seen[4] = { false, false, false, false };
+        for (int t = 0; t < 400; ++t) {
+            /* Pinned. A moving body is what the limbs are supposed to trail
+               behind; holding it still isolates the spring from the chase. */
+            body.vx = body.vy = 0.0f;
+            const float bx = body.centreX(), by = body.centreY();
+            run(w, 1);
+            body.x = bx - (float)ENT_DEFS[ENT_CENSER].w * 0.5f;
+            body.y = by - (float)ENT_DEFS[ENT_CENSER].h * 0.5f;
+            for (int i = 0; i < MAX_ENTITIES; ++i) {
+                const Entity& l = g_entities[i];
+                if (l.type != ENT_CENSER_LIMB || !l.alive() ||
+                    l.home != (i16)core) continue;
+                const int k = l.phase >= 0 && l.phase < 4 ? l.phase : 0;
+                const float dx = l.centreX() - body.centreX();
+                const float dy = l.centreY() - body.centreY();
+                const float d = sqrtf(dx * dx + dy * dy);
+                if (d < lo[k]) lo[k] = d;
+                if (d > hi[k]) hi[k] = d;
+                if (seen[k]) {
+                    const float step = fabsf(l.centreX() - prevX[k]) +
+                                       fabsf(l.centreY() - prevY[k]);
+                    if (step > worstStep) worstStep = step;
+                }
+                prevX[k] = l.centreX(); prevY[k] = l.centreY();
+                seen[k] = true;
+            }
+        }
+        float widest = 0.0f;
+        for (int k = 0; k < 4; ++k)
+            if (seen[k] && hi[k] - lo[k] > widest) widest = hi[k] - lo[k];
+        printf("limbs over 400 settled frames: widest swing %.1f cells, "
+               "fastest step %.2f cells/frame\n", widest, worstStep);
+        check(widest < 6.0f, "a limb hangs at its station rather than swinging");
+        check(worstStep < 0.9f, "and moves slowly enough to read as hanging");
+    }
+
     /* --- 4 & 5. the armour, and losing it -------------------------------- */
     /* The whole point of the structure. Same hit, twice, with the only
        difference being whether the limbs are alive. */
