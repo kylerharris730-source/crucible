@@ -3186,12 +3186,25 @@ static void censerTick(World& w, Entity& e, const Player& p) {
         e.vx *= 0.80f;
     }
 
-    /* Shears the rock in front of it across its whole face, exactly as the
-       Brood Mother does and for the same reason her note gives: a creature this
-       size should read as going THROUGH a wall rather than nibbling one.
-       Strength-gated, so it eats stone and soil and is stopped dead by a layer
-       barrier -- a boss that could cut the seal could leave its own arena. */
-    broodPlough(w, e, (float)e.facing, 0.0f);
+    /* --- and it shears rock, but only where it is STOPPED ------------------
+       It cut every frame once, across its whole face, which does not read as a
+       creature going through a wall -- it reads as a tunnel boring machine.
+       It left a corridor behind it over ground it could have simply walked
+       across, and the arena was gone before the fight was.
+
+       So the cut is conditional: it goes THROUGH what is in its way, and
+       through nothing else. "In its way" is read exactly as the wedged check
+       below reads it -- it is trying to walk, and last frame's move got it
+       nowhere along the ground. Nothing needs to be sampled in front of it,
+       because broodPlough only takes cells that are actually there: on open
+       ground the call finds nothing and the question answers itself.
+
+       Still strength-gated, so it eats stone and soil and is stopped dead by a
+       layer barrier -- a boss that could cut the seal could leave its arena. */
+    const float movedX  = fabsf(e.x - e.prevX);
+    const bool  walking = toward > 4.0f || toward < -4.0f;
+    if (walking && movedX < BOSS_STUCK_CELLS)
+        broodPlough(w, e, (float)e.facing, 0.0f);
 
     /* --- and when that is not enough, it climbs --------------------------
        Ploughing handles a wall. It does not handle a LEDGE, because the rock
@@ -3213,7 +3226,6 @@ static void censerTick(World& w, Entity& e, const Player& p) {
        spot and dragging its four limbs up and down with it, which measured as
        the limbs swinging fifty cells after the damping had already fixed
        them. */
-    const bool walking = toward > 4.0f || toward < -4.0f;
     if (walking && moved < BOSS_STUCK_CELLS) {
         if (++e.stuck >= CENSER_STUCK) {
             e.stuck = 0;

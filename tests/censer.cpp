@@ -284,6 +284,54 @@ int main() {
         }
     }
 
+    /* --- 3e. and it does NOT dig when nothing is in the way ----------------
+       Asked for: "lets only have the censer destroy blocks when its movement is
+       obstructed." It cut every frame before this, so it shaved terrain it
+       could simply have stepped over and left a corridor behind it.
+
+       An EMPTY corridor proves nothing -- the plough only reaches one cell past
+       the body, so on flat ground there is nothing there to take and both
+       builds score zero. What discriminates them is ground the creature can
+       cross without being stopped, so the floor here carries six low mounds:
+       walkable, and directly in front of its face. The old build ground them
+       down as it passed; this one walks over them.
+
+       Counted over the whole window rather than a band, because a trench one
+       row below the one I guessed at would not show up in a band. Cells GAINED
+       are ignored -- the spit lands, and that is not what this is about. */
+    {
+        core = arena(w);
+        if (core < 0) return 2;
+        for (int k = 0; k < 6; ++k) {
+            const int mx = CX + 60 - 40 * k;
+            fill(w, mx - 12, FLOOR - 6, mx, FLOOR, MAT_STONE);
+        }
+        const int X0 = CX - 400, X1 = CX + 400;
+        const int Y0 = CY - 200, Y1 = FLOOR + 40;
+        /* Sized from the bounds rather than by hand. Written by hand once, as
+           801*281 against a 301-row span, and the overrun landed on the
+           failure counter: every check printed ok and the suite reported
+           thirty-three million failures. */
+        static u8 before[(X1 - X0 + 1) * (Y1 - Y0 + 1)];
+        int i = 0;
+        for (int y = Y0; y <= Y1; ++y)
+            for (int x = X0; x <= X1; ++x) before[i++] = w.at(x, y).mat;
+        run(w, 600);
+        int lost = 0;
+        i = 0;
+        for (int y = Y0; y <= Y1; ++y)
+            for (int x = X0; x <= X1; ++x, ++i)
+                if (before[i] != MAT_EMPTY && w.at(x, y).mat == MAT_EMPTY) ++lost;
+        printf("walkable mounds: %d cells destroyed in 600 frames\n", lost);
+        /* Exactly zero, and it can be: the arena is stone and the spit is a
+           fire, so nothing in here is burnable. The old build scored 14 on the
+           same run -- a small number for a visibly wrong behaviour, because
+           the plough was never able to take more than the creature's own
+           silhouette. Tighten the arena and it grows; the sign is what
+           matters. */
+        check(lost == 0, "it walks over ground it can cross without cutting it");
+    }
+
     /* --- 3d. there is no range you can just sit in -------------------------
        Reported from play: "kiting is too effective, you can just sit in the
        range where it follows without shooting forever."
