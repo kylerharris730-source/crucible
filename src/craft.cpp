@@ -437,6 +437,22 @@ const Recipe RECIPES[] = {
     { { { (ItemId)MAT_STEEL, 8 }, { (ItemId)MAT_RUBBER, 2 }, { ITEM_NONE, 0 } },
       ITEM_STEEL_SUIT, 1, "Steel Suit", STATION_FORGE },
 
+    /* --- the two early specialists ---------------------------------------
+       Both are made of INSULATION rather than of metal, which is the recipe
+       saying what the suit is: ceramic and rubber are the two best insulators
+       in the table, and cotton is the warm thing layer 1 has. Neither costs a
+       drop of anything rare -- a suit for a place should be craftable the
+       moment you know you need it, not gated behind the fight you are trying
+       to avoid. */
+    { { { (ItemId)MAT_CERAMIC, 5 }, { (ItemId)MAT_RUBBER, 2 }, { ITEM_NONE, 0 } },
+      ITEM_CINDERWEAVE_HOOD, 1, "Cinderweave Hood", STATION_FORGE },
+    { { { (ItemId)MAT_CERAMIC, 9 }, { (ItemId)MAT_RUBBER, 4 }, { (ItemId)MAT_CHITIN, 6 } },
+      ITEM_CINDERWEAVE_COAT, 1, "Cinderweave Coat", STATION_FORGE },
+    { { { (ItemId)MAT_COTTON, 6 }, { (ItemId)MAT_CHITIN, 4 }, { ITEM_NONE, 0 } },
+      ITEM_PELT_HOOD, 1, "Pelt Hood", STATION_BENCH },
+    { { { (ItemId)MAT_COTTON, 10 }, { (ItemId)MAT_CHITIN, 8 }, { (ItemId)MAT_RUBBER, 3 } },
+      ITEM_PELT_COAT, 1, "Pelt Coat", STATION_BENCH },
+
     /* --- the melee ladder -----------------------------------------------
        Metal and wood, and nothing else. Every other recipe in this file mixes
        two or three materials because the thing it makes is a MACHINE with parts;
@@ -563,6 +579,20 @@ const Recipe RECIPES[] = {
       ITEM_TITANIUM_HELMET, 1, "Titanium Helmet", STATION_ASSEMBLY },
     { { { (ItemId)MAT_TITANIUM, 8 }, { (ItemId)MAT_RUBBER, 2 }, { (ItemId)MAT_GOLD, 2 } },
       ITEM_TITANIUM_SUIT, 1, "Titanium Suit", STATION_ASSEMBLY },
+
+    /* --- and the two late ones -------------------------------------------
+       The same idea in the materials the deep provides: refractory and
+       aluminium nitride for heat, and titanium lined with inert fluid for
+       cold. Still no boss drop in either -- these are equipment for a PLACE,
+       and the place is open to anyone who can reach it. */
+    { { { (ItemId)MAT_REFRACTORY, 5 }, { (ItemId)MAT_ALUMINUM_NITRIDE, 3 }, { (ItemId)MAT_CERAMIC, 4 } },
+      ITEM_FUMAROLE_HELM, 1, "Fumarole Helm", STATION_ASSEMBLY },
+    { { { (ItemId)MAT_REFRACTORY, 9 }, { (ItemId)MAT_ALUMINUM_NITRIDE, 6 }, { (ItemId)MAT_TUNGSTEN, 4 } },
+      ITEM_FUMAROLE_PLATE, 1, "Fumarole Plate", STATION_ASSEMBLY },
+    { { { (ItemId)MAT_TITANIUM, 4 }, { (ItemId)MAT_RUBBER, 5 }, { (ItemId)MAT_INERT_FLUID, 3 } },
+      ITEM_HOARFROST_HELM, 1, "Hoarfrost Helm", STATION_ASSEMBLY },
+    { { { (ItemId)MAT_TITANIUM, 7 }, { (ItemId)MAT_RUBBER, 9 }, { (ItemId)MAT_INERT_FLUID, 6 } },
+      ITEM_HOARFROST_PLATE, 1, "Hoarfrost Plate", STATION_ASSEMBLY },
     { { { (ItemId)MAT_COPPER, 2 }, { (ItemId)MAT_GOLD, 1 }, { ITEM_NONE, 0 } },
       ITEM_CONSTANT_COMBINATOR, 1, "Constant Combinator", STATION_ASSEMBLY },
     { { { (ItemId)MAT_COPPER, 2 }, { (ItemId)MAT_GOLD, 2 }, { ITEM_NONE, 0 } },

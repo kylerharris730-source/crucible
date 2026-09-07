@@ -5,19 +5,33 @@
 #include <string.h>
 
 namespace {
-enum Style { BARE, IRON, STEEL, TITANIUM, DRONE, RANGER, VANGUARD, THURIBLE, ASHEN, BRIMSTEEL };
-struct Design { u32 plate, shadow, trim; bool heavy, coat, harness; };
+enum Style { BARE, IRON, STEEL, TITANIUM, DRONE, RANGER, VANGUARD, THURIBLE, ASHEN, BRIMSTEEL,
+             CINDERWEAVE, FUMAROLE, PELT, HOARFROST };
+/* `quilt` is the fourth silhouette, and the two resistance lines needed one:
+   they are neither plate nor coat nor harness but LAGGING -- thick, soft and
+   wrapped, with the bulk on the torso and a rolled collar rather than
+   pauldrons. Without it the Cinderweave would have been the Ranger in a
+   different colour, and the whole point of a suit worn for a place rather than
+   for a fight is that you can tell at a glance which one somebody has on. */
+struct Design { u32 plate, shadow, trim; bool heavy, coat, harness, quilt; };
 const Design designs[] = {
-    {0,0,0,false,false,false},
-    {0xA8ADB6,0x555B64,0xC8C1AB,true,false,false},
-    {0x8399B0,0x424F65,0xC8DCE8,true,false,false},
-    {0xD2CDE3,0x777B98,0x96ECE6,false,false,false},
-    {0x6FAFBE,0x3D6C78,0x8AF0ED,false,false,true},
-    {0x9DA76A,0x4D633F,0xDEC293,false,true,false},
-    {0xA85A65,0x59313B,0xE2AD79,true,false,false},
-    {0xE8A24A,0x8A5410,0xFFE5A1,false,false,true},
-    {0xB9B2A6,0x5E5A52,0xEBB56F,false,true,false},
-    {0xC0492A,0x5E2010,0xFFD06A,true,false,false}
+    {0,0,0,false,false,false,false},
+    {0xA8ADB6,0x555B64,0xC8C1AB,true,false,false,false},
+    {0x8399B0,0x424F65,0xC8DCE8,true,false,false,false},
+    {0xD2CDE3,0x777B98,0x96ECE6,false,false,false,false},
+    {0x6FAFBE,0x3D6C78,0x8AF0ED,false,false,true,false},
+    {0x9DA76A,0x4D633F,0xDEC293,false,true,false,false},
+    {0xA85A65,0x59313B,0xE2AD79,true,false,false,false},
+    {0xE8A24A,0x8A5410,0xFFE5A1,false,false,true,false},
+    {0xB9B2A6,0x5E5A52,0xEBB56F,false,true,false,false},
+    {0xC0492A,0x5E2010,0xFFD06A,true,false,false,false},
+    /* The four specialists. Two ember palettes and two frost ones, and the
+       later suit of each pair is the brighter and harder of the two -- quilted
+       hide first, then plate over it. */
+    {0xB4643C,0x5E2E18,0xE8A05A,false,false,false,true},
+    {0xE07A28,0x7A3608,0xFFD08A,true, false,false,true},
+    {0x8AA0B4,0x46586A,0xD6E4F0,false,false,false,true},
+    {0xC8E8F7,0x6A94B4,0xFFFFFF,true, false,false,true}
 };
 int style(ItemId id) {
     if (id<=ITEM_NONE || id>=ITEM_COUNT || ITEMS[id].armour<=0) return BARE;
@@ -34,6 +48,10 @@ int style(ItemId id) {
     case ITEM_IRON_HELMET: case ITEM_IRON_CUIRASS: case ITEM_IRON_GREAVES: return IRON;
     case ITEM_STEEL_HELMET: case ITEM_STEEL_SUIT: return STEEL;
     case ITEM_TITANIUM_HELMET: case ITEM_TITANIUM_SUIT: return TITANIUM;
+    case ITEM_CINDERWEAVE_HOOD: case ITEM_CINDERWEAVE_COAT: return CINDERWEAVE;
+    case ITEM_FUMAROLE_HELM: case ITEM_FUMAROLE_PLATE: return FUMAROLE;
+    case ITEM_PELT_HOOD: case ITEM_PELT_COAT: return PELT;
+    case ITEM_HOARFROST_HELM: case ITEM_HOARFROST_PLATE: return HOARFROST;
     default: return BARE;
     }
 }
@@ -72,7 +90,12 @@ void bake(Frames& f, const int* styles) {
             bones[RB_HEAD].wTip=d.coat ? 3 : d.heavy ? 10 : 8;
             bones[RB_VISOR].wBase=d.harness ? 4 : 5;
             bones[RB_VISOR].wTip=3;
-            if (d.coat) { // Pointed hood and forward brim.
+            if (d.quilt) { // Padded hood, rolled collar, and a filter at the jaw.
+                bones[RB_HEAD].wTip=11;
+                detail(RB_HEAD,60,90,9,4,col+1);   // the roll, around the neck
+                detail(RB_HEAD,60,-90,9,4,col+1);
+                detail(RB_HEAD,170,-40,5,3,col+2); // filter, on the facing side
+            } else if (d.coat) { // Pointed hood and forward brim.
                 detail(RB_HEAD,150,-75,7,2,col);
             } else if (d.harness) { // Earpiece and upright receiver/crown prongs.
                 detail(RB_HEAD,100,95,4,3,col+1);
@@ -91,7 +114,21 @@ void bake(Frames& f, const int* styles) {
             bones[RB_SPINE].wTip=d.heavy ? 12 : d.harness ? 7 : 9;
             detail(RB_SPINE,70,0,14,d.heavy ? 6 : 3,col);
             detail(RB_SPINE,170,80,6,3,col+2);
-            if (d.heavy) { // Pauldron follows the upper arm, with separate gauntlet.
+            if (d.quilt) {
+                /* Three bands around the trunk rather than shoulders on it.
+                   Lagging is thickest at the middle and the bands are what say
+                   it is wrapped rather than cast -- and they are child bones of
+                   the spine, so they sway with the body instead of sitting
+                   over an animated character like a sticker. */
+                bones[RB_SPINE].wTip=(u8)(d.heavy ? 14 : 12);
+                detail(RB_SPINE,90,90,11,3,col+1);
+                detail(RB_SPINE,150,90,10,3,col+1);
+                detail(RB_SPINE,210,90,9,3,col+1);
+                /* And a heavier sleeve on the near arm, which is what makes
+                   the later pair of each line read as plate over the padding
+                   rather than as more padding. */
+                if (d.heavy) detail(RB_NEAR_UPPER,0,0,7,6,col+2);
+            } else if (d.heavy) { // Pauldron follows the upper arm, with separate gauntlet.
                 detail(RB_NEAR_UPPER,0,0,6,7,col);
                 detail(RB_NEAR_FORE,180,0,4,4,col+2);
             } else if (d.coat) {

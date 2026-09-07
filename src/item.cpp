@@ -1264,6 +1264,123 @@ void initItems() {
     ITEMS[ITEM_BRIMSTEEL_GREAVES].armourSet  = ARMOUR_SET_MELEE_PYRE;
     ITEMS[ITEM_BRIMSTEEL_GREAVES].sprite     = SPR_ARMOUR_BRIMSTEEL_GREAVES;
 
+    /* --- Cinderweave: the early heat suit ---------------------------------
+       Ceramic wadding quilted into hide. Armour 4 across two pieces against
+       steel's 6 -- two thirds, which is the trade stated in item.h -- and 75
+       degrees of heat against steel's 30.
+
+       75 is chosen against a PLACE, not against a number: it puts the burn
+       line at 120 C, which is above a wood fire and above burning coal, so
+       this is the suit you wear to work a furnace or walk a lava shelf. It is
+       nowhere near brimstone's 195, and that gap is the point -- the deep
+       needs the later one. */
+    ITEMS[ITEM_CINDERWEAVE_HOOD].name       = "Cinderweave Hood";
+    ITEMS[ITEM_CINDERWEAVE_HOOD].kind       = ITEMK_WORN;
+    ITEMS[ITEM_CINDERWEAVE_HOOD].equipSlot  = EQ_HEAD;
+    ITEMS[ITEM_CINDERWEAVE_HOOD].maxStack   = 1;
+    ITEMS[ITEM_CINDERWEAVE_HOOD].colour     = 0xB4643C;
+    ITEMS[ITEM_CINDERWEAVE_HOOD].armour     = 1;
+    ITEMS[ITEM_CINDERWEAVE_HOOD].heatResist = 55;
+    ITEMS[ITEM_CINDERWEAVE_HOOD].coldResist = 0;
+    ITEMS[ITEM_CINDERWEAVE_HOOD].sprite     = SPR_ARMOUR_CINDERWEAVE_HOOD;
+
+    ITEMS[ITEM_CINDERWEAVE_COAT].name       = "Cinderweave Coat";
+    ITEMS[ITEM_CINDERWEAVE_COAT].kind       = ITEMK_WORN;
+    ITEMS[ITEM_CINDERWEAVE_COAT].equipSlot  = EQ_BODY;
+    ITEMS[ITEM_CINDERWEAVE_COAT].maxStack   = 1;
+    ITEMS[ITEM_CINDERWEAVE_COAT].colour     = 0xB4643C;
+    ITEMS[ITEM_CINDERWEAVE_COAT].armour     = 3;
+    ITEMS[ITEM_CINDERWEAVE_COAT].heatResist = 75;
+    ITEMS[ITEM_CINDERWEAVE_COAT].coldResist = 5;
+    ITEMS[ITEM_CINDERWEAVE_COAT].sprite     = SPR_ARMOUR_CINDERWEAVE_COAT;
+
+    /* --- Fumarole: the late heat suit -------------------------------------
+       Refractory plate over aluminium nitride. Armour 9 against titanium's 14,
+       and 135 degrees of heat -- a burn line of 180 C, which is the number
+       that matters: brimfire spawns at 195 and a lit brimstone seam settles
+       somewhere under that, so this is the first suit you can dig layer 3 in
+       while it is burning.
+
+       Above Brimsteel's 90, and that is not a mistake. Brimsteel is a fighting
+       suit with heat on the side; this is the suit that exists ONLY for the
+       heat and gives up nine points of armour and every set bonus to get it.
+       If the specialist did not beat the generalist at the one thing it does,
+       there would be no reason to make it. */
+    ITEMS[ITEM_FUMAROLE_HELM].name       = "Fumarole Helm";
+    ITEMS[ITEM_FUMAROLE_HELM].kind       = ITEMK_WORN;
+    ITEMS[ITEM_FUMAROLE_HELM].equipSlot  = EQ_HEAD;
+    ITEMS[ITEM_FUMAROLE_HELM].maxStack   = 1;
+    ITEMS[ITEM_FUMAROLE_HELM].colour     = 0xE07A28;
+    ITEMS[ITEM_FUMAROLE_HELM].armour     = 3;
+    ITEMS[ITEM_FUMAROLE_HELM].heatResist = 105;
+    ITEMS[ITEM_FUMAROLE_HELM].coldResist = 10;
+    ITEMS[ITEM_FUMAROLE_HELM].sprite     = SPR_ARMOUR_FUMAROLE_HELM;
+
+    ITEMS[ITEM_FUMAROLE_PLATE].name       = "Fumarole Plate";
+    ITEMS[ITEM_FUMAROLE_PLATE].kind       = ITEMK_WORN;
+    ITEMS[ITEM_FUMAROLE_PLATE].equipSlot  = EQ_BODY;
+    ITEMS[ITEM_FUMAROLE_PLATE].maxStack   = 1;
+    ITEMS[ITEM_FUMAROLE_PLATE].colour     = 0xE07A28;
+    ITEMS[ITEM_FUMAROLE_PLATE].armour     = 6;
+    ITEMS[ITEM_FUMAROLE_PLATE].heatResist = 135;
+    ITEMS[ITEM_FUMAROLE_PLATE].coldResist = 15;
+    ITEMS[ITEM_FUMAROLE_PLATE].sprite     = SPR_ARMOUR_FUMAROLE_PLATE;
+
+    /* --- Pelt: the early cold suit ----------------------------------------
+       Chitin scale over cotton batting, which is the warm thing layer 1
+       actually has. Armour 4 and 75 degrees of cold, putting the freeze line
+       at -83 C -- far past anything the surface does at night and enough to
+       stand near liquid nitrogen without the cold itself being the problem. */
+    ITEMS[ITEM_PELT_HOOD].name       = "Pelt Hood";
+    ITEMS[ITEM_PELT_HOOD].kind       = ITEMK_WORN;
+    ITEMS[ITEM_PELT_HOOD].equipSlot  = EQ_HEAD;
+    ITEMS[ITEM_PELT_HOOD].maxStack   = 1;
+    ITEMS[ITEM_PELT_HOOD].colour     = 0x8AA0B4;
+    ITEMS[ITEM_PELT_HOOD].armour     = 1;
+    ITEMS[ITEM_PELT_HOOD].heatResist = 0;
+    ITEMS[ITEM_PELT_HOOD].coldResist = 55;
+    ITEMS[ITEM_PELT_HOOD].sprite     = SPR_ARMOUR_PELT_HOOD;
+
+    ITEMS[ITEM_PELT_COAT].name       = "Pelt Coat";
+    ITEMS[ITEM_PELT_COAT].kind       = ITEMK_WORN;
+    ITEMS[ITEM_PELT_COAT].equipSlot  = EQ_BODY;
+    ITEMS[ITEM_PELT_COAT].maxStack   = 1;
+    ITEMS[ITEM_PELT_COAT].colour     = 0x8AA0B4;
+    ITEMS[ITEM_PELT_COAT].armour     = 3;
+    ITEMS[ITEM_PELT_COAT].heatResist = 5;
+    ITEMS[ITEM_PELT_COAT].coldResist = 75;
+    ITEMS[ITEM_PELT_COAT].sprite     = SPR_ARMOUR_PELT_COAT;
+
+    /* --- Hoarfrost: the late cold suit ------------------------------------
+       Titanium shell lined with rubber and inert fluid, and the mirror of the
+       Fumarole in every number. 135 degrees of cold is a freeze line of -143
+       C, which is below the coolant's own floor -- the point where the cold
+       stops being the thing that kills you in a room built to be cold.
+
+       It is the least useful of the four today and that is honest rather than
+       hidden: nothing in the three layers is that cold on its own. It is for
+       the rooms players build, and it is here because a heat line without a
+       cold line would say the temperature model only runs one way. */
+    ITEMS[ITEM_HOARFROST_HELM].name       = "Hoarfrost Helm";
+    ITEMS[ITEM_HOARFROST_HELM].kind       = ITEMK_WORN;
+    ITEMS[ITEM_HOARFROST_HELM].equipSlot  = EQ_HEAD;
+    ITEMS[ITEM_HOARFROST_HELM].maxStack   = 1;
+    ITEMS[ITEM_HOARFROST_HELM].colour     = 0xC8E8F7;
+    ITEMS[ITEM_HOARFROST_HELM].armour     = 3;
+    ITEMS[ITEM_HOARFROST_HELM].heatResist = 10;
+    ITEMS[ITEM_HOARFROST_HELM].coldResist = 105;
+    ITEMS[ITEM_HOARFROST_HELM].sprite     = SPR_ARMOUR_HOARFROST_HELM;
+
+    ITEMS[ITEM_HOARFROST_PLATE].name       = "Hoarfrost Plate";
+    ITEMS[ITEM_HOARFROST_PLATE].kind       = ITEMK_WORN;
+    ITEMS[ITEM_HOARFROST_PLATE].equipSlot  = EQ_BODY;
+    ITEMS[ITEM_HOARFROST_PLATE].maxStack   = 1;
+    ITEMS[ITEM_HOARFROST_PLATE].colour     = 0xC8E8F7;
+    ITEMS[ITEM_HOARFROST_PLATE].armour     = 6;
+    ITEMS[ITEM_HOARFROST_PLATE].heatResist = 15;
+    ITEMS[ITEM_HOARFROST_PLATE].coldResist = 135;
+    ITEMS[ITEM_HOARFROST_PLATE].sprite     = SPR_ARMOUR_HOARFROST_PLATE;
+
     ITEMS[ITEM_DRONE_BEACON].name      = "Drone Beacon";
     ITEMS[ITEM_DRONE_BEACON].kind      = ITEMK_ACCESSORY;
     ITEMS[ITEM_DRONE_BEACON].equipSlot = EQ_TRINKET_A;
@@ -2208,6 +2325,22 @@ void initItems() {
         "Censer's mark. +20% damage, +3 armour, +10% speed, and heat resistance.";
     ITEMS[ITEM_ASCENT_SIGIL].description =
         "Effigy's mark. +24% damage, +5 armour, +16% speed, heat and cold resistance, and slow regeneration.";
+    ITEMS[ITEM_CINDERWEAVE_HOOD].description =
+        "Cinderweave. Light protection, but it shrugs off a furnace.";
+    ITEMS[ITEM_CINDERWEAVE_COAT].description =
+        "Cinderweave. Light protection, but it shrugs off a furnace.";
+    ITEMS[ITEM_FUMAROLE_HELM].description =
+        "Fumarole plate. Thin for its tier, and the deep stops burning you.";
+    ITEMS[ITEM_FUMAROLE_PLATE].description =
+        "Fumarole plate. Thin for its tier, and the deep stops burning you.";
+    ITEMS[ITEM_PELT_HOOD].description =
+        "Pelt. Light protection, and the cold stops mattering.";
+    ITEMS[ITEM_PELT_COAT].description =
+        "Pelt. Light protection, and the cold stops mattering.";
+    ITEMS[ITEM_HOARFROST_HELM].description =
+        "Hoarfrost. Thin for its tier, and nothing you can build is cold enough to hurt you.";
+    ITEMS[ITEM_HOARFROST_PLATE].description =
+        "Hoarfrost. Thin for its tier, and nothing you can build is cold enough to hurt you.";
     ITEMS[ITEM_DRONE_BEACON].description =
         "Unlocks one additional combat-drone bay. Duplicate Beacons do not stack.";
     ITEMS[ITEM_OVERCLOCK_CHIP].description = "Install in an attack drone to reduce the delay between shots.";

@@ -150,6 +150,16 @@ Steel and titanium have only head/body pieces, so do not invent matching greaves
 | Thurible | Ember-gold crown receiver and control harness with pale hot trim |
 | Ashen | Ash-gray hood and long coat, ember-tan sash and light greaves |
 | Brimsteel | Brimstone-red heavy plate and closed cheek guard, gold-hot fittings |
+| Cinderweave | Quilted rust-brown lagging, sealed hood with rolled collar and jaw filter, banded trunk |
+| Fumarole | The same quilting in bright ember orange, with a heavier sleeve over it |
+| Pelt | Slate-blue padding, sealed hood, banded trunk |
+| Hoarfrost | Pale ice quilting under a heavier sleeve, white fittings |
+
+The four resistance suits share a fourth silhouette, `quilt`: bulk on the trunk
+in three bands rather than shoulders on it, and a sealed hood with a rolled
+collar instead of a ridge or a brim. They are worn for a PLACE rather than for a
+fight, and the silhouette is what says so at a glance. The later suit of each
+pair adds a heavy sleeve, which reads as plate over the padding.
 
 Decorations are child bones: never stamp a stationary helmet or skirt over an
 animated character. Keep armor palettes intact in multiplayer; exposed suit

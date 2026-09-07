@@ -445,6 +445,31 @@ enum {
     ITEM_SILK_SIGIL,
     ITEM_PYRE_SIGIL,
     ITEM_ASCENT_SIGIL,
+
+    /* --- the two specialists ---------------------------------------------
+       Asked for: "lets have some armor that you can craft thats below average
+       for its tier in defensive stats but its very hot resistant, and another
+       one thats very cold resistant. there can be a beginner version, and a
+       later game version."
+
+       Four suits in two lines, and the trade is the whole design: each is
+       roughly two thirds of its tier's armour and two to three times its
+       resistance. That makes them the answer to a PLACE rather than to a
+       fight, which is a kind of equipment this game did not have -- every
+       other suit is worn because of what is trying to kill you.
+
+       Two pieces each, head and body, matching steel and titanium. The class
+       sets own the three-piece shape and a set bonus, and these deliberately
+       have neither: a specialist suit that also paid a bonus would be the
+       obvious answer everywhere rather than the right answer somewhere. */
+    ITEM_CINDERWEAVE_HOOD,
+    ITEM_CINDERWEAVE_COAT,
+    ITEM_FUMAROLE_HELM,
+    ITEM_FUMAROLE_PLATE,
+    ITEM_PELT_HOOD,
+    ITEM_PELT_COAT,
+    ITEM_HOARFROST_HELM,
+    ITEM_HOARFROST_PLATE,
     ITEM_COUNT
 };
 

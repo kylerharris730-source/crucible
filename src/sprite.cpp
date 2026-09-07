@@ -2864,6 +2864,18 @@ void initSprites() {
     expandMetal(SPR_ARMOUR_BRIMSTEEL_HELM,   ART_ARMOUR_HELM,    0xC0492A, 0x5E2010);
     expandMetal(SPR_ARMOUR_BRIMSTEEL_PLATE,  ART_ARMOUR_SUIT,    0xC0492A, 0x5E2010);
     expandMetal(SPR_ARMOUR_BRIMSTEEL_GREAVES,ART_ARMOUR_GREAVES, 0xC0492A, 0x5E2010);
+    /* The two resistance lines. Their palettes are the opposite ends of the
+       temperature scale on purpose -- an ember pair and a frost pair -- because
+       what these suits are FOR is the one thing a player has to be able to read
+       off the icon at a glance in a pack full of armour. */
+    expandMetal(SPR_ARMOUR_CINDERWEAVE_HOOD, ART_ARMOUR_HELM, 0xB4643C, 0x5E2E18);
+    expandMetal(SPR_ARMOUR_CINDERWEAVE_COAT, ART_ARMOUR_SUIT, 0xB4643C, 0x5E2E18);
+    expandMetal(SPR_ARMOUR_FUMAROLE_HELM,    ART_ARMOUR_HELM, 0xE07A28, 0x7A3608);
+    expandMetal(SPR_ARMOUR_FUMAROLE_PLATE,   ART_ARMOUR_SUIT, 0xE07A28, 0x7A3608);
+    expandMetal(SPR_ARMOUR_PELT_HOOD,        ART_ARMOUR_HELM, 0x8AA0B4, 0x46586A);
+    expandMetal(SPR_ARMOUR_PELT_COAT,        ART_ARMOUR_SUIT, 0x8AA0B4, 0x46586A);
+    expandMetal(SPR_ARMOUR_HOARFROST_HELM,   ART_ARMOUR_HELM, 0xC8E8F7, 0x6A94B4);
+    expandMetal(SPR_ARMOUR_HOARFROST_PLATE,  ART_ARMOUR_SUIT, 0xC8E8F7, 0x6A94B4);
     expand(SPR_ACC_BALLAST, ART_ACC_BALLAST);
     expand(SPR_ACC_SPURS,   ART_ACC_SPURS);
     expand(SPR_ACC_LOADER,  ART_ACC_LOADER);

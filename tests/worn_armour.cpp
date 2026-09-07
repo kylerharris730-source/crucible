@@ -19,14 +19,20 @@ int main(int argc,char** argv) {
         {ITEM_THURIBLE_CROWN,ITEM_THURIBLE_HARNESS,ITEM_THURIBLE_GREAVES},
         {ITEM_ASHEN_HOOD,ITEM_ASHEN_COAT,ITEM_ASHEN_GREAVES},
         {ITEM_BRIMSTEEL_HELM,ITEM_BRIMSTEEL_PLATE,ITEM_BRIMSTEEL_GREAVES},
+        /* The four specialists. Two pieces each, like steel and titanium --
+           there are no greaves to invent for them. */
+        {ITEM_CINDERWEAVE_HOOD,ITEM_CINDERWEAVE_COAT,ITEM_NONE},
+        {ITEM_FUMAROLE_HELM,ITEM_FUMAROLE_PLATE,ITEM_NONE},
+        {ITEM_PELT_HOOD,ITEM_PELT_COAT,ITEM_NONE},
+        {ITEM_HOARFROST_HELM,ITEM_HOARFROST_PLATE,ITEM_NONE},
         {ITEM_DRONE_VISOR,ITEM_VANGUARD_PLATE,ITEM_RANGER_GREAVES}
     };
-    const char* names[]={"Bare","Iron","Steel","Titanium","Drone","Ranger","Vanguard","Thurible","Ashen","Brimsteel","Mixed"};
+    const char* names[]={"Bare","Iron","Steel","Titanium","Drone","Ranger","Vanguard","Thurible","Ashen","Brimsteel","Cinderweave","Fumarole","Pelt","Hoarfrost","Mixed"};
     const int slots[]={EQ_HEAD,EQ_BODY,EQ_FEET};
     FILE* out=argc>1 ? fopen(argv[1],"w") : 0;
     if (argc>1 && !out) return 2;
     u32 saved[PSPR_W*PSPR_H];
-    for (int s=0;s<11;++s) {
+    for (int s=0;s<15;++s) {
         Inventory inv={};
         for (int p=0;p<3;++p) inv.equip[slots[p]]={sets[s][p],1,0};
         for (int f=0;f<=PF_COUNT;++f) {

@@ -297,6 +297,16 @@ enum SpriteId {
     SPR_SIGIL_SILK,
     SPR_SIGIL_PYRE,
     SPR_SIGIL_ASCENT,
+    /* The two resistance lines, in the armour ladder's own grammar: one helm
+       shape and one suit shape, recoloured per family. */
+    SPR_ARMOUR_CINDERWEAVE_HOOD,
+    SPR_ARMOUR_CINDERWEAVE_COAT,
+    SPR_ARMOUR_FUMAROLE_HELM,
+    SPR_ARMOUR_FUMAROLE_PLATE,
+    SPR_ARMOUR_PELT_HOOD,
+    SPR_ARMOUR_PELT_COAT,
+    SPR_ARMOUR_HOARFROST_HELM,
+    SPR_ARMOUR_HOARFROST_PLATE,
     SPR_EFFIGY_CALL,
     SPR_ASCENT_CORE,
 
