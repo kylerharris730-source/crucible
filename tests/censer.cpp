@@ -332,6 +332,46 @@ int main() {
         check(lost == 0, "it walks over ground it can cross without cutting it");
     }
 
+    /* --- 3f. and it comes DOWN through the floor ---------------------------
+       Reported from play, with a picture of the boss standing on the surface
+       while the player watched from a hole below it: "it wont dig down to get
+       me, my drones could kill it now."
+
+       Everything it had was horizontal. The plough cuts the face it is walking
+       into and the hop clears the ledge above it, so a player who is neither in
+       front of it nor above it was simply out of the model -- the boss paced
+       the surface over their head, forever, being shot.
+
+       Measured as the VERTICAL gap to a player sealed in a chamber below it. */
+    {
+        core = arena(w);
+        if (core < 0) return 2;
+        Player& p = g_player;
+        /* Solid rock under the arena floor, and a chamber cut in it well below
+           anything the creature can reach by falling into a hole that already
+           exists. */
+        const int deep = FLOOR + 120;
+        fill(w, CX - 200, FLOOR + 1, CX + 200, deep + 40, MAT_STONE);
+        fill(w, CX - 20, deep - PLAYER_H - 2, CX + 20, deep, MAT_EMPTY);
+        w.setLiveWindow(CX - 420, CY - 220, CX + 420, deep + 60);
+        for (int f = 0; f < 900; ++f) {
+            /* Pinned, so this measures the boss coming down rather than the
+               player wandering into reach. */
+            p.x = (float)CX;
+            p.y = (float)(deep - PLAYER_H);
+            p.alive = true; p.hp = PLAYER_HP_MAX;
+            entTick(w, p, g_inv);
+            projUpdate(w);
+        }
+        const float gap = p.centreY() - g_entities[core].centreY();
+        printf("player sealed %d cells below: gap after 900 frames %.0f cells\n",
+               deep - FLOOR, gap);
+        /* It has to ARRIVE. "Made progress" was the trap the wall case above
+           already documents -- a boss ninety cells into a hundred-cell problem
+           is still a boss you shoot from safety. */
+        check(gap < 60.0f, "it digs down to a player underneath it");
+    }
+
     /* --- 3d. there is no range you can just sit in -------------------------
        Reported from play: "kiting is too effective, you can just sit in the
        range where it follows without shooting forever."

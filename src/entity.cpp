@@ -174,6 +174,21 @@ static const float CENSER_SPIT_RANGE  = 200.0f;
    because the creature is: 3.6 lifts a 56-cell body about as far as its own
    knees, which is what it takes to get onto the sort of ledge that stops it. */
 static const int   CENSER_STUCK = 22;
+/* When it cuts the floor instead of walking on it. Two conditions, and the
+   second is what keeps this from being a boss that answers every slope with a
+   hole: the player must be BELOW it and roughly UNDERNEATH it, within its own
+   width. A player down a hillside is walked to; a player under its feet is dug
+   to.
+
+   Measured FEET to feet rather than centre to centre, which is not a detail.
+   Centres put two creatures standing on one floor thirteen cells apart, so the
+   threshold has to clear thirteen before it means anything -- and a Censer
+   standing on a six-cell mound with the player beside it then reads as
+   nineteen and starts digging. That is exactly the tunnelling the last change
+   removed, pointed downward, and it cost the open-ground test 39 cells to say
+   so. Feet to feet, the same floor is zero and a mound is six. */
+static const float CENSER_DIG_BELOW    = 24.0f;
+static const float CENSER_DIG_OVERHEAD = 40.0f;
 static const float CENSER_HOP   = 3.6f;
 
 /* --- what it does when you back out of its reach ----------------------------
@@ -3205,6 +3220,32 @@ static void censerTick(World& w, Entity& e, const Player& p) {
     const bool  walking = toward > 4.0f || toward < -4.0f;
     if (walking && movedX < BOSS_STUCK_CELLS)
         broodPlough(w, e, (float)e.facing, 0.0f);
+
+    /* --- and it goes DOWN, which is the direction it never had -------------
+       Reported from play, with a picture of the boss pacing the surface while
+       the player watched from a hole underneath it: "it wont dig down to get
+       me, my drones could kill it now."
+
+       Every answer it had was horizontal. The plough cuts the face it walks
+       into; the hop clears the ledge above it. A player who was neither in
+       front of it nor above it was outside the model entirely, and the fight
+       became free damage from a position it could not even try to leave.
+
+       This is the same obstruction rule as the plough above, read down the
+       other axis: it wants to be lower, and the floor it is standing on is
+       what is stopping it, so the floor is what it cuts. No stuck timer --
+       standing on rock with the player below it is not a situation that needs
+       twenty-two frames of evidence.
+
+       The threshold is well clear of the everyday case. Two creatures on one
+       floor sit about thirteen cells apart centre to centre, and a shallow pit
+       is something it can simply walk into, so a shaft has to be a real shaft
+       before it starts cutting -- otherwise this is the tunnel-boring machine
+       again, pointed at the ground. */
+    const float overhead = toward < 0.0f ? -toward : toward;
+    if ((float)(p.bottom() - e.bottom()) > CENSER_DIG_BELOW
+        && overhead < CENSER_DIG_OVERHEAD && e.onGround)
+        broodPlough(w, e, 0.0f, 1.0f);
 
     /* --- and when that is not enough, it climbs --------------------------
        Ploughing handles a wall. It does not handle a LEDGE, because the rock
