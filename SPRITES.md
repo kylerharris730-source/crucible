@@ -1,10 +1,9 @@
 # Sprite language
 
 Inventory art is presented on a **21×21 pixel reading grid**, cached 2× with
-nearest-neighbour scaling and displayed as a 38×38 screen icon. This is the
-inventory standard: every slot intended to identify an item must reserve at
-least that much square icon space; counts may overlay an edge but must not
-squash the art.
+nearest-neighbour scaling and displayed at a **34×34 default cap**, adjusted by
+the player's UI scale. Compact text lists may use smaller icons. Counts may
+overlay an edge but must not squash the square art.
 
 The simulation-facing sprite master remains 14×14 because machines and
 creatures use those pixels as world-scale art. Inventory rendering converts
@@ -18,24 +17,37 @@ without adding per-cell render cost.
 
 ## Material silhouettes
 
-- Static blocks are squared samples with chipped highlights.
-- Powders are triangular piles: gravity is visible even in an inventory slot.
-- Liquids are low, wavy fills; their edge is never a rigid rectangle.
-- Gases are sparse overlapping puffs, leaving transparent air around them.
-- Seeds and plants favour a clear stem or husk silhouette over texture.
+- Refined metals are beveled ingots: bright top, midtone face, dark end.
+- Ores are angular dark host rock with thick mineral veins, never ingots.
+- Stone and coal are faceted chunks; sand, dirt, and fuel are granular piles.
+- Wood has end grain and long bark lines; birch has pale bark and dark dashes.
+- Glass is an open frame with a diagonal reflection; masonry has mortar joints.
+- Liquids are shaded droplets, gases overlapping puffs, and flames tapered tongues.
+- Seeds use paired kernels; plants use stems, grain heads, or cotton bolls.
+- Rope is a twisted coil, rubber a dark ring, chitin a segmented shell, and web
+  a radial mesh. Sieves retain visible holes; springs show an upward water jet.
+- Stations and torches reuse their authored object sprites, not rock shapes.
 
-Every material begins with its table colour, then receives a deterministic
-highlight/shadow pattern. This preserves the useful colour identity of the
-simulation while keeping Stone, Clay, Iron, and Ceramic readable as different
-objects rather than anonymous swatches.
+`src/material_icon.cpp` owns inventory-only material art. Most colors start from
+the world table, but material-specific palettes take priority over literal terrain
+swatches. Copper is salmon-red metal with peach highlights, bronze muted ochre,
+and gold bright yellow. Copper ore includes a little green oxidation. Iron is
+neutral silver, steel blue-gray, tin pale green-silver, titanium pale lavender,
+and tungsten dark slate. Use broad coherent lighting planes, not random speckles
+on every surface. Texture is reserved for genuinely granular or fibrous material.
+Copper and bronze weapon icons and held weapon colors match their ingot palettes.
+None of this changes simulation colors, material IDs, or physical behavior.
 
 ## Phase language
 
-Molten materials keep the silhouette of a liquid but add bright gold fissures.
-Frozen forms are pale, hard-edged blocks. Vapours use the gas silhouette and
-are lighter than their parent liquid. These are phase cues, not arbitrary
-repaints: an unfamiliar material should still read as solid, powder, liquid,
-gas, or molten at a glance.
+Molten materials use droplets with hot highlights in their existing heat palette.
+Ice is pale and hard-edged. Vapours use the gas silhouette rather than the liquid
+drop. These are phase cues, not arbitrary repaints.
+
+`tests/material_icons.cpp` checks coverage, deterministic pixels, and transparent
+margins, and optionally writes an art dump. Run `scripts/preview_material_icons.py`
+with that dump and a PNG output path (requires Pillow) for a labeled contact sheet
+showing every material at 34px and 63px. Inspect it after art changes.
 
 ## Machines, character, and future enemies
 
@@ -64,7 +76,7 @@ Three things this doc can only assert and a picture can settle:
 
 - **Use the full reading grid.** Inventory silhouettes should occupy most of
   the 21×21 canvas while retaining at least one pixel of transparent breathing
-  room. Fine texture does not justify a small silhouette. The 38px display cap
+  room. Fine texture does not justify a small silhouette. The 34px default cap
   provides additional breathing room around the enlarged art. Counts belong at the
   slot edge and must never reduce or distort the square reserved for the icon.
 

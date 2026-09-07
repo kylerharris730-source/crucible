@@ -1242,8 +1242,8 @@ void initItems() {
        copper, which is the price of it being the quickest. */
     static const MeleeTier MELEE[] = {
         /*                                     ---- sword ----   ---- spear ---- */
-        { ITEM_SWORD_COPPER,   ITEM_SPEAR_COPPER,   "Copper",     6, 33, 32,   6, 22, 45, 0xC87A32, SPR_SWORD_COPPER,   SPR_SPEAR_COPPER,   0.9f },
-        { ITEM_SWORD_BRONZE,   ITEM_SPEAR_BRONZE,   "Bronze",     9, 33, 35,   8, 22, 47, 0xCE9B4E, SPR_SWORD_BRONZE,   SPR_SPEAR_BRONZE,   1.0f },
+        { ITEM_SWORD_COPPER,   ITEM_SPEAR_COPPER,   "Copper",     6, 33, 32,   6, 22, 45, 0xD77D58, SPR_SWORD_COPPER,   SPR_SPEAR_COPPER,   0.9f },
+        { ITEM_SWORD_BRONZE,   ITEM_SPEAR_BRONZE,   "Bronze",     9, 33, 35,   8, 22, 47, 0xAD893E, SPR_SWORD_BRONZE,   SPR_SPEAR_BRONZE,   1.0f },
         { ITEM_SWORD_IRON,     ITEM_SPEAR_IRON,     "Iron",      12, 33, 35,  11, 22, 50, 0xA8ADB6, SPR_SWORD_IRON,     SPR_SPEAR_IRON,     1.1f },
         /* Gold: the fast tier. Its reach is the SHORTEST of anything past
            copper, which is the other half of paying for the speed -- a quick

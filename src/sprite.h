@@ -12,11 +12,8 @@
    same row as twelve 0xRRGGBB literals is not, and the whole point of art is
    that adjusting it should be cheap.
 
-   Materials do NOT get sprites and should not. Every material already has a
-   colour that means something in this game -- a stack of stone is stone-
-   coloured, automatically, from the same LUT the world uses -- and a swatch
-   reads faster than a glyph. Sprites are for the things that have no natural
-   colour: tools and modules. */
+   Material inventory art is generated separately by material_icon.cpp at
+   21x21. It describes material form without changing world LUT rendering. */
 
 static const int SPR_W = 14;
 static const int SPR_H = 14;

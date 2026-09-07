@@ -2603,18 +2603,16 @@ void initSprites() {
     expand(SPR_PEDESTAL,      ART_PEDESTAL);
 
     /* --- the melee ladder ------------------------------------------------
-       Colours taken from the metals themselves rather than invented here. A
-       bronze sword that is not bronze-coloured is a small lie the player has to
-       learn, and there is no reason to tell it: these are the same values the
-       world draws those materials with.
+       Copper and bronze match the inventory ingots and held ItemDef palette;
+       these presentation colors need not copy terrain's darker world swatches.
 
        The shade is a darkened copy rather than a second hand-picked colour, so
        adding an eighth tier is one row here and not a fresh pair of greys. */
     {
         struct MetalSpr { int sword, spear; u32 col; };
         static const MetalSpr METAL[] = {
-            { SPR_SWORD_COPPER,   SPR_SPEAR_COPPER,   0xC87A32 },
-            { SPR_SWORD_BRONZE,   SPR_SPEAR_BRONZE,   0xCE9B4E },
+            { SPR_SWORD_COPPER,   SPR_SPEAR_COPPER,   0xD77D58 },
+            { SPR_SWORD_BRONZE,   SPR_SPEAR_BRONZE,   0xAD893E },
             { SPR_SWORD_IRON,     SPR_SPEAR_IRON,     0xA8ADB6 },
             { SPR_SWORD_GOLD,     SPR_SPEAR_GOLD,     0xE8C233 },
             { SPR_SWORD_STEEL,    SPR_SPEAR_STEEL,    0x8E97A6 },

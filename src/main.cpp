@@ -24,6 +24,7 @@
 #include "render.h"
 #include "player.h"
 #include "item.h"
+#include "material_icon.h"
 #include "projectile.h"
 #include "worldgen.h"
 #include "light.h"
@@ -494,10 +495,6 @@ static void toggleFullscreen(HWND hwnd) {
     updatePresentRect(hwnd);
 }
 
-static u32 iconLight(u32 c, int add) {
-    int r = ((c >> 16) & 255) + add, g = ((c >> 8) & 255) + add, b = (c & 255) + add;
-    return ((u32)imin(255, imax(0, r)) << 16) | ((u32)imin(255, imax(0, g)) << 8) | (u32)imin(255, imax(0, b));
-}
 
 static void buildMaterialIcons(HDC screen) {
     for (int m = 1; m < MAT_COUNT; ++m) {
@@ -505,17 +502,11 @@ static void buildMaterialIcons(HDC screen) {
         HGDIOBJ old = SelectObject(g_iconDC, g_matIconBmp[m]);
         RECT all = { 0, 0, ICON_PX, ICON_PX }; HBRUSH key = CreateSolidBrush(ICON_KEY);
         FillRect(g_iconDC, &all, key); DeleteObject(key);
-        const u32 base = MATS[m].dryA, hi = iconLight(base, 42), lo = iconLight(base, -38);
-        const bool molten = m == MAT_LAVA || m == MAT_IRON_MELT || m == MAT_COPPER_MELT || m == MAT_RUBBER_MELT || m == MAT_SLAG_MELT;
+        u32 pixels[INV_SPR_W * INV_SPR_H];
+        renderMaterialIcon(m, pixels);
         for (int y = 0; y < INV_SPR_H; ++y) for (int x = 0; x < INV_SPR_W; ++x) {
-            bool on = false;
-            if (MATS[m].kind == KIND_POWDER) on = x >= 1 && x <= 19 && y >= 9 + abs(x - 10) / 2;
-            else if (MATS[m].kind == KIND_LIQUID) on = x >= 1 && x <= 19 && y >= 11 + ((x + m) % 4 == 0 ? 1 : 0);
-            else if (MATS[m].kind == KIND_GAS) { const int dx = x - 10, dy = y - 11; on = dx*dx + dy*dy < 66 || ((x-5)*(x-5)+(y-7)*(y-7)<27); }
-            else on = x >= 3 && x <= 17 && y >= 3 && y <= 17;
-            if (!on) continue;
-            u32 c = ((x * 13 + y * 7 + m * 11) % 9 == 0) ? hi : (((x + y + m) % 11 == 0) ? lo : base);
-            if (molten && ((x + y * 3 + m) % 5 == 0)) c = 0xFFD45A;
+            const u32 c = pixels[y * INV_SPR_W + x];
+            if (!c) continue;
             RECT p = { x * ICON_SCALE, y * ICON_SCALE, (x + 1) * ICON_SCALE, (y + 1) * ICON_SCALE };
             HBRUSH b = CreateSolidBrush(RGB((c>>16)&255, (c>>8)&255, c&255)); FillRect(g_iconDC, &p, b); DeleteObject(b);
         }
@@ -554,8 +545,7 @@ static void buildIcons() {
     ReleaseDC(NULL, screen);
 }
 
-/* Centres an item's icon in a rect, or falls back to a colour swatch for
-   everything without one -- which is every material, deliberately. */
+/* Centres the material art or authored item sprite in a square UI slot. */
 static void drawItemIcon(HDC hdc, const RECT& r, ItemId item) {
     if (inRect(r, g_mx, g_my)) { g_hoverItem = item; g_hoverRect = r; }
     if (item < MAT_COUNT && g_matIconBmp[item]) {
