@@ -750,28 +750,60 @@ bool saveRead(const char* path, World& w) {
                calculation because this is the same compiler with the same
                padding rules, and copying field by field cannot be off by a
                pad byte the way arithmetic over `len` can. */
+            /* FORTY, spelled out, and not INV_SLOTS. Every one of these
+               structs describes a file that already exists on somebody's disk,
+               so its numbers have to be frozen at what they were when it was
+               written -- and INV_SLOTS is exactly the kind of constant that
+               looks stable until the day it is not. The pack went from four
+               rows to six, and had these said INV_SLOTS they would have
+               silently stopped describing any real file, which reads as every
+               old save losing its inventory for no visible reason. */
+            static const int INV_SLOTS_4ROW = 40;
             struct InventoryV1 {
-                ItemStack slot[INV_SLOTS];
+                ItemStack slot[INV_SLOTS_4ROW];
                 ItemStack equip[9];          /* before EQ_TRINKET_C/D */
                 int       selected;
                 ItemStack droneModule[3][Inventory::DRONE_MODULE_SLOTS_MAX];
                 u8        droneLevel[3];
             };
             struct InventoryV2 {
-                ItemStack slot[INV_SLOTS];
+                ItemStack slot[INV_SLOTS_4ROW];
                 ItemStack equip[11];         /* before Drone C */
                 int       selected;
                 ItemStack droneModule[3][Inventory::DRONE_MODULE_SLOTS_MAX];
                 u8        droneLevel[3];
             };
+            /* Today's shape with yesterday's pack: everything else about the
+               inventory is current, and only the forty slots are old. This is
+               the one every save written before the pack grew will match. */
+            struct InventoryV3 {
+                ItemStack slot[INV_SLOTS_4ROW];
+                ItemStack equip[EQ_COUNT];
+                int       selected;
+                ItemStack droneModule[DRONE_BAY_COUNT][Inventory::DRONE_MODULE_SLOTS_MAX];
+                u8        droneLevel[DRONE_BAY_COUNT];
+            };
             if (len == sizeof(Inventory)) {
                 fread(&g_inv, 1, (size_t)len, f);
+                remapInventoryItems();
+            } else if (len == sizeof(InventoryV3)) {
+                InventoryV3 old;
+                fread(&old, 1, sizeof(old), f);
+                g_inv.clear();
+                for (int i = 0; i < INV_SLOTS_4ROW; ++i) g_inv.slot[i] = old.slot[i];
+                for (int i = 0; i < EQ_COUNT; ++i)       g_inv.equip[i] = old.equip[i];
+                g_inv.selected = old.selected;
+                for (int d = 0; d < DRONE_BAY_COUNT; ++d) {
+                    for (int i = 0; i < Inventory::DRONE_MODULE_SLOTS_MAX; ++i)
+                        g_inv.droneModule[d][i] = old.droneModule[d][i];
+                    g_inv.droneLevel[d] = old.droneLevel[d];
+                }
                 remapInventoryItems();
             } else if (len == sizeof(InventoryV2)) {
                 InventoryV2 old;
                 fread(&old, 1, sizeof(old), f);
                 g_inv.clear();
-                for (int i = 0; i < INV_SLOTS; ++i) g_inv.slot[i] = old.slot[i];
+                for (int i = 0; i < INV_SLOTS_4ROW; ++i) g_inv.slot[i] = old.slot[i];
                 for (int i = 0; i < 11; ++i)        g_inv.equip[i] = old.equip[i];
                 g_inv.selected = old.selected;
                 for (int d = 0; d < 3; ++d) {
@@ -785,7 +817,7 @@ bool saveRead(const char* path, World& w) {
                 memset(&old, 0, sizeof(old));
                 fread(&old, 1, (size_t)len, f);
                 g_inv.clear();
-                for (int i = 0; i < INV_SLOTS; ++i) g_inv.slot[i] = old.slot[i];
+                for (int i = 0; i < INV_SLOTS_4ROW; ++i) g_inv.slot[i] = old.slot[i];
                 for (int i = 0; i < 9; ++i)         g_inv.equip[i] = old.equip[i];
                 g_inv.selected = old.selected;
                 for (int d = 0; d < 3; ++d) {

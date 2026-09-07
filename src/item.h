@@ -957,18 +957,25 @@ static const int MATERIAL_STACK = 100000;
    "put this in the hotbar" is a drag from one slot to another rather than a
    transfer between two systems that each have their own idea of what a slot is.
 
-   Four rows of ten. Ten across because that is the hotbar's width and the grid
-   has to line up under it to read as the same container; four rows because a
-   stack is 100000 and the thing that fills a pack is VARIETY rather than
-   volume -- forty is enough to hold one of everything the world currently
-   contains and still have room for what you dug up on the way.
+   SIX rows of ten, up from four. Ten across because that is the hotbar's width
+   and the grid has to line up under it to read as the same container -- which
+   is also why the pack grew DOWNWARD rather than sideways when asked to be
+   half again as big. Fifteen columns would have meant fifteen hotbar slots and
+   a keyboard with five more number keys on it; two more rows cost nothing but
+   panel height, and the panel already sizes itself from INV_ROWS.
 
-   Widening this DOES cost the inventory section of a save, which is checked by
-   exact size: an older file's pack is skipped and the world loads without it.
-   That is the format working as designed -- see save.cpp -- and it is the right
-   trade here, since the alternative is never being able to change the number. */
+   Four rows was argued from variety rather than volume -- forty holds one of
+   everything the world contains. The world has since grown: ten more charms,
+   four sigils, four armour lines and the layer-3 materials, all of which are
+   things you carry rather than things you stack. Sixty is the same argument
+   against a bigger table.
+
+   Widening this DOES change the size of the inventory section of a save, which
+   is matched by exact size -- see save.cpp, where the previous shape is spelled
+   out and converted rather than skipped, so an existing character keeps its
+   forty slots and gains twenty empty ones. */
 static const int HOTBAR_SLOTS = 10;
-static const int INV_ROWS     = 4;
+static const int INV_ROWS     = 6;
 static const int INV_SLOTS    = HOTBAR_SLOTS * INV_ROWS;
 
 /* --- tools carry state, materials do not -----------------------------------
