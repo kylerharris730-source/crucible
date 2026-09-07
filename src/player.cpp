@@ -3,6 +3,7 @@
 #include "sprite.h"   /* the posed frames; player.h no longer pulls it in, since
                         sprite.h now needs PLAYER_W to size its canvas */
 #include "rig.h"      /* RIG_SUIT: identify exactly which pixels are suit fabric */
+#include "worn_armour.h"
 #include "light.h"    /* VIEW_CELLS_W/H, and shading the figure by the field */
 #include <math.h>
 
@@ -1011,16 +1012,14 @@ static u32 identityTint(u32 colour, u32 identity) {
 }
 
 void Player::draw(u32* px, int camX, int camY, bool lit,
-                  u32 identityColour) const {
+                  u32 identityColour, const Inventory* inventory) const {
     if (!alive) return;
 
     /* Two independent canvases, not one canvas with the crouch frame
        squashed into it -- see the note on g_playerCrouchSpr in sprite.h.
        Everything below already reads its bounds from the array it picked, so
        there is nothing further to key off `crouching`. */
-    const u32* spr = crouching
-        ? g_playerCrouchSpr[(frame >= 0 && frame < PCF_COUNT) ? frame : PCF_CROUCH]
-        : g_playerSpr[(frame >= 0 && frame < PF_COUNT) ? frame : PF_IDLE];
+    const u32* spr = wornArmourFrame(inventory, crouching, frame);
     const int sprW = crouching ? CSPR_W : PSPR_W;
     const int sprH = crouching ? CSPR_H : PSPR_H;
     /* World cell -> view cell. Everything below works in view space. */

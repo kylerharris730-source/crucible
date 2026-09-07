@@ -233,7 +233,8 @@ static const int EFF_HEART = 3;    /* what burns inside the cage */
 static const int EFF_FIRST_STAVE = 4;
 static const int EFF_FIRST_LEG   = EFF_FIRST_STAVE + EFF_STAVES * EFF_STAVE_SEGS;
 static const int EFF_FIRST_ARM   = EFF_FIRST_LEG + EFF_LEGS * EFF_SEGS;
-static const int EFF_BONES       = EFF_FIRST_ARM + EFF_ARMS * EFF_SEGS;
+static const int EFF_FACE        = EFF_FIRST_ARM + EFF_ARMS * EFF_SEGS;
+static const int EFF_BONES       = EFF_FACE + 1;
 
 static inline int effStaveBone(int t, int s) {
     return EFF_FIRST_STAVE + t * EFF_STAVE_SEGS + s;
@@ -259,6 +260,7 @@ void rigEffigy(Bone* bone, RigDef* rig, const char* name,
 void rigEffigyWalk(PoseKey* keys, int count);
 extern const Clip RIG_EFF_WALK;
 extern const Clip RIG_EFF_IDLE;
+extern const Clip RIG_EFF_RITUAL;
 
 /* --- the gait, GENERATED rather than authored -------------------------------
 

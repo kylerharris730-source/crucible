@@ -40,6 +40,8 @@
 #include "projectile.h"
 #include "craft.h"
 #include "multiplayer.h"
+#include "render.h"
+#include <string.h>
 #include <stdio.h>
 #include <math.h>
 
@@ -74,7 +76,7 @@ static int arena(World& w, int back = 500) {
     p.reset((float)(CX - 240), (float)(FLOOR - PLAYER_H / 2));
     p.alive = true; p.hp = PLAYER_HP_MAX;
     entReset();
-    return entSpawn(w, ENT_EFFIGY, (float)(CX + 160), (float)(FLOOR - 50));
+    return entSpawn(w, ENT_EFFIGY, (float)(CX + 160), (float)(FLOOR - EFFIGY_SPR_H/2-1));
 }
 
 /* Runs the world with the player pinned where the caller put them. Pinned
@@ -242,6 +244,79 @@ int main() {
         printf("a player who stood still had %d cells of fire open under them\n",
                burning);
         check(burning > 0, "the ground erupts under a player who stops moving");
+    }
+
+    /* The warning is visible even when the body is off-screen, and remains
+       at the locked location when the player moves away. */
+    {
+        core=arena(w);
+        if (core<0) return 2;
+        Entity& e=g_entities[core]; e.partsSpawned=3; e.shotTimer=1;
+        const float px=(float)(CX-240),py=(float)(FLOOR-PLAYER_H);
+        run(w,2,px,py);
+        const int x=(int)e.aimX,y=(int)e.aimY;
+        check(e.telegraph>0,"fire warning starts before ignition");
+        static u32 pixels[VIEW_CELLS_W*VIEW_CELLS_H];
+        memset(pixels,0,sizeof(pixels));
+        entDraw(pixels,x-50,y-40,false);
+        int warnings=0;
+        for (int k=0;k<VIEW_CELLS_W*VIEW_CELLS_H;++k) if (pixels[k]==0xFFE3A0) ++warnings;
+        check(warnings>=30,"all three fire footprints are drawn off-body");
+        run(w,60,px+140,py);
+        check((int)e.aimX==x && (int)e.aimY==y,"fire aim stays locked after player dodges");
+        check(w.at(x,y).mat!=MAT_BRIMFIRE,"no fire during the first second of warning");
+        run(w,24,px+140,py);
+        check(w.at(x,y).mat==MAT_BRIMFIRE && w.at(x-30,y).mat==MAT_BRIMFIRE && w.at(x+30,y).mat==MAT_BRIMFIRE,
+              "only warned locations ignite after the full wind-up");
+    }
+
+    {
+        core=arena(w);
+        if (core<0) return 2;
+        g_entities[core].partsSpawned=3;
+        int crown=entSpawn(w,ENT_EFFIGY_CROWN,g_entities[core].centreX(),g_entities[core].centreY()-58);
+        if (crown<0) return 2;
+        Entity& c=g_entities[crown]; c.home=(i16)core; c.shotTimer=0; c.actTimer=0;
+        const float px=(float)(CX-200),py=(float)(FLOOR-PLAYER_H);
+        run(w,1,px,py); float locked=c.aimX;
+        run(w,52,px-60,py);
+        int shots=0;
+        for (int j=0;j<MAX_PROJ;++j) shots+=g_proj[j].alive;
+        check(shots==0 && c.telegraph>0 && c.aimX==locked,"crown winds up without firing or tracking a dodge");
+        run(w,1,px-60,py);
+        shots=0; for (int j=0;j<MAX_PROJ;++j) shots+=g_proj[j].alive;
+        check(shots==5,"first crown pattern is a five-orb fan");
+        projClear(); c.shotTimer=0;
+        run(w,54,px,py);
+        shots=0; for (int j=0;j<MAX_PROJ;++j) shots+=g_proj[j].alive;
+        check(shots==8,"second crown pattern is an eight-orb halo");
+    }
+
+    {
+        core=arena(w);
+        if (core<0) return 2;
+        Entity& e=g_entities[core]; e.partsSpawned=3; e.shotTimer=10000;
+        const float px=(float)(CX-240),py=(float)(FLOOR-PLAYER_H);
+        int jumps=0;
+        for (int f=0;f<180;++f) {
+            run(w,1,px,py);
+            if (e.vy < -0.1f) ++jumps;
+        }
+        check(jumps==0,"ordinary slow walking never triggers a recovery hop");
+        const int wall=(int)e.x-6;
+        fill(w,wall-20,CY-180,wall,FLOOR,MAT_WALL);
+        int last=-1000,hops=0; bool spaced=true,low=true;
+        for (int f=0;f<500;++f) {
+            bool grounded=e.onGround;
+            run(w,1,px,py);
+            if (grounded && e.vy < -0.1f) {
+                spaced=spaced && f-last>=180;
+                low=low && e.vy>=-3.01f;
+                last=f; ++hops;
+            }
+        }
+        check(hops>0 && hops<=3 && spaced,"a real obstruction still permits infrequent recovery hops");
+        check(low,"recovery hops use the lower impulse");
     }
 
     /* --- 7. no orphans, and it is remembered ------------------------------ */

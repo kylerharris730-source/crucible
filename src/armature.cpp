@@ -48,9 +48,9 @@ static inline int wrapDeg(int d) { d %= 360; return d < 0 ? d + 360 : d; }
    have been refused. Raising it costs 144 KB of static scratch against the old
    64 KB, which is nothing next to one creature's baked frames, and the refusal
    above is what makes raising it a decision rather than a memory corruption. */
-static const int ARM_MAX_CELLS = 96 * 96;
-static const int MAX_SS_W = 96 * ARM_SS;
-static const int MAX_SS_H = 96 * ARM_SS;
+static const int ARM_MAX_CELLS = 128 * 128;
+static const int MAX_SS_W = 128 * ARM_SS;
+static const int MAX_SS_H = 128 * ARM_SS;
 static u8 g_ss[MAX_SS_W * MAX_SS_H];   /* 0 = empty, else shade + 1 */
 
 /* A filled disc, which is how a capsule is drawn: stamp one every half-radius

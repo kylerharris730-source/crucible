@@ -961,6 +961,8 @@ void rigEffigy(Bone* b, RigDef* rig, const char* name,
        them -- and short, so it barely clears the shoulders. The tallest point
        of the creature is the cage, not a face. */
     b[EFF_HEAD]  = mk(EFF_CHEST, 0, headLen, staveW * 4, staveW * 2, 4, 4, 255);
+    // A charred eye slit on the forward side makes facing unambiguous.
+    b[EFF_FACE] = mk(EFF_HEAD,-90,W*5/100,H/100,H/100,0,5,150);
     /* Hangs back DOWN inside the ribs from halfway up the spine. Drawn on the
        near layer so it reads as being behind the front ribs and in front of
        the back ones, which is the whole trick of a light in a lantern. */
@@ -1025,8 +1027,8 @@ void rigEffigy(Bone* b, RigDef* rig, const char* name,
            legs in the same place is a post. The near one takes the forward
            stance, so the leg the eye reads first is the one with the stride
            in it. */
-        const int stance = nearSide ? -27 : 21;
-        const int rest[EFF_SEGS] = { 180 + stance, 44, -34 };
+        const int stance = nearSide ? 22 : -18;
+        const int rest[EFF_SEGS] = { 180 + stance, -48, 85 };
         for (int seg = 0; seg < EFF_SEGS; ++seg) {
             const int idx = effLegBone(t, seg);
             const int parent = seg == 0 ? EFF_HIP : idx - 1;
@@ -1107,7 +1109,7 @@ void rigEffigyWalk(PoseKey* keys, int count) {
             /* The hip swings, the knee folds only while the leg is BEHIND the
                body -- a knee that folds on the forward swing kicks. */
             p.angle[effLegBone(t, 0)] = (i16)((swing * 26) / 1024);
-            p.angle[effLegBone(t, 1)] = (i16)((fold < 0 ? -fold : 0) * 30 / 1024);
+            p.angle[effLegBone(t, 1)] = (i16)(-(fold > 0 ? fold : 0) * 38 / 1024);
             p.angle[effLegBone(t, 2)] = (i16)((swing * -8) / 1024);
         }
         for (int t = 0; t < EFF_ARMS; ++t) {
@@ -1118,40 +1120,59 @@ void rigEffigyWalk(PoseKey* keys, int count) {
             const int turn  = t ? 1 : -1;
             p.angle[effArmBone(t, 0)] = (i16)((swing * turn * 15) / 1024);
             p.angle[effArmBone(t, 1)] = (i16)((swing * turn * 9) / 1024);
+            p.angle[effArmBone(t, 2)] = (i16)(isin1024(phase-60)*turn*14/1024);
         }
         /* Twice the leg cycle: the body drops on EVERY footfall, and there are
            two of those per stride. The heart lags it, because a weight on a
            chain arrives late. */
         p.rootDY = (i16)((isin1024(cyc * 2) * ARM_SS * 2) / 1024);
         p.angle[EFF_HEART] = (i16)((isin1024(cyc * 2 - 60) * 7) / 1024);
+        p.angle[EFF_CHEST] = (i16)(isin1024(cyc-30)*3/1024);
+        p.angle[EFF_HEAD] = (i16)(-p.angle[EFF_CHEST]);
     }
 }
 
 static PoseKey g_effWalkKeys[8];
-static PoseKey g_effIdleKeys[2];
+static PoseKey g_effIdleKeys[4];
+static PoseKey g_effRitualKeys[8];
 
 static void buildEffClips() {
     rigEffigyWalk(g_effWalkKeys, 8);
     /* Standing still is the legs planted and the heart still swinging. A boss
        that freezes completely between steps reads as a prop. */
-    rigEffigyWalk(g_effIdleKeys, 2);
-    for (int k = 0; k < 2; ++k) {
+    rigEffigyWalk(g_effIdleKeys, 4);
+    for (int k = 0; k < 4; ++k) {
         for (int t = 0; t < EFF_LEGS; ++t)
             for (int s = 0; s < EFF_SEGS; ++s)
                 g_effIdleKeys[k].angle[effLegBone(t, s)] = 0;
         for (int t = 0; t < EFF_ARMS; ++t)
             for (int s = 0; s < EFF_SEGS; ++s)
-                g_effIdleKeys[k].angle[effArmBone(t, s)] = 0;
+                g_effIdleKeys[k].angle[effArmBone(t, s)] = (i16)(isin1024(k*90-s*35)*(t ? -1 : 1)*4/1024);
         g_effIdleKeys[k].rootDY = 0;
     }
     g_effIdleKeys[1].angle[EFF_HEART] = 5;
     g_effIdleKeys[1].rootDY = -ARM_SS / 2;
+    memset(g_effRitualKeys,0,sizeof(g_effRitualKeys));
+    for (int k=0;k<8;++k) {
+        PoseKey& p=g_effRitualKeys[k];
+        const int lift=k<5 ? k*12 : 48-(k-4)*4;
+        p.angle[EFF_CHEST]=-lift/8;
+        p.angle[EFF_HEAD]=lift/5;
+        p.angle[EFF_HEART]=isin1024(k*60)*12/1024;
+        for (int t=0;t<EFF_ARMS;++t) {
+            const int side=t ? -1 : 1;
+            p.angle[effArmBone(t,0)]=side*lift;
+            p.angle[effArmBone(t,1)]=-side*lift/2;
+            p.angle[effArmBone(t,2)]=side*(lift/2+isin1024(k*50)*10/1024);
+        }
+    }
 }
 
-static const Clip EFF_WALK = { "effwalk", g_effWalkKeys, 8, 8, true, true };
-static const Clip EFF_IDLE = { "effidle", g_effIdleKeys, 2, 2, true, true };
+static const Clip EFF_WALK = { "effwalk", g_effWalkKeys, 8, 16, true, true };
+static const Clip EFF_IDLE = { "effidle", g_effIdleKeys, 4, 4, true, true };
 const Clip RIG_EFF_WALK = EFF_WALK;
 const Clip RIG_EFF_IDLE = EFF_IDLE;
+const Clip RIG_EFF_RITUAL = { "effritual",g_effRitualKeys,8,8,false,true };
 
 struct TentClipInit { TentClipInit() { buildTentClips(); buildSpiderClips(); buildHarvClips(); buildEffClips(); } };
 static TentClipInit g_tentClipInit;

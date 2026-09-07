@@ -405,10 +405,12 @@ extern u32 g_censerWalk[CENSER_WALK_FRAMES][CENSER_SPR_W * CENSER_SPR_H];
    STANDS. A spider fills a wide box; an upright figure in a 96-cell one is
    mostly air, and the box is the hitbox -- so the extra width was a boss you
    could be hit by while standing well clear of anything drawn. */
-static const int EFFIGY_SPR_W = 72;
-static const int EFFIGY_SPR_H = 88;
-static const int EFFIGY_IDLE_FRAMES = 2;
-static const int EFFIGY_WALK_FRAMES = 8;
+static const int EFFIGY_SPR_W = 96;
+static const int EFFIGY_SPR_H = 112;
+static const int EFFIGY_IDLE_FRAMES = 4;
+static const int EFFIGY_WALK_FRAMES = 16;
+static const int EFFIGY_RITUAL_FRAMES = 8;
+extern u32 g_effigyRitual[EFFIGY_RITUAL_FRAMES][EFFIGY_SPR_W * EFFIGY_SPR_H];
 extern u32 g_effigyIdle[EFFIGY_IDLE_FRAMES][EFFIGY_SPR_W * EFFIGY_SPR_H];
 extern u32 g_effigyWalk[EFFIGY_WALK_FRAMES][EFFIGY_SPR_W * EFFIGY_SPR_H];
 

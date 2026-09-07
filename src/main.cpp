@@ -7736,7 +7736,7 @@ static void clientRender(HWND hwnd) {
     if (g_playerOn) {
         const u32 accent = showPlayerIdentity
                          ? playerIdentityColour(g_playerSessions[0].networkId) : 0;
-        g_player.draw(g_pixels, g_camX, g_camY, g_lightOn, accent);
+        g_player.draw(g_pixels, g_camX, g_camY, g_lightOn, accent, &g_inv);
         if (g_survival) {
             const Aim aim = currentAim();
             drawHeldTool(g_pixels, g_player, g_inv, g_playerSessions[0],
@@ -7754,7 +7754,7 @@ static void clientRender(HWND hwnd) {
         const Player& body = (netRole() == NET_CLIENT && g_remoteVisualValid[slot])
                            ? g_remoteVisual[slot] : other.body;
         body.draw(g_pixels, g_camX, g_camY, g_lightOn,
-                  playerIdentityColour(other.networkId));
+                  playerIdentityColour(other.networkId), &other.inventory);
         /* No cursor to read, so a resting weapon points the way they face.
            A swing ignores this and uses the direction the stroke committed
            to, which is replicated -- so the attack you have to read and

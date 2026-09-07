@@ -109,6 +109,59 @@ the repeated trim without making the three slot roles look interchangeable. The
 Drone Beacon repeats that cyan signal colour but uses antenna arcs and a cased
 puck, so it reads as the set's controller rather than a fourth armour piece.
 
+## Effigy final boss
+
+The Effigy uses a 96×112 world canvas (formerly 72×88), with 16 distance-driven
+walk frames, four breathing frames, and an eight-pose fire ritual. Its forward
+toe and eye slit face right in source art; mirror the whole figure for leftward
+travel. The backward-folding shin is anatomy, not permission to point the toes
+backward. Lift the knee during forward recovery, then plant it on the backward
+stroke. Chest sway, counter-rotating head, delayed wrists, and a swinging heart
+give the cage weight. Keep gaps between the ribs visible.
+
+Fire rituals halt the walk and lift the arms. Three fixed floor footprints,
+30 cells apart, remain visible for 84 ticks before brimfire appears. Their edge
+lines are persistent, not a whole-screen flash; rising marks show time passing.
+Render these warnings independently of body visibility and terrain lighting.
+The crown previews its five-ray fan or eight-ray halo for 54 ticks; the arm orbs
+mark a committed lunge target for 40 ticks, then recover rather than tracking
+the player indefinitely. These timers and aim coordinates use replicated entity
+state, not local animation clocks.
+
+`tests/effigy_art.cpp` and `scripts/preview_effigy.py` produce a contact sheet
+and animated walk/ritual previews. `tests/effigy.cpp` checks warning timing,
+locked targets, both crown patterns, and existing multipart boss behavior.
+
+## Worn armor
+
+`src/worn_armour.cpp` builds armor on the player's humanoid skeleton. Each
+equipped head, body, or feet piece contributes its own palette and geometry;
+mixed sets work without requiring a set bonus. Empty slots retain the base suit.
+Steel and titanium have only head/body pieces, so do not invent matching greaves.
+
+| Family | Worn design |
+| --- | --- |
+| Iron | Neutral iron plates, rounded helmet ridge, simple pauldrons and knee guards |
+| Steel | Blue-steel cuirass and ridged helmet, pale metal fittings |
+| Titanium | Pale lavender lightweight shell with mint fittings and small shoulders |
+| Drone | Teal visor receiver, narrow cyan-strapped harness and control pack, shin strips |
+| Ranger | Olive pointed hood/brim, tan sash, rear coat skirt, light greaves |
+| Vanguard | Wine-red broad plate, cheek guard, warm metal pauldrons and gauntlets |
+| Thurible | Ember-gold crown receiver and control harness with pale hot trim |
+| Ashen | Ash-gray hood and long coat, ember-tan sash and light greaves |
+| Brimsteel | Brimstone-red heavy plate and closed cheek guard, gold-hot fittings |
+
+Decorations are child bones: never stamp a stationary helmet or skirt over an
+animated character. Keep armor palettes intact in multiplayer; exposed suit
+fabric, belt, and the existing numbered badge retain player identity colors.
+All designs use the existing collision boxes, lighting, facing, and damage flash.
+Eight cached loadouts avoid rebaking during normal animation, including four-player
+play. Equipment changes select or bake a loadout; no save or protocol changes.
+
+`tests/worn_armour.cpp` checks every pose, individual pieces, mixed sets, removal,
+cache eviction, and coverage for wearable armor. Its optional dump is rendered by
+`scripts/preview_worn_armour.py` at 2x game scale and 3x inspection scale.
+
 ## Circuit signals
 
 Virtual circuit signals `1` through `9` use violet seven-segment chips with a

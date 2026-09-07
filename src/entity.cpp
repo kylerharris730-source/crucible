@@ -1,4 +1,5 @@
 #include "entity.h"
+#include "rig.h"
 #include "multiplayer.h"
 #include "device.h"       /* hiveTarget and hiveDeliver, for the round trip */
 #include "sprite.h"
@@ -713,7 +714,7 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
        No layerMask and no rareDrop: it is summoned, it drops the Ascent Core,
        and it opens no seal because there is nothing under it. */
     { "The Effigy", EFFIGY_SPR_W, EFFIGY_SPR_H, 6000, 55, 24,
-      0.34f, 0.05f, false, 0, false,
+      0.22f, 0.025f, false, 0, false,
       EFFIGY_ERUPT_EVERY, 30, 0.0f, 0.0f, true,
       ITEM_ASCENT_CORE, 1, 1, ITEM_NONE, 0, SPR_NONE, 0xE85A14,
       ITEM_EGG_EFFIGY, false, false, 250 },
@@ -3432,9 +3433,9 @@ static void censerLimbTick(World& w, Entity& e, const Player& p) {
    a part floating somewhere the silhouette says nothing is would read as an
    escort rather than a limb. */
 static const int   EFFIGY_ARMS   = 2;
-static const float EFFIGY_ARM_X[EFFIGY_ARMS] = { -34.0f, 34.0f };
+static const float EFFIGY_ARM_X[EFFIGY_ARMS] = { -44.0f, 44.0f };
 static const float EFFIGY_ARM_Y = -6.0f;
-static const float EFFIGY_CROWN_Y = -46.0f;
+static const float EFFIGY_CROWN_Y = -58.0f;
 
 /* Station-keeping, the same damped spring the Censer's limbs use and for the
    reason its note gives at length: a pure spring oscillates forever, and what
@@ -3453,19 +3454,18 @@ static const float EFFIGY_ARM_REACH = 110.0f;
 static const float EFFIGY_ARM_LUNGE = 0.085f;
 static const float EFFIGY_ARM_SPEED = 3.40f;
 
-/* How long the ground is marked before it opens. Long enough to walk out of
-   at the player's own speed from a standing start -- 1.2 cells a frame over
-   fifty frames is sixty cells, against an eruption eleven wide. Standing
-   still is the mistake, not being caught out. */
-static const int   EFFIGY_ERUPT_WIND = 50;
+/* 1.4 seconds to leave three eleven-cell footprints, with nineteen-cell gaps. */
+static const int   EFFIGY_ERUPT_WIND = 84;
 static const int   EFFIGY_ERUPT_HALF = 5;
 static const int   EFFIGY_ERUPT_DEEP = 3;
 
 /* Movement. Slow, and it does not surge -- the Censer's charge exists because
    it could neither reach nor shoot a player past 200 cells, and this creature
    has a crown that reaches everywhere. It never needs to hurry. */
-static const int   EFFIGY_STUCK = 20;
-static const float EFFIGY_HOP   = 4.4f;
+static const int   EFFIGY_STUCK = 55;
+static const float EFFIGY_HOP   = 3.0f;
+static const float EFFIGY_STUCK_CELLS = 0.05f; // Below its normal 0.22 pace.
+static const int   EFFIGY_HOP_COOLDOWN = 180;
 static const float EFFIGY_DIG_BELOW    = 30.0f;
 static const float EFFIGY_DIG_OVERHEAD = 56.0f;
 
@@ -3521,6 +3521,7 @@ static void effigyErupt(World& w, int cx, int cy) {
 static void effigyTick(World& w, Entity& e, const Player& p) {
     const EntityDef& d = ENT_DEFS[e.type];
     const int self = (int)(&e - g_entities);
+    if (e.aimHold>0) --e.aimHold; // Core-only recovery-hop cooldown.
 
     /* Its parts, once, one a frame, at the body's own centre -- the same
        streaming the Censer uses and for the reason its note gives: a station
@@ -3533,6 +3534,7 @@ static void effigyTick(World& w, Entity& e, const Player& p) {
         if (slot >= 0) {
             g_entities[slot].home  = (i16)self;
             g_entities[slot].phase = e.partsSpawned;
+            if (type==ENT_EFFIGY_ARM) g_entities[slot].shotTimer=60+e.partsSpawned*70;
             ++e.partsSpawned;
         }
     }
@@ -3544,16 +3546,21 @@ static void effigyTick(World& w, Entity& e, const Player& p) {
        wind-up starts and never revisited -- which is the entire reason it can
        be walked out of, and the same commitment the Brood Mother's dash makes.
 
-       telegraph is negative-going here so the renderer's wind-up flash reads
-       the same way it does on every other boss. */
+       The positive elapsed telegraph drives the ritual pose and floor marks. */
     --e.shotTimer;
     if (e.shotTimer == 0) {
         e.aimX = p.centreX();
         e.aimY = p.bottom() + 1.0f;
+        // Find the nearby floor once. The warning must never chase the player.
+        for (int n=0;n<48 && e.aimY<PLAY_Y1-4;++n) {
+            if (w.at((int)e.aimX,(int)e.aimY).mat!=MAT_EMPTY) break;
+            e.aimY+=1.0f;
+        }
     }
     if (e.shotTimer <= 0) e.telegraph = -e.shotTimer;
     if (e.shotTimer <= -EFFIGY_ERUPT_WIND) {
-        effigyErupt(w, (int)e.aimX, (int)e.aimY);
+        for (int mark=-1;mark<=1;++mark)
+            effigyErupt(w, (int)e.aimX+mark*30, (int)e.aimY);
         e.telegraph = 0;
         /* Faster once its parts are gone. Nothing new arrives in the second
            half -- the same rule the Censer's phases follow, because a boss
@@ -3570,9 +3577,11 @@ static void effigyTick(World& w, Entity& e, const Player& p) {
     if (toward >  3.0f) e.facing =  1;
     else if (toward < -3.0f) e.facing = -1;
 
-    const float pace  = d.speed * (exposed ? 1.5f : 1.0f);
-    const float shove = d.accel * (exposed ? 1.4f : 1.0f);
-    if (toward > 6.0f || toward < -6.0f) {
+    const float pace  = d.speed * (exposed ? 1.25f : 1.0f);
+    const float shove = d.accel * (exposed ? 1.15f : 1.0f);
+    const bool ritual=e.shotTimer<=0;
+    if (ritual) e.vx*=0.75f;
+    else if (toward > 6.0f || toward < -6.0f) {
         e.vx += (float)e.facing * shove;
         if (e.vx >  pace) e.vx =  pace;
         if (e.vx < -pace) e.vx = -pace;
@@ -3585,8 +3594,8 @@ static void effigyTick(World& w, Entity& e, const Player& p) {
        its movement is obstructed" -- and there is no reason for the bigger
        creature to be the one that tunnels. */
     const float movedX  = fabsf(e.x - e.prevX);
-    const bool  walking = toward > 6.0f || toward < -6.0f;
-    if (walking && movedX < BOSS_STUCK_CELLS)
+    const bool  walking = !ritual && (toward > 6.0f || toward < -6.0f);
+    if (walking && movedX < EFFIGY_STUCK_CELLS)
         broodPlough(w, e, (float)e.facing, 0.0f);
 
     /* Down through the floor at a player underneath it, feet to feet, and
@@ -3594,16 +3603,18 @@ static void effigyTick(World& w, Entity& e, const Player& p) {
        88 cells tall and 96 wide, so "underneath me" is a wider window and "far
        enough below to be worth digging for" is a deeper one. */
     const float overhead = toward < 0.0f ? -toward : toward;
-    if ((float)(p.bottom() - e.bottom()) > EFFIGY_DIG_BELOW
+    if (!ritual && (float)(p.bottom() - e.bottom()) > EFFIGY_DIG_BELOW
         && overhead < EFFIGY_DIG_OVERHEAD && e.onGround)
         broodPlough(w, e, 0.0f, 1.0f);
 
-    /* And over a ledge, on the same wedged detector every boss here uses. */
+    /* A grounded recovery step, not a jump whenever its slow gait falls below
+       the other bosses' threshold. Never retrigger while airborne. */
     const float moved = fabsf(e.x - e.prevX) + fabsf(e.y - e.prevY);
-    if (walking && moved < BOSS_STUCK_CELLS) {
+    if (walking && e.onGround && e.aimHold==0 && moved < EFFIGY_STUCK_CELLS) {
         if (++e.stuck >= EFFIGY_STUCK) {
             e.stuck = 0;
             e.vy = -EFFIGY_HOP;
+            e.aimHold=EFFIGY_HOP_COOLDOWN;
             broodPlough(w, e, 0.0f, -1.0f);
         }
     } else {
@@ -3628,18 +3639,28 @@ static void effigyArmTick(World& w, Entity& e, const Player& p) {
     const int k = e.phase >= 0 && e.phase < EFFIGY_ARMS ? e.phase : 0;
 
     const float dx = p.centreX() - e.centreX(), dy = p.centreY() - e.centreY();
-    const float reaching = dx * dx + dy * dy
-                         < EFFIGY_ARM_REACH * EFFIGY_ARM_REACH ? 1.0f : 0.0f;
+    const bool inReach=dx*dx+dy*dy<EFFIGY_ARM_REACH*EFFIGY_ARM_REACH;
+    // Staggered orbit, wind-up, committed sweep, recovery. No homing fist.
+    ++e.actTimer;
+    if (e.shotTimer>0) --e.shotTimer;
+    if (e.shotTimer==0 && inReach) {
+        e.aimX=p.centreX(); e.aimY=p.centreY();
+        e.shotTimer=-1;
+    } else if (e.shotTimer<0) --e.shotTimer;
+    const bool wind=e.shotTimer<0 && e.shotTimer>=-40;
+    const bool reaching=e.shotTimer<-40 && e.shotTimer>=-100;
+    e.telegraph=wind ? -e.shotTimer : 0;
+    if (e.shotTimer<-100) e.shotTimer=100+k*45;
+    const float orbit=e.actTimer*0.023f+k*3.14159265f;
 
     /* Its post, or the player. One spring either way -- what changes is where
        it is pulled and how hard, which keeps the two behaviours from being two
        different movement systems that can disagree about velocity. */
-    const float tx = reaching > 0.0f ? p.centreX()
-                                     : core.centreX() + EFFIGY_ARM_X[k];
-    const float ty = reaching > 0.0f ? p.centreY()
-                                     : core.centreY() + EFFIGY_ARM_Y;
-    const float pull = reaching > 0.0f ? EFFIGY_ARM_LUNGE : EFFIGY_PART_PULL;
-    const float cap  = reaching > 0.0f ? EFFIGY_ARM_SPEED : EFFIGY_PART_SPEED;
+    const float tx = reaching ? e.aimX : core.centreX()+EFFIGY_ARM_X[k]
+                  +sinf(orbit)*12.0f+(wind ? (k ? 14.0f : -14.0f) : 0.0f);
+    const float ty = reaching ? e.aimY : core.centreY()+EFFIGY_ARM_Y+cosf(orbit)*14.0f-(wind ? 18.0f : 0.0f);
+    const float pull = reaching ? EFFIGY_ARM_LUNGE : EFFIGY_PART_PULL;
+    const float cap  = reaching ? EFFIGY_ARM_SPEED : EFFIGY_PART_SPEED;
 
     e.vx += (tx - e.centreX()) * pull;
     e.vy += (ty - e.centreY()) * pull;
@@ -3664,8 +3685,9 @@ static void effigyCrownTick(World& w, Entity& e, const Player& p) {
     }
     const Entity& core = g_entities[home];
 
-    const float tx = core.centreX();
-    const float ty = core.centreY() + EFFIGY_CROWN_Y;
+    ++e.aimHold;
+    const float tx = core.centreX()+sinf(e.aimHold*0.017f)*23.0f;
+    const float ty = core.centreY()+EFFIGY_CROWN_Y+cosf(e.aimHold*0.034f)*8.0f;
     e.vx += (tx - e.centreX()) * EFFIGY_PART_PULL;
     e.vy += (ty - e.centreY()) * EFFIGY_PART_PULL;
     e.vx *= EFFIGY_PART_DAMP;
@@ -3678,16 +3700,25 @@ static void effigyCrownTick(World& w, Entity& e, const Player& p) {
     e.facing = core.facing;
 
     if (e.shotTimer > 0) { --e.shotTimer; return; }
-    /* No line-of-sight test, and that is the point of it: this is the part
-       that answers hiding. The Censer's limbs check for a clear line and hold
-       fire behind cover, which is right for a creature whose body is already
-       walking at you -- here the body is slower than anything else in the game
-       and the fire has to arrive anyway.
-
-       It still cannot reach the other side of the world: lobAtPlayer solves an
-       arc at the crown's own shot speed and simply does not fire when the
-       target is past what that arc covers. */
-    lobAtPlayer(w, e, p, MAT_BRIMFIRE, 0xFFD07A);
+    if (e.shotTimer==0) { e.aimX=p.centreX(); e.aimY=p.centreY(); }
+    --e.shotTimer;
+    e.telegraph=-e.shotTimer;
+    if (e.shotTimer>-54) return;
+    /* Bounded, non-homing patterns. Terrain still stops these shots; the core's
+       warned ground ritual is the answer to hiding, not a wall-piercing volley. */
+    (void)w;
+    const float heading=atan2f(e.aimY-e.centreY(),e.aimX-e.centreX());
+    const bool halo=(e.actTimer++ & 1)!=0;
+    const int shots=halo ? 8 : 5;
+    for (int i=0;i<shots;++i) {
+        // A slow halo has large gaps; the faster fan aims only at the old mark.
+        const float angle=halo ? heading+(i+0.5f)*6.2831853f/8.0f : heading+(i-2)*0.20f;
+        const float speed=halo ? 2.5f : 4.0f;
+        projSpawn(e.centreX(),e.centreY(),cosf(angle)*speed,sinf(angle)*speed,
+                  STR_SOFT,1,180,halo ? 0xFF9854 : 0xFFD07A,0,MAT_BRIMFIRE,
+                  d.shotDamage,true,0.0f);
+    }
+    e.telegraph=0;
     e.shotTimer = d.shotEvery;
 }
 
@@ -4533,6 +4564,44 @@ static bool rigArtFor(u8 type, RigArt* out) {
     }
 }
 
+static void effigyWarnings(u32* px,int camX,int camY) {
+    const auto dot=[&](int x,int y,u32 c) {
+        x-=camX; y-=camY;
+        if (x>=0 && x<VIEW_CELLS_W && y>=0 && y<VIEW_CELLS_H)
+            px[y*VIEW_CELLS_W+x]=c;
+    };
+    for (int i=0;i<MAX_ENTITIES;++i) {
+        const Entity& e=g_entities[i];
+        if (!e.alive() || e.telegraph<=0) continue;
+        if (e.type==ENT_EFFIGY) {
+            for (int mark=-1;mark<=1;++mark) {
+                int x=(int)e.aimX+mark*30, y=(int)e.aimY;
+                // Exact hazard footprint stays lit; rising sparks show the countdown.
+                for (int dx=-EFFIGY_ERUPT_HALF;dx<=EFFIGY_ERUPT_HALF;++dx) {
+                    dot(x+dx,y-EFFIGY_ERUPT_DEEP-1,0xFFE3A0);
+                    dot(x+dx,y+EFFIGY_ERUPT_DEEP+1,0xB9512E);
+                }
+                for (int h=0;h<18;++h) {
+                    if (h%3==0) { dot(x-6,y-4-h,0xDC7143); dot(x+6,y-4-h,0xDC7143); }
+                    if ((h+e.telegraph/4)%7==0) dot(x,y-4-h,0xFFF2C2);
+                }
+            }
+        } else if (e.type==ENT_EFFIGY_ARM) {
+            const int x=(int)e.aimX,y=(int)e.aimY;
+            for (int a=-5;a<=5;++a) {
+                dot(x+a,y-6,0xFFCF85); dot(x+a,y+6,0xFFCF85);
+            }
+        } else if (e.type==ENT_EFFIGY_CROWN) {
+            const float heading=atan2f(e.aimY-e.centreY(),e.aimX-e.centreX());
+            const bool halo=(e.actTimer&1)!=0;
+            for (int ray=0;ray<(halo ? 8 : 5);++ray) {
+                const float a=halo ? heading+(ray+0.5f)*6.2831853f/8 : heading+(ray-2)*0.20f;
+                for (int r=12;r<31;r+=3) dot((int)(e.centreX()+cosf(a)*r),(int)(e.centreY()+sinf(a)*r),0xFFD891);
+            }
+        }
+    }
+}
+
 void entDraw(u32* px, int camX, int camY, bool lit) {
     for (int i = 0; i < MAX_ENTITIES; ++i) {
         const Entity& e = g_entities[i];
@@ -4548,11 +4617,14 @@ void entDraw(u32* px, int camX, int camY, bool lit) {
         if (rigArtFor(e.type, &art3)) {
             const u32* art = 0;
             const bool moving = fabsf(e.vx) > 0.04f || fabsf(e.vy) > 0.04f;
-            if (e.type == ENT_SHAMBLER && !e.onGround)
+            if (e.type==ENT_EFFIGY && e.telegraph>0)
+                art=g_effigyRitual[imin(EFFIGY_RITUAL_FRAMES-1,e.telegraph*EFFIGY_RITUAL_FRAMES/EFFIGY_ERUPT_WIND)];
+            else if (e.type == ENT_SHAMBLER && !e.onGround)
                 art = e.vy < 0.0f ? g_shamblerJump : g_shamblerFall;
             else if (moving) {
                 const float stride = (float)imax(2, d.h / 3);
-                const int frame = ((int)(e.walkPhase * 4.0f / stride)) &
+                const float rate=e.type==ENT_EFFIGY ? 8.0f : 4.0f;
+                const int frame = ((int)(e.walkPhase * rate / stride)) &
                                   (art3.walkFrames - 1);
                 art = art3.walk + (size_t)frame * art3.w * art3.h;
             } else {
@@ -4570,6 +4642,8 @@ void entDraw(u32* px, int camX, int camY, bool lit) {
                     u32 out = art[sy * art3.w +
                                   (e.facing < 0 ? art3.w - 1 - sx : sx)];
                     if (!out) continue;
+                    if (e.type==ENT_EFFIGY && e.telegraph>0 && out==RIG_EFFIGY[3])
+                        out=lerpColor(out,0xFFF0B4,imin(220,e.telegraph*2));
                     if (lit) out = shadeColor(out, viewShade(vx, vy));
                     if (e.hurtFlash > 0) out = 0xFFFFFF;
                     px[vy * VIEW_CELLS_W + vx] = out;
@@ -4629,6 +4703,8 @@ void entDraw(u32* px, int camX, int camY, bool lit) {
             }
         }
     }
+
+    effigyWarnings(px,camX,camY);
 
     /* Draw pickups after creatures: a freshly dropped chitin plate should be
        visible at a corpse's feet instead of hiding beneath its last frame. */

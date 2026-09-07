@@ -44,6 +44,21 @@ int main() {
         fprintf(stderr, "FAIL: single-player draw changed when no identity was requested\n");
         return 2;
     }
-    printf("PASS\n");
+    Inventory armour={};
+    armour.equip[EQ_HEAD]={ITEM_DRONE_VISOR,1,0};
+    armour.equip[EQ_BODY]={ITEM_DRONE_HARNESS,1,0};
+    armour.equip[EQ_FEET]={ITEM_DRONE_GREAVES,1,0};
+    memset(amber,0,sizeof(amber)); memset(cyan,0,sizeof(cyan));
+    player.draw(amber,0,0,false,0xF0B44C,&armour);
+    player.draw(cyan,0,0,false,0x55BFE6,&armour);
+    int plate=0, identity=0;
+    for (int i=0;i<VIEW_CELLS_W*VIEW_CELLS_H;++i) {
+        if (amber[i]==0x6FAFBE && cyan[i]==amber[i]) ++plate;
+        if (amber[i]!=cyan[i]) ++identity;
+    }
+    if (plate<20 || identity==0) {
+        fprintf(stderr,"FAIL: armour palette or multiplayer identity was lost\n"); return 3;
+    }
+    printf("PASS: armour keeps its palette and players keep their identity accent\n");
     return 0;
 }

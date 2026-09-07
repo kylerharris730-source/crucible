@@ -1,5 +1,6 @@
 #pragma once
 #include "world.h"
+struct Inventory;
 
 /* The player is an ENTITY, not a cell. It has no id in MatId, never occupies a
    slot in the grid, and the simulation neither knows nor cares that it exists --
@@ -562,7 +563,7 @@ struct Player {
     /* `identityColour` tints the suit fabric in multiplayer. Zero preserves
        the ordinary single-player art byte-for-byte. */
     void draw(u32* px, int camX, int camY, bool lit = false,
-              u32 identityColour = 0) const;
+              u32 identityColour = 0, const Inventory* inventory = 0) const;
 
     /* Publish the collision box to the world so material cannot move into it.
        Called once a frame from the host; the world knows nothing about players,
