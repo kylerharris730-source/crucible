@@ -1026,6 +1026,31 @@ static int  g_circuitWireFromPort = 0;
    devTick can remove a device at any time, and the panel revalidates by index
    every frame it draws. */
 static int  g_devPanel = -1;
+
+/* --- one screen at a time ---------------------------------------------------
+   Reported from play: "you shouldnt be able to open one menu over another, you
+   can open inventory over crafting or something janky like that."
+
+   Every full-screen panel was its own independent boolean, so opening one did
+   nothing about the others: the crafting list and the creative grid would draw
+   on top of each other, both dimming the world, both taking clicks, and the
+   Escape key would then close them one at a time in an order nobody could
+   predict from looking at the screen.
+
+   `screenExclusive` closes every panel except the one named. Each opener calls
+   it as its first act, which puts the rule in ONE place rather than in a
+   growing pile of "and also clear that other flag" lines at every call site --
+   which is exactly how this got out of hand in the first place.
+
+   The satellite uses of the creative grid are deliberately NOT routed through
+   it: a dig filter, a device filter and a circuit signal picker all borrow that
+   grid while a device panel stays open behind them, and they are children of
+   that panel rather than peers of it. See openCircuitSignalPicker. */
+enum ScreenKind {
+    SCREEN_NONE = 0, SCREEN_MENU, SCREEN_CREATIVE, SCREEN_CRAFT,
+    SCREEN_CHEST, SCREEN_DEVICE, SCREEN_MAP
+};
+static void screenExclusive(int keep);
 static int  g_closeDevicePending = -1; /* client-side close until host echoes it */
 static bool handleDevPanelClick(int mx, int my);
 static bool handleCraftClick(int mx, int my);
@@ -2467,6 +2492,7 @@ static bool sendClientAction(u8 type, u8 container, u8 a, u8 b, u8 flags, i32 x,
    let a survival click on empty ground clear an openDevice the command stream
    still believes in, which is the session's to decide and not the UI's. */
 static void setDevicePanel(int index) {
+    if (index >= 0) screenExclusive(SCREEN_DEVICE);
     g_devPanel = index;
     if (!(g_survival && g_playerOn)) g_playerSessions[0].openDevice = index;
 }
@@ -2490,6 +2516,7 @@ static void dragStow() {
 
 static void openChest(int index) {
     if (index < 0 || index >= MAX_DEVICES || !g_devices[index].used) return;
+    screenExclusive(SCREEN_CHEST);
     Device& d = g_devices[index];
     g_playerSessions[0].openDevice = index;
     g_chestOpen = index; g_devPanel = -1; g_logisticsUiOpen = true;
@@ -2514,6 +2541,42 @@ static void closeChest() {
     }
     sendClientAction(NACT_CLOSE_DEVICE);
     g_chestOpen = -1; g_logisticsUiOpen = false; dragStow();
+}
+
+/* Defined here rather than beside its declaration because it has to be able to
+   call closeChest() and dragStow(), both of which are defined above this line
+   and below setDevicePanel -- which is one of its callers. */
+static void screenExclusive(int keep) {
+    if (keep != SCREEN_MENU)     g_menuOpen = false;
+    if (keep != SCREEN_CRAFT)    g_craftOpen = false;
+    if (keep != SCREEN_MAP)      g_mapOpen = false;
+    if (keep != SCREEN_CREATIVE && g_creativeOpen) {
+        /* The same teardown Escape does, and it has to be all of it: the
+           filter and picker fields are what tell the grid it is being used as
+           a picker, and a grid closed with one of them still set would come
+           back next time still believing it was choosing a signal for a device
+           that is no longer open. */
+        g_creativeOpen = false;
+        g_filterDevice = -1;
+        g_digFilterPicking = false;
+        g_signalPickerDevice = -1;
+        g_signalPickerField = CIR_PICK_NONE;
+        g_creSearchFocus = false;
+        dragStow();
+    }
+    if (keep != SCREEN_CHEST && g_chestOpen >= 0) closeChest();
+    if (keep != SCREEN_DEVICE && g_devPanel >= 0) {
+        /* Through the network, exactly as Escape does. A device panel is not
+           only a rectangle on this screen -- the host is holding it open for
+           this player -- so dropping the flag on its own would leave a device
+           the session thinks is still in use. */
+        if (netRole() == NET_CLIENT) {
+            g_closeDevicePending = g_devPanel;
+            g_playerSessions[0].openDevice = -1;
+        }
+        sendClientAction(NACT_CLOSE_DEVICE);
+        g_devPanel = -1;
+    }
 }
 
 static bool handleChestClick(int mx, int my, bool right) {
@@ -3351,7 +3414,11 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
            to a mistyped craft key would be unforgivable. */
         case 'C':
             g_craftOpen = !g_craftOpen;
-            if (g_craftOpen) { layoutCraft(); g_lmb = g_rmb = false; }
+            if (g_craftOpen) {
+                screenExclusive(SCREEN_CRAFT);
+                layoutCraft();
+                g_lmb = g_rmb = false;
+            }
             break;
         case 'N':
             if (netRole() == NET_CLIENT) break;
@@ -3416,7 +3483,10 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
            Opening the full map re-centres it on the player: a map you have to
            find yourself on every time is a map you stop opening. */
-        case 'T': g_mapOpen = !g_mapOpen; if (g_mapOpen) g_mapPanned = false; break;
+        case 'T':
+            g_mapOpen = !g_mapOpen;
+            if (g_mapOpen) { screenExclusive(SCREEN_MAP); g_mapPanned = false; }
+            break;
         case 'Z': g_miniOn = !g_miniOn; break;
         case VK_OEM_PLUS: case VK_ADD:      changeZoom(+1); break;
         case VK_OEM_MINUS: case VK_SUBTRACT: changeZoom(-1); break;
@@ -3425,7 +3495,10 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case VK_OEM_6: changeSize(+1); break;  /* ] */
         case VK_TAB:
             g_creativeOpen = !g_creativeOpen;
-            if (g_creativeOpen) { g_creSearchFocus = true; layoutCreative(); g_lmb = g_rmb = false; }
+            if (g_creativeOpen) {
+                screenExclusive(SCREEN_CREATIVE);
+                g_creSearchFocus = true; layoutCreative(); g_lmb = g_rmb = false;
+            }
             else { g_filterDevice = -1; g_digFilterPicking = false; g_signalPickerDevice = -1; g_signalPickerField = CIR_PICK_NONE; g_creSearchFocus = false; dragStow(); }
             break;
         /* Escape backs out of the creative grid before it reaches the pause
@@ -3445,7 +3518,10 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             }
             else if (g_craftOpen)    g_craftOpen = false;
             else if (g_creativeOpen) { g_creativeOpen = false; g_filterDevice = -1; g_digFilterPicking = false; g_signalPickerDevice = -1; g_signalPickerField = CIR_PICK_NONE; g_creSearchFocus = false; dragStow(); }
-            else                     g_menuOpen = !g_menuOpen;
+            else {
+                g_menuOpen = !g_menuOpen;
+                if (g_menuOpen) screenExclusive(SCREEN_MENU);
+            }
             break;
         }
         return 0;
@@ -6910,7 +6986,19 @@ static void drawCreative(HDC hdc) {
    moment you already had wood, and by then you have probably built a staircase.
    Greyed-out rows are a shopping list. */
 static RECT g_craftPanel;
-static RECT g_craftRow[128];
+/* --- how many rows the panel can address ------------------------------------
+   256, and it was a bare 128 until the recipe table went past it. That was not
+   a near miss: there are 138 recipes now, so the last ten had no rect, could
+   not be clicked, and simply were not in the crafting menu -- including some
+   added in the same session as this note. Nothing said so, because a row with
+   an empty rect looks exactly like a row that is scrolled out of view.
+
+   It is a named constant used by every loop over the table now rather than a
+   literal repeated in four places, and the command smoke asserts that the
+   sorted order accounts for every recipe -- which is the check that would have
+   caught the first overflow the frame it happened. */
+static const int CRAFT_MAX_ROWS = 256;
+static RECT g_craftRow[CRAFT_MAX_ROWS];
 
 /* --- making more than one -------------------------------------------------
    Crafting a hundred platform one click at a time is not a decision repeated a
@@ -6946,6 +7034,49 @@ static const int CRAFT_ROW_H = 46;
 int  g_craftScroll = 0;
 static RECT g_craftTrack, g_craftThumb;
 
+/* --- what you can make, first -----------------------------------------------
+   Asked for: "the crafting menu should sort all craftable items to the top."
+
+   The list is seventy-odd rows and the ones you can actually make are usually
+   a handful scattered through it, so the panel opened on a screenful of grey
+   and the answer to "what can I build right now" was to scroll the whole thing.
+
+   `g_craftOrder` is display position -> recipe index, and everything else keeps
+   working in RECIPE indices: the rects, the click handler, the held-row repeat
+   and the action sent to the host are all unchanged, because a display order
+   that leaked into the action would send the host a row number and the host has
+   no idea what is on this player's screen.
+
+   STABLE, in two senses that both matter. Within each group the table's own
+   order is preserved, so the list you learned does not shuffle itself into a
+   new arrangement every time you pick something up -- the rows only ever move
+   between the two groups. And the sort does not run while the mouse button is
+   down: crafting the last of something drops that row out of the top group,
+   and a list that re-sorted under a held button would repeat onto whatever
+   slid up into the space. */
+/* Sized by CRAFT_MAX_ROWS, matching g_craftRow: N_RECIPES is a runtime extern
+   and cannot size an array, so the two have to be guarded identically or the
+   panel drops rows at one step and not the other. */
+static int g_craftOrder[CRAFT_MAX_ROWS];
+static int g_craftOrderCount = 0;
+static bool g_craftOrdered = false;
+
+static void craftSortOrder() {
+    int n = 0;
+    for (int pass = 0; pass < 2; ++pass)
+        for (int i = 0; i < N_RECIPES && n < CRAFT_MAX_ROWS; ++i) {
+            /* Craftable means BOTH -- the station is there and the ingredients
+               are there -- which is what craftCan already answers. A row you
+               are only short of a station for stays down with the rest: it is
+               not something you can make, and promoting it would put an errand
+               where the answers are supposed to be. */
+            const bool can = craftCan(g_inv, i);
+            if (can == (pass == 0)) g_craftOrder[n++] = i;
+        }
+    g_craftOrderCount = n;
+    g_craftOrdered = true;
+}
+
 static void layoutCraft() {
     /* Stations are read fresh here rather than in craftCan() itself --
        see the note on craftScanStations() in craft.h for why this has to
@@ -6960,8 +7091,16 @@ static void layoutCraft() {
        own -- at the old width the label beside it ellipsised down to "A...".
        The viewport is 1024 wide, so the room was there for the asking. */
     const int w = 430;
-    const int visRows = imin(CRAFT_VIS_ROWS, N_RECIPES);
-    const int maxScroll = imax(0, N_RECIPES - CRAFT_VIS_ROWS);
+    /* The sort runs FIRST, because everything below it counts rows in display
+       order and g_craftOrderCount is what the scrollbar has to be sized
+       against. It is the same number as N_RECIPES until the table outgrows the
+       128 the panel can address, and using it here keeps the thumb honest at
+       that point rather than promising rows the list will not show. */
+    if (!g_craftOrdered || !g_lmb) craftSortOrder();
+
+    const int rows = g_craftOrderCount;
+    const int visRows = imin(CRAFT_VIS_ROWS, rows);
+    const int maxScroll = imax(0, rows - CRAFT_VIS_ROWS);
     g_craftScroll = imax(0, imin(g_craftScroll, maxScroll));
 
     const int h = 46 + visRows * CRAFT_ROW_PITCH + 12;
@@ -6973,9 +7112,15 @@ static void layoutCraft() {
        merely skipped when drawing -- inRect() then fails on them for free,
        so a click cannot land on a row that is not on screen. Same
        reasoning as the creative palette's own g_creRect. */
-    for (int i = 0; i < N_RECIPES && i < 128; ++i) {
-        const int row = i - g_craftScroll;
-        if (row < 0 || row >= visRows) { SetRectEmpty(&g_craftRow[i]); continue; }
+    /* Sorted at the top of this function, and from here the panel is laid out
+       and drawn in DISPLAY order while everything downstream -- the click
+       handler, the held-row repeat, the action sent to the host -- still speaks
+       in recipe indices. */
+    for (int i = 0; i < N_RECIPES && i < CRAFT_MAX_ROWS; ++i) SetRectEmpty(&g_craftRow[i]);
+    for (int pos = 0; pos < g_craftOrderCount; ++pos) {
+        const int i = g_craftOrder[pos];
+        const int row = pos - g_craftScroll;
+        if (row < 0 || row >= visRows) continue;
         SetRect(&g_craftRow[i], g_craftPanel.left + 12,
                 g_craftPanel.top + 40 + row * CRAFT_ROW_PITCH,
                 g_craftPanel.right - 12 - barW - 4,
@@ -6988,7 +7133,7 @@ static void layoutCraft() {
     SetRect(&g_craftTrack, trackX, trackY0, trackX + barW, trackY1);
     if (maxScroll > 0) {
         const int trackH = trackY1 - trackY0;
-        const int thumbH = imax(20, trackH * visRows / N_RECIPES);
+        const int thumbH = imax(20, trackH * visRows / imax(1, rows));
         const int travel  = trackH - thumbH;
         const int thumbY  = trackY0 + travel * g_craftScroll / maxScroll;
         SetRect(&g_craftThumb, trackX, thumbY, trackX + barW, thumbY + thumbH);
@@ -6999,7 +7144,7 @@ static void layoutCraft() {
 
 static bool handleCraftClick(int mx, int my) {
     if (!g_craftOpen) return false;
-    for (int i = 0; i < N_RECIPES && i < 128; ++i)
+    for (int i = 0; i < N_RECIPES && i < CRAFT_MAX_ROWS; ++i)
         if (inRect(g_craftRow[i], mx, my)) {
             /* Shift makes a stack in one go. Stopping the moment one fails --
                out of ingredients, or no room for the result -- rather than
@@ -7041,7 +7186,7 @@ static void drawCraft(HDC hdc) {
     SetTextColor(hdc, RGB(226, 190, 90));
     DrawTextA(hdc, "CRAFTING", -1, &title, DT_CENTER | DT_TOP | DT_SINGLELINE);
 
-    for (int i = 0; i < N_RECIPES && i < 128; ++i) {
+    for (int i = 0; i < N_RECIPES && i < CRAFT_MAX_ROWS; ++i) {
         RECT r = g_craftRow[i];
         if (r.right <= r.left) continue;   /* scrolled out of the window */
         const Recipe& rc = RECIPES[i];
@@ -8149,6 +8294,60 @@ static int runLocalCommandSmoke() {
     setDevicePanel(-1);
     if (g_playerSessions[0].openDevice != -1) return 223;
     g_playerOn = true;
+
+    /* --- 240: the crafting list puts what you can make first ---------------
+       Asked for: "the crafting menu should sort all craftable items to the
+       top." Checked as a PARTITION rather than by naming a recipe: which rows
+       are affordable depends on the pack, and pinning one would break the
+       moment a recipe's cost changed. What must hold is that no craftable row
+       appears after an uncraftable one, and that the table's own order
+       survives inside each group. */
+    g_inv.clear();
+    g_inv.add((ItemId)MAT_WOOD, 64);
+    g_inv.add((ItemId)MAT_COAL, 64);
+    g_inv.add((ItemId)MAT_STONE, 64);
+    craftScanStations(g_world, g_player);
+    craftSortOrder();
+    if (g_craftOrderCount != N_RECIPES) return 240;
+    bool seenBlocked = false;
+    int  craftable = 0, prevTop = -1, prevBottom = -1;
+    for (int pos = 0; pos < g_craftOrderCount; ++pos) {
+        const int i = g_craftOrder[pos];
+        const bool can = craftCan(g_inv, i);
+        if (can) {
+            ++craftable;
+            if (seenBlocked) return 241;          /* a made row after a blocked one */
+            if (i <= prevTop) return 242;         /* the group lost table order */
+            prevTop = i;
+        } else {
+            seenBlocked = true;
+            if (i <= prevBottom) return 243;
+            prevBottom = i;
+        }
+    }
+    /* And the scene has to actually HAVE both kinds, or the partition above is
+       vacuously true and would pass on a sort that did nothing. */
+    if (craftable <= 0 || !seenBlocked) return 244;
+
+    /* --- 241: one screen at a time ----------------------------------------
+       Reported from play: "you shouldnt be able to open one menu over another,
+       you can open inventory over crafting or something janky like that."
+       Every pair, not just the reported one -- the bug was that each panel was
+       its own independent flag, so any two of them could coexist. */
+    g_craftOpen = true;
+    screenExclusive(SCREEN_CREATIVE);
+    if (g_craftOpen) return 245;
+    g_creativeOpen = true; g_mapOpen = true;
+    screenExclusive(SCREEN_CRAFT);
+    if (g_creativeOpen || g_mapOpen) return 246;
+    g_menuOpen = true;
+    screenExclusive(SCREEN_MAP);
+    if (g_menuOpen) return 247;
+    /* And the one it must NOT close: a screen may keep itself open. */
+    g_craftOpen = true;
+    screenExclusive(SCREEN_CRAFT);
+    if (!g_craftOpen) return 248;
+    g_craftOpen = false;
 
     puts("local command loopback smoke passed");
     return 0;
