@@ -957,26 +957,36 @@ static const int MATERIAL_STACK = 100000;
    "put this in the hotbar" is a drag from one slot to another rather than a
    transfer between two systems that each have their own idea of what a slot is.
 
-   SIX rows of ten, up from four. Ten across because that is the hotbar's width
-   and the grid has to line up under it to read as the same container -- which
-   is also why the pack grew DOWNWARD rather than sideways when asked to be
-   half again as big. Fifteen columns would have meant fifteen hotbar slots and
-   a keyboard with five more number keys on it; two more rows cost nothing but
-   panel height, and the panel already sizes itself from INV_ROWS.
+   FIFTEEN columns by four rows: sixty slots, up from forty. Four rows was
+   argued from variety rather than volume -- forty holds one of everything the
+   world contains -- and the world has since grown by ten charms, four sigils,
+   four armour lines and layer 3's materials, all of which are things you carry
+   rather than things you stack.
 
-   Four rows was argued from variety rather than volume -- forty holds one of
-   everything the world contains. The world has since grown: ten more charms,
-   four sigils, four armour lines and the layer-3 materials, all of which are
-   things you carry rather than things you stack. Sixty is the same argument
-   against a bigger table.
+   It went WIDE rather than deep, and the first attempt did the opposite. Six
+   rows of ten is the same sixty slots and it broke the panel: the creative
+   window sizes its height from INV_ROWS and it ran past the top of the screen,
+   which cut the search box off. Reported immediately, and the fix was to grow
+   the axis with room in it -- the viewport is 1024 wide and the panel was
+   nowhere near that.
 
-   Widening this DOES change the size of the inventory section of a save, which
+   So the pack is WIDER THAN THE HOTBAR now, deliberately, and that is worth
+   stating because the two used to be the same number and the grid was arranged
+   to line up under the bar. The hotbar is still ten: it is a row of keys, and
+   there are ten number keys. The pack's first row is fifteen, of which the
+   leftmost ten are those keys and the other five are ordinary storage.
+
+   Changing this DOES change the size of the inventory section of a save, which
    is matched by exact size -- see save.cpp, where the previous shape is spelled
    out and converted rather than skipped, so an existing character keeps its
    forty slots and gains twenty empty ones. */
 static const int HOTBAR_SLOTS = 10;
-static const int INV_ROWS     = 6;
-static const int INV_SLOTS    = HOTBAR_SLOTS * INV_ROWS;
+/* The pack's own width, and no longer the hotbar's. Every layout that arranges
+   pack slots uses this; only the bar along the bottom of the screen uses
+   HOTBAR_SLOTS. */
+static const int INV_COLS     = 15;
+static const int INV_ROWS     = 4;
+static const int INV_SLOTS    = INV_COLS * INV_ROWS;
 
 /* --- tools carry state, materials do not -----------------------------------
 

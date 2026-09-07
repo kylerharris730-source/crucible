@@ -2372,7 +2372,13 @@ static void layoutCreative() {
        in. */
     const int benchW = (signalPicker || g_toolPackSlot < 0)
                      ? 0 : pad * 2 + (g_toolSlotCount + 1) * 52 - 6;
-    const int w = imax(imax(paletteW, equipW), benchW);
+    /* And the pack states its own, for the third time and the same reason: the
+       palette decided this alone once and the equipment row hung off the side.
+       At ten columns the pack was narrower than the palette and never came up;
+       at fifteen it is the widest thing in the panel. */
+    const int packW = signalPicker ? 0
+                    : pad * 2 + INV_COLS * ps + (INV_COLS - 1) * pgap;
+    const int w = imax(imax(paletteW, equipW), imax(benchW, packW));
     const int h = pad + 56 + paletteH + 10 + packH + equipH + droneModuleH + benchH + 38;
     const int cx = PANEL_W + VIEW_W / 2, cy = VIEW_H / 2;
     const int x0 = cx - w / 2, y0 = cy - h / 2;
@@ -2413,7 +2419,10 @@ static void layoutCreative() {
     }
     for (int i = 0; i < INV_SLOTS; ++i) {
         if (signalPicker) break;
-        const int c = i % HOTBAR_SLOTS, r = i / HOTBAR_SLOTS;
+        /* INV_COLS, not HOTBAR_SLOTS: the pack is fifteen wide and the bar
+           along the bottom of the screen is ten. They were the same number
+           once and every grid in this file was written in terms of the bar. */
+        const int c = i % INV_COLS, r = i / INV_COLS;
         /* The HOTBAR row drawn LAST, at the bottom, the way it sits on screen.
            Slots 0..9 are the hotbar and they belong under the rest of the pack,
            not above it, or the grid contradicts the bar it describes. */
@@ -2610,12 +2619,17 @@ static void openChest(int index) {
     g_chestOpen = index; g_devPanel = -1; g_logisticsUiOpen = true;
     g_chestStack.item = d.count ? (ItemId)d.mat : ITEM_NONE;
     g_chestStack.count = d.count; g_chestStack.inst = 0;
-    const int x = PANEL_W + (VIEW_W - 620) / 2, y = (VIEW_H - 430) / 2;
-    SetRect(&g_chestPanel, x, y, x + 620, y + 430);
+    /* Sized around the pack grid rather than around a number typed once: at
+       ten columns 620 was comfortable, and a fifteen-column pack drawn in it
+       would have run five squares out of the right-hand edge. 54 of margin,
+       fifteen 52px pitches, and 54 again. */
+    const int chestW = imax(620, 54 + INV_COLS * 52 + 54);
+    const int x = PANEL_W + (VIEW_W - chestW) / 2, y = (VIEW_H - 430) / 2;
+    SetRect(&g_chestPanel, x, y, x + chestW, y + 430);
     SetRect(&g_chestSlot, x + 54, y + 68, x + 106, y + 120);
-    SetRect(&g_chestClose, x + 580, y + 10, x + 604, y + 32);
+    SetRect(&g_chestClose, x + chestW - 40, y + 10, x + chestW - 16, y + 32);
     for (int i = 0; i < INV_SLOTS; ++i) {
-        const int c = i % HOTBAR_SLOTS, r = i / HOTBAR_SLOTS;
+        const int c = i % INV_COLS, r = i / INV_COLS;
         const int rr = r == 0 ? INV_ROWS - 1 : r - 1;
         SetRect(&g_chestPack[i], x + 54 + c * 52, y + 170 + rr * 54,
                 x + 104 + c * 52, y + 220 + rr * 54);
@@ -6938,13 +6952,20 @@ static void drawCreative(HDC hdc) {
     }
 
     /* --- the pack ---------------------------------------------------------
-       Forty squares in the same grid the hotbar is the bottom row of. Drawn
-       with the hotbar row highlighted and the held slot ringed, so the screen
-       answers "which of these am I actually swinging" without being asked. */
+       Sixty squares, fifteen across, with the row containing the hotbar drawn
+       at the bottom where the bar itself sits. The ten slots that ARE the bar
+       are highlighted and the held one is ringed, so the screen answers "which
+       of these am I actually swinging" without being asked -- and, now that
+       the pack is wider than the bar, also answers which five of that row are
+       only storage. */
     if (!signalPicker) {
         RECT lr = g_crePanel;
         lr.left = g_packRect[0].left;
-        lr.top  = g_packRect[HOTBAR_SLOTS].top - 18;
+        /* Slot INV_COLS is the first of the second row, which is the top row
+           on screen. It was HOTBAR_SLOTS while the two numbers agreed; at
+           fifteen columns that named a square in the middle of the bar row and
+           put the heading through the middle of the grid. */
+        lr.top  = g_packRect[INV_COLS].top - 18;
         SetTextColor(hdc, RGB(150, 156, 168));
         DrawTextA(hdc, "PACK  --  click to lift a stack, right-click for half",
                   -1, &lr, DT_LEFT | DT_TOP | DT_SINGLELINE);
@@ -8668,6 +8689,33 @@ static int runLocalCommandSmoke() {
     if (equipLaneOf(ITEM_IRON_HELMET) != equipLaneOfSlot(EQ_HEAD))     return 256;
     if (equipLaneOf(ITEM_SWIFT_CHARM) != equipLaneOfSlot(EQ_TRINKET_A)) return 257;
     if (equipLaneOf(ITEM_ORBIT_DRONE) != equipLaneOfSlot(EQ_DRONE_A))  return 258;
+
+    /* --- 270: the inventory panel fits on the screen -----------------------
+       Reported from play: "now the search is cut off." The pack had grown from
+       four rows to six, the creative panel sizes its height from INV_ROWS, and
+       it ran off the top of the viewport taking the search box with it.
+
+       Nothing checked that the panel fits, which is why widening the pack was
+       able to break a control at the other end of it. This does: lay it out and
+       assert the rectangle is inside the view, with the pack grid measured
+       separately so a pack too wide for its own panel fails here rather than
+       by drawing five squares past the frame. */
+    {
+        g_creativeOpen = true;
+        layoutCreative();
+        g_creativeOpen = false;
+        if (g_crePanel.left   < PANEL_W) return 270;
+        if (g_crePanel.right  > PANEL_W + VIEW_W) return 271;
+        if (g_crePanel.top    < 0) return 272;
+        if (g_crePanel.bottom > VIEW_H) return 273;
+        /* And the pack inside it. Slot INV_SLOTS-1 is the last square of the
+           bottom-most row, which is the one that runs out of the frame first. */
+        if (g_packRect[INV_SLOTS - 1].right > g_crePanel.right) return 274;
+        if (g_packRect[INV_SLOTS - 1].bottom > g_crePanel.bottom) return 275;
+        /* The search box is the control that actually went missing. */
+        if (g_creSearchBox.top < g_crePanel.top) return 276;
+        if (g_creSearchBox.right > g_crePanel.right) return 277;
+    }
 
     /* --- 260: the boss bar comes up and goes away --------------------------
        Asked for: "lets get healthbars with names that pop up when fighting
