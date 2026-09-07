@@ -561,9 +561,9 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
        them rather than the numbers. She is a charge you dodge in an open room;
        backing away from her works and is supposed to. This one makes the
        ground you backed into cost something. */
-    { "Widow", WIDOW_SPR_W, WIDOW_SPR_H, 1400, 34, 26,
+    { "Widow", WIDOW_SPR_W, WIDOW_SPR_H, 1400, 27, 26,
       0.62f, 0.075f, false, 0, false,
-      WIDOW_SPIT_EVERY, 14, 7.0f, 0.0f, true,
+      WIDOW_SPIT_EVERY, 11, 7.0f, 0.0f, true,
       ITEM_SILK_GLAND, 1, 1, ITEM_SILK_SIGIL, 1, SPR_NONE, 0x6E5578,
       ITEM_EGG_WIDOW, false, false, 0 },
 
@@ -665,9 +665,9 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
        hazard the player has spent the whole layer learning, which is what makes
        an arena filling up with flame read as the fight rather than as a new
        rule arriving at the end. */
-    { "The Censer", CENSER_SPR_W, CENSER_SPR_H, 2200, 42, 26,
+    { "The Censer", CENSER_SPR_W, CENSER_SPR_H, 2200, 34, 26,
       0.50f, 0.06f, false, 0, false,
-      CENSER_SPIT_EVERY, 20, 7.6f, 0.0f, true,
+      CENSER_SPIT_EVERY, 16, 7.6f, 0.0f, true,
       ITEM_PYRE_CORE, 1, 1, ITEM_PYRE_SIGIL, 1, SPR_NONE, 0xE0641C,
       ITEM_EGG_CENSER, false, false, 250 },
 
@@ -685,9 +685,9 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
 
        240 hp each. Four of them is 960, against a body that is barely worth
        shooting until they are gone. */
-    { "Censer Limb", 14, 14, 240, 26, 30,
+    { "Censer Limb", 14, 14, 240, 21, 30,
       2.40f, 0.10f, true, 0, false,
-      90, 14, 4.6f, 0.0f, false,
+      90, 11, 4.6f, 0.0f, false,
       ITEM_NONE, 0, 0, ITEM_NONE, 0, SPR_CENSER_LIMB, 0xFF8A3A,
       ITEM_NONE, false, false, 250 },
 
