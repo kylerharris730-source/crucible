@@ -166,6 +166,18 @@ static const int   CENSER_STRANDS     = 7;
 static const float CENSER_SPREAD      = 0.16f;
 static const float CENSER_SPIT_RANGE  = 200.0f;
 
+/* --- the Effigy's two clocks -------------------------------------------------
+   Up here for the same reason the Censer's is: ENT_DEFS names both intervals
+   and the table comes first in this file. Everything else about the last boss
+   is beside its tick.
+
+   Both are slow, and that is the fight: it is made of things you can see
+   coming and have to answer, not of a rate of fire. The crown lobs once every
+   two and a half seconds; the ground opens under you once every three and a
+   half, and takes another second to do it. */
+static const int EFFIGY_CROWN_EVERY = 150;
+static const int EFFIGY_ERUPT_EVERY = 220;
+
 /* When a wedged Censer gives up pushing and jumps, and how hard.
 
    Sooner than the Brood Mother's 40 frames, because she is wedged only during a
@@ -677,6 +689,67 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
       90, 14, 4.6f, 0.0f, false,
       ITEM_NONE, 0, 0, ITEM_NONE, 0, SPR_CENSER_LIMB, 0xFF8A3A,
       ITEM_NONE, false, false, 250 },
+
+    /* --- the Effigy --------------------------------------------------------
+       96 x 88, which is over twice the Censer's area and more than three times
+       the Widow's. Asked for outright -- "i want it to be bigger... bigger than
+       any of the other bosses" -- and the size is not only a number: at 88 cells
+       tall it is nearly three times the player's height, so it cannot be looked
+       at all at once at 1x zoom, and the parts are at genuinely different
+       places on the screen rather than all being "the boss".
+
+       SLOW. 0.34 against the Censer's 0.50 and the player's 1.2, and slower
+       than anything else in the game. A creature this size that also kept pace
+       would leave nothing to do; what makes it dangerous is that it never
+       stops, it goes through what is in its way, and everything it owns has
+       reach. Walking away works for exactly as long as you can keep walking.
+
+       6000 hp, and most of it is not the point for the same reason the
+       Censer's is not: while any part lives the body takes a SIXTH of what you
+       deal it, so the number is a record of whether you worked out the order.
+       A sixth rather than the Censer's fifth because there are three parts
+       here and not four -- the same total resistance, shared differently.
+
+       No layerMask and no rareDrop: it is summoned, it drops the Ascent Core,
+       and it opens no seal because there is nothing under it. */
+    { "The Effigy", EFFIGY_SPR_W, EFFIGY_SPR_H, 6000, 55, 24,
+      0.34f, 0.05f, false, 0, false,
+      EFFIGY_ERUPT_EVERY, 30, 0.0f, 0.0f, true,
+      ITEM_ASCENT_CORE, 1, 1, ITEM_NONE, 0, SPR_NONE, 0xE85A14,
+      ITEM_EGG_EFFIGY, false, false, 250 },
+
+    /* --- an arm ------------------------------------------------------------
+       The melee half of the fight, and the reason you cannot stand next to it.
+       It holds a shoulder and REACHES: inside its reach it drives at the
+       player and hits like nothing else in the game, and outside it goes back
+       to hanging. Killing one halves that, which is the first real decision
+       the fight offers.
+
+       800 hp each, and they are meant to be the expensive parts -- two of them
+       is 1600, against a body that is barely worth shooting until they and the
+       crown are gone.
+
+       Not a boss, for the reason the Censer Limb's note gives: it owns no bit
+       in g_bossesBeaten, and the roster harness asserts that everything
+       claiming isBoss owns one. */
+    { "Effigy Arm", 20, 20, 800, 44, 26,
+      2.10f, 0.16f, true, 0, false,
+      0, 0, 0.0f, 0.0f, false,
+      ITEM_NONE, 0, 0, ITEM_NONE, 0, SPR_CENSER_LIMB, 0x9A7A56,
+      ITEM_NONE, false, false, 250 },
+
+    /* --- the crown ---------------------------------------------------------
+       The artillery half, and the reason you cannot stand away from it. It
+       sits above the shoulders and lobs fire at any range, so the two parts
+       between them close both of the answers a player has to a slow boss.
+
+       600 hp: cheaper than an arm, because it is the one you can shoot from
+       where you are already standing. */
+    { "Effigy Crown", 16, 16, 600, 30, 30,
+      1.60f, 0.10f, true, 0, false,
+      EFFIGY_CROWN_EVERY, 22, 7.2f, 0.0f, false,
+      ITEM_NONE, 0, 0, ITEM_NONE, 0, SPR_CENSER_LIMB, 0xFFD07A,
+      ITEM_NONE, false, false, 250 },
 };
 
 /* See the note in entity.h. One switch, and hive_bosses asserts it covers
@@ -686,6 +759,7 @@ u32 bossBitOf(int entityType) {
         case ENT_BROOD: return BOSS_LAYER1;
         case ENT_WIDOW: return BOSS_LAYER2;
         case ENT_CENSER: return BOSS_LAYER3;
+        case ENT_EFFIGY: return BOSS_FINAL;
         default:        return 0;
     }
 }
@@ -1029,10 +1103,18 @@ static void entDie(World& w, Entity& e) {
    The rule so far is one: an armoured boss shrugs off most of what it takes
    while its parts are alive. See censerArmoured. */
 static bool censerArmoured(const Entity& e);
+static bool effigyArmoured(const Entity& e);
 
 void entApplyDamage(Entity& e, int damage) {
     if (damage <= 0) return;
-    if (censerArmoured(e)) {
+    /* A sixth for the Effigy rather than a fifth, and the two numbers say the
+       same thing about different fights: the Censer's four limbs and the
+       Effigy's three parts are meant to be worth about the same to clear, so
+       the one with fewer parts makes each of them count for more. */
+    if (effigyArmoured(e)) {
+        damage = damage / 6;
+        if (damage < 1) damage = 1;
+    } else if (censerArmoured(e)) {
         /* A fifth, not nothing. Immunity would be the obvious reading of "kill
            the limbs first" and it is the worse one: a boss that cannot be hurt
            at all reads as a bug the first time somebody shoots it, and there is
@@ -3329,6 +3411,287 @@ static void censerLimbTick(World& w, Entity& e, const Player& p) {
     e.shotTimer = d.shotEvery + k * 11;
 }
 
+/* ==========================================================================
+   The Effigy -- the last boss
+   ==========================================================================
+
+   A standing figure with a cage for a torso, and three parts that each close
+   off one of the three answers a player has to a slow enemy:
+
+     stand close   -- the ARMS reach for you
+     stand away    -- the CROWN drops fire on you
+     keep moving   -- the GROUND erupts where you were going
+
+   The body itself is the slowest thing in the game and cannot be stopped by
+   terrain. That combination is the design: nothing it does is fast, and none
+   of it can be walked away from indefinitely.
+   ========================================================================== */
+
+/* Where the parts hang, relative to the body's centre. The arms are at the
+   shoulders and the crown is above them, which is where the rig draws them --
+   a part floating somewhere the silhouette says nothing is would read as an
+   escort rather than a limb. */
+static const int   EFFIGY_ARMS   = 2;
+static const float EFFIGY_ARM_X[EFFIGY_ARMS] = { -34.0f, 34.0f };
+static const float EFFIGY_ARM_Y = -6.0f;
+static const float EFFIGY_CROWN_Y = -46.0f;
+
+/* Station-keeping, the same damped spring the Censer's limbs use and for the
+   reason its note gives at length: a pure spring oscillates forever, and what
+   makes these hang instead of bob is the damping. */
+static const float EFFIGY_PART_PULL  = 0.020f;
+static const float EFFIGY_PART_DAMP  = 0.84f;
+static const float EFFIGY_PART_SPEED = 2.60f;
+
+/* An arm leaves its station when the player is inside this and drives at them.
+   Wide -- the creature is 96 cells across, so an arm that only reached to the
+   edge of the body would never be the reason you cannot stand next to it. */
+static const float EFFIGY_ARM_REACH = 110.0f;
+/* And how hard it pulls once it has committed. Above the station spring by a
+   long way, because a limb that reaches at the same rate it hangs is a limb
+   that never arrives. */
+static const float EFFIGY_ARM_LUNGE = 0.085f;
+static const float EFFIGY_ARM_SPEED = 3.40f;
+
+/* How long the ground is marked before it opens. Long enough to walk out of
+   at the player's own speed from a standing start -- 1.2 cells a frame over
+   fifty frames is sixty cells, against an eruption eleven wide. Standing
+   still is the mistake, not being caught out. */
+static const int   EFFIGY_ERUPT_WIND = 50;
+static const int   EFFIGY_ERUPT_HALF = 5;
+static const int   EFFIGY_ERUPT_DEEP = 3;
+
+/* Movement. Slow, and it does not surge -- the Censer's charge exists because
+   it could neither reach nor shoot a player past 200 cells, and this creature
+   has a crown that reaches everywhere. It never needs to hurry. */
+static const int   EFFIGY_STUCK = 20;
+static const float EFFIGY_HOP   = 4.4f;
+static const float EFFIGY_DIG_BELOW    = 30.0f;
+static const float EFFIGY_DIG_OVERHEAD = 56.0f;
+
+static int effigyPartsAlive(int coreIndex) {
+    int n = 0;
+    for (int i = 0; i < MAX_ENTITIES; ++i) {
+        const Entity& l = g_entities[i];
+        if ((l.type == ENT_EFFIGY_ARM || l.type == ENT_EFFIGY_CROWN) &&
+            l.alive() && l.home == (i16)coreIndex) ++n;
+    }
+    return n;
+}
+
+/* Declared above entApplyDamage, which is its only caller. */
+static bool effigyArmoured(const Entity& e) {
+    if (e.type != ENT_EFFIGY) return false;
+    return effigyPartsAlive((int)(&e - g_entities)) > 0;
+}
+
+/* --- the ground opens --------------------------------------------------------
+   The body's own attack, and it is deliberately not a projectile. Both bosses
+   before this one throw things, and a third that threw things would be a third
+   fight about dodging arcs. This one marks the floor UNDER the player and
+   opens it a second later, which asks a different question: not "can you get
+   out of the way of that" but "were you standing still".
+
+   Brimfire rather than plain fire, because burning rock is layer 3's own
+   hazard and the player has spent the whole layer learning what it does. It
+   also burns OUT, into ash, so the arena fills up and then clears rather than
+   becoming permanently unusable -- see g_matDecay.
+
+   The cells are lit at their own spawn temperature, which setCell does not do
+   on its own. Placing brimfire cold is the trap the deep_layer harness records:
+   they arrive below their own cooling point and turn to ash on the first frame
+   without ever burning anything. */
+static void effigyErupt(World& w, int cx, int cy) {
+    for (int x = cx - EFFIGY_ERUPT_HALF; x <= cx + EFFIGY_ERUPT_HALF; ++x) {
+        for (int y = cy - EFFIGY_ERUPT_DEEP; y <= cy + EFFIGY_ERUPT_DEEP; ++y) {
+            if (x <= PLAY_X0 || x >= PLAY_X1 || y <= PLAY_Y0 || y >= PLAY_Y1)
+                continue;
+            const u8 m = w.at(x, y).mat;
+            /* Only into air and into what it could have dug anyway. A vent
+               that ate a layer barrier would let the last boss open the world
+               it is standing in. */
+            if (m != MAT_EMPTY && g_matStrength[m] > STR_ROCK) continue;
+            w.setCell(x, y, MAT_BRIMFIRE);
+            w.temp[y * SIM_W + x] = MATS[MAT_BRIMFIRE].spawnTemp;
+            w.dirtyPoint(x, y);
+        }
+    }
+}
+
+static void effigyTick(World& w, Entity& e, const Player& p) {
+    const EntityDef& d = ENT_DEFS[e.type];
+    const int self = (int)(&e - g_entities);
+
+    /* Its parts, once, one a frame, at the body's own centre -- the same
+       streaming the Censer uses and for the reason its note gives: a station
+       can be inside a wall depending on where the fight happens, and a batch
+       that placed three at once had no way to report that one failed. */
+    if (e.partsSpawned < EFFIGY_ARMS + 1) {
+        const int type = e.partsSpawned < EFFIGY_ARMS ? ENT_EFFIGY_ARM
+                                                      : ENT_EFFIGY_CROWN;
+        const int slot = entSpawn(w, type, e.centreX(), e.centreY() - 8.0f);
+        if (slot >= 0) {
+            g_entities[slot].home  = (i16)self;
+            g_entities[slot].phase = e.partsSpawned;
+            ++e.partsSpawned;
+        }
+    }
+
+    const bool exposed = effigyPartsAlive(self) == 0;
+
+    /* --- the ground -------------------------------------------------------
+       Wind-up, then open. aimX/aimY hold the marked spot, chosen when the
+       wind-up starts and never revisited -- which is the entire reason it can
+       be walked out of, and the same commitment the Brood Mother's dash makes.
+
+       telegraph is negative-going here so the renderer's wind-up flash reads
+       the same way it does on every other boss. */
+    --e.shotTimer;
+    if (e.shotTimer == 0) {
+        e.aimX = p.centreX();
+        e.aimY = p.bottom() + 1.0f;
+    }
+    if (e.shotTimer <= 0) e.telegraph = -e.shotTimer;
+    if (e.shotTimer <= -EFFIGY_ERUPT_WIND) {
+        effigyErupt(w, (int)e.aimX, (int)e.aimY);
+        e.telegraph = 0;
+        /* Faster once its parts are gone. Nothing new arrives in the second
+           half -- the same rule the Censer's phases follow, because a boss
+           whose second half is a different fight is two fights. */
+        e.shotTimer = exposed ? (d.shotEvery * 3) / 5 : d.shotEvery;
+    }
+
+    /* --- and it walks -----------------------------------------------------
+       Unrouted, for the reason the Censer's note spells out and more so: the
+       tallest nav class is 24 cells and this creature is 88, so every answer
+       the flow field could give it would be about a creature less than a third
+       its size. It goes through things instead. */
+    const float toward = p.centreX() - e.centreX();
+    if (toward >  3.0f) e.facing =  1;
+    else if (toward < -3.0f) e.facing = -1;
+
+    const float pace  = d.speed * (exposed ? 1.5f : 1.0f);
+    const float shove = d.accel * (exposed ? 1.4f : 1.0f);
+    if (toward > 6.0f || toward < -6.0f) {
+        e.vx += (float)e.facing * shove;
+        if (e.vx >  pace) e.vx =  pace;
+        if (e.vx < -pace) e.vx = -pace;
+    } else {
+        e.vx *= 0.82f;
+    }
+
+    /* Cuts only what is actually stopping it, which is the rule the Censer
+       arrived at from play -- "lets only have the censer destroy blocks when
+       its movement is obstructed" -- and there is no reason for the bigger
+       creature to be the one that tunnels. */
+    const float movedX  = fabsf(e.x - e.prevX);
+    const bool  walking = toward > 6.0f || toward < -6.0f;
+    if (walking && movedX < BOSS_STUCK_CELLS)
+        broodPlough(w, e, (float)e.facing, 0.0f);
+
+    /* Down through the floor at a player underneath it, feet to feet, and
+       both thresholds are scaled to this creature rather than copied: it is
+       88 cells tall and 96 wide, so "underneath me" is a wider window and "far
+       enough below to be worth digging for" is a deeper one. */
+    const float overhead = toward < 0.0f ? -toward : toward;
+    if ((float)(p.bottom() - e.bottom()) > EFFIGY_DIG_BELOW
+        && overhead < EFFIGY_DIG_OVERHEAD && e.onGround)
+        broodPlough(w, e, 0.0f, 1.0f);
+
+    /* And over a ledge, on the same wedged detector every boss here uses. */
+    const float moved = fabsf(e.x - e.prevX) + fabsf(e.y - e.prevY);
+    if (walking && moved < BOSS_STUCK_CELLS) {
+        if (++e.stuck >= EFFIGY_STUCK) {
+            e.stuck = 0;
+            e.vy = -EFFIGY_HOP;
+            broodPlough(w, e, 0.0f, -1.0f);
+        }
+    } else {
+        e.stuck = 0;
+    }
+}
+
+/* --- an arm ------------------------------------------------------------------
+   Hangs at a shoulder until the player is inside its reach, then goes for
+   them. It does no ranged damage of any kind: what it is for is to make the
+   space around the body unusable, and a limb that also shot would blur that
+   into the crown's job. */
+static void effigyArmTick(World& w, Entity& e, const Player& p) {
+    (void)w;
+    const int home = (int)e.home;
+    if (home < 0 || home >= MAX_ENTITIES ||
+        g_entities[home].type != ENT_EFFIGY || !g_entities[home].alive()) {
+        e.hp = 0;
+        return;
+    }
+    const Entity& core = g_entities[home];
+    const int k = e.phase >= 0 && e.phase < EFFIGY_ARMS ? e.phase : 0;
+
+    const float dx = p.centreX() - e.centreX(), dy = p.centreY() - e.centreY();
+    const float reaching = dx * dx + dy * dy
+                         < EFFIGY_ARM_REACH * EFFIGY_ARM_REACH ? 1.0f : 0.0f;
+
+    /* Its post, or the player. One spring either way -- what changes is where
+       it is pulled and how hard, which keeps the two behaviours from being two
+       different movement systems that can disagree about velocity. */
+    const float tx = reaching > 0.0f ? p.centreX()
+                                     : core.centreX() + EFFIGY_ARM_X[k];
+    const float ty = reaching > 0.0f ? p.centreY()
+                                     : core.centreY() + EFFIGY_ARM_Y;
+    const float pull = reaching > 0.0f ? EFFIGY_ARM_LUNGE : EFFIGY_PART_PULL;
+    const float cap  = reaching > 0.0f ? EFFIGY_ARM_SPEED : EFFIGY_PART_SPEED;
+
+    e.vx += (tx - e.centreX()) * pull;
+    e.vy += (ty - e.centreY()) * pull;
+    e.vx *= EFFIGY_PART_DAMP;
+    e.vy *= EFFIGY_PART_DAMP;
+    const float sp = sqrtf(e.vx * e.vx + e.vy * e.vy);
+    if (sp > cap) { e.vx = e.vx / sp * cap; e.vy = e.vy / sp * cap; }
+    e.facing = dx < 0.0f ? -1 : 1;
+}
+
+/* --- the crown ---------------------------------------------------------------
+   Sits above the shoulders and lobs fire. It never leaves its post: the arms
+   are the half of the fight that comes to you, and a crown that also closed
+   would make the two parts the same part. */
+static void effigyCrownTick(World& w, Entity& e, const Player& p) {
+    const EntityDef& d = ENT_DEFS[e.type];
+    const int home = (int)e.home;
+    if (home < 0 || home >= MAX_ENTITIES ||
+        g_entities[home].type != ENT_EFFIGY || !g_entities[home].alive()) {
+        e.hp = 0;
+        return;
+    }
+    const Entity& core = g_entities[home];
+
+    const float tx = core.centreX();
+    const float ty = core.centreY() + EFFIGY_CROWN_Y;
+    e.vx += (tx - e.centreX()) * EFFIGY_PART_PULL;
+    e.vy += (ty - e.centreY()) * EFFIGY_PART_PULL;
+    e.vx *= EFFIGY_PART_DAMP;
+    e.vy *= EFFIGY_PART_DAMP;
+    const float sp = sqrtf(e.vx * e.vx + e.vy * e.vy);
+    if (sp > EFFIGY_PART_SPEED) {
+        e.vx = e.vx / sp * EFFIGY_PART_SPEED;
+        e.vy = e.vy / sp * EFFIGY_PART_SPEED;
+    }
+    e.facing = core.facing;
+
+    if (e.shotTimer > 0) { --e.shotTimer; return; }
+    /* No line-of-sight test, and that is the point of it: this is the part
+       that answers hiding. The Censer's limbs check for a clear line and hold
+       fire behind cover, which is right for a creature whose body is already
+       walking at you -- here the body is slower than anything else in the game
+       and the fire has to arrive anyway.
+
+       It still cannot reach the other side of the world: lobAtPlayer solves an
+       arc at the crown's own shot speed and simply does not fire when the
+       target is past what that arc covers. */
+    lobAtPlayer(w, e, p, MAT_BRIMFIRE, 0xFFD07A);
+    e.shotTimer = d.shotEvery;
+}
+
+
 static void entTickMode(World& w, Player& fallbackPlayer, Inventory& fallbackInv,
                         bool multiplayer) {
     /* One search for the whole roster, before anybody moves. Seeded from every
@@ -3438,6 +3801,9 @@ static void entTickMode(World& w, Player& fallbackPlayer, Inventory& fallbackInv
         case ENT_CINDERLING: cinderlingTick(w, e, p); break;
         case ENT_CENSER:      censerTick(w, e, p);      break;
         case ENT_CENSER_LIMB: censerLimbTick(w, e, p);  break;
+        case ENT_EFFIGY:       effigyTick(w, e, p);      break;
+        case ENT_EFFIGY_ARM:   effigyArmTick(w, e, p);   break;
+        case ENT_EFFIGY_CROWN: effigyCrownTick(w, e, p); break;
         case ENT_DUMMY:   dummyTick(w, e, p);   break;
         case ENT_SHAMBLER: shamblerTick(w, e, p); break;
         case ENT_THRESHER: thresherTick(w, e, p); break;
@@ -4081,6 +4447,31 @@ static void entityPixelMotion(const Entity& e, int entityIndex, int sx, int sy,
             *dy -= (int)((tick / 11u) & 1u);
         break;
     }
+    case ENT_EFFIGY_ARM: {
+        /* A hanging arm, and what it does is CLENCH rather than swing: the
+           whole thing draws in on itself and lets go, which is the motion of
+           something waiting to grab you and not the pendulum the Censer's limb
+           is. Sampled on the same slow clock, because both are heavy.
+
+           Reaching is not read here. The arm's lunge is real velocity, so it
+           is already visible as the thing MOVING -- doubling it with a sprite
+           tell would be the mistake the limb's own note records, animation and
+           physics disagreeing about how heavy a part is. */
+        const int grip = ((tick / 14u) & 3u) < 2u ? 1 : 0;
+        if (sy >= 8) *dy -= grip;
+        if (sy >= 8) *dx += (sx < SPR_W / 2 ? 1 : -1) * grip;
+        break;
+    }
+    case ENT_EFFIGY_CROWN: {
+        /* It BURNS rather than moves. The crown is the part that never leaves
+           its post, so a sprite that swayed would be saying the opposite of
+           what the creature does -- what changes is the fire in it, on a fast
+           clock, in the middle of the sprite only. */
+        const int flare = (int)((tick / 5u) & 1u);
+        if (sy >= 4 && sy <= 9 && sx >= 4 && sx <= 9) *dy -= flare;
+        if (sy <= 3) *dx += flare ? 1 : -1;
+        break;
+    }
     case ENT_CINDERLING: {
         /* A coal that decided to move: the body flickers like the ember it is,
            and the three spindly legs scurry on the gait. Fast clock, because
@@ -4131,6 +4522,11 @@ static bool rigArtFor(u8 type, RigArt* out) {
         out->idle = g_censerIdle[0]; out->idleFrames = CENSER_IDLE_FRAMES;
         out->walk = g_censerWalk[0]; out->walkFrames = CENSER_WALK_FRAMES;
         out->w = CENSER_SPR_W; out->h = CENSER_SPR_H;
+        return true;
+    case ENT_EFFIGY:
+        out->idle = g_effigyIdle[0]; out->idleFrames = EFFIGY_IDLE_FRAMES;
+        out->walk = g_effigyWalk[0]; out->walkFrames = EFFIGY_WALK_FRAMES;
+        out->w = EFFIGY_SPR_W; out->h = EFFIGY_SPR_H;
         return true;
     default:
         return false;

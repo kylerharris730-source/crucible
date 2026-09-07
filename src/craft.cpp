@@ -331,6 +331,14 @@ const Recipe RECIPES[] = {
       ITEM_VANGUARD_PLATE, 1, "Vanguard Plate", STATION_ASSEMBLY },
     { { { ITEM_ICHOR, 4 }, { (ItemId)MAT_IRON, 5 }, { (ItemId)MAT_BRONZE, 3 } },
       ITEM_VANGUARD_GREAVES, 1, "Vanguard Greaves", STATION_ASSEMBLY },
+    /* The Effigy's call. A Pyre Core is the gate -- you cannot ask for the
+       last fight before you have won the one before it -- and the rest is bulk
+       from the deep, so calling it is an expedition rather than a button. It
+       competes with the armour for cores on purpose: the choice between one
+       more suit and the fight it is for is the last decision the game asks. */
+    { { { ITEM_PYRE_CORE, 1 }, { (ItemId)MAT_TUNGSTEN, 24 }, { (ItemId)MAT_BRIMSTONE, 32 } },
+      ITEM_EFFIGY_CALL, 1, "Effigy Call", STATION_ASSEMBLY },
+
     /* --- the post-Censer three ------------------------------------------
        A Pyre Core in every piece, so every one of them is a Censer killed.
        Three kills for a suit is a real price and it is the intended one: this

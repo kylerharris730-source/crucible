@@ -1148,9 +1148,9 @@ void initItems() {
     ITEMS[ITEM_THURIBLE_CROWN].equipSlot  = EQ_HEAD;
     ITEMS[ITEM_THURIBLE_CROWN].maxStack   = 1;
     ITEMS[ITEM_THURIBLE_CROWN].colour     = 0xE8A24A;
-    ITEMS[ITEM_THURIBLE_CROWN].armour     = 3;
-    ITEMS[ITEM_THURIBLE_CROWN].heatResist = 45;
-    ITEMS[ITEM_THURIBLE_CROWN].coldResist = 25;
+    ITEMS[ITEM_THURIBLE_CROWN].armour     = 4;
+    ITEMS[ITEM_THURIBLE_CROWN].heatResist = 50;
+    ITEMS[ITEM_THURIBLE_CROWN].coldResist = 30;
     ITEMS[ITEM_THURIBLE_CROWN].armourSet  = ARMOUR_SET_DRONE_PYRE;
     ITEMS[ITEM_THURIBLE_CROWN].sprite     = SPR_ARMOUR_THURIBLE_CROWN;
 
@@ -1159,9 +1159,9 @@ void initItems() {
     ITEMS[ITEM_THURIBLE_HARNESS].equipSlot  = EQ_BODY;
     ITEMS[ITEM_THURIBLE_HARNESS].maxStack   = 1;
     ITEMS[ITEM_THURIBLE_HARNESS].colour     = 0xE8A24A;
-    ITEMS[ITEM_THURIBLE_HARNESS].armour     = 5;
-    ITEMS[ITEM_THURIBLE_HARNESS].heatResist = 70;
-    ITEMS[ITEM_THURIBLE_HARNESS].coldResist = 40;
+    ITEMS[ITEM_THURIBLE_HARNESS].armour     = 7;
+    ITEMS[ITEM_THURIBLE_HARNESS].heatResist = 75;
+    ITEMS[ITEM_THURIBLE_HARNESS].coldResist = 45;
     ITEMS[ITEM_THURIBLE_HARNESS].armourSet  = ARMOUR_SET_DRONE_PYRE;
     ITEMS[ITEM_THURIBLE_HARNESS].sprite     = SPR_ARMOUR_THURIBLE_HARNESS;
 
@@ -1170,9 +1170,9 @@ void initItems() {
     ITEMS[ITEM_THURIBLE_GREAVES].equipSlot  = EQ_FEET;
     ITEMS[ITEM_THURIBLE_GREAVES].maxStack   = 1;
     ITEMS[ITEM_THURIBLE_GREAVES].colour     = 0xE8A24A;
-    ITEMS[ITEM_THURIBLE_GREAVES].armour     = 3;
-    ITEMS[ITEM_THURIBLE_GREAVES].heatResist = 45;
-    ITEMS[ITEM_THURIBLE_GREAVES].coldResist = 25;
+    ITEMS[ITEM_THURIBLE_GREAVES].armour     = 4;
+    ITEMS[ITEM_THURIBLE_GREAVES].heatResist = 50;
+    ITEMS[ITEM_THURIBLE_GREAVES].coldResist = 30;
     ITEMS[ITEM_THURIBLE_GREAVES].armourSet  = ARMOUR_SET_DRONE_PYRE;
     ITEMS[ITEM_THURIBLE_GREAVES].sprite     = SPR_ARMOUR_THURIBLE_GREAVES;
 
@@ -1188,8 +1188,8 @@ void initItems() {
     ITEMS[ITEM_ASHEN_HOOD].equipSlot  = EQ_HEAD;
     ITEMS[ITEM_ASHEN_HOOD].maxStack   = 1;
     ITEMS[ITEM_ASHEN_HOOD].colour     = 0xB9B2A6;
-    ITEMS[ITEM_ASHEN_HOOD].armour     = 3;
-    ITEMS[ITEM_ASHEN_HOOD].heatResist = 40;
+    ITEMS[ITEM_ASHEN_HOOD].armour     = 4;
+    ITEMS[ITEM_ASHEN_HOOD].heatResist = 45;
     ITEMS[ITEM_ASHEN_HOOD].coldResist = 30;
     ITEMS[ITEM_ASHEN_HOOD].armourSet  = ARMOUR_SET_RANGED_PYRE;
     ITEMS[ITEM_ASHEN_HOOD].sprite     = SPR_ARMOUR_ASHEN_HOOD;
@@ -1199,9 +1199,9 @@ void initItems() {
     ITEMS[ITEM_ASHEN_COAT].equipSlot  = EQ_BODY;
     ITEMS[ITEM_ASHEN_COAT].maxStack   = 1;
     ITEMS[ITEM_ASHEN_COAT].colour     = 0xB9B2A6;
-    ITEMS[ITEM_ASHEN_COAT].armour     = 5;
-    ITEMS[ITEM_ASHEN_COAT].heatResist = 65;
-    ITEMS[ITEM_ASHEN_COAT].coldResist = 45;
+    ITEMS[ITEM_ASHEN_COAT].armour     = 6;
+    ITEMS[ITEM_ASHEN_COAT].heatResist = 70;
+    ITEMS[ITEM_ASHEN_COAT].coldResist = 50;
     ITEMS[ITEM_ASHEN_COAT].armourSet  = ARMOUR_SET_RANGED_PYRE;
     ITEMS[ITEM_ASHEN_COAT].sprite     = SPR_ARMOUR_ASHEN_COAT;
 
@@ -1210,8 +1210,8 @@ void initItems() {
     ITEMS[ITEM_ASHEN_GREAVES].equipSlot  = EQ_FEET;
     ITEMS[ITEM_ASHEN_GREAVES].maxStack   = 1;
     ITEMS[ITEM_ASHEN_GREAVES].colour     = 0xB9B2A6;
-    ITEMS[ITEM_ASHEN_GREAVES].armour     = 2;
-    ITEMS[ITEM_ASHEN_GREAVES].heatResist = 40;
+    ITEMS[ITEM_ASHEN_GREAVES].armour     = 3;
+    ITEMS[ITEM_ASHEN_GREAVES].heatResist = 45;
     ITEMS[ITEM_ASHEN_GREAVES].coldResist = 30;
     ITEMS[ITEM_ASHEN_GREAVES].armourSet  = ARMOUR_SET_RANGED_PYRE;
     ITEMS[ITEM_ASHEN_GREAVES].sprite     = SPR_ARMOUR_ASHEN_GREAVES;
@@ -1807,6 +1807,22 @@ void initItems() {
     ITEMS[ITEM_PYRE_CORE].colour   = 0xFFD46A;
     ITEMS[ITEM_PYRE_CORE].sprite   = SPR_PYRE_CORE;
 
+    /* --- the Effigy ------------------------------------------------------
+       The call, and what the fight pays out. The egg is built by the same loop
+       that builds every other creature's, so nothing is written here for it. */
+    ITEMS[ITEM_EFFIGY_CALL].name     = "Effigy Call";
+    ITEMS[ITEM_EFFIGY_CALL].kind     = ITEMK_EGG;
+    ITEMS[ITEM_EFFIGY_CALL].summons  = ENT_EFFIGY;
+    ITEMS[ITEM_EFFIGY_CALL].maxStack = 4;
+    ITEMS[ITEM_EFFIGY_CALL].colour   = 0xE85A14;
+    ITEMS[ITEM_EFFIGY_CALL].sprite   = SPR_EFFIGY_CALL;
+
+    ITEMS[ITEM_ASCENT_CORE].name     = "Ascent Core";
+    ITEMS[ITEM_ASCENT_CORE].kind     = ITEMK_COMPONENT;
+    ITEMS[ITEM_ASCENT_CORE].maxStack = 16;
+    ITEMS[ITEM_ASCENT_CORE].colour   = 0xFFD07A;
+    ITEMS[ITEM_ASCENT_CORE].sprite   = SPR_ASCENT_CORE;
+
     ITEMS[ITEM_TITANIUM_HELMET].name       = "Titanium Helmet";
     ITEMS[ITEM_TITANIUM_HELMET].kind       = ITEMK_WORN;
     ITEMS[ITEM_TITANIUM_HELMET].equipSlot  = EQ_HEAD;
@@ -1893,6 +1909,7 @@ void initItems() {
     ITEMS[ITEM_CINDER_HEART].description =
         "Still warm. Cut from something that lived in the deep.";
     ITEMS[ITEM_CENSER_CALL].description = "Consume to summon the Censer nearby.";
+    ITEMS[ITEM_EFFIGY_CALL].description = "Consume to summon the Effigy nearby.";
     ITEMS[ITEM_PYRE_CORE].description =
         "Cracked, and still burning. Whatever leaves this world will be built around it.";
     ITEMS[ITEM_MULTITOOL3].description =
@@ -1952,6 +1969,11 @@ void initItems() {
         "Brimsteel Armour. 2 pieces: +45% melee damage. 3 pieces: +40% reach and +30% swing speed.";
     ITEMS[ITEM_BRIMSTEEL_PLATE].description = ITEMS[ITEM_BRIMSTEEL_HELM].description;
     ITEMS[ITEM_BRIMSTEEL_GREAVES].description = ITEMS[ITEM_BRIMSTEEL_HELM].description;
+    /* It says what it is FOR, and the rocket does not exist yet. A component
+       with no recipe and no explanation reads as a bug; one that names the
+       thing it is waiting for reads as an ending you have not reached. */
+    ITEMS[ITEM_ASCENT_CORE].description =
+        "The last core, taken from the Effigy. The rocket will be built around it.";
     ITEMS[ITEM_DRONE_BEACON].description =
         "Unlocks one additional combat-drone bay. Duplicate Beacons do not stack.";
     ITEMS[ITEM_OVERCLOCK_CHIP].description = "Install in an attack drone to reduce the delay between shots.";

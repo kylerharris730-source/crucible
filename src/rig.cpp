@@ -909,5 +909,249 @@ static const Clip HARV_IDLE = { "harvidle", g_harvIdleKeys, 2, 2, true, true };
 const Clip RIG_HARV_WALK = HARV_WALK;
 const Clip RIG_HARV_IDLE = HARV_IDLE;
 
-struct TentClipInit { TentClipInit() { buildTentClips(); buildSpiderClips(); buildHarvClips(); } };
+/* --- the effigy --------------------------------------------------------------
+   See the long note in rig.h for what this is and why it is not the humanoid
+   with bigger numbers. What follows is only the arithmetic. */
+const u32 RIG_EFFIGY[EFFIGY_SHADES] = {
+    /* Charred wood, and the ladder is built the way the Censer's note says it
+       has to be: the bottom rung is above the backdrop, not black. A creature
+       drawn in shades darker than the cave behind it is a creature nobody can
+       see move. */
+    0x4A3A2E,   /* 0 far limb   -- weathered timber in shadow */
+    0x7A6046,   /* 1 the frame  -- hip, chest, staves */
+    0x9A7A56,   /* 2 near limb  -- a clear step above the far side */
+    0xE85A14,   /* 3 the heart  -- what is burning in the cage */
+    0xFFD07A,   /* 4 the head   -- the brightest thing on it */
+    0xFF9A34,   /* 5 the eyes */
+};
+
+void rigEffigy(Bone* b, RigDef* rig, const char* name,
+               int w, int h, const u32* shade) {
+    const int H = h * ARM_SS, W = w * ARM_SS;
+
+    /* The vertical budget, spent from the ground up and adding to 96% of the
+       box: leg 50, hip 7, cage 30, head 9. It is written as a budget rather
+       than as four independent fractions because the first version was not,
+       and the result was a creature whose arms hung off the bottom of the
+       canvas while its ribs ran off the top. */
+    const int legSpan = (H * 50) / 100;
+    const int hipLen  = (H *  7) / 100;
+    const int cageLen = (H * 30) / 100;
+    const int headLen = (H *  9) / 100;
+
+    /* Widths are HALF-widths in subsamples -- the trap the spider's note
+       records -- so a "13%" body is a quarter of the box across. */
+    const int hipW   = (W *  9) / 100;
+    const int staveW = (W *  2) / 100;
+
+    /* --- the frame --------------------------------------------------------
+       Rest 0 points DOWN and a child's rest is measured FROM ITS PARENT, which
+       is the convention every rig in this file uses and the one that made the
+       first version of this creature stand on its head. The hip's 180 is
+       absolute up, so a child of the hip at rest 0 also points UP -- which is
+       right for the cage and catastrophic for a leg. Anything meant to hang
+       off this skeleton is near 180 from its parent, not near 0. */
+    b[EFF_HIP]   = mk(-1, 180, hipLen, hipW, hipW * 11 / 10, 1, 2, 0);
+    /* The spine, and it is THIN. It runs the whole height of the cage so the
+       shoulders are at the top of the ribs rather than just above the hip, but
+       at little more than a stave's width, because anything solid in the
+       middle of the cage fills in the gap the cage exists to have. */
+    b[EFF_CHEST] = mk(EFF_HIP, 0, cageLen, staveW * 3 / 2, staveW * 2, 1, 2, 250);
+    /* Off the spine's TIP, so the head sits above the ribs rather than inside
+       them -- and short, so it barely clears the shoulders. The tallest point
+       of the creature is the cage, not a face. */
+    b[EFF_HEAD]  = mk(EFF_CHEST, 0, headLen, staveW * 4, staveW * 2, 4, 4, 255);
+    /* Hangs back DOWN inside the ribs from halfway up the spine. Drawn on the
+       near layer so it reads as being behind the front ribs and in front of
+       the back ones, which is the whole trick of a light in a lantern. */
+    b[EFF_HEART] = mk(EFF_CHEST, 180, cageLen / 2,
+                      staveW * 5, staveW * 3, 3, 3, 130);
+
+    /* --- the cage ---------------------------------------------------------
+       Six ribs off the top of the hip, fanning OUT as they rise: a brazier
+       rather than a barrel. They are meant to be read as separate lines with
+       daylight between them, so the fan has to be wide -- the first version
+       spread them by four to eighteen degrees and six ribs at that spacing
+       overlapped into a solid oval, which is a torso and not a cage.
+
+       Longer than the spine by a tenth, because a rib that stops exactly at
+       the shoulder looks cut off rather than open. */
+    /* Attached at three HEIGHTS along the spine rather than all at the hip,
+       and that is what makes this a ribcage instead of a wedge. Six ribs
+       sharing one origin are six lines through the same point, and the first
+       twenty cells of every one of them overlap into a solid triangle -- which
+       is what the first two versions drew, once as a bare tree and once as a
+       hood. Started apart, they enclose a space.
+
+       Each rib goes OUT, nearly square to the spine, and then folds back to
+       parallel: a stave of a barrel. The fold is the negative of the lean, so
+       every rib finishes pointing the same way whatever it leaned to get
+       there -- the computed-fold trick the harvestman's legs use. */
+    static const int ribAt[EFF_STAVES / 2] = { 40, 120, 200 };
+    static const int ribOut[EFF_STAVES / 2] = { 58, 70, 62 };
+    for (int t = 0; t < EFF_STAVES; ++t) {
+        const bool nearSide = t >= EFF_STAVES / 2;
+        const int  pair  = t % (EFF_STAVES / 2);
+        const int  turn  = nearSide ? 1 : -1;
+        const int  sh    = nearSide ? 2 : 0;
+        const int  layer = nearSide ? 3 : 1;
+        const int  out   = ribOut[pair];
+        b[effStaveBone(t, 0)] = mk(EFF_CHEST, turn * out,
+                                   cageLen * 40 / 100, staveW, staveW,
+                                   sh, layer, (u8)ribAt[pair]);
+        b[effStaveBone(t, 1)] = mk(effStaveBone(t, 0), -turn * out,
+                                   cageLen * 62 / 100, staveW, staveW * 3 / 4,
+                                   sh, layer, 255);
+    }
+
+    /* --- the legs ---------------------------------------------------------
+       DIGITIGRADE: a thigh that drops and leans forward, a shin that folds
+       BACK past vertical, and a foot that reaches forward again to land. The
+       net of the three is a leg that arrives under the body having bent the
+       wrong way twice -- a bird's leg, not a person's, and the difference is
+       visible at a glance even in silhouette.
+
+       The thigh is the long one. Even segments give a zigzag; a long thigh
+       with a shorter fold under it gives the heel-in-the-air stance that makes
+       the shape read. */
+    const int legSeg[EFF_SEGS] = { (legSpan * 46) / 100,
+                                   (legSpan * 36) / 100,
+                                   (legSpan * 18) / 100 };
+    const int legW[EFF_SEGS + 1] = { (W * 5) / 100, (W * 4) / 100,
+                                     (W * 3) / 100, (W * 3) / 100 };
+    for (int t = 0; t < EFF_LEGS; ++t) {
+        const bool nearSide = t == 1;
+        /* One leg forward and one back -- a standing figure drawn with both
+           legs in the same place is a post. The near one takes the forward
+           stance, so the leg the eye reads first is the one with the stride
+           in it. */
+        const int stance = nearSide ? -27 : 21;
+        const int rest[EFF_SEGS] = { 180 + stance, 44, -34 };
+        for (int seg = 0; seg < EFF_SEGS; ++seg) {
+            const int idx = effLegBone(t, seg);
+            const int parent = seg == 0 ? EFF_HIP : idx - 1;
+            b[idx] = mk(parent, rest[seg], legSeg[seg],
+                        legW[seg], legW[seg + 1],
+                        nearSide ? 2 : 0, nearSide ? 3 : 1,
+                        seg == 0 ? 30 : 255);
+        }
+    }
+
+    /* --- the arms ---------------------------------------------------------
+       Off the SPINE'S TIP, so they hang from the shoulders at the top of the
+       cage, and long enough that the hand ends around the knee: the three
+       segments come to 44% of the box against the leg's 50%, measured from a
+       shoulder that is much higher than the hip. An arm that stopped at the
+       waist would read as a person's. */
+    const int armSpan = (H * 44) / 100;
+    const int armSeg[EFF_SEGS] = { (armSpan * 40) / 100,
+                                   (armSpan * 36) / 100,
+                                   (armSpan * 24) / 100 };
+    const int armW[EFF_SEGS + 1] = { (W * 4) / 100, (W * 3) / 100,
+                                     (W * 2) / 100, (W * 2) / 100 };
+    for (int t = 0; t < EFF_ARMS; ++t) {
+        const bool nearSide = t == 1;
+        const int turn = nearSide ? 1 : -1;
+        /* Nearly straight down with a small outward set at the shoulder and
+           the barest bend at the elbow. These are not posed -- they HANG, and
+           the stride is what swings them. */
+        /* Set well out at the shoulder -- 34 degrees off vertical -- so the
+           arm hangs OUTSIDE the ribs rather than down through them. At 14 the
+           arms were inside the cage and the whole middle of the creature was
+           one indistinct column. */
+        const int rest[EFF_SEGS] = { 180 - turn * 46, turn * 30, turn * 10 };
+        for (int seg = 0; seg < EFF_SEGS; ++seg) {
+            const int idx = effArmBone(t, seg);
+            const int parent = seg == 0 ? EFF_CHEST : idx - 1;
+            b[idx] = mk(parent, rest[seg], armSeg[seg],
+                        armW[seg], armW[seg + 1],
+                        nearSide ? 2 : 0, nearSide ? 3 : 1,
+                        seg == 0 ? 240 : 255);
+        }
+    }
+
+    rig->name  = name;
+    rig->bone  = b;
+    rig->bones = EFF_BONES;
+    rig->shade = shade;
+    rig->w = w; rig->h = h;
+    rig->rootX = (i16)(W / 2);
+    /* Half way down, which is where the legs end: everything above this point
+       is cage and everything below it is leg. The harvestman's 70% would drive
+       the ribs off the top of the canvas, because that rig builds DOWNWARD
+       from an arch and this one builds upward from a pelvis. */
+    rig->rootY = (i16)((H * 50) / 100);
+}
+
+/* --- the stride --------------------------------------------------------------
+   Two legs, so there is nothing to phase apart and no thicket to keep in order.
+   What has to be generated instead is weight, and it comes from three things
+   moving together:
+
+     the legs a half cycle apart, swinging at the hip and folding at the knee;
+     the arms a half cycle behind the leg on their own side, which is what a
+     walking body actually does and what stops this reading as a shamble;
+     and the root DROPPING as a foot lands and rising as it passes over.
+
+   The root drop is the one that carries the weight. Without it a two-legged
+   walk is a pair of scissors opening and closing. */
+void rigEffigyWalk(PoseKey* keys, int count) {
+    memset(keys, 0, sizeof(PoseKey) * (size_t)count);
+    for (int k = 0; k < count; ++k) {
+        PoseKey& p = keys[k];
+        const int cyc = (k * 360) / count;
+        for (int t = 0; t < EFF_LEGS; ++t) {
+            const int phase = cyc + (t ? 180 : 0);
+            const int swing = isin1024(phase);
+            const int fold  = isin1024(phase + 90);
+            /* The hip swings, the knee folds only while the leg is BEHIND the
+               body -- a knee that folds on the forward swing kicks. */
+            p.angle[effLegBone(t, 0)] = (i16)((swing * 26) / 1024);
+            p.angle[effLegBone(t, 1)] = (i16)((fold < 0 ? -fold : 0) * 30 / 1024);
+            p.angle[effLegBone(t, 2)] = (i16)((swing * -8) / 1024);
+        }
+        for (int t = 0; t < EFF_ARMS; ++t) {
+            /* Opposite the leg on the same side, which is the half cycle that
+               makes a walk look like a walk. */
+            const int phase = cyc + (t ? 0 : 180);
+            const int swing = isin1024(phase);
+            const int turn  = t ? 1 : -1;
+            p.angle[effArmBone(t, 0)] = (i16)((swing * turn * 15) / 1024);
+            p.angle[effArmBone(t, 1)] = (i16)((swing * turn * 9) / 1024);
+        }
+        /* Twice the leg cycle: the body drops on EVERY footfall, and there are
+           two of those per stride. The heart lags it, because a weight on a
+           chain arrives late. */
+        p.rootDY = (i16)((isin1024(cyc * 2) * ARM_SS * 2) / 1024);
+        p.angle[EFF_HEART] = (i16)((isin1024(cyc * 2 - 60) * 7) / 1024);
+    }
+}
+
+static PoseKey g_effWalkKeys[8];
+static PoseKey g_effIdleKeys[2];
+
+static void buildEffClips() {
+    rigEffigyWalk(g_effWalkKeys, 8);
+    /* Standing still is the legs planted and the heart still swinging. A boss
+       that freezes completely between steps reads as a prop. */
+    rigEffigyWalk(g_effIdleKeys, 2);
+    for (int k = 0; k < 2; ++k) {
+        for (int t = 0; t < EFF_LEGS; ++t)
+            for (int s = 0; s < EFF_SEGS; ++s)
+                g_effIdleKeys[k].angle[effLegBone(t, s)] = 0;
+        for (int t = 0; t < EFF_ARMS; ++t)
+            for (int s = 0; s < EFF_SEGS; ++s)
+                g_effIdleKeys[k].angle[effArmBone(t, s)] = 0;
+        g_effIdleKeys[k].rootDY = 0;
+    }
+    g_effIdleKeys[1].angle[EFF_HEART] = 5;
+    g_effIdleKeys[1].rootDY = -ARM_SS / 2;
+}
+
+static const Clip EFF_WALK = { "effwalk", g_effWalkKeys, 8, 8, true, true };
+static const Clip EFF_IDLE = { "effidle", g_effIdleKeys, 2, 2, true, true };
+const Clip RIG_EFF_WALK = EFF_WALK;
+const Clip RIG_EFF_IDLE = EFF_IDLE;
+
+struct TentClipInit { TentClipInit() { buildTentClips(); buildSpiderClips(); buildHarvClips(); buildEffClips(); } };
 static TentClipInit g_tentClipInit;

@@ -18,6 +18,8 @@ u32 g_widowIdle[WIDOW_IDLE_FRAMES][WIDOW_SPR_W * WIDOW_SPR_H];
 u32 g_widowWalk[WIDOW_WALK_FRAMES][WIDOW_SPR_W * WIDOW_SPR_H];
 u32 g_censerIdle[CENSER_IDLE_FRAMES][CENSER_SPR_W * CENSER_SPR_H];
 u32 g_censerWalk[CENSER_WALK_FRAMES][CENSER_SPR_W * CENSER_SPR_H];
+u32 g_effigyIdle[EFFIGY_IDLE_FRAMES][EFFIGY_SPR_W * EFFIGY_SPR_H];
+u32 g_effigyWalk[EFFIGY_WALK_FRAMES][EFFIGY_SPR_W * EFFIGY_SPR_H];
 
 /* One palette shared by every sprite, so a colour means the same thing
    everywhere: T is always a highlight, S is always steel, and the two handle
@@ -598,6 +600,47 @@ static const char* ART_PYRE_CORE[SPR_H] = {
     "..............",
 };
 
+/* The Effigy's call: a small wicker figure with something lit inside it. The
+   summon items are all pictures of the thing they bring -- the Censer's call is
+   a swung vessel, the Widow's a web -- and this one is a doll of the last boss,
+   which is what an effigy IS before you set fire to it. */
+static const char* ART_EFFIGY_CALL[SPR_H] = {
+    "..............",
+    "......kk......",
+    "......kk......",
+    "....k&&&&k....",
+    "...k&L**L&k...",
+    "...k&*ii*&k...",
+    "...k&L**L&k...",
+    "....k&&&&k....",
+    "...k..kk..k...",
+    "..k...kk...k..",
+    ".k....kk....k.",
+    "......kk......",
+    ".....k..k.....",
+    "..............",
+};
+
+/* The Ascent Core. Fourth in the Forge Core's line and drawn as one, with the
+   light breaking OUT of the shell rather than sitting in it -- the other three
+   are things you carry, and this one is the thing that leaves. */
+static const char* ART_ASCENT_CORE[SPR_H] = {
+    "..............",
+    "......ii......",
+    "....i&iiii....",
+    "...k&*LL*&k...",
+    "..k&*iiii*&k..",
+    "..k&LiiiiL&k..",
+    "..i&iiiiii&i..",
+    "..k&LiiiiL&k..",
+    "..k&*iiii*&k..",
+    "...k&*LL*&k...",
+    "....i&iiii....",
+    "......ii......",
+    "..............",
+    "..............",
+};
+
 /* --- the warp wand ---------------------------------------------------------
    A rod held on the diagonal with the split-space colour burning at the tip.
 
@@ -1027,6 +1070,16 @@ static void buildCenserFrames() {
     rigHarvester(bone, &rig, "censer", CENSER_SPR_W, CENSER_SPR_H, RIG_CENSER);
     armBake(&rig, &RIG_HARV_WALK, g_censerWalk[0]);
     armBake(&rig, &RIG_HARV_IDLE, g_censerIdle[0]);
+}
+
+/* The Effigy, on the fifth skeleton -- a standing figure with a cage for a
+   torso. See rigEffigy for why the last boss is not the Censer at 150%. */
+static void buildEffigyFrames() {
+    static Bone bone[EFF_BONES];
+    RigDef rig;
+    rigEffigy(bone, &rig, "effigy", EFFIGY_SPR_W, EFFIGY_SPR_H, RIG_EFFIGY);
+    armBake(&rig, &RIG_EFF_WALK, g_effigyWalk[0]);
+    armBake(&rig, &RIG_EFF_IDLE, g_effigyIdle[0]);
 }
 
 
@@ -2564,6 +2617,8 @@ void initSprites() {
     expand(SPR_CENSER_LIMB,  ART_CENSER_LIMB);
     expand(SPR_CENSER_CALL,  ART_CENSER_CALL);
     expand(SPR_PYRE_CORE,    ART_PYRE_CORE);
+    expand(SPR_EFFIGY_CALL,  ART_EFFIGY_CALL);
+    expand(SPR_ASCENT_CORE,  ART_ASCENT_CORE);
     expand(SPR_WARP_WAND, ART_WARP_WAND);
     expand(SPR_SPARK, ART_SPARK);
     expandMetal(SPR_ARMOUR_DRONE_VISOR,   ART_ARMOUR_HELM,    0x6FAFBE, 0x3D6C78);
@@ -2744,4 +2799,5 @@ void initSprites() {
     buildThresherFrames();
     buildWidowFrames();
     buildCenserFrames();
+    buildEffigyFrames();
 }

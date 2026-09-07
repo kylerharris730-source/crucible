@@ -390,6 +390,19 @@ enum {
     ITEM_BRIMSTEEL_HELM,
     ITEM_BRIMSTEEL_PLATE,
     ITEM_BRIMSTEEL_GREAVES,
+
+    /* --- the Effigy ------------------------------------------------------
+       What calls the last boss, its egg, and what it leaves.
+
+       The ASCENT CORE is the fourth in the line the Forge Core started, and
+       the only one that gates nothing yet: the rocket it is meant to be built
+       around does not exist. That is deliberate rather than forgotten -- see
+       ROADMAP -- and it is why the item says outright what it is FOR, so a
+       player who finds one is told there is an ending rather than left holding
+       a component with no recipe. */
+    ITEM_EFFIGY_CALL,
+    ITEM_EGG_EFFIGY,
+    ITEM_ASCENT_CORE,
     ITEM_COUNT
 };
 

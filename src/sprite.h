@@ -185,11 +185,13 @@ enum SpriteId {
        Sixteen is slack, not a plan. initSprites() checks it against ENT_COUNT
        rather than trusting it. */
     SPR_EGG_FIRST,
-    /* Widened from 16 to 24. The roster reached exactly sixteen creatures with
-       the Skirmisher, so the next one added would have tripped the check in
-       initSprites rather than silently overflowing -- which is the check
-       working, and also a warning worth acting on before it fires. */
-    SPR_EGG_LAST = SPR_EGG_FIRST + 23,
+    /* Widened from 16 to 24, and then to 32. Twice now the check in
+       initSprites has been the thing that noticed -- the Skirmisher took the
+       roster to exactly sixteen, and the Effigy's three took it to twenty-six
+       past a ceiling of twenty-four. It aborts with the count and the name of
+       this constant rather than overflowing, which is why widening it is a
+       one-line chore instead of a debugging session. */
+    SPR_EGG_LAST = SPR_EGG_FIRST + 31,
 
     /* The one-offs: two boss items, two components, and lunch. */
     SPR_FORGE_CORE,
@@ -273,6 +275,8 @@ enum SpriteId {
     SPR_ARMOUR_BRIMSTEEL_HELM,
     SPR_ARMOUR_BRIMSTEEL_PLATE,
     SPR_ARMOUR_BRIMSTEEL_GREAVES,
+    SPR_EFFIGY_CALL,
+    SPR_ASCENT_CORE,
 
     SPR_COUNT
 };
@@ -391,5 +395,21 @@ static const int CENSER_IDLE_FRAMES = 2;
 static const int CENSER_WALK_FRAMES = 8;
 extern u32 g_censerIdle[CENSER_IDLE_FRAMES][CENSER_SPR_W * CENSER_SPR_H];
 extern u32 g_censerWalk[CENSER_WALK_FRAMES][CENSER_SPR_W * CENSER_SPR_H];
+
+/* The Effigy: the last boss, and the biggest thing in the game by a distance.
+   72 x 88 against the Censer's 64 x 56 -- over half again the area, taller
+   than anything else in the game by a wide margin, and past what the
+   armature's scratch buffer held until it was raised for this.
+
+   72 rather than the 96 it was first drawn at, and the reason is that this one
+   STANDS. A spider fills a wide box; an upright figure in a 96-cell one is
+   mostly air, and the box is the hitbox -- so the extra width was a boss you
+   could be hit by while standing well clear of anything drawn. */
+static const int EFFIGY_SPR_W = 72;
+static const int EFFIGY_SPR_H = 88;
+static const int EFFIGY_IDLE_FRAMES = 2;
+static const int EFFIGY_WALK_FRAMES = 8;
+extern u32 g_effigyIdle[EFFIGY_IDLE_FRAMES][EFFIGY_SPR_W * EFFIGY_SPR_H];
+extern u32 g_effigyWalk[EFFIGY_WALK_FRAMES][EFFIGY_SPR_W * EFFIGY_SPR_H];
 
 void initSprites();

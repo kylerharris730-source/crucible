@@ -43,11 +43,14 @@ static inline int wrapDeg(int d) { d %= 360; return d < 0 ? d + 360 : d; }
    less convenient the next time this file's globals moved. armBake now refuses
    a rig it cannot hold rather than writing past the end of one.
 
-   64 x 64 cells = 4096, which is double what the biggest creature needs and is
-   still only 64 KB. */
-static const int ARM_MAX_CELLS = 64 * 64;
-static const int MAX_SS_W = 64 * ARM_SS;
-static const int MAX_SS_H = 64 * ARM_SS;
+   96 x 96 cells = 9216, and it was 64 x 64 = 4096 until the last boss needed
+   more: the Effigy is 96 x 88 = 8448, which is over twice the Censer and would
+   have been refused. Raising it costs 144 KB of static scratch against the old
+   64 KB, which is nothing next to one creature's baked frames, and the refusal
+   above is what makes raising it a decision rather than a memory corruption. */
+static const int ARM_MAX_CELLS = 96 * 96;
+static const int MAX_SS_W = 96 * ARM_SS;
+static const int MAX_SS_H = 96 * ARM_SS;
 static u8 g_ss[MAX_SS_W * MAX_SS_H];   /* 0 = empty, else shade + 1 */
 
 /* A filled disc, which is how a capsule is drawn: stamp one every half-radius

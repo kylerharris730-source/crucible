@@ -42,7 +42,19 @@ int main() {
        on a different phase of whatever clock its creature uses, which is the
        whole reason the table is hand-written rather than a constant. */
     const int later[ENT_COUNT] = { 0, 5, 6, 9, 7, 4, 6, 6, 6, 8, 6, 21, 12, 6,
-                                   6, 6, 5, 6, 6, 6, 7, 5, 6, 12};
+                                   6, 6, 5, 6, 6, 6, 7, 5, 6, 12,
+                                   /* The Effigy and its two parts. The arm's
+                                      16 is the same trap the Emberwing's note
+                                      above records, for the third time: its
+                                      clench runs on (tick / 14) & 3, so every
+                                      frame from 0 to 27 is the SAME half of
+                                      that cycle and the two samples came out
+                                      identical -- twice, because 16 is inside
+                                      it as well. 30 is the first that is
+                                      genuinely elsewhere. Every
+                                      entry here has to land on a different
+                                      phase of its own creature's clock. */
+                                   9, 30, 6};
 
     for (int type = ENT_NONE + 1; type < ENT_COUNT; ++type) {
         if (later[type] == 0) {

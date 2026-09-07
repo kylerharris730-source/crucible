@@ -178,6 +178,88 @@ void rigHarvesterWalk(PoseKey* keys, int count, int lift);
 extern const Clip RIG_HARV_WALK;
 extern const Clip RIG_HARV_IDLE;
 
+/* --- the effigy --------------------------------------------------------------
+
+   The last boss, and the fifth skeleton. Asked for: "then lets do a final boss,
+   i want it to be bigger. multi part, bigger than any of the other bosses."
+
+   Bigger is the easy half and is a number in a table. The hard half is that it
+   must not read as the Censer scaled up, and the four rigs that already exist
+   have used up the obvious shapes: two spiders, a harvestman and a person. So
+   this one is the thing none of those are -- a STANDING FIGURE, upright and
+   two-legged, which is the silhouette a player has been looking at since the
+   first frame of the game and has never once been threatened by.
+
+   Three things make it a wicker man rather than a big humanoid, and each is a
+   deliberate inversion of the player's own rig:
+
+     THE TORSO IS A CAGE. Not one trunk bone but six thin staves that bow out
+     from the hip and close again at the shoulders, with nothing between them.
+     A body you can see through is the whole idea: the burning heart inside it
+     is drawn as its own bone, in the gap.
+
+     THE LEGS BEND BACKWARD. Digitigrade -- a long thigh forward, a shin that
+     folds back, and a foot that reaches forward again -- so it stands on its
+     toes with its heel in the air. The player's legs are two segments that
+     bend forward at the knee; these are three that bend the other way, which
+     is enough for the eye to call it an animal rather than a man.
+
+     THE ARMS ARE FAR TOO LONG. Three segments each, hanging past where the
+     knee would be. Long arms on an upright body is the oldest trick there is
+     for making something person-shaped read as wrong, and here they are also
+     the fight: the arms are separate creatures.
+
+   The head is the last of it, and it ended up doing the opposite of what it
+   was first drawn doing. Sunk between the shoulders it was invisible -- the
+   ribs closed over it and the creature had no face at all, which reads as a
+   modelling error rather than as menace. It sits at the top of the spine
+   instead, small, pale and the brightest thing on the silhouette after the
+   heart: a skull on a stake above a burning cage. */
+static const int EFF_LEGS   = 2;
+static const int EFF_ARMS   = 2;
+static const int EFF_SEGS   = 3;   /* both legs and arms: thigh, shin, foot */
+static const int EFF_STAVES = 6;   /* the ribs of the cage */
+/* TWO segments per rib, and it is the difference between a cage and a dead
+   tree. A rib is a bone that goes out and comes back; one straight bone can
+   only go out, so the first version drawn this way was six sticks radiating
+   from a trunk -- a burning tree, which is a fine thing to look at and not the
+   thing that was asked for. Out, then fold back in to meet at the shoulder. */
+static const int EFF_STAVE_SEGS = 2;
+
+static const int EFF_HIP   = 0;    /* the root: a short pelvis block */
+static const int EFF_CHEST = 1;    /* the yoke the staves and arms hang from */
+static const int EFF_HEAD  = 2;
+static const int EFF_HEART = 3;    /* what burns inside the cage */
+static const int EFF_FIRST_STAVE = 4;
+static const int EFF_FIRST_LEG   = EFF_FIRST_STAVE + EFF_STAVES * EFF_STAVE_SEGS;
+static const int EFF_FIRST_ARM   = EFF_FIRST_LEG + EFF_LEGS * EFF_SEGS;
+static const int EFF_BONES       = EFF_FIRST_ARM + EFF_ARMS * EFF_SEGS;
+
+static inline int effStaveBone(int t, int s) {
+    return EFF_FIRST_STAVE + t * EFF_STAVE_SEGS + s;
+}
+static inline int effLegBone(int t, int s) {
+    return EFF_FIRST_LEG + t * EFF_SEGS + s;
+}
+static inline int effArmBone(int t, int s) {
+    return EFF_FIRST_ARM + t * EFF_SEGS + s;
+}
+
+static const int EFFIGY_SHADES = 6;
+extern const u32 RIG_EFFIGY[EFFIGY_SHADES];
+
+void rigEffigy(Bone* bone, RigDef* rig, const char* name,
+               int w, int h, const u32* shade);
+
+/* Its stride. Two legs, so there is no tripod to phase and no thicket to keep
+   apart -- what this generates instead is WEIGHT: a long slow step, the body
+   dropping onto the planted leg and rising over it, and the arms swinging a
+   half cycle behind the legs they are opposite to. Generated rather than
+   authored for the same reason the spider's is, at 22 bones. */
+void rigEffigyWalk(PoseKey* keys, int count);
+extern const Clip RIG_EFF_WALK;
+extern const Clip RIG_EFF_IDLE;
+
 /* --- the gait, GENERATED rather than authored -------------------------------
 
    The humanoid clips above are hand-written keyframe tables, which is right for

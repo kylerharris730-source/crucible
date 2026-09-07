@@ -160,6 +160,39 @@ enum EntityType {
        their hive. Nothing here is a new system. */
     ENT_CENSER,
     ENT_CENSER_LIMB,
+
+    /* --- the Effigy, and the end of it -----------------------------------
+       Asked for: "then lets do a final boss, i want it to be bigger. multi
+       part, bigger than any of the other bosses."
+
+       96 x 88 against the Censer's 64 x 56 -- over twice the area, and past
+       what the armature's scratch buffer would bake until it was raised for
+       this one creature.
+
+       MULTI-PART, and structured rather than merely numerous. The Censer's
+       four limbs are four of the same thing, so clearing them is one job done
+       four times; the Effigy's three parts each do a different job, and each
+       one you kill takes a different threat out of the fight:
+
+         the two ARMS are the melee. They hang at the shoulders, and they
+         reach for you rather than orbiting -- the reason you cannot simply
+         stand next to it.
+
+         the CROWN is the artillery. It sits above the shoulders and drops
+         fire on you at any range -- the reason you cannot simply stand away
+         from it.
+
+       So the order you kill them in is a decision about which half of the
+       fight you would rather still be in, which is a step past "clear the
+       limbs, then the body".
+
+       And the body's own attack answers the third option, which is moving:
+       the ground erupts where you ARE, after a delay, so a player who solves
+       both parts by running is answered by the thing they are running across.
+       See effigyErupt. */
+    ENT_EFFIGY,
+    ENT_EFFIGY_ARM,
+    ENT_EFFIGY_CROWN,
     ENT_COUNT
 };
 
@@ -170,6 +203,11 @@ extern u32 g_bossesBeaten;
 static const u32 BOSS_LAYER1 = 1u << 0;
 static const u32 BOSS_LAYER2 = 1u << 1;
 static const u32 BOSS_LAYER3 = 1u << 2;
+/* The fourth, and it is not a layer: there is no layer 4 and the Effigy opens
+   no seal. It is named for the fight rather than for a depth because that is
+   what the roadmap settled -- the last boss is gated behind the ending, not
+   behind digging further down. */
+static const u32 BOSS_FINAL  = 1u << 3;
 
 /* Which bit a boss owns, stated in one switch rather than derived from its
    EntityType. Derived would be tidier right up to the first time a creature is

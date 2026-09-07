@@ -98,9 +98,9 @@ int main() {
     };
     const PyreSet pyre[3] = {
         { "Thurible",  ITEM_THURIBLE_CROWN, ITEM_THURIBLE_HARNESS,
-                       ITEM_THURIBLE_GREAVES, 11, 70 },
+                       ITEM_THURIBLE_GREAVES, 15, 75 },
         { "Ashen",     ITEM_ASHEN_HOOD,     ITEM_ASHEN_COAT,
-                       ITEM_ASHEN_GREAVES,   10, 65 },
+                       ITEM_ASHEN_GREAVES,   13, 70 },
         { "Brimsteel", ITEM_BRIMSTEEL_HELM, ITEM_BRIMSTEEL_PLATE,
                        ITEM_BRIMSTEEL_GREAVES, 21, 90 }
     };

@@ -5,7 +5,8 @@ are not scheduled yet. Near-term chores live in [CHECKLIST.md](CHECKLIST.md);
 this file is the long arc.
 
 **Done means:** FOUR bosses, all three layers populated and fleshed out, and a
-rocket you can build to win.
+rocket you can build to win. Two of those three are now done: the bosses are
+finished and the layers are populated. The rocket is what is left.
 
 Settled 2026-09-06, and the number is now four rather than "three or four": a
 layer 3 boss and then a final one. What follows is the ordering decision that
@@ -26,7 +27,7 @@ then.
 
 ---
 
-## 1. Bosses — 3 of 4
+## 1. Bosses — 4 of 4
 
 Today there is exactly one: the **Brood Mother** (900 hp, summoned with
 `ITEM_BROOD_CALL`, drops `ITEM_FORGE_CORE`). She is not spawned, only called,
@@ -40,9 +41,19 @@ a boss you summon is a decision.
       MULTI-PART fight in the game -- the body takes a fifth of what you deal it
       while any limb lives, so the fight has an order rather than a health bar.
       Drops the Pyre Core. It opens no seal, because there is nothing below it.
-- [ ] **A final boss, at the rocket.** No longer optional. A fight gated behind
-      the win condition rather than behind a depth, so the ending is something
-      you beat rather than something you assemble.
+- [x] **A final boss.** The Effigy: 72x88 -- taller than anything else in the
+      game and over half again the Censer's area -- a standing figure with a
+      cage for a torso and something burning inside it. Three parts, and each
+      closes one of the three answers to a slow enemy: the two ARMS reach for
+      you if you stand close, the CROWN drops fire on you if you stand away,
+      and the ground erupts where you are if you keep moving. The body takes a
+      sixth of what you deal it while any part lives. Drops the Ascent Core.
+
+      Gated behind the **Pyre Core** rather than behind the rocket, because the
+      rocket does not exist yet. That is the one thing still owed here: when
+      there is a rocket, the Effigy Call should come off the Assembly Table and
+      onto it, so the last fight is something the ending asks for rather than
+      something you can craft the moment you have beaten the Censer.
 
 Each wants a summon item, a drop that unlocks the next tier, and — going by
 the Brood Mother — an arena big enough for a dash attack (`BOSS_DASH_SPEED`,
