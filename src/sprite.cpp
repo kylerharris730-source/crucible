@@ -835,6 +835,26 @@ static const char* ART_ACC_ASH[SPR_H] = {
     "..............",
 };
 
+/* A sigil: a struck disc with a mark cut through it, hung from a ring. Drawn
+   once and tinted four times -- see the note in sprite.h. The letters here are
+   the metal ramp, so expandMetal can recolour the whole thing from one pair. */
+static const char* ART_SIGIL[SPR_H] = {
+    "..............",
+    ".....SSSS.....",
+    "....S....S....",
+    ".....SSSS.....",
+    "...SSSSSSSS...",
+    "..SSSTTTTSSS..",
+    "..SST.TT.TSS..",
+    "..SST.TT.TSS..",
+    "..SSSTTTTSSS..",
+    "...SSSSSSSS...",
+    "....SSSSSS....",
+    ".....SSSS.....",
+    "..............",
+    "..............",
+};
+
 /* --- the warp wand ---------------------------------------------------------
    A rod held on the diagonal with the split-space colour burning at the tip.
 
@@ -2854,6 +2874,11 @@ void initSprites() {
     expand(SPR_ACC_FEATHER, ART_ACC_FEATHER);
     expand(SPR_ACC_GULLET,  ART_ACC_GULLET);
     expand(SPR_ACC_ASH,     ART_ACC_ASH);
+    /* The four sigils, in the colour of the boss each came off. */
+    expandMetal(SPR_SIGIL_FORGE,  ART_SIGIL, 0xE07A32, 0x7A3C10);
+    expandMetal(SPR_SIGIL_SILK,   ART_SIGIL, 0xC8C0D8, 0x635C74);
+    expandMetal(SPR_SIGIL_PYRE,   ART_SIGIL, 0xFFD46A, 0x8A6410);
+    expandMetal(SPR_SIGIL_ASCENT, ART_SIGIL, 0xFFF0C8, 0xB07A2A);
     expand(SPR_ACC_DRONE_BEACON, ART_DRONE_BEACON);
     expand(SPR_MINE1,     ART_MINE1);
     expand(SPR_MINE2,     ART_MINE2);

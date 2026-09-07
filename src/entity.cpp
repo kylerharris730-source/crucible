@@ -361,7 +361,7 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
        hp 900 against a starting shot that does 6 is a real fight without being
        a war of attrition, and it is meant to be fought AFTER the Blast Module,
        which does 22. Drops the Forge Core -- see the note there. */
-    { "Brood Mother", 34, 24, 900, 16, 26, 0.55f, 0.05f, false, 0, false,  0, 0, 0.0f, 0.0f, true,  ITEM_FORGE_CORE, 1, 1, ITEM_NONE,            0, SPR_BROOD, 0xB04838, ITEM_EGG_BROOD,     false, false, 0 },
+    { "Brood Mother", 34, 24, 900, 16, 26, 0.55f, 0.05f, false, 0, false,  0, 0, 0.0f, 0.0f, true,  ITEM_FORGE_CORE, 1, 1, ITEM_FORGE_SIGIL,     1, SPR_BROOD, 0xB04838, ITEM_EGG_BROOD,     false, false, 0 },
 
     /* --- the crash dummy ---------------------------------------------------
        A test rig, not a creature, and every column says so: no touch damage, no
@@ -564,7 +564,7 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
     { "Widow", WIDOW_SPR_W, WIDOW_SPR_H, 1400, 34, 26,
       0.62f, 0.075f, false, 0, false,
       WIDOW_SPIT_EVERY, 14, 7.0f, 0.0f, true,
-      ITEM_SILK_GLAND, 1, 1, ITEM_NONE, 0, SPR_NONE, 0x6E5578,
+      ITEM_SILK_GLAND, 1, 1, ITEM_SILK_SIGIL, 1, SPR_NONE, 0x6E5578,
       ITEM_EGG_WIDOW, false, false, 0 },
 
     /* --- the Ashhound, layer 3 ---------------------------------------------
@@ -668,7 +668,7 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
     { "The Censer", CENSER_SPR_W, CENSER_SPR_H, 2200, 42, 26,
       0.50f, 0.06f, false, 0, false,
       CENSER_SPIT_EVERY, 20, 7.6f, 0.0f, true,
-      ITEM_PYRE_CORE, 1, 1, ITEM_NONE, 0, SPR_NONE, 0xE0641C,
+      ITEM_PYRE_CORE, 1, 1, ITEM_PYRE_SIGIL, 1, SPR_NONE, 0xE0641C,
       ITEM_EGG_CENSER, false, false, 250 },
 
     /* --- one of its limbs --------------------------------------------------
@@ -716,7 +716,7 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
     { "The Effigy", EFFIGY_SPR_W, EFFIGY_SPR_H, 6000, 55, 24,
       0.22f, 0.025f, false, 0, false,
       EFFIGY_ERUPT_EVERY, 30, 0.0f, 0.0f, true,
-      ITEM_ASCENT_CORE, 1, 1, ITEM_NONE, 0, SPR_NONE, 0xE85A14,
+      ITEM_ASCENT_CORE, 1, 1, ITEM_ASCENT_SIGIL, 1, SPR_NONE, 0xE85A14,
       ITEM_EGG_EFFIGY, false, false, 250 },
 
     /* --- an arm ------------------------------------------------------------

@@ -423,6 +423,28 @@ enum {
     ITEM_EMBERWING_FEATHER,
     ITEM_SLAGMAW_GULLET,
     ITEM_CINDERLING_ASH,
+
+    /* --- the sigils ------------------------------------------------------
+       One per boss, and unlike every other charm in the game they are not
+       about a mechanic -- they are a LADDER. Each is a flat all-round buff
+       strictly better than the one before it, and the fourth is meaningfully
+       better than any charm you can find in the world.
+
+       That is a deliberate exception to how charms work here. A charm you find
+       on a creature should be a specialisation you build around; a charm four
+       bosses deep should be the reward for having beaten four bosses, and
+       nothing about "have you finished the game" is a specialisation. Reading
+       the four tooltips in order is meant to be the clearest statement of
+       progression in the game.
+
+       They stack the way everything else does -- largest wins for the
+       percentages, armour sums -- so wearing two sigils is legal, worse than
+       wearing the best one plus something else, and therefore a mistake the
+       player can make and recover from. */
+    ITEM_FORGE_SIGIL,
+    ITEM_SILK_SIGIL,
+    ITEM_PYRE_SIGIL,
+    ITEM_ASCENT_SIGIL,
     ITEM_COUNT
 };
 

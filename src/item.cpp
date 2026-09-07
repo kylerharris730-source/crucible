@@ -1710,6 +1710,82 @@ void initItems() {
     ITEMS[ITEM_CINDERLING_ASH].colour    = 0xFF8A3A;
     ITEMS[ITEM_CINDERLING_ASH].sprite    = SPR_ACC_ASH;
 
+    /* --- the sigils ------------------------------------------------------
+       One per boss, a ladder rather than four ideas -- see the note in item.h.
+       Every step adds to the last rather than replacing it, so the tooltips
+       read as a progression when they are lined up. */
+
+    /* The Brood Mother's. The smallest of the four and still worth a slot at
+       the point you get it: 10% and a point of armour against a layer-1
+       creature hitting for 6 to 16 is felt immediately, which is what a first
+       boss reward has to be. */
+    ITEMS[ITEM_FORGE_SIGIL].name      = "Forge Sigil";
+    ITEMS[ITEM_FORGE_SIGIL].kind      = ITEMK_ACCESSORY;
+    ITEMS[ITEM_FORGE_SIGIL].equipSlot = EQ_TRINKET_A;
+    ITEMS[ITEM_FORGE_SIGIL].maxStack  = 1;
+    ITEMS[ITEM_FORGE_SIGIL].damagePct = 8;
+    ITEMS[ITEM_FORGE_SIGIL].armour = 1;
+    ITEMS[ITEM_FORGE_SIGIL].colour    = 0xE07A32;
+    ITEMS[ITEM_FORGE_SIGIL].sprite    = SPR_SIGIL_FORGE;
+
+    /* The Widow's. Speed joins the ladder here, and it is the smallest
+       useful amount -- a third of the Swift Charm's -- so a sigil never makes
+       the charm that specialises in a stat pointless. That rule holds for all
+       four: the ladder is broad and shallow, and the specialists stay deeper
+       than it in their own lane. The Whetstone's 25% damage and the Swift
+       Charm's 18% speed are the two numbers the TOP of this ladder is written
+       to stay under, and the harness checks it.
+
+       Armour is the exception and needs no such rule, because armour SUMS
+       rather than taking the largest: a sigil cannot eclipse the Carapace
+       Charm when wearing both is simply better than either. */
+    ITEMS[ITEM_SILK_SIGIL].name      = "Silk Sigil";
+    ITEMS[ITEM_SILK_SIGIL].kind      = ITEMK_ACCESSORY;
+    ITEMS[ITEM_SILK_SIGIL].equipSlot = EQ_TRINKET_A;
+    ITEMS[ITEM_SILK_SIGIL].maxStack  = 1;
+    ITEMS[ITEM_SILK_SIGIL].damagePct = 14;
+    ITEMS[ITEM_SILK_SIGIL].armour = 2;
+    ITEMS[ITEM_SILK_SIGIL].speedPct = 6;
+    ITEMS[ITEM_SILK_SIGIL].colour    = 0xC8C0D8;
+    ITEMS[ITEM_SILK_SIGIL].sprite    = SPR_SIGIL_SILK;
+
+    /* The Censer's, and the first with heat on it -- which is the layer it
+       comes from saying what it is for. 25 degrees is a quarter of what
+       Brimsteel gives, so it is a help in the deep and not a substitute for
+       dressing for it. */
+    ITEMS[ITEM_PYRE_SIGIL].name      = "Pyre Sigil";
+    ITEMS[ITEM_PYRE_SIGIL].kind      = ITEMK_ACCESSORY;
+    ITEMS[ITEM_PYRE_SIGIL].equipSlot = EQ_TRINKET_A;
+    ITEMS[ITEM_PYRE_SIGIL].maxStack  = 1;
+    ITEMS[ITEM_PYRE_SIGIL].damagePct = 20;
+    ITEMS[ITEM_PYRE_SIGIL].armour = 3;
+    ITEMS[ITEM_PYRE_SIGIL].speedPct = 10;
+    ITEMS[ITEM_PYRE_SIGIL].heatResist = 25;
+    ITEMS[ITEM_PYRE_SIGIL].colour    = 0xFFD46A;
+    ITEMS[ITEM_PYRE_SIGIL].sprite    = SPR_SIGIL_PYRE;
+
+    /* The Effigy's, and the last charm in the game. Everything the three
+       below it do, more of it, plus a slow heal -- the one effect on the
+       ladder that is not simply a bigger number, because the reward for
+       finishing the bosses should include not having to walk home hurt.
+
+       240 frames a point is four seconds, well behind the Husk Heart's 90. A
+       sigil that also outhealed the dedicated regen charm would break the rule
+       the Silk Sigil's note states: broad and shallow, never deeper than a
+       specialist in the specialist's own lane. */
+    ITEMS[ITEM_ASCENT_SIGIL].name      = "Ascent Sigil";
+    ITEMS[ITEM_ASCENT_SIGIL].kind      = ITEMK_ACCESSORY;
+    ITEMS[ITEM_ASCENT_SIGIL].equipSlot = EQ_TRINKET_A;
+    ITEMS[ITEM_ASCENT_SIGIL].maxStack  = 1;
+    ITEMS[ITEM_ASCENT_SIGIL].damagePct = 24;
+    ITEMS[ITEM_ASCENT_SIGIL].armour = 5;
+    ITEMS[ITEM_ASCENT_SIGIL].speedPct = 16;
+    ITEMS[ITEM_ASCENT_SIGIL].heatResist = 40;
+    ITEMS[ITEM_ASCENT_SIGIL].coldResist = 40;
+    ITEMS[ITEM_ASCENT_SIGIL].regenPer = 240;
+    ITEMS[ITEM_ASCENT_SIGIL].colour    = 0xFFF0C8;
+    ITEMS[ITEM_ASCENT_SIGIL].sprite    = SPR_SIGIL_ASCENT;
+
     /* Pedestal loot. Both are flat combat multipliers, which is the reward that
        should sit lit in a chamber you chose to walk into rather than falling
        out of whatever wandered past -- a charm you can go and LOOK for wants to
@@ -2124,6 +2200,14 @@ void initItems() {
         "An unloaded tool's shots leave fire where they land.";
     ITEMS[ITEM_CINDERLING_ASH].description =
         "You leave fire behind you while you run. It burns you too.";
+    ITEMS[ITEM_FORGE_SIGIL].description =
+        "Brood Mother's mark. +8% damage and +1 armour.";
+    ITEMS[ITEM_SILK_SIGIL].description =
+        "Widow's mark. +14% damage, +2 armour, +6% movement speed.";
+    ITEMS[ITEM_PYRE_SIGIL].description =
+        "Censer's mark. +20% damage, +3 armour, +10% speed, and heat resistance.";
+    ITEMS[ITEM_ASCENT_SIGIL].description =
+        "Effigy's mark. +24% damage, +5 armour, +16% speed, heat and cold resistance, and slow regeneration.";
     ITEMS[ITEM_DRONE_BEACON].description =
         "Unlocks one additional combat-drone bay. Duplicate Beacons do not stack.";
     ITEMS[ITEM_OVERCLOCK_CHIP].description = "Install in an attack drone to reduce the delay between shots.";

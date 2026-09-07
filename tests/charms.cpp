@@ -265,6 +265,46 @@ int main() {
         check(withCharm > without + 8.0f, "the Feather buys a second jump");
     }
 
+    /* --- 6. the boss sigils are a ladder ----------------------------------
+       Asked for: "bosses get charms too, the boss charms can be basic good
+       stuff, maybe just an increasingly powerful general buff."
+
+       So the property is not what any one of them does -- it is that they are
+       ORDERED. Checked as a chain rather than by pinning four sets of numbers,
+       because the numbers are allowed to be tuned and the ordering is not. */
+    {
+        const ItemId ladder[4] = { ITEM_FORGE_SIGIL, ITEM_SILK_SIGIL,
+                                   ITEM_PYRE_SIGIL, ITEM_ASCENT_SIGIL };
+        bool rising = true, guaranteed = true;
+        for (int i = 0; i < 4; ++i) {
+            const ItemDef& d = ITEMS[ladder[i]];
+            printf("  %-14s +%d%% damage, +%d armour, +%d%% speed\n",
+                   d.name, (int)d.damagePct, (int)d.armour, (int)d.speedPct);
+            if (i > 0) {
+                const ItemDef& prev = ITEMS[ladder[i - 1]];
+                if (d.damagePct <= prev.damagePct || d.armour <= prev.armour ||
+                    d.speedPct < prev.speedPct) rising = false;
+            }
+        }
+        /* Guaranteed, not one in fifty. A boss you have to kill four times for
+           its charm is a grind where the creature charms are a surprise. */
+        const int bosses[4] = { ENT_BROOD, ENT_WIDOW, ENT_CENSER, ENT_EFFIGY };
+        for (int i = 0; i < 4; ++i)
+            if (ENT_DEFS[bosses[i]].rareDrop != ladder[i] ||
+                ENT_DEFS[bosses[i]].rareOneIn != 1) guaranteed = false;
+        check(rising, "each sigil is strictly better than the one before it");
+        check(guaranteed, "and every boss drops its own, every time");
+        /* Broad and shallow: a sigil must never beat the charm that
+           specialises in its stat, or the specialists stop being worth a slot
+           the moment the last boss is dead. */
+        check(ITEMS[ITEM_ASCENT_SIGIL].speedPct < ITEMS[ITEM_SWIFT_CHARM].speedPct,
+              "and none of them outruns the charm that specialises in speed");
+        check(ITEMS[ITEM_ASCENT_SIGIL].damagePct < ITEMS[ITEM_WHETSTONE].damagePct,
+              "nor outhits the one that specialises in damage");
+        check(ITEMS[ITEM_ASCENT_SIGIL].regenPer > ITEMS[ITEM_HUSK_HEART].regenPer,
+              "nor outheals the one that specialises in healing");
+    }
+
     if (failures) {
         fprintf(stderr, "\n%d charm check(s) failed\n", failures);
         return 1;

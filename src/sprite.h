@@ -289,6 +289,14 @@ enum SpriteId {
     SPR_ACC_FEATHER,
     SPR_ACC_GULLET,
     SPR_ACC_ASH,
+    /* The four boss sigils. One shape, four tints -- the same arrangement the
+       armour ladder uses and for the same reason its note gives: these ARE a
+       ladder, and four unrelated pictures would hide the one fact about them
+       that matters. */
+    SPR_SIGIL_FORGE,
+    SPR_SIGIL_SILK,
+    SPR_SIGIL_PYRE,
+    SPR_SIGIL_ASCENT,
     SPR_EFFIGY_CALL,
     SPR_ASCENT_CORE,
 
