@@ -2581,6 +2581,19 @@ void initSprites() {
     expandMetal(SPR_ARMOUR_VANGUARD_HELM,   ART_ARMOUR_HELM,    0xA85A65, 0x59313B);
     expandMetal(SPR_ARMOUR_VANGUARD_PLATE,  ART_ARMOUR_SUIT,    0xA85A65, 0x59313B);
     expandMetal(SPR_ARMOUR_VANGUARD_GREAVES,ART_ARMOUR_GREAVES, 0xA85A65, 0x59313B);
+    /* The post-Censer tier, and the palettes are deliberately hotter than the
+       three above them: this is armour made out of a boss that burned. Ember
+       gold for the Thurible, ash grey for the Ashen, and brimstone red for the
+       Brimsteel plate. */
+    expandMetal(SPR_ARMOUR_THURIBLE_CROWN,   ART_ARMOUR_HELM,    0xE8A24A, 0x8A5410);
+    expandMetal(SPR_ARMOUR_THURIBLE_HARNESS, ART_ARMOUR_SUIT,    0xE8A24A, 0x8A5410);
+    expandMetal(SPR_ARMOUR_THURIBLE_GREAVES, ART_ARMOUR_GREAVES, 0xE8A24A, 0x8A5410);
+    expandMetal(SPR_ARMOUR_ASHEN_HOOD,       ART_ARMOUR_HELM,    0xB9B2A6, 0x5E5A52);
+    expandMetal(SPR_ARMOUR_ASHEN_COAT,       ART_ARMOUR_SUIT,    0xB9B2A6, 0x5E5A52);
+    expandMetal(SPR_ARMOUR_ASHEN_GREAVES,    ART_ARMOUR_GREAVES, 0xB9B2A6, 0x5E5A52);
+    expandMetal(SPR_ARMOUR_BRIMSTEEL_HELM,   ART_ARMOUR_HELM,    0xC0492A, 0x5E2010);
+    expandMetal(SPR_ARMOUR_BRIMSTEEL_PLATE,  ART_ARMOUR_SUIT,    0xC0492A, 0x5E2010);
+    expandMetal(SPR_ARMOUR_BRIMSTEEL_GREAVES,ART_ARMOUR_GREAVES, 0xC0492A, 0x5E2010);
     expand(SPR_ACC_DRONE_BEACON, ART_DRONE_BEACON);
     expand(SPR_MINE1,     ART_MINE1);
     expand(SPR_MINE2,     ART_MINE2);

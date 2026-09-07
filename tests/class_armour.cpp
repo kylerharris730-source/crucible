@@ -85,6 +85,95 @@ int main() {
             return 6;
         }
 
-    puts("iron baseline and Ichor class armour bonuses passed");
+    /* --- the post-Censer three ------------------------------------------
+       Asked for: "lets make an armor that you can make post censer. one for
+       each archetype."
+
+       Four properties, and the last two are the ones that would quietly not be
+       true if the sets shared their ids with the Ichor three. */
+    struct PyreSet {
+        const char* name;
+        ItemId head, body, feet;
+        int armour, heat;
+    };
+    const PyreSet pyre[3] = {
+        { "Thurible",  ITEM_THURIBLE_CROWN, ITEM_THURIBLE_HARNESS,
+                       ITEM_THURIBLE_GREAVES, 11, 70 },
+        { "Ashen",     ITEM_ASHEN_HOOD,     ITEM_ASHEN_COAT,
+                       ITEM_ASHEN_GREAVES,   10, 65 },
+        { "Brimsteel", ITEM_BRIMSTEEL_HELM, ITEM_BRIMSTEEL_PLATE,
+                       ITEM_BRIMSTEEL_GREAVES, 21, 90 }
+    };
+    for (int i = 0; i < 3; ++i) {
+        inv.clear();
+        wear(inv, EQ_HEAD, pyre[i].head);
+        wear(inv, EQ_BODY, pyre[i].body);
+        wear(inv, EQ_FEET, pyre[i].feet);
+        if (inv.armour() != pyre[i].armour ||
+            inv.tempResist().heat != pyre[i].heat) {
+            fprintf(stderr, "%s armour/heat is wrong: %d / %d\n", pyre[i].name,
+                    inv.armour(), inv.tempResist().heat);
+            return 7;
+        }
+        /* Every piece is a Censer killed. Gated at the Assembly Table by the
+           Pyre Core, the same way the Ichor three are gated by Ichor. */
+        const ItemId piece[3] = { pyre[i].head, pyre[i].body, pyre[i].feet };
+        for (int k = 0; k < 3; ++k)
+            if (!recipeHas(piece[k], ITEM_PYRE_CORE, STATION_ASSEMBLY)) {
+                fprintf(stderr, "%s is not gated by the Pyre Core\n",
+                        ITEMS[piece[k]].name);
+                return 8;
+            }
+    }
+
+    /* Each set beats its own Ichor predecessor, and every one of these numbers
+       has to come from the NEW set rather than the old: they are separate
+       ArmourSets, so a bonus that still read the old id would report zero. */
+    inv.clear();
+    wear(inv, EQ_HEAD, ITEM_THURIBLE_CROWN);
+    wear(inv, EQ_BODY, ITEM_THURIBLE_HARNESS);
+    if (inv.combatDroneSlots() < 2) {
+        fprintf(stderr, "two Thurible pieces do not open a second drone bay\n");
+        return 9;
+    }
+    wear(inv, EQ_FEET, ITEM_THURIBLE_GREAVES);
+    if (inv.droneDamagePct() != 110) {
+        fprintf(stderr, "Thurible three-piece drone damage is wrong\n");
+        return 10;
+    }
+
+    inv.clear();
+    wear(inv, EQ_HEAD, ITEM_ASHEN_HOOD);
+    wear(inv, EQ_BODY, ITEM_ASHEN_COAT);
+    wear(inv, EQ_FEET, ITEM_ASHEN_GREAVES);
+    if (inv.rangedDamagePct() != 45 || inv.rangedRangePct() != 60) {
+        fprintf(stderr, "Ashen three-piece bonus is wrong\n");
+        return 11;
+    }
+
+    inv.clear();
+    wear(inv, EQ_HEAD, ITEM_BRIMSTEEL_HELM);
+    wear(inv, EQ_BODY, ITEM_BRIMSTEEL_PLATE);
+    wear(inv, EQ_FEET, ITEM_BRIMSTEEL_GREAVES);
+    if (inv.meleeDamagePct() != 45 || inv.meleeReachPct() != 40 ||
+        inv.meleeSpeedPct() != 30) {
+        fprintf(stderr, "Brimsteel three-piece bonus is wrong\n");
+        return 12;
+    }
+
+    /* And the tiers do not blend. Two Vanguard pieces and one Brimsteel is
+       three pieces of melee armour and pays the two-piece bonus of neither
+       three-piece set -- which is what stops the new tier from being something
+       you reach two thirds of the way into. */
+    inv.clear();
+    wear(inv, EQ_HEAD, ITEM_VANGUARD_HELM);
+    wear(inv, EQ_BODY, ITEM_VANGUARD_PLATE);
+    wear(inv, EQ_FEET, ITEM_BRIMSTEEL_GREAVES);
+    if (inv.meleeReachPct() != 0 || inv.meleeDamagePct() != 20) {
+        fprintf(stderr, "mixing armour tiers pays a three-piece bonus\n");
+        return 13;
+    }
+
+    puts("iron baseline, Ichor class armour and the post-Censer three passed");
     return 0;
 }

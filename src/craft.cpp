@@ -331,6 +331,38 @@ const Recipe RECIPES[] = {
       ITEM_VANGUARD_PLATE, 1, "Vanguard Plate", STATION_ASSEMBLY },
     { { { ITEM_ICHOR, 4 }, { (ItemId)MAT_IRON, 5 }, { (ItemId)MAT_BRONZE, 3 } },
       ITEM_VANGUARD_GREAVES, 1, "Vanguard Greaves", STATION_ASSEMBLY },
+    /* --- the post-Censer three ------------------------------------------
+       A Pyre Core in every piece, so every one of them is a Censer killed.
+       Three kills for a suit is a real price and it is the intended one: this
+       is the last armour in the game and there are three of it, so the cost is
+       what makes choosing an archetype mean something rather than collecting
+       all nine.
+
+       The rest of each recipe is that archetype's own material line, the same
+       way the Ichor sets pay in iron, bronze and iron again -- so the deep
+       ore network stays worth running instead of the tier being bought
+       entirely with boss drops. */
+    { { { ITEM_PYRE_CORE, 1 }, { (ItemId)MAT_TUNGSTEN, 6 }, { (ItemId)MAT_GOLD, 4 } },
+      ITEM_THURIBLE_CROWN, 1, "Thurible Crown", STATION_ASSEMBLY },
+    { { { ITEM_PYRE_CORE, 1 }, { (ItemId)MAT_TUNGSTEN, 10 }, { (ItemId)MAT_TITANIUM, 6 } },
+      ITEM_THURIBLE_HARNESS, 1, "Thurible Harness", STATION_ASSEMBLY },
+    { { { ITEM_PYRE_CORE, 1 }, { (ItemId)MAT_TUNGSTEN, 6 }, { (ItemId)MAT_COPPER, 5 } },
+      ITEM_THURIBLE_GREAVES, 1, "Thurible Greaves", STATION_ASSEMBLY },
+
+    { { { ITEM_PYRE_CORE, 1 }, { (ItemId)MAT_TITANIUM, 6 }, { (ItemId)MAT_GLASS, 4 } },
+      ITEM_ASHEN_HOOD, 1, "Ashen Hood", STATION_ASSEMBLY },
+    { { { ITEM_PYRE_CORE, 1 }, { (ItemId)MAT_TITANIUM, 10 }, { (ItemId)MAT_TUNGSTEN, 5 } },
+      ITEM_ASHEN_COAT, 1, "Ashen Coat", STATION_ASSEMBLY },
+    { { { ITEM_PYRE_CORE, 1 }, { (ItemId)MAT_TITANIUM, 6 }, { (ItemId)MAT_RUBBER, 4 } },
+      ITEM_ASHEN_GREAVES, 1, "Ashen Greaves", STATION_ASSEMBLY },
+
+    { { { ITEM_PYRE_CORE, 1 }, { (ItemId)MAT_STEEL, 8 }, { (ItemId)MAT_BRIMSTONE, 6 } },
+      ITEM_BRIMSTEEL_HELM, 1, "Brimsteel Helm", STATION_ASSEMBLY },
+    { { { ITEM_PYRE_CORE, 1 }, { (ItemId)MAT_STEEL, 14 }, { (ItemId)MAT_BRIMSTONE, 10 } },
+      ITEM_BRIMSTEEL_PLATE, 1, "Brimsteel Plate", STATION_ASSEMBLY },
+    { { { ITEM_PYRE_CORE, 1 }, { (ItemId)MAT_STEEL, 8 }, { (ItemId)MAT_BRIMSTONE, 6 } },
+      ITEM_BRIMSTEEL_GREAVES, 1, "Brimsteel Greaves", STATION_ASSEMBLY },
+
     { { { (ItemId)MAT_COPPER, 4 }, { (ItemId)MAT_GLASS, 2 }, { ITEM_NONE, 0 } },
       ITEM_DRONE_BEACON, 1, "Drone Beacon", STATION_ANVIL },
     /* The weapon chassis, and every one of them costs CHITIN on top of metal.

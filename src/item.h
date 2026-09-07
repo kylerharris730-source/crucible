@@ -372,6 +372,24 @@ enum {
     ITEM_CENSER_CALL,
     ITEM_EGG_CENSER,
     ITEM_PYRE_CORE,
+
+    /* --- what you make out of the Censer ---------------------------------
+       One suit per archetype, and the tier's whole point is that it is a
+       CHOICE rather than a rung: three sets, one Pyre Core per piece, and a
+       Censer to kill for every core. Nobody wears two of these.
+
+       They are separate ArmourSets from the Ichor three rather than better
+       pieces of the same one, which is the only arrangement that makes the
+       step mean anything -- see the ArmourSet note below. */
+    ITEM_THURIBLE_CROWN,
+    ITEM_THURIBLE_HARNESS,
+    ITEM_THURIBLE_GREAVES,
+    ITEM_ASHEN_HOOD,
+    ITEM_ASHEN_COAT,
+    ITEM_ASHEN_GREAVES,
+    ITEM_BRIMSTEEL_HELM,
+    ITEM_BRIMSTEEL_PLATE,
+    ITEM_BRIMSTEEL_GREAVES,
     ITEM_COUNT
 };
 
@@ -379,7 +397,19 @@ enum ArmourSet {
     ARMOUR_SET_NONE = 0,
     ARMOUR_SET_DRONE,
     ARMOUR_SET_RANGED,
-    ARMOUR_SET_MELEE
+    ARMOUR_SET_MELEE,
+    /* --- the post-Censer three -------------------------------------------
+       Their own set ids, not stronger pieces of the three above, and the
+       reason is that a set bonus is counted by PIECES WORN. Share the id and
+       two Ranger pieces plus one Ashen would pay the three-piece bonus of
+       whichever is written last -- so the new tier would be a stat bump you
+       could reach two thirds of the way into, rather than a suit you commit
+       to. Separate ids mean mixing tiers gets you the armour value and no
+       bonus at all, which is the same rule that already stops mixing
+       archetypes. */
+    ARMOUR_SET_DRONE_PYRE,
+    ARMOUR_SET_RANGED_PYRE,
+    ARMOUR_SET_MELEE_PYRE
 };
 
 enum ItemKind {

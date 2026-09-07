@@ -1133,6 +1133,130 @@ void initItems() {
     ITEMS[ITEM_VANGUARD_GREAVES].armourSet  = ARMOUR_SET_MELEE;
     ITEMS[ITEM_VANGUARD_GREAVES].sprite     = SPR_ARMOUR_VANGUARD_GREAVES;
 
+    /* --- Thurible: the drone set -----------------------------------------
+       A thurible is a censer on a chain -- the thing the boss is named for,
+       swung rather than hung -- and that is exactly what this set turns the
+       player into: a body with things orbiting it. It carries the same extra
+       bay the Drone set does at two pieces, and at three the drones hit for
+       more than twice what they did.
+
+       Armour 11 against the Drone set's 4. The old set was honestly labelled
+       "a modest iron-sidegrade whose power is the loadout it enables"; this
+       one is a suit as well as a loadout. */
+    ITEMS[ITEM_THURIBLE_CROWN].name       = "Thurible Crown";
+    ITEMS[ITEM_THURIBLE_CROWN].kind       = ITEMK_WORN;
+    ITEMS[ITEM_THURIBLE_CROWN].equipSlot  = EQ_HEAD;
+    ITEMS[ITEM_THURIBLE_CROWN].maxStack   = 1;
+    ITEMS[ITEM_THURIBLE_CROWN].colour     = 0xE8A24A;
+    ITEMS[ITEM_THURIBLE_CROWN].armour     = 3;
+    ITEMS[ITEM_THURIBLE_CROWN].heatResist = 45;
+    ITEMS[ITEM_THURIBLE_CROWN].coldResist = 25;
+    ITEMS[ITEM_THURIBLE_CROWN].armourSet  = ARMOUR_SET_DRONE_PYRE;
+    ITEMS[ITEM_THURIBLE_CROWN].sprite     = SPR_ARMOUR_THURIBLE_CROWN;
+
+    ITEMS[ITEM_THURIBLE_HARNESS].name       = "Thurible Harness";
+    ITEMS[ITEM_THURIBLE_HARNESS].kind       = ITEMK_WORN;
+    ITEMS[ITEM_THURIBLE_HARNESS].equipSlot  = EQ_BODY;
+    ITEMS[ITEM_THURIBLE_HARNESS].maxStack   = 1;
+    ITEMS[ITEM_THURIBLE_HARNESS].colour     = 0xE8A24A;
+    ITEMS[ITEM_THURIBLE_HARNESS].armour     = 5;
+    ITEMS[ITEM_THURIBLE_HARNESS].heatResist = 70;
+    ITEMS[ITEM_THURIBLE_HARNESS].coldResist = 40;
+    ITEMS[ITEM_THURIBLE_HARNESS].armourSet  = ARMOUR_SET_DRONE_PYRE;
+    ITEMS[ITEM_THURIBLE_HARNESS].sprite     = SPR_ARMOUR_THURIBLE_HARNESS;
+
+    ITEMS[ITEM_THURIBLE_GREAVES].name       = "Thurible Greaves";
+    ITEMS[ITEM_THURIBLE_GREAVES].kind       = ITEMK_WORN;
+    ITEMS[ITEM_THURIBLE_GREAVES].equipSlot  = EQ_FEET;
+    ITEMS[ITEM_THURIBLE_GREAVES].maxStack   = 1;
+    ITEMS[ITEM_THURIBLE_GREAVES].colour     = 0xE8A24A;
+    ITEMS[ITEM_THURIBLE_GREAVES].armour     = 3;
+    ITEMS[ITEM_THURIBLE_GREAVES].heatResist = 45;
+    ITEMS[ITEM_THURIBLE_GREAVES].coldResist = 25;
+    ITEMS[ITEM_THURIBLE_GREAVES].armourSet  = ARMOUR_SET_DRONE_PYRE;
+    ITEMS[ITEM_THURIBLE_GREAVES].sprite     = SPR_ARMOUR_THURIBLE_GREAVES;
+
+    /* --- Ashen: the ranged set -------------------------------------------
+       Ash is what a burnt seam leaves, and this is the lightest of the three
+       for the same reason the Ranger Coat was: the set that wants to be at the
+       far end of the room does not get to also be the hardest to kill. What it
+       gets instead is reach -- +60% range at three pieces, which is what turns
+       a weapon that can nearly reach the Censer into one that comfortably
+       does. */
+    ITEMS[ITEM_ASHEN_HOOD].name       = "Ashen Hood";
+    ITEMS[ITEM_ASHEN_HOOD].kind       = ITEMK_WORN;
+    ITEMS[ITEM_ASHEN_HOOD].equipSlot  = EQ_HEAD;
+    ITEMS[ITEM_ASHEN_HOOD].maxStack   = 1;
+    ITEMS[ITEM_ASHEN_HOOD].colour     = 0xB9B2A6;
+    ITEMS[ITEM_ASHEN_HOOD].armour     = 3;
+    ITEMS[ITEM_ASHEN_HOOD].heatResist = 40;
+    ITEMS[ITEM_ASHEN_HOOD].coldResist = 30;
+    ITEMS[ITEM_ASHEN_HOOD].armourSet  = ARMOUR_SET_RANGED_PYRE;
+    ITEMS[ITEM_ASHEN_HOOD].sprite     = SPR_ARMOUR_ASHEN_HOOD;
+
+    ITEMS[ITEM_ASHEN_COAT].name       = "Ashen Coat";
+    ITEMS[ITEM_ASHEN_COAT].kind       = ITEMK_WORN;
+    ITEMS[ITEM_ASHEN_COAT].equipSlot  = EQ_BODY;
+    ITEMS[ITEM_ASHEN_COAT].maxStack   = 1;
+    ITEMS[ITEM_ASHEN_COAT].colour     = 0xB9B2A6;
+    ITEMS[ITEM_ASHEN_COAT].armour     = 5;
+    ITEMS[ITEM_ASHEN_COAT].heatResist = 65;
+    ITEMS[ITEM_ASHEN_COAT].coldResist = 45;
+    ITEMS[ITEM_ASHEN_COAT].armourSet  = ARMOUR_SET_RANGED_PYRE;
+    ITEMS[ITEM_ASHEN_COAT].sprite     = SPR_ARMOUR_ASHEN_COAT;
+
+    ITEMS[ITEM_ASHEN_GREAVES].name       = "Ashen Greaves";
+    ITEMS[ITEM_ASHEN_GREAVES].kind       = ITEMK_WORN;
+    ITEMS[ITEM_ASHEN_GREAVES].equipSlot  = EQ_FEET;
+    ITEMS[ITEM_ASHEN_GREAVES].maxStack   = 1;
+    ITEMS[ITEM_ASHEN_GREAVES].colour     = 0xB9B2A6;
+    ITEMS[ITEM_ASHEN_GREAVES].armour     = 2;
+    ITEMS[ITEM_ASHEN_GREAVES].heatResist = 40;
+    ITEMS[ITEM_ASHEN_GREAVES].coldResist = 30;
+    ITEMS[ITEM_ASHEN_GREAVES].armourSet  = ARMOUR_SET_RANGED_PYRE;
+    ITEMS[ITEM_ASHEN_GREAVES].sprite     = SPR_ARMOUR_ASHEN_GREAVES;
+
+    /* --- Brimsteel: the melee set ----------------------------------------
+       Steel quenched in burning rock. The heaviest armour in the game by a
+       distance (21 against Vanguard's 14) and 90 degrees of heat resistance,
+       which is the number that actually changes where you can stand: the deep
+       is 57 C ambient and this is the first suit that simply does not care.
+
+       That is deliberate as the melee reward. Every other archetype answers
+       layer 3 by not being in it; this one answers it by being able to be. */
+    ITEMS[ITEM_BRIMSTEEL_HELM].name       = "Brimsteel Helm";
+    ITEMS[ITEM_BRIMSTEEL_HELM].kind       = ITEMK_WORN;
+    ITEMS[ITEM_BRIMSTEEL_HELM].equipSlot  = EQ_HEAD;
+    ITEMS[ITEM_BRIMSTEEL_HELM].maxStack   = 1;
+    ITEMS[ITEM_BRIMSTEEL_HELM].colour     = 0xC0492A;
+    ITEMS[ITEM_BRIMSTEEL_HELM].armour     = 6;
+    ITEMS[ITEM_BRIMSTEEL_HELM].heatResist = 60;
+    ITEMS[ITEM_BRIMSTEEL_HELM].coldResist = 35;
+    ITEMS[ITEM_BRIMSTEEL_HELM].armourSet  = ARMOUR_SET_MELEE_PYRE;
+    ITEMS[ITEM_BRIMSTEEL_HELM].sprite     = SPR_ARMOUR_BRIMSTEEL_HELM;
+
+    ITEMS[ITEM_BRIMSTEEL_PLATE].name       = "Brimsteel Plate";
+    ITEMS[ITEM_BRIMSTEEL_PLATE].kind       = ITEMK_WORN;
+    ITEMS[ITEM_BRIMSTEEL_PLATE].equipSlot  = EQ_BODY;
+    ITEMS[ITEM_BRIMSTEEL_PLATE].maxStack   = 1;
+    ITEMS[ITEM_BRIMSTEEL_PLATE].colour     = 0xC0492A;
+    ITEMS[ITEM_BRIMSTEEL_PLATE].armour     = 10;
+    ITEMS[ITEM_BRIMSTEEL_PLATE].heatResist = 90;
+    ITEMS[ITEM_BRIMSTEEL_PLATE].coldResist = 55;
+    ITEMS[ITEM_BRIMSTEEL_PLATE].armourSet  = ARMOUR_SET_MELEE_PYRE;
+    ITEMS[ITEM_BRIMSTEEL_PLATE].sprite     = SPR_ARMOUR_BRIMSTEEL_PLATE;
+
+    ITEMS[ITEM_BRIMSTEEL_GREAVES].name       = "Brimsteel Greaves";
+    ITEMS[ITEM_BRIMSTEEL_GREAVES].kind       = ITEMK_WORN;
+    ITEMS[ITEM_BRIMSTEEL_GREAVES].equipSlot  = EQ_FEET;
+    ITEMS[ITEM_BRIMSTEEL_GREAVES].maxStack   = 1;
+    ITEMS[ITEM_BRIMSTEEL_GREAVES].colour     = 0xC0492A;
+    ITEMS[ITEM_BRIMSTEEL_GREAVES].armour     = 5;
+    ITEMS[ITEM_BRIMSTEEL_GREAVES].heatResist = 55;
+    ITEMS[ITEM_BRIMSTEEL_GREAVES].coldResist = 35;
+    ITEMS[ITEM_BRIMSTEEL_GREAVES].armourSet  = ARMOUR_SET_MELEE_PYRE;
+    ITEMS[ITEM_BRIMSTEEL_GREAVES].sprite     = SPR_ARMOUR_BRIMSTEEL_GREAVES;
+
     ITEMS[ITEM_DRONE_BEACON].name      = "Drone Beacon";
     ITEMS[ITEM_DRONE_BEACON].kind      = ITEMK_ACCESSORY;
     ITEMS[ITEM_DRONE_BEACON].equipSlot = EQ_TRINKET_A;
@@ -1816,6 +1940,18 @@ void initItems() {
         "Vanguard Armour. 2 pieces: +20% melee damage. 3 pieces: +20% reach and +15% swing speed.";
     ITEMS[ITEM_VANGUARD_PLATE].description = ITEMS[ITEM_VANGUARD_HELM].description;
     ITEMS[ITEM_VANGUARD_GREAVES].description = ITEMS[ITEM_VANGUARD_HELM].description;
+    ITEMS[ITEM_THURIBLE_CROWN].description =
+        "Thurible Armour. 2 pieces: +1 combat-drone bay. 3 pieces: +110% drone damage.";
+    ITEMS[ITEM_THURIBLE_HARNESS].description = ITEMS[ITEM_THURIBLE_CROWN].description;
+    ITEMS[ITEM_THURIBLE_GREAVES].description = ITEMS[ITEM_THURIBLE_CROWN].description;
+    ITEMS[ITEM_ASHEN_HOOD].description =
+        "Ashen Armour. 2 pieces: +20% ranged damage and +30% range. 3 pieces: +45% damage and +60% range.";
+    ITEMS[ITEM_ASHEN_COAT].description = ITEMS[ITEM_ASHEN_HOOD].description;
+    ITEMS[ITEM_ASHEN_GREAVES].description = ITEMS[ITEM_ASHEN_HOOD].description;
+    ITEMS[ITEM_BRIMSTEEL_HELM].description =
+        "Brimsteel Armour. 2 pieces: +45% melee damage. 3 pieces: +40% reach and +30% swing speed.";
+    ITEMS[ITEM_BRIMSTEEL_PLATE].description = ITEMS[ITEM_BRIMSTEEL_HELM].description;
+    ITEMS[ITEM_BRIMSTEEL_GREAVES].description = ITEMS[ITEM_BRIMSTEEL_HELM].description;
     ITEMS[ITEM_DRONE_BEACON].description =
         "Unlocks one additional combat-drone bay. Duplicate Beacons do not stack.";
     ITEMS[ITEM_OVERCLOCK_CHIP].description = "Install in an attack drone to reduce the delay between shots.";
@@ -2094,7 +2230,8 @@ int Inventory::armourSetPieces(u8 set) const {
 
 int Inventory::combatDroneSlots() const {
     int slots = 1;
-    if (armourSetPieces(ARMOUR_SET_DRONE) >= 2) ++slots;
+    if (armourSetPieces(ARMOUR_SET_DRONE) >= 2
+        || armourSetPieces(ARMOUR_SET_DRONE_PYRE) >= 2) ++slots;
     /* hasEquipped is boolean by design: a second copy is visible equipment but
        cannot apply the Beacon effect twice. */
     if (hasEquipped(ITEM_DRONE_BEACON)) ++slots;
@@ -2108,30 +2245,54 @@ bool Inventory::droneBayUnlocked(int eqSlot) const {
     return true;
 }
 
+/* --- one archetype, two tiers ------------------------------------------
+   Each of these asks the Ichor set and the Pyre set the same question and
+   takes the LARGER answer, rather than adding them. Adding would pay a player
+   for owning two suits at once, which is not possible -- there are three
+   equipment slots and both sets want all three -- so the sum could only ever
+   be reached by a bug. Taking the larger says the plain thing instead: the
+   better suit is the one you are wearing. */
+static int setStep(const Inventory& inv, u8 set, int two, int three) {
+    const int pieces = inv.armourSetPieces(set);
+    return pieces >= 3 ? three : pieces >= 2 ? two : 0;
+}
+
 int Inventory::droneDamagePct() const {
-    return armourSetPieces(ARMOUR_SET_DRONE) >= 3 ? 50 : 0;
+    const int a = armourSetPieces(ARMOUR_SET_DRONE)      >= 3 ?  50 : 0;
+    /* More than double the Ichor set's, and it is the reward for a set whose
+       own armour still does not want you in the fight. */
+    const int b = armourSetPieces(ARMOUR_SET_DRONE_PYRE) >= 3 ? 110 : 0;
+    return a > b ? a : b;
 }
 
 int Inventory::rangedDamagePct() const {
-    const int pieces = armourSetPieces(ARMOUR_SET_RANGED);
-    return pieces >= 3 ? 20 : pieces >= 2 ? 10 : 0;
+    const int a = setStep(*this, ARMOUR_SET_RANGED,      10, 20);
+    const int b = setStep(*this, ARMOUR_SET_RANGED_PYRE, 20, 45);
+    return a > b ? a : b;
 }
 
 int Inventory::rangedRangePct() const {
-    const int pieces = armourSetPieces(ARMOUR_SET_RANGED);
-    return pieces >= 3 ? 30 : pieces >= 2 ? 15 : 0;
+    const int a = setStep(*this, ARMOUR_SET_RANGED,      15, 30);
+    const int b = setStep(*this, ARMOUR_SET_RANGED_PYRE, 30, 60);
+    return a > b ? a : b;
 }
 
 int Inventory::meleeDamagePct() const {
-    return armourSetPieces(ARMOUR_SET_MELEE) >= 2 ? 20 : 0;
+    const int a = armourSetPieces(ARMOUR_SET_MELEE)      >= 2 ? 20 : 0;
+    const int b = armourSetPieces(ARMOUR_SET_MELEE_PYRE) >= 2 ? 45 : 0;
+    return a > b ? a : b;
 }
 
 int Inventory::meleeReachPct() const {
-    return armourSetPieces(ARMOUR_SET_MELEE) >= 3 ? 20 : 0;
+    const int a = armourSetPieces(ARMOUR_SET_MELEE)      >= 3 ? 20 : 0;
+    const int b = armourSetPieces(ARMOUR_SET_MELEE_PYRE) >= 3 ? 40 : 0;
+    return a > b ? a : b;
 }
 
 int Inventory::meleeSpeedPct() const {
-    return armourSetPieces(ARMOUR_SET_MELEE) >= 3 ? 15 : 0;
+    const int a = armourSetPieces(ARMOUR_SET_MELEE)      >= 3 ? 15 : 0;
+    const int b = armourSetPieces(ARMOUR_SET_MELEE_PYRE) >= 3 ? 30 : 0;
+    return a > b ? a : b;
 }
 
 bool equipFits(ItemId item, int eqSlot) {

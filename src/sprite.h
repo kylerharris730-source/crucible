@@ -257,6 +257,23 @@ enum SpriteId {
     SPR_FLOWER_ITEM,
     SPR_HEAT_LAMP,
 
+    /* --- the post-Censer armour ------------------------------------------
+       Three more families in the same armour grammar the ladder above already
+       uses: one helm shape, one suit shape, one greave shape, recoloured per
+       family. That is the established rule here rather than a shortcut -- see
+       the note beside the expandMetal calls in sprite.cpp -- and it is what
+       makes a suit readable as armour at a glance and as WHICH armour at a
+       second glance. */
+    SPR_ARMOUR_THURIBLE_CROWN,
+    SPR_ARMOUR_THURIBLE_HARNESS,
+    SPR_ARMOUR_THURIBLE_GREAVES,
+    SPR_ARMOUR_ASHEN_HOOD,
+    SPR_ARMOUR_ASHEN_COAT,
+    SPR_ARMOUR_ASHEN_GREAVES,
+    SPR_ARMOUR_BRIMSTEEL_HELM,
+    SPR_ARMOUR_BRIMSTEEL_PLATE,
+    SPR_ARMOUR_BRIMSTEEL_GREAVES,
+
     SPR_COUNT
 };
 
