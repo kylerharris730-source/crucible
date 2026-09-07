@@ -3092,8 +3092,17 @@ void World::updateCell(Lane& L, int x, int y) {
                    means wood catches the instant lava touches it rather than
                    after a conduction ramp, which is what you expect to see.
                    Any lava qualifies: it freezes back to stone below 100, well
-                   above wood's ignition point. */
-                if ((nm == MAT_FIRE || nm == MAT_LAVA || nm == MAT_PLASMA)
+                   above wood's ignition point.
+
+                   A TABLE now rather than the three ids this used to name, and
+                   the burning solids are in it too -- see g_matIgnitesOnContact.
+                   The reason is in the paragraph above, and it turned out to be
+                   understated: conduction is not merely marginal, it can be a
+                   near miss that holds. Measured on a lit brimstone seam, the
+                   rock next to the fire climbed to 130-135 C against an
+                   ignition point of 140 and stalled there while the burning
+                   cell cooled past it, so the seam never spread one cell. */
+                if (g_matIgnitesOnContact[nm]
                     && lchance(L, FIRE_SPREAD)) { ignite = true; break; }
             }
         }
@@ -3129,8 +3138,14 @@ void World::updateCell(Lane& L, int x, int y) {
     if (g_matDecay[c.mat]) {
         if (lchance(L, g_matDecay[c.mat])) {
             /* Into whatever it leaves behind, which is MAT_EMPTY for everything
-               that does not name something else -- see g_matDecaysTo. */
-            convert(L, x, y, g_matDecaysTo[c.mat]);
+               that does not name something else -- see g_matDecaysTo. And only
+               SOMETIMES, where the material says so: burning brimstone leaves
+               ash half the time and nothing the other half, so a spent seam is
+               drifts with gaps in rather than a solid cast of itself. */
+            const u8 leaves = g_matDecayResidueChance[c.mat] >= 255
+                            || lchance(L, g_matDecayResidueChance[c.mat])
+                            ? g_matDecaysTo[c.mat] : MAT_EMPTY;
+            convert(L, x, y, leaves);
             return;
         }
         /* KEEP ITSELF AWAKE, which is the same `moreToDo` pattern acid and
@@ -3257,7 +3272,7 @@ void World::updateCell(Lane& L, int x, int y) {
        handed back to updateCell, so a vent in a quiet cavern would erupt once
        when it was generated and never again. That is the trap the acid rule
        documents at length and the decay rule was caught by. */
-    if (c.mat == MAT_FUMAROLE) {
+    if (g_matVentsFire[c.mat]) {
         bool room = false;
         /* Above, then the two sides. Never down: a vent venting into the floor
            it is embedded in is the one direction that can do nothing. */
@@ -3268,7 +3283,7 @@ void World::updateCell(Lane& L, int x, int y) {
             if (nx <= PLAY_X0 || nx >= PLAY_X1 || ny <= PLAY_Y0 || ny >= PLAY_Y1) continue;
             if (cells[ny * SIM_W + nx].mat != MAT_EMPTY) continue;
             room = true;
-            if (!lchance(L, FUMAROLE_VENT_CHANCE)) continue;
+            if (!lchance(L, g_matVentsFire[c.mat])) continue;
             spawnCell(L, nx, ny, MAT_FIRE);
             dirtyPoint(L, nx, ny);
             return;

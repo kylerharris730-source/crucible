@@ -290,11 +290,23 @@ int main() {
         }
         const int left = countBox(w, MAT_BRIMFIRE, CX, CY, 60);
         const int ash  = countBox(w, MAT_ASH, CX, CY, 60);
+        const int unburnt = countBox(w, MAT_BRIMSTONE, CX, CY, 60);
+        const int burnt = seam - unburnt;
         printf("a lit seam of %d cells: peaked at %d alight, %d still burning after "
-               "4000 frames, %d ash\n", seam, peak, left, ash);
+               "4000 frames, %d of %d burnt cells left ash\n",
+               seam, peak, left, ash, burnt);
         check(peak > 40, "fire spreads through a brimstone seam");
         check(left < peak, "and burns out rather than staying lit forever");
         check(ash > 0, "leaving ash, so a spent seam is visibly spent");
+        /* Asked for: "brimstone should only have a 50% chance of turning to
+           ash." Half, and the band is wide because this is a coin flip over a
+           thousand-odd cells rather than a quota -- and because ash FALLS, so a
+           little of it settles below the seam and some finds its way out of the
+           box entirely. Anything inside 35-65 is the coin; 100 was the old
+           behaviour and 0 would be the residue table wired up wrong. */
+        const int pct = burnt > 0 ? ash * 100 / burnt : 0;
+        check(pct > 35 && pct < 65,
+              "and only about half of a burnt seam leaves any");
     }
 
     /* --- 6. a vent keeps venting ----------------------------------------- */

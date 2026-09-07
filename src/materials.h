@@ -480,6 +480,28 @@ enum MatId {
        does not sit still and glow at you: it is quiet until it is not. */
     MAT_FUMAROLE,
 
+    /* --- what wood actually turns into -----------------------------------
+       Reported from play: "wood has always burned a bit weirdly, it should
+       turn to ember, then burn away so the fire propagates down."
+
+       It burned straight to FIRE, and fire is a gas that rises. So a plank
+       lit at the top converted into something that immediately left, and the
+       only thing carrying the burn downward was heat conducted into cold wood
+       with open air stripping it off the other side. Measured on a
+       forty-cell plank lit at the top: the front got two cells down and
+       stopped, leaving 112 of 120 cells standing.
+
+       This is the missing state. Static, so it stays where the wood was and
+       keeps heating the cell BELOW it; hot enough to light wood, coal and
+       clay and deliberately not hot enough for copper; and on a timer, so a
+       lit tree is spent rather than permanent.
+
+       Not MAT_EMBER, which is burning COAL. That one runs at 185 C with
+       sixteen times the heat capacity because it is the fuel step of the
+       ladder, and wood arriving at the same place would make the ladder
+       pointless. This is the cooler, shorter-lived one. */
+    MAT_WOOD_EMBER,
+
     MAT_COUNT
 };
 
@@ -700,6 +722,43 @@ extern u8 g_matDecay[MAT_COUNT];
    a cavity, so the deep would slowly hollow itself; one that reverted to
    brimstone would make the whole hazard free. Ash is neither. */
 extern u8 g_matDecaysTo[MAT_COUNT];
+
+/* The chance, out of 255, that a decaying cell actually leaves its residue.
+   255 for everything that does not say otherwise, which is what brimfire did
+   before this existed and what every MAT_EMPTY residue still means.
+
+   Asked for: "brimstone should only have a 50% chance of turning to ash." A
+   seam that burned out to a solid bed of ash filled its own cavity every time,
+   so the deep read as a place that swaps one floor for another. At half, a
+   burnt seam leaves drifts with holes in them -- which is both what a burnt
+   thing looks like and the difference between scenery and a wall. */
+extern u8 g_matDecayResidueChance[MAT_COUNT];
+
+/* Materials that light a flammable neighbour BY TOUCHING IT, rather than only
+   by heating it past its ignition point.
+
+   Fire, lava and plasma were a hardcoded list in world.cpp's ignite rule, and
+   the note there gives the reason it has to exist at all: conduction through
+   one neighbour is too marginal to sustain a burn front on its own. It is
+   worse than marginal -- it is a near miss that looks like a design decision.
+   Measured on a lit brimstone seam, the neighbouring rock stalled at 130-135 C
+   against an ignition point of 140 and sat there while the burning cell cooled
+   past it. The seam never spread a single cell, which is exactly what the
+   layer-3 suite had been reporting.
+
+   So it is a table, and everything that is BURNING is in it: a coal ember
+   sitting against a plank should light the plank, and burning brimstone should
+   take the seam it is part of with it. */
+extern u8 g_matIgnitesOnContact[MAT_COUNT];
+
+/* Chance, out of 255, that a cell spits fire into an empty neighbour -- the
+   fumarole's rule, made a table so the wood ember can use it too.
+
+   A burning thing has to LOOK like it is burning. The ember carries the heat
+   and does the spreading, but a forest fire made entirely of glowing blocks
+   with no flame above them reads as a strange orange disease, so the ember
+   vents the flame the wood used to become. */
+extern u8 g_matVentsFire[MAT_COUNT];
 
 /* --- how hard a material is to break ---------------------------------------
 

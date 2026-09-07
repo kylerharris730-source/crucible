@@ -437,7 +437,10 @@ MatInfo MATS[MAT_COUNT] = {
      so lava melts, lights and boils things exactly as before. Freezing at 100
      also guarantees any lava is hot enough to boil water. */
   { "Lava",  KIND_LIQUID, 200,   0,    0,   3,   0,   0,  0,  120,  3,   0, degC(215), degC(100), MAT_STONE, 0, MAT_EMPTY, 0, MAT_EMPTY,  0,  0xF0641E, 0x9A2408, 0xF0641E, 0x9A2408, 0 },
-  { "Wood",  KIND_STATIC, 150,   0,    0,   0,   0,   0,  0,   70,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY, degC(80), MAT_FIRE,   0,  0x8A5A2C, 0x63401E, 0x8A5A2C, 0x63401E, 0 },
+  /* Burns to an EMBER rather than to flame. See MAT_WOOD_EMBER for the whole
+     argument; the short version is that flame is a gas and leaves, so a plank
+     lit at the top used to put its own fire out from below. */
+  { "Wood",  KIND_STATIC, 150,   0,    0,   0,   0,   0,  0,   70,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY, degC(80), MAT_WOOD_EMBER,   0,  0x8A5A2C, 0x63401E, 0x8A5A2C, 0x63401E, 0 },
   /* Rubber: the best insulator in the game, and the only one that is a solid.
      heatCond 12 against wood's 70 and stone's 85 -- and conduction runs at
      min(condA, condB), so a rubber layer throttles heat crossing it whatever is
@@ -734,7 +737,7 @@ MatInfo MATS[MAT_COUNT] = {
      name. */
   { "Birch Seed",KIND_POWDER,120,60,  30,   0,   0,   0,  0,   12,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY, degC(95), MAT_FIRE,   0,  0xC8C0A8, 0xA09880, 0xC8C0A8, 0xA09880, 0 },
   { "Birch Sapling",KIND_STATIC,255,0, 0,   0,   0,   0,  0,   12,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY, degC(85), MAT_FIRE,   0,  0x9AD06A, 0x76B04A, 0x9AD06A, 0x76B04A, 0 },
-  { "Birch Wood",KIND_STATIC,255, 0,   0,   0,   0,   0,  0,   14,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY, degC(90), MAT_FIRE,   0,  0xDCD8C8, 0xB0AC9A, 0xDCD8C8, 0xB0AC9A, 0 },
+  { "Birch Wood",KIND_STATIC,255, 0,   0,   0,   0,   0,  0,   14,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY, degC(90), MAT_WOOD_EMBER,   0,  0xDCD8C8, 0xB0AC9A, 0xDCD8C8, 0xB0AC9A, 0 },
   { "Birch Leaves",KIND_STATIC,255,0,  0,   0,   0,   0,  0,   10,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY, degC(80), MAT_FIRE,   0,  0x8AC44E, 0x66A034, 0x8AC44E, 0x66A034, 0 },
   { "Birch Seed Pod",KIND_STATIC,255,0,0,   0,   0,   0,  0,   10,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY, degC(80), MAT_FIRE,   0,  0xE8E0A0, 0xC0B878, 0xE8E0A0, 0xC0B878, 0 },
   /* --- crops -----------------------------------------------------------
@@ -1042,6 +1045,29 @@ MatInfo MATS[MAT_COUNT] = {
      vent you walk around; the point of this one is that the floor is the
      hazard. */
   { "Fumarole", KIND_STATIC, 255,  0,   0,   0,   0,   0,  0,  180,  4,   0, degC(150),  0,  MAT_EMPTY,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0x3A2620, 0x241612, 0x3A2620, 0x241612, 0 },
+  /* Burning wood. Every number here is set against something else in the heat
+     ladder rather than picked for feel:
+
+       spawn 130 C. Above wood's own 80 so a plank keeps its neighbours lit,
+         above coal's 90 so a wood fire is still the kindling step it was
+         designed to be, and above clay's 120 -- which the clay row already
+         promised ("fires into ceramic at a temperature a wood fire can
+         reach") and the old rising flame never actually delivered. Below
+         copper ore's 165 and iron's 190, and that is the load-bearing end:
+         g_matDrive clamps at the source's own temperature, so a fire this
+         cool CANNOT smelt however long it burns, and coal keeps its job.
+
+       mass 2 -- four times the heat capacity, against coal ember's sixteen.
+         It has something to give and it does not last.
+
+       cond 120. The pair rate is the poorer of the two, and wood is 70, so
+         this only has to be comfortably above that.
+
+     No coolsTo. It ends on the timer in initBurnLife, not by cooling: a plank
+     in the middle of a burning stack has nowhere to shed heat to, and that is
+     precisely the bind the fuelfire note describes -- a sealed fire that
+     reached equilibrium with itself and burned forever. */
+  { "Wood Ember", KIND_STATIC, 255, 0,  0,   0,   0,   0,  0,  120,  2,   0, degC(130),  0,  MAT_EMPTY,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0xC85A18, 0x8A3208, 0xC85A18, 0x8A3208, 0 },
 };
 
 u32 g_colorLut[MAT_COUNT * 256];
@@ -1050,6 +1076,9 @@ u8  g_heatAlpha[256];
 u8  g_matGlows[MAT_COUNT];
 u8  g_matDecay[MAT_COUNT];
 u8  g_matDecaysTo[MAT_COUNT];
+u8  g_matDecayResidueChance[MAT_COUNT];
+u8  g_matIgnitesOnContact[MAT_COUNT];
+u8  g_matVentsFire[MAT_COUNT];
 u8  g_matStrength[MAT_COUNT];
 u8  g_matPassable[MAT_COUNT];
 u8  g_matUnseen[MAT_COUNT];
@@ -1383,6 +1412,9 @@ static void initLight() {
        matching how much hotter it is. */
     g_matLight[MAT_FUELFIRE]   = 105;
     g_matLight[MAT_EMBER]      = 75;
+    /* A shade under coal's, because it is a cooler fire and because a burning
+       tree already carries flame above it that lights on its own account. */
+    g_matLight[MAT_WOOD_EMBER] = 68;
     /* A burning seam lights the room it is in, and brighter than an ember does
        -- it is a whole wall alight rather than a lump of coal. This is also the
        only light source in layer 3 that arrives without you placing it, which
@@ -1923,11 +1955,69 @@ static void initBurnLife() {
        visibly for a while and is finished rather than permanent. */
     g_matDecay[MAT_BRIMFIRE]  = 1;
 
+    /* Burning wood, and it spends about three times as fast as burning coal.
+       That ratio is the point of the two materials: coal is a fuel you bank
+       and wood is kindling you feed. A mean cell life around eighty frames is
+       long enough to light the cell below it several times over and short
+       enough that a burnt tree is gone rather than standing there glowing. */
+    g_matDecay[MAT_WOOD_EMBER] = 3;
+
     /* Empty unless a material says otherwise, which preserves exactly what
        cold fire and the embers have always done. */
     for (int m = 0; m < MAT_COUNT; ++m) g_matDecaysTo[m] = MAT_EMPTY;
     g_matDecaysTo[MAT_BRIMFIRE] = MAT_ASH;
     g_matDecay[MAT_FUELFIRE] = 1;
+
+    /* And it leaves that residue every time unless it says otherwise. */
+    for (int m = 0; m < MAT_COUNT; ++m) g_matDecayResidueChance[m] = 255;
+    /* Asked for: "brimstone should only have a 50% chance of turning to ash."
+       128 of 255 -- half, near enough, and the half that does not is simply
+       gone. A burnt seam is now drifts with gaps rather than a solid cast of
+       the seam it used to be. */
+    g_matDecayResidueChance[MAT_BRIMFIRE] = 128;
+}
+
+/* What lights a flammable neighbour by touching it -- see g_matIgnitesOnContact
+   in materials.h for why conduction alone cannot be trusted with this.
+
+   The list is "everything that is on fire", and it is worth naming what is NOT
+   here. A torch is not, which is what keeps "brimstone catches from lava, not
+   from a torch" true. A heater is not, because it is a fixture rather than a
+   fire and a heated wall should have to reach the ignition point like anything
+   else. */
+static void initContactFire() {
+    for (int m = 0; m < MAT_COUNT; ++m) g_matIgnitesOnContact[m] = 0;
+    g_matIgnitesOnContact[MAT_FIRE]       = 1;
+    g_matIgnitesOnContact[MAT_LAVA]       = 1;
+    g_matIgnitesOnContact[MAT_PLASMA]     = 1;
+    /* The burning solids. Each of these is a fire that stays put, which is the
+       one kind of fire that CAN carry a front downward. */
+    g_matIgnitesOnContact[MAT_EMBER]      = 1;
+    g_matIgnitesOnContact[MAT_WAX_EMBER]  = 1;
+    g_matIgnitesOnContact[MAT_WOOD_EMBER] = 1;
+    g_matIgnitesOnContact[MAT_FUELFIRE]   = 1;
+    g_matIgnitesOnContact[MAT_BRIMFIRE]   = 1;
+
+    /* Fire spat into empty space. The fumarole is the original; the wood ember
+       joined it so a burning tree has flames above it and not just a glow.
+       The ember's rate is well below the vent's -- a plank should show a
+       flicker of flame, not jet like a hole into the deep. */
+    for (int m = 0; m < MAT_COUNT; ++m) g_matVentsFire[m] = 0;
+    /* The vent, out of 255, and FAR rarer than a spring flows. The gap between
+       those two numbers is the whole difference between a feature and a
+       nuisance: a vent erupting at a spring's rate would be a permanent column
+       of flame you can see and route around from a screen away, which is a
+       wall rather than a hazard. At 3 it is quiet most of the time, so crossing
+       the floor it is in is a gamble rather than an obstacle -- and the one it
+       catches is the player who assumed the last crossing meant anything. */
+    g_matVentsFire[MAT_FUMAROLE]  = 3;
+    /* Well ABOVE the vent's rate, and for the opposite reason: the vent's
+       number is a hazard being rationed, and this one is a picture. Only the
+       ember at the exposed face of a burning stack has an empty cell to spit
+       into at all, so a rate meant to be occasional per cell reads as a plank
+       that is mostly not on fire -- measured at 2, flame was visible on 257 of
+       the 600 frames the plank was alight. */
+    g_matVentsFire[MAT_WOOD_EMBER] = 20;
 }
 
 static void initDrive() {
@@ -2320,6 +2410,7 @@ void initMaterials() {
     /* AFTER the loop above, which assigns g_matDecay for every material and would
        otherwise wipe these. */
     initBurnLife();
+    initContactFire();
 
     checkCloneColorInvariant();
 }
