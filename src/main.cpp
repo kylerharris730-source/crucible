@@ -397,6 +397,40 @@ static RECT g_zoomRect[N_ZOOM];
 
 /* GDI objects, all created once -- object churn per frame is not free. */
 static HBRUSH g_panelBg, g_btnBg, g_btnBgHot, g_btnBgSel, g_borderBrush, g_accentBrush, g_warnBrush;
+
+/* --- where a thing goes, said in colour -------------------------------------
+   Asked for: "trinkets should have a light blue background in their sprite,
+   worn items should have a green, this will help differentiate where they
+   should go, drones can have a light yellow, make the corresponding equip
+   slots have those colors too."
+
+   Three lanes, three colours, and the SAME colour on both ends of the journey:
+   behind the icon wherever it is drawn, and behind the slot it belongs in. That
+   is what makes it a hint rather than decoration -- an icon and its home are
+   the same colour, so "where does this go" is answered by looking rather than
+   by reading a tooltip and remembering.
+
+   Light, as asked, and light against a panel this dark means genuinely
+   mid-tone: the background is RGB(26,28,34) and an ordinary slot is (42,46,56),
+   so a tint under a hundred would read as a slightly different shade of grey
+   rather than as a colour. These are well clear of both.
+
+   They are still not saturated, because they sit UNDER pixel art that has its
+   own palette and a pure hue behind every icon would fight all of them at
+   once. If the effect turns out too strong or too weak in play, these three
+   values are the whole knob. The order matches EQ_GROUP_NAME. */
+enum EquipLane { LANE_NONE = -1, LANE_WORN = 0, LANE_TRINKET = 1, LANE_DRONE = 2 };
+static const COLORREF EQ_LANE_RGB[3] = {
+    RGB( 92, 148, 102),   /* worn:    green */
+    RGB( 96, 152, 184),   /* trinket: light blue */
+    RGB(178, 158,  88)    /* drone:   light yellow */
+};
+static HBRUSH g_laneBrush[3];
+/* And a lighter one for the hovered slot, so the lane colour does not cost the
+   row its hover feedback -- which it did in the first version, where every
+   equipment square stopped responding to the mouse because the lane fill was
+   painted over g_btnBgHot. */
+static HBRUSH g_laneBrushHot[3];
 static HBRUSH g_swatchBrush[N_BRUSH];
 
 /* --- item icons -----------------------------------------------------------
@@ -546,8 +580,50 @@ static void buildIcons() {
 }
 
 /* Centres the material art or authored item sprite in a square UI slot. */
+/* Which lane an item belongs to, or LANE_NONE for everything that is not worn
+   at all. Read from equipSlot rather than from `kind`, and that is the only
+   arrangement that works: a drone is ITEMK_WORN exactly like a helmet is, and
+   the two are told apart by the slot they name and nothing else. */
+static int equipLaneOf(ItemId item) {
+    if (item <= ITEM_NONE || item >= ITEM_COUNT) return LANE_NONE;
+    const ItemDef& d = ITEMS[item];
+    if (d.kind != ITEMK_WORN && d.kind != ITEMK_ACCESSORY) return LANE_NONE;
+    switch (d.equipSlot) {
+    case EQ_HEAD: case EQ_BODY: case EQ_FEET: case EQ_BACK: return LANE_WORN;
+    case EQ_TRINKET_A: case EQ_TRINKET_B:
+    case EQ_TRINKET_C: case EQ_TRINKET_D: return LANE_TRINKET;
+    case EQ_LIGHT_DRONE: case EQ_DRONE_A:
+    case EQ_DRONE_B: case EQ_DRONE_C: return LANE_DRONE;
+    default: return LANE_NONE;
+    }
+}
+
+/* The lane colour of the slot at equipment index `i`, which is the same three
+   colours read off the group layout rather than a second list that could
+   disagree with it. */
+static int equipLaneOfSlot(int slot);
+
 static void drawItemIcon(HDC hdc, const RECT& r, ItemId item) {
     if (inRect(r, g_mx, g_my)) { g_hoverItem = item; g_hoverRect = r; }
+    /* The lane backing, behind everything else this function draws. A SQUARE
+       the size of the icon rather than the whole rect: a hotbar slot is wider
+       than it is tall to leave room for the count, and filling it would put a
+       coloured bar under the number as well as under the picture. */
+    {
+        const int lane = equipLaneOf(item);
+        if (lane != LANE_NONE) {
+            int side = imin(r.right - r.left - 2, r.bottom - r.top - 2);
+            if (side > iconDrawPx()) side = iconDrawPx();
+            if (side > 0) {
+                RECT br;
+                br.left = r.left + (r.right - r.left - side) / 2;
+                br.top  = r.top  + (r.bottom - r.top - side) / 2;
+                br.right = br.left + side;
+                br.bottom = br.top + side;
+                FillRect(hdc, &br, g_laneBrush[lane]);
+            }
+        }
+    }
     if (item < MAT_COUNT && g_matIconBmp[item]) {
         const int side = imin(imin(r.right-r.left-2, r.bottom-r.top-2), iconDrawPx());
         if (side > 0) { const int x = r.left + (r.right-r.left-side)/2, y = r.top + (r.bottom-r.top-side)/2;
@@ -1465,6 +1541,18 @@ static int eqRowWidth(int row) {
 /* The row the bin shares, and the space it needs after that row's last slot. */
 static const int EQ_BIN_GAP = 26;
 static int eqBinRow() { return EQ_GROUP_ROW[2]; }
+
+/* Defined here rather than beside its declaration, because it is the group
+   layout above that decides which lane a slot is in and there is deliberately
+   no second list to fall out of step with it. */
+static int equipLaneOfSlot(int slot) {
+    for (int pos = 0; pos < EQ_COUNT; ++pos)
+        if (EQ_ORDER[pos] == slot) {
+            const int group = eqGroupOf(pos);
+            return group >= 0 && group < 3 ? group : LANE_NONE;
+        }
+    return LANE_NONE;
+}
 
 static RECT g_eqRect[EQ_COUNT];
 static RECT g_droneModuleRect[MAX_DRONES][Inventory::DRONE_MODULE_SLOTS_MAX];
@@ -6785,7 +6873,13 @@ static void drawCreative(HDC hdc) {
             const ItemStack& eq = g_inv.equip[i];
             const bool hot = inRect(r, g_mx, g_my);
             const bool locked = !g_inv.droneBayUnlocked(i);
-            FillRect(hdc, &r, hot ? g_btnBgHot : g_btnBg);
+            /* The slot wears its lane's colour, which is the other half of the
+               hint: an icon and the square it belongs in match, so a pack full
+               of equipment sorts itself by eye. */
+            const int lane = equipLaneOfSlot(i);
+            FillRect(hdc, &r, lane != LANE_NONE
+                              ? (hot ? g_laneBrushHot[lane] : g_laneBrush[lane])
+                              : (hot ? g_btnBgHot : g_btnBg));
             FrameRect(hdc, &r, eq.empty() ? g_borderBrush : g_accentBrush);
             if (!eq.empty()) {
                 RECT ir = r; ir.left += 2; ir.top += 2; ir.right -= 2; ir.bottom -= 2;
@@ -6794,7 +6888,12 @@ static void drawCreative(HDC hdc) {
                 /* The SHORT name -- see EQ_SHORT. The long one is on the
                    tooltip, which is where there is room for it, and hovering is
                    the moment somebody is actually asking. */
-                SetTextColor(hdc, RGB(110, 116, 128));
+                /* DARK on a lane colour, pale on the plain slot. The label
+                   was one grey for both, and against the lightened squares it
+                   came out at almost exactly their own value -- a slot that
+                   reads as blank until you look straight at it. */
+                SetTextColor(hdc, lane != LANE_NONE ? RGB(28, 34, 40)
+                                                    : RGB(110, 116, 128));
                 RECT tr = r; tr.top += 10;
                 DrawTextA(hdc, EQ_SHORT[i], -1, &tr, DT_CENTER | DT_TOP | DT_SINGLELINE);
                 if (hot) { g_hoverLabel = EQ_NAMES[i]; g_hoverRect = r; }
@@ -6802,7 +6901,10 @@ static void drawCreative(HDC hdc) {
             if (locked) {
                 /* Stored equipment remains visible and removable after losing
                    a capacity bonus, but LOCK makes it clear that it is inert. */
-                SetTextColor(hdc, RGB(190, 126, 92));
+                /* Same problem, same answer: LOCK sits on a drone bay, which
+                   is the lightest of the three lanes. */
+                SetTextColor(hdc, lane != LANE_NONE ? RGB(96, 34, 12)
+                                                    : RGB(190, 126, 92));
                 RECT tr = r; tr.top = r.bottom - 17;
                 DrawTextA(hdc, "LOCK", -1, &tr, DT_CENTER | DT_TOP | DT_SINGLELINE);
                 if (hot) {
@@ -8349,6 +8451,34 @@ static int runLocalCommandSmoke() {
     if (!g_craftOpen) return 248;
     g_craftOpen = false;
 
+    /* --- 250: everything wearable knows which lane it is in ----------------
+       Asked for: "trinkets should have a light blue background... worn items
+       should have a green... drones can have a light yellow, make the
+       corresponding equip slots have those colors too."
+
+       The colours themselves are three FillRects and are not worth a check.
+       What IS worth one is the classification, because it is read off
+       equipSlot and a new item that forgets to name one would silently draw
+       with no backing at all -- the failure looks like nothing rather than
+       like a mistake. So: every worn or accessory item lands in a lane, and
+       every equipment slot lands in the lane its group heading claims. */
+    for (int id = ITEM_NONE + 1; id < ITEM_COUNT; ++id) {
+        const ItemDef& d = ITEMS[id];
+        if (d.kind != ITEMK_WORN && d.kind != ITEMK_ACCESSORY) continue;
+        if (equipLaneOf((ItemId)id) == LANE_NONE) return 250;
+    }
+    if (equipLaneOfSlot(EQ_HEAD)      != LANE_WORN)    return 251;
+    if (equipLaneOfSlot(EQ_BACK)      != LANE_WORN)    return 252;
+    if (equipLaneOfSlot(EQ_TRINKET_D) != LANE_TRINKET) return 253;
+    if (equipLaneOfSlot(EQ_DRONE_C)   != LANE_DRONE)   return 254;
+    if (equipLaneOfSlot(EQ_LIGHT_DRONE) != LANE_DRONE) return 255;
+    /* And an item's lane matches the lane of the slot it names, or the icon
+       and the square it belongs in would be different colours -- which is the
+       one thing this feature exists to prevent. */
+    if (equipLaneOf(ITEM_IRON_HELMET) != equipLaneOfSlot(EQ_HEAD))     return 256;
+    if (equipLaneOf(ITEM_SWIFT_CHARM) != equipLaneOfSlot(EQ_TRINKET_A)) return 257;
+    if (equipLaneOf(ITEM_ORBIT_DRONE) != equipLaneOfSlot(EQ_DRONE_A))  return 258;
+
     puts("local command loopback smoke passed");
     return 0;
 }
@@ -8461,6 +8591,16 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR commandLine, int) {
        accent gold, because it means "this is about to be lost", not "this is
        equipped". */
     g_warnBrush   = CreateSolidBrush(RGB(200, 96, 76));
+    for (int lane = 0; lane < 3; ++lane) {
+        const COLORREF c = EQ_LANE_RGB[lane];
+        g_laneBrush[lane] = CreateSolidBrush(c);
+        /* The hover, mixed toward the button highlight rather than simply
+           brightened, so a hovered lane square is recognisably the same
+           highlight every other button in the panel uses. */
+        g_laneBrushHot[lane] = CreateSolidBrush(
+            RGB(imin(255, GetRValue(c) + 34), imin(255, GetGValue(c) + 34),
+                imin(255, GetBValue(c) + 34)));
+    }
     buildIcons();
 
     /* Swatch colours come from each material's own palette (a dry, mid-tint
