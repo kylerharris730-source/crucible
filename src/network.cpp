@@ -173,20 +173,104 @@ static bool nonblocking(SOCKET) { return true; }
 static void preferLowLatency(SOCKET) {}
 static void closeSocket(SOCKET& s) { if (s != INVALID_SOCKET) { webNetClose(s); s = INVALID_SOCKET; } }
 #else
+/* --- which of this machine's addresses to put on the Host LAN button -------
+
+   Reported from play: "sometimes the correct local ipv4 is displayed, but
+   sometimes the public ip is displayed, which i dont want."
+
+   The old answer was the first non-loopback entry gethostbyname() returned for
+   our own hostname, and the flaw is that the ORDER of that list is not ours to
+   choose and has nothing to do with which address a player can dial. On the
+   machine that reported this:
+
+       gethostbyname[0] = 26.34.44.215     <- a VPN's address, publicly routed
+       gethostbyname[1] = 192.168.56.1     <- a hypervisor's host-only switch
+       gethostbyname[2] = 192.168.1.242    <- the actual LAN address
+
+   It printed the first one. Every one of those is genuinely bound to this
+   machine, so no amount of validating that an address is "real" would have
+   caught it: the question is not which addresses exist, it is which one the
+   other player's packets can arrive on.
+
+   Ask the routing table instead. Connecting a UDP socket sends nothing -- it
+   only fixes a route -- and getsockname() then reports the source address this
+   machine would speak from. That is precisely the address a peer sees, and it
+   picks the real NIC out of the three above without knowing anything about
+   VPNs or hypervisors. Measured on the same machine: 192.168.1.242. */
+static bool privateV4(u32 hostOrder) {
+    const u32 a = (hostOrder >> 24) & 0xFF, b = (hostOrder >> 16) & 0xFF;
+    return a == 10                             /* 10.0.0.0/8     */
+        || (a == 172 && b >= 16 && b <= 31)    /* 172.16.0.0/12  */
+        || (a == 192 && b == 168);             /* 192.168.0.0/16 */
+}
+
+/* The source address the default route would use. `dst` is never contacted. */
+static bool routeSource(const char* dst, char* out, size_t outSize) {
+    SOCKET s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (s == INVALID_SOCKET) return false;
+    sockaddr_in to;
+    memset(&to, 0, sizeof(to));
+    to.sin_family = AF_INET;
+    to.sin_port   = htons(9);              /* discard; nothing is sent there */
+    to.sin_addr.s_addr = inet_addr(dst);
+    bool ok = false;
+    if (connect(s, (sockaddr*)&to, sizeof(to)) == 0) {
+        sockaddr_in me;
+        int len = (int)sizeof(me);
+        if (getsockname(s, (sockaddr*)&me, &len) == 0) {
+            const u32 hostOrder = ntohl(me.sin_addr.s_addr);
+            /* Only a LAN address. A machine behind a full-tunnel VPN would
+               answer this with the VPN's own address, which is the honest
+               answer to "what would I speak from" and the wrong answer to
+               "what should the other player type" -- so it falls through to
+               the enumeration below rather than being shown. */
+            if (privateV4(hostOrder)) {
+                strncpy(out, inet_ntoa(me.sin_addr), outSize - 1);
+                out[outSize - 1] = 0;
+                ok = true;
+            }
+        }
+    }
+    closesocket(s);
+    return ok;
+}
+
 static bool startup() {
     if (g_wsa) return true;
     WSADATA data;
     if (WSAStartup(MAKEWORD(2, 2), &data) != 0) { statusf("Network startup failed"); return false; }
     g_wsa = true;
+
+    /* 192.0.2.1 is TEST-NET-1 (RFC 5737): reserved for documentation, so no
+       host is ever there and nothing can be bothered by a route lookup aimed
+       at it. It is a public address, which is the point -- it resolves through
+       the DEFAULT route, and the interface carrying the default route is the
+       one a LAN peer is on. */
+    if (routeSource("192.0.2.1", g_localAddress, sizeof(g_localAddress))) return true;
+
+    /* No default route at all -- an unplugged LAN party, which is exactly the
+       situation this button exists for. Fall back to the hostname's own
+       addresses, but take the first PRIVATE one rather than the first one:
+       that is still the fix for the report, since a public or VPN address can
+       never be right here. Which private address wins is then down to the
+       resolver's order again, and a machine with a hypervisor switch and no
+       default route may well show the switch. There is nothing left to break
+       the tie with once the routing table has declined to answer. */
     char host[256];
     if (gethostname(host, sizeof(host)) == 0) {
         hostent* he = gethostbyname(host);
         if (he) for (int i = 0; he->h_addr_list[i]; ++i) {
-            in_addr a; memcpy(&a, he->h_addr_list[i], sizeof(a));
-            const char* ip = inet_ntoa(a);
-            if (ip && strcmp(ip, "127.0.0.1") != 0) { strncpy(g_localAddress, ip, sizeof(g_localAddress)-1); g_localAddress[sizeof(g_localAddress)-1] = 0; break; }
+            in_addr a;
+            memcpy(&a, he->h_addr_list[i], sizeof(a));
+            if (!privateV4(ntohl(a.s_addr))) continue;
+            strncpy(g_localAddress, inet_ntoa(a), sizeof(g_localAddress) - 1);
+            g_localAddress[sizeof(g_localAddress) - 1] = 0;
+            break;
         }
     }
+    /* And 127.0.0.1 if even that found nothing, which is what g_localAddress
+       already holds. Loopback is a truthful answer for a machine with no
+       network: the second player has to be on this one. */
     return true;
 }
 
