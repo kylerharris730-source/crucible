@@ -275,6 +275,20 @@ enum SpriteId {
     SPR_ARMOUR_BRIMSTEEL_HELM,
     SPR_ARMOUR_BRIMSTEEL_PLATE,
     SPR_ARMOUR_BRIMSTEEL_GREAVES,
+    /* One icon per layer-2 and layer-3 charm. Hand-drawn rather than tinted
+       from a shared shape, unlike the armour ladder above: an armour piece is
+       recognisable by being armour and only needs its family colour, while a
+       charm has nothing to read but its own picture. */
+    SPR_ACC_BALLAST,
+    SPR_ACC_SPURS,
+    SPR_ACC_LOADER,
+    SPR_ACC_PRISM,
+    SPR_ACC_TALON,
+    SPR_ACC_CELL,
+    SPR_ACC_COLLAR,
+    SPR_ACC_FEATHER,
+    SPR_ACC_GULLET,
+    SPR_ACC_ASH,
     SPR_EFFIGY_CALL,
     SPR_ASCENT_CORE,
 

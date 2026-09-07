@@ -523,6 +523,25 @@ struct Player {
        unequipped, and it is a multiplier rather than a percentage so this
        side never has to do the conversion. */
     float speedMul;
+    /* --- two charms the body has to know about ----------------------------
+       Published by the host each frame from what is worn, the same arrangement
+       `fly`, `speedMul` and `resist` use and for the same reason stated there:
+       movement should not have to know an inventory exists.
+
+       `airJumps` is how many jumps are available OFF THE GROUND -- zero
+       unequipped -- and `airJumpsUsed` is the body's own count of how many it
+       has spent since it last stood on something. The budget is published and
+       the spending is not, because how many jumps you have left is a fact
+       about a fall and not about a pack.
+
+       `fallGuardPct` is percentage off fall damage, 100 being none at all. */
+    int   airJumps;
+    int   airJumpsUsed;
+    int   fallGuardPct;
+    /* Last frame's jump key, so a midair jump can be a fresh PRESS. Held down
+       through a fall, an un-edged check spends the whole budget on the first
+       airborne frame. */
+    bool  jumpHeld;
     /* How far the last landing fell, in cells. Zero except on the frame of an
        impact. Published because "why did that hurt" is the first question a
        fall-damage system has to be able to answer. */

@@ -3608,8 +3608,11 @@ static void predictClientPlayer(const PlayerCommand& command, bool predictUses =
         input.jump = (command.bits & PCMD_JUMP) != 0;
         input.down = (command.bits & PCMD_DOWN) != 0;
         session.body.fly = flightSpec(session.inventory);
-        session.body.speedMul = 1.0f + (float)session.inventory.speedBonus() / 100.0f;
+        session.body.speedMul = 1.0f + (float)(session.inventory.speedBonus()
+                              + accessorySprintPct(0, session.inventory)) / 100.0f;
         session.body.resist = session.inventory.tempResist();
+        session.body.airJumps = session.inventory.airJumps();
+        session.body.fallGuardPct = session.inventory.fallGuardPct();
         session.body.update(g_world, input);
     }
     if (predictUses) {
@@ -4601,8 +4604,15 @@ static void updatePlayerFromCommand(int slot, PlayerSession& session, PlayerComm
     in.down = (command.bits & PCMD_DOWN) != 0;
     if (session.restBed >= 0 && (in.left || in.right || in.jump || in.down)) session.restBed = -1;
     session.body.fly = flightSpec(session.inventory);
-    session.body.speedMul = 1.0f + (float)session.inventory.speedBonus() / 100.0f;
+    /* The Ashhound Collar adds to the same multiplier the boots do rather than
+       multiplying with it. Compounding two movement bonuses is how a character
+       ends up outrunning the terrain streamer, and the sprint is already the
+       larger of the two after three seconds. */
+    session.body.speedMul = 1.0f + (float)(session.inventory.speedBonus()
+                          + accessorySprintPct(slot, session.inventory)) / 100.0f;
     session.body.resist = session.inventory.tempResist();
+    session.body.airJumps = session.inventory.airJumps();
+    session.body.fallGuardPct = session.inventory.fallGuardPct();
     if (allowMovement && session.restBed < 0) session.body.update(g_world, in);
     if (!session.body.alive) {
         undoFinish(slot, &session.inventory);
@@ -4753,11 +4763,28 @@ static void fireToolFor(Player& player, Inventory& inventory, const Aim& aim) {
        the tool and its modules, and folding the wearer's jewellery into that
        answer would mean the bench panel had to state a number that changes when
        you take a ring off. */
+    /* Which slot is firing, needed by the three charms that remember what the
+       player has been doing. Resolved the same way `owner` is below. */
+    int shooter = -1;
+    for (int slot = 0; slot < MAX_PLAYERS; ++slot)
+        if (&g_playerSessions[slot].inventory == &inventory) { shooter = slot; break; }
+
     int shotDamage = accessoryShotDamage(inventory, s.damage);
     const int rangedDamagePct = inventory.rangedDamagePct();
     if (rangedDamagePct > 0)
         shotDamage = imax(shotDamage + 1,
                           shotDamage + shotDamage * rangedDamagePct / 100);
+    /* The Threshing Spurs, last, so momentum multiplies the finished number
+       rather than the base one -- it is the reward for having been moving, and
+       a build that has already invested in damage should feel it there too. */
+    const int momentum = accessoryMomentumPct(shooter, inventory);
+    if (momentum > 0)
+        shotDamage = imax(shotDamage + 1,
+                          shotDamage + shotDamage * momentum / 100);
+    /* The Wisp Prism. Pierce is a COUNT of cells a shot survives, so this adds
+       rather than scales: a bolt that punched through one wall now punches
+       through three, whatever it started at. */
+    const int shotPierce = s.pierce + inventory.piercePlus();
     const float shotSpeed  = accessoryShotSpeed(inventory, s.speed);
     const int rangedRangePct = inventory.rangedRangePct();
     const int shotLife = s.life + s.life * rangedRangePct / 100;
@@ -4789,12 +4816,18 @@ static void fireToolFor(Player& player, Inventory& inventory, const Aim& aim) {
     if (s.payloadMat != MAT_EMPTY && ti.payload.count > 0) {
         payload = s.payloadMat;
     }
+    /* The Slagmaw Gullet, and only when nothing else is loaded. A charm that
+       overrode real ammunition would be a charm you have to take OFF to use
+       the tool you built, and the cost of that surprise is far higher than the
+       value of the effect. `paidPayload` is what the tool is actually spending
+       -- the fire is free, so it must not decrement a magazine. */
+    const bool paidPayload = payload != MAT_EMPTY;
+    if (!paidPayload && inventory.hasEquipped(ITEM_SLAGMAW_GULLET))
+        payload = MAT_FIRE;
     const float vx = dx * SPEED, vy = dy * SPEED;
-    u8 owner = PLAYER_NONE;
-    for (int slot = 0; slot < MAX_PLAYERS; ++slot)
-        if (&g_playerSessions[slot].inventory == &inventory) { owner = (u8)slot; break; }
+    const u8 owner = shooter >= 0 ? (u8)shooter : (u8)PLAYER_NONE;
     const bool fired = projSpawn(pcx + dx * MUZZLE, pcy + dy * MUZZLE, vx, vy,
-                                 s.power, s.pierce, shotLife, s.colour, s.blast,
+                                 s.power, shotPierce, shotLife, s.colour, s.blast,
                                  payload, shotDamage, false, s.gravity, s.effect,
                                  s.bounces, s.homing, owner, 0,
                                  s.trail, s.seekMouse,
@@ -4825,7 +4858,8 @@ static void fireToolFor(Player& player, Inventory& inventory, const Aim& aim) {
         const bool second = projSpawn(pcx + dx * MUZZLE - fanX * 3.0f,
                                       pcy + dy * MUZZLE - fanY * 3.0f,
                                       dx * cSpeed + fanX, dy * cSpeed + fanY,
-                                      c.power, c.pierce, cLife, c.colour, c.blast,
+                                      c.power, c.pierce + inventory.piercePlus(),
+                                      cLife, c.colour, c.blast,
                                       MAT_EMPTY, cDamage, false, c.gravity,
                                       c.effect, c.bounces, c.homing, owner, 0,
                                       c.trail, c.seekMouse,
@@ -4834,8 +4868,31 @@ static void fireToolFor(Player& player, Inventory& inventory, const Aim& aim) {
             projLink(firstIndex, projLastSpawnedIndex(), s.link);
     }
 
+    /* --- the Culverin Loader ---------------------------------------------
+       Two more shots, fanned, when the trigger has been held for two seconds.
+       Spawned before the delay is committed and before the clock is noted, so
+       the volley is one trigger pull rather than three -- and they cost no
+       payload for the same reason the twin charm's second shot does not: a
+       modifier duplicates the SHOT, never the ammunition.
+
+       Deliberately the plain shot rather than the full companion treatment.
+       This is a burst, and three bolts arriving together should read as one
+       loud answer to holding fire, not as a light show. */
+    if (accessoryBurstReady(shooter, inventory)) {
+        for (int k = 0; k < 2; ++k) {
+            const float fan = (k == 0 ? -1.0f : 1.0f) * VOLLEY_FAN * 1.5f;
+            const float fanX = -dy * fan, fanY = dx * fan;
+            projSpawn(pcx + dx * MUZZLE - fanX * 2.0f,
+                      pcy + dy * MUZZLE - fanY * 2.0f,
+                      vx + fanX, vy + fanY, s.power, shotPierce, shotLife,
+                      s.colour, s.blast, MAT_EMPTY, shotDamage, false,
+                      s.gravity, s.effect, s.bounces, s.homing, owner);
+        }
+    }
+    accessoryNoteShot(shooter);
+
     toolCommitShot(h, s, accessoryShotDelay(inventory, s.delay));
-    if (payload != MAT_EMPTY && --ti.payload.count == 0) {
+    if (paidPayload && --ti.payload.count == 0) {
         ti.payload.item = ITEM_NONE; ti.payload.inst = 0;
     }
     if (fired && accessoryTwinShot(inventory)) {
@@ -4844,7 +4901,7 @@ static void fireToolFor(Player& player, Inventory& inventory, const Aim& aim) {
            fanned just enough that both projectiles remain individually visible. */
         const float fanX = -vy * 0.10f, fanY = vx * 0.10f;
         projSpawn(pcx + dx * MUZZLE, pcy + dy * MUZZLE,
-                  vx + fanX, vy + fanY, s.power, s.pierce, shotLife, 0xD8A4FF,
+                  vx + fanX, vy + fanY, s.power, shotPierce, shotLife, 0xD8A4FF,
                   s.blast, payload, shotDamage, false, s.gravity, s.effect,
                   s.bounces, s.homing, owner);
     }
@@ -7544,7 +7601,7 @@ static void serverTick(const LARGE_INTEGER& perfFrequency) {
            are the only data ever accepted by the host. The authoritative RNG
            seed in each state keeps ordinary stretches close, while generic
            chunk repair handles unavoidable divergence from unseen host input. */
-        toolInstTick();
+        toolInstTick(g_inv.energyBonus());
         publishServerRegions();
         LARGE_INTEGER begin, end; QueryPerformanceCounter(&begin);
         g_world.step();
@@ -7559,6 +7616,7 @@ static void serverTick(const LARGE_INTEGER& perfFrequency) {
                 PlayerSession& session = g_playerSessions[slot];
                 if (!session.connected || !session.body.alive) continue;
                 accessoryTickFor(slot, session.body, session.inventory);
+                accessoryAshTrail(slot, session.body, session.inventory, g_world);
                 meleeTickFor(session);
                 droneTickFor(slot, g_world, session.body, session.inventory);
             }
@@ -7573,7 +7631,7 @@ static void serverTick(const LARGE_INTEGER& perfFrequency) {
     const bool uiPausesActors = !onlineHost &&
         (g_menuOpen || g_creativeOpen || g_craftOpen || g_chestOpen >= 0);
 
-    toolInstTick();
+    toolInstTick(g_inv.energyBonus());
     /* Survival always uses PlayerCommand. The direct brush remains only for
        the character-off creative sandbox, which has no player authority. */
     if (!(g_survival && g_playerOn) && !g_menuOpen && !g_creativeOpen &&
@@ -7625,6 +7683,7 @@ static void serverTick(const LARGE_INTEGER& perfFrequency) {
                 PlayerSession& session = g_playerSessions[slot];
                 if (!session.connected || !session.body.alive) continue;
                 accessoryTickFor(slot, session.body, session.inventory);
+                accessoryAshTrail(slot, session.body, session.inventory, g_world);
                 meleeTickFor(session);
                 droneTickFor(slot, g_world, session.body, session.inventory);
             }

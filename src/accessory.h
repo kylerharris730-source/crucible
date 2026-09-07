@@ -16,6 +16,29 @@ void accessoryTickFor(int playerSlot, const Player& player, const Inventory& inv
 int  accessoryShotDelay(const Inventory& inv, int baseDelay);
 bool accessoryTwinShot(const Inventory& inv);
 
+/* --- the charms with a memory ------------------------------------------------
+   Three of the ten new charms are about what you have been DOING rather than
+   about what you are wearing, so they need a clock. All three read the same
+   per-slot state accessoryTickFor maintains, and all three answer in the unit
+   their call site wants rather than exposing the counter.
+
+   accessoryMomentumPct -- Threshing Spurs: extra shot damage, 0 while still
+   accessorySprintPct   -- Ashhound Collar: extra move speed, 0 from a standstill
+   accessoryBurstReady  -- Culverin Loader: is the next trigger pull a volley */
+int  accessoryMomentumPct(int playerSlot, const Inventory& inv);
+int  accessorySprintPct(int playerSlot, const Inventory& inv);
+bool accessoryBurstReady(int playerSlot, const Inventory& inv);
+void accessoryNoteShot(int playerSlot);
+
+/* The Cinderling Ash: fire dropped behind a running player. It takes the World
+   because it WRITES to it, which is why it is not folded into accessoryTickFor
+   -- everything else in that function reads equipment and moves numbers, and a
+   tick that also edits terrain would be a very different thing to reason
+   about. Called from the same loop. */
+struct World;
+void accessoryAshTrail(int playerSlot, const Player& player,
+                       const Inventory& inv, World& world);
+
 /* The charms that act on a shot, applied at the firing site because that is the
    only place all three are known at once. Kept as functions taking the base
    value rather than as a struct of percentages, so a call site reads as the

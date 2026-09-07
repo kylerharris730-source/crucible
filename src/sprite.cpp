@@ -642,6 +642,199 @@ static const char* ART_ASCENT_CORE[SPR_H] = {
     "..............",
 };
 
+/* --- the layer-2 and layer-3 charms ------------------------------------------
+   Ten icons, and each one is a picture of the CREATURE'S OWN part rather than
+   of the effect: a talon, a feather, a prism. That is the same rule the layer-1
+   charms follow -- a Husk Heart is a heart -- and it is what makes a pack full
+   of trinkets sortable by eye. */
+
+/* Shambler: a slab of ballast on a strap. Heavy, low, and wider than it is
+   tall, which is the shape of the creature it came off. */
+static const char* ART_ACC_BALLAST[SPR_H] = {
+    "..............",
+    "..............",
+    "....GGGGGG....",
+    "...G......G...",
+    "..GGGGGGGGGG..",
+    ".GbbbbbbbbbbG.",
+    ".GbhhbbbbhhbG.",
+    ".GbbbbbbbbbbG.",
+    ".GbhhbbbbhhbG.",
+    ".GbbbbbbbbbbG.",
+    ".GGGGGGGGGGGG.",
+    "..............",
+    "..............",
+    "..............",
+};
+
+/* Thresher: a spur, worn at the heel. The rowel is the wheel of blades the
+   creature charges with. */
+static const char* ART_ACC_SPURS[SPR_H] = {
+    "..............",
+    "..............",
+    "...GG.........",
+    "..G..G........",
+    "..G...S.......",
+    "..G....S......",
+    "...GG...S..T..",
+    "........STST..",
+    ".......TSSSTT.",
+    "........STST..",
+    "........S..T..",
+    "..............",
+    "..............",
+    "..............",
+};
+
+/* Culverin: a speed loader. Three chambers on a ring, which is the creature's
+   volley drawn as an object. */
+static const char* ART_ACC_LOADER[SPR_H] = {
+    "..............",
+    "....RRRRRR....",
+    "...RSSSSSSR...",
+    "..RSSKSSKSSR..",
+    "..RSSSSSSSSR..",
+    "..RSSSSSSSSR..",
+    "..RSSSKSSSSR..",
+    "..RSSSSSSSSR..",
+    "...RSSSSSSR...",
+    "....RRRRRR....",
+    ".....RRRR.....",
+    "..............",
+    "..............",
+    "..............",
+};
+
+/* Wisp: a prism with a line going straight through it and out the far side.
+   The line is the point -- a beam does not stop at what it meets. */
+static const char* ART_ACC_PRISM[SPR_H] = {
+    "..............",
+    "..............",
+    "......4.......",
+    ".....444......",
+    "....44444.....",
+    "...4444444....",
+    "KKKK444444KKKK",
+    "...4444444....",
+    "....44444.....",
+    ".....444......",
+    "......4.......",
+    "..............",
+    "..............",
+    "..............",
+};
+
+/* Stooper: a talon, curved and closed. Drawn hooked rather than spread, which
+   is how a diving bird's foot actually arrives. */
+static const char* ART_ACC_TALON[SPR_H] = {
+    "..............",
+    "....qq........",
+    "...qSSq.......",
+    "...qSSSq......",
+    "....qSSSq.....",
+    ".....qSSSq....",
+    "......qSSSq...",
+    ".......qSSSq..",
+    "........qSSq..",
+    ".........qSq..",
+    "..........q...",
+    "..............",
+    "..............",
+    "..............",
+};
+
+/* Skirmisher: a charge cell. A cased battery with a lit window and a terminal
+   at each end. */
+static const char* ART_ACC_CELL[SPR_H] = {
+    "..............",
+    ".....l..l.....",
+    "....DDDDDD....",
+    "....DEEEEDD...",
+    "....DEllEDD...",
+    "....DEllEDD...",
+    "....DEllEDD...",
+    "....DEllEDD...",
+    "....DEEEEDD...",
+    "....DDDDDD....",
+    ".....l..l.....",
+    "..............",
+    "..............",
+    "..............",
+};
+
+/* Ashhound: a collar with a burning tag. The band is the creature's, the ember
+   on it is what the charm does. */
+static const char* ART_ACC_COLLAR[SPR_H] = {
+    "..............",
+    "...qqqqqqqq...",
+    "..q11111111q..",
+    "..q1qqqqqq1q..",
+    "..q1q....q1q..",
+    "..q1q....q1q..",
+    "..q11q..q11q..",
+    "...q1qqqq1q...",
+    "....q1111q....",
+    ".....q11q.....",
+    "......ff......",
+    ".....feef.....",
+    "......ff......",
+    "..............",
+};
+
+/* Emberwing: a single feather, still hot along the shaft. */
+static const char* ART_ACC_FEATHER[SPR_H] = {
+    "..............",
+    "..........AA..",
+    ".........AAA..",
+    "........AAAA..",
+    ".......AAAfA..",
+    "......AAAfA...",
+    ".....AAAfA....",
+    "....AAAfA.....",
+    "...AAAfA......",
+    "..AAAfA.......",
+    "..AAfA........",
+    "...fA.........",
+    "..f...........",
+    "..............",
+};
+
+/* Slagmaw: a gullet -- a ring of teeth with fire down the middle of it. */
+static const char* ART_ACC_GULLET[SPR_H] = {
+    "..............",
+    "....jjjjjj....",
+    "...jXXXXXXj...",
+    "..jXeffffeXj..",
+    "..jXffffffXj..",
+    "..jXffffffXj..",
+    "..jXffffffXj..",
+    "..jXeffffeXj..",
+    "...jXXXXXXj...",
+    "....jjjjjj....",
+    "..............",
+    "..............",
+    "..............",
+    "..............",
+};
+
+/* Cinderling: a pinch of ash with an ember still live in it. */
+static const char* ART_ACC_ASH[SPR_H] = {
+    "..............",
+    "..............",
+    "......G.......",
+    ".....GgG......",
+    "....GgggG.....",
+    "...GgefegG....",
+    "...GgfffgG....",
+    "...GgefegG....",
+    "....GgggG.....",
+    ".....GgG......",
+    "...G..G..G....",
+    "..G...G...G...",
+    "..............",
+    "..............",
+};
+
 /* --- the warp wand ---------------------------------------------------------
    A rod held on the diagonal with the split-space colour burning at the tip.
 
@@ -2651,6 +2844,16 @@ void initSprites() {
     expandMetal(SPR_ARMOUR_BRIMSTEEL_HELM,   ART_ARMOUR_HELM,    0xC0492A, 0x5E2010);
     expandMetal(SPR_ARMOUR_BRIMSTEEL_PLATE,  ART_ARMOUR_SUIT,    0xC0492A, 0x5E2010);
     expandMetal(SPR_ARMOUR_BRIMSTEEL_GREAVES,ART_ARMOUR_GREAVES, 0xC0492A, 0x5E2010);
+    expand(SPR_ACC_BALLAST, ART_ACC_BALLAST);
+    expand(SPR_ACC_SPURS,   ART_ACC_SPURS);
+    expand(SPR_ACC_LOADER,  ART_ACC_LOADER);
+    expand(SPR_ACC_PRISM,   ART_ACC_PRISM);
+    expand(SPR_ACC_TALON,   ART_ACC_TALON);
+    expand(SPR_ACC_CELL,    ART_ACC_CELL);
+    expand(SPR_ACC_COLLAR,  ART_ACC_COLLAR);
+    expand(SPR_ACC_FEATHER, ART_ACC_FEATHER);
+    expand(SPR_ACC_GULLET,  ART_ACC_GULLET);
+    expand(SPR_ACC_ASH,     ART_ACC_ASH);
     expand(SPR_ACC_DRONE_BEACON, ART_DRONE_BEACON);
     expand(SPR_MINE1,     ART_MINE1);
     expand(SPR_MINE2,     ART_MINE2);

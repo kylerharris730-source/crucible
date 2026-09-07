@@ -76,6 +76,20 @@ struct PlayerSession {
        a passive is a property of the SLOT, not of the body, and the body is
        replicated across a network where this is nobody else's business. */
     i32 regenTimer;
+    /* --- the four charms that need to remember something ------------------
+       Beside the garlic clock and the regen timer, for the reason that note
+       gives: a passive is a property of the SLOT, not of the body, and the
+       body is written to the save as a raw sized block where a new field would
+       discard every existing character.
+
+       momentum  -- frames spent moving, for the Threshing Spurs
+       idle      -- frames since the last shot, for the Culverin Loader
+       sprint    -- frames running one way, for the Ashhound Collar
+       burst     -- shots still owed by a Loader volley */
+    i32 momentumFrames;
+    i32 idleFrames;
+    i32 sprintFrames;
+    i32 sprintDir;
     ItemStack cursor;
     ItemStack trash;
     /* Host-only input/runtime state. It belongs to the player rather than the

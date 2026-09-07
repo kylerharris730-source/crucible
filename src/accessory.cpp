@@ -1,4 +1,6 @@
 #include "accessory.h"
+#include "world.h"
+#include "materials.h"
 #include "entity.h"
 #include "light.h"
 #include "multiplayer.h"
@@ -7,6 +9,10 @@ void accessoryReset() {
     for (int slot = 0; slot < MAX_PLAYERS; ++slot) {
         g_playerSessions[slot].garlicCooldown = 0;
         g_playerSessions[slot].regenTimer     = 0;
+        g_playerSessions[slot].momentumFrames = 0;
+        g_playerSessions[slot].idleFrames     = 0;
+        g_playerSessions[slot].sprintFrames   = 0;
+        g_playerSessions[slot].sprintDir      = 0;
     }
 }
 
@@ -27,6 +33,51 @@ int accessoryShotDelay(const Inventory& inv, int baseDelay) {
     if (pct > 0)
         best = imin(best, baseDelay - baseDelay * pct / 100);
     return imax(1, best);
+}
+
+/* --- the three clocks --------------------------------------------------------
+   How long each effect takes to reach full, and what full is worth. Every one
+   of these is a RAMP rather than a switch, which is the whole reason they are
+   worth having as separate charms: a flat bonus for moving would just be a
+   bonus, and what makes these read is watching the number climb while you
+   commit to doing the thing. */
+static const int   MOMENTUM_FULL_FRAMES = 150;  /* two and a half seconds */
+static const int   MOMENTUM_MAX_PCT     = 40;
+static const int   SPRINT_FULL_FRAMES   = 180;  /* three seconds one way */
+static const int   SPRINT_MAX_PCT       = 35;
+static const int   LOADER_IDLE_FRAMES   = 120;  /* two seconds of held fire */
+
+/* The trail the Cinderling Ash leaves. Sparse -- one cell every few frames --
+   because a solid line of fire behind a running player is a wall the player
+   themselves cannot get back through, and this charm is meant to be a hazard
+   you are carrying rather than a door you are closing. */
+static const int   ASH_TRAIL_EVERY = 7;
+
+int accessoryMomentumPct(int playerSlot, const Inventory& inv) {
+    if (playerSlot < 0 || playerSlot >= MAX_PLAYERS) return 0;
+    if (!inv.hasEquipped(ITEM_THRESHING_SPURS)) return 0;
+    const int frames = g_playerSessions[playerSlot].momentumFrames;
+    if (frames >= MOMENTUM_FULL_FRAMES) return MOMENTUM_MAX_PCT;
+    return MOMENTUM_MAX_PCT * frames / MOMENTUM_FULL_FRAMES;
+}
+
+int accessorySprintPct(int playerSlot, const Inventory& inv) {
+    if (playerSlot < 0 || playerSlot >= MAX_PLAYERS) return 0;
+    if (!inv.hasEquipped(ITEM_ASHHOUND_COLLAR)) return 0;
+    const int frames = g_playerSessions[playerSlot].sprintFrames;
+    if (frames >= SPRINT_FULL_FRAMES) return SPRINT_MAX_PCT;
+    return SPRINT_MAX_PCT * frames / SPRINT_FULL_FRAMES;
+}
+
+bool accessoryBurstReady(int playerSlot, const Inventory& inv) {
+    if (playerSlot < 0 || playerSlot >= MAX_PLAYERS) return false;
+    if (!inv.hasEquipped(ITEM_CULVERIN_LOADER)) return false;
+    return g_playerSessions[playerSlot].idleFrames >= LOADER_IDLE_FRAMES;
+}
+
+void accessoryNoteShot(int playerSlot) {
+    if (playerSlot < 0 || playerSlot >= MAX_PLAYERS) return;
+    g_playerSessions[playerSlot].idleFrames = 0;
 }
 
 int accessoryShotDamage(const Inventory& inv, int baseDamage) {
@@ -64,6 +115,38 @@ bool accessoryTwinShot(const Inventory& inv) {
     return inv.hasEquipped(ITEM_TWIN_ACCESSORY);
 }
 
+/* --- the trail -------------------------------------------------------------
+   Fire behind a running player, and every constraint on it is about not
+   handing the player a weapon they cannot control.
+
+   BEHIND, not underneath: the cell is placed at the heel, on the side the
+   player came from, so running forward never puts fire where you are about to
+   be. Sparse, one cell every seventh frame, so it is a dotted line rather than
+   a wall -- a solid one would be a door the player has closed behind
+   themselves in a corridor they may need to come back down.
+
+   And only into EMPTY air with something solid under it. Fire in mid-air falls
+   and spreads unpredictably; fire on a floor stays where it was put and burns
+   out, which is the version a player can plan around. */
+void accessoryAshTrail(int playerSlot, const Player& player,
+                       const Inventory& inv, World& world) {
+    if (playerSlot < 0 || playerSlot >= MAX_PLAYERS) return;
+    if (!inv.hasEquipped(ITEM_CINDERLING_ASH)) return;
+    if (!player.onGround) return;
+    const float vx = player.vx;
+    if (vx > -0.25f && vx < 0.25f) return;
+    if ((g_playerSessions[playerSlot].sprintFrames % ASH_TRAIL_EVERY) != 0) return;
+
+    const int behind = vx > 0.0f ? player.left() - 1 : player.right() + 1;
+    const int y = player.bottom();
+    if (behind <= PLAY_X0 || behind >= PLAY_X1 || y <= PLAY_Y0 || y >= PLAY_Y1 - 1)
+        return;
+    if (world.at(behind, y).mat != MAT_EMPTY) return;
+    if (world.at(behind, y + 1).mat == MAT_EMPTY) return;
+    world.setCell(behind, y, MAT_FIRE);
+    world.dirtyPoint(behind, y);
+}
+
 void accessoryTick(const Player& player, const Inventory& inv) {
     accessoryTickFor(0, player, inv);
 }
@@ -94,6 +177,27 @@ void accessoryTickFor(int playerSlot, const Player& player, const Inventory& inv
         }
     } else {
         g_playerSessions[playerSlot].regenTimer = 0;
+    }
+
+    /* --- the three clocks -------------------------------------------------
+       Counted for everybody rather than only while the charm is worn, and that
+       is deliberate: a counter that only runs while equipped would make taking
+       a charm off and putting it back a way to keep progress that the tooltip
+       never promised, and the cost of counting is four integers. */
+    PlayerSession& session = g_playerSessions[playerSlot];
+    const bool moving = body.vx > 0.08f || body.vx < -0.08f;
+    if (moving) ++session.momentumFrames; else session.momentumFrames = 0;
+    ++session.idleFrames;
+
+    /* ONE WAY. Turning round resets it, which is what makes this a sprint and
+       not a reward for jiggling on the spot -- and it is the difference between
+       the Collar and the Swift Charm, which simply makes you faster. */
+    const int dir = !moving ? 0 : (body.vx > 0.0f ? 1 : -1);
+    if (dir == 0 || dir != session.sprintDir) {
+        session.sprintFrames = 0;
+        session.sprintDir = dir;
+    } else {
+        ++session.sprintFrames;
     }
 
     int& cooldown = g_playerSessions[playerSlot].garlicCooldown;

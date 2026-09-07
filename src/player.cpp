@@ -181,6 +181,8 @@ void Player::reset(float cx, float cy) {
     fallFromY = y;
     feltTemp  = (u8)AMBIENT_TEMP;
     resist.heat = resist.cold = 0;
+    airJumps = airJumpsUsed = fallGuardPct = 0;
+    jumpHeld = false;
     lastFall  = 0.0f;
     swimming   = false;
     underwater = false;
@@ -692,6 +694,27 @@ void Player::update(const World& w, const PlayerInput& in) {
         fallFromY = y;
     } else {
         if (in.jump && onGround) { vy = -JUMP_VEL; onGround = false; }
+        /* --- and the jumps you get in the air -----------------------------
+           The Emberwing Feather, and it is EDGE TRIGGERED: a midair jump has
+           to be a fresh press, or holding the key through a fall would spend
+           every jump in the budget on the first frame off the ground and the
+           charm would read as broken.
+
+           `airJumpsUsed` is reset by landing rather than here -- see the
+           ground contact below -- so walking off a ledge without jumping still
+           leaves the full budget, which is what a player expects from a double
+           jump and not what a naive counter gives them.
+
+           And it is an `else if` on the ground jump rather than a test of
+           `!onGround`, which is not a tidier way of writing the same thing.
+           The line above clears onGround as it fires, so on the frame you leap
+           the two conditions are BOTH true: measured, the budget was spent on
+           frame 0 of every jump, for no height, and the charm did nothing at
+           all while looking perfectly plausible in the debugger. */
+        else if (in.jump && !jumpHeld && airJumpsUsed < airJumps) {
+            ++airJumpsUsed;
+            vy = -JUMP_VEL;
+        }
         /* Holding the jump key supports the ASCENT; it does not push. That
            distinction is what keeps this a taller version of the same jump:
            no fuel, no extra impulse, and no effect once the apex is passed. */
@@ -884,7 +907,7 @@ void Player::update(const World& w, const PlayerInput& in) {
         if (blocked) {
             y  = (float)cur;
             vy = 0.0f;
-            if (dir > 0) onGround = true;   /* landed */
+            if (dir > 0) { onGround = true; airJumpsUsed = 0; }  /* landed */
         } else {
             y = target;
         }
@@ -922,8 +945,14 @@ void Player::update(const World& w, const PlayerInput& in) {
            should not chip at you, or the number on the HUD stops meaning "I am
            in trouble". */
         lastFall = y - fallFromY;
-        if (lastFall > FALL_SAFE)
-            damage((lastFall - FALL_SAFE) * FALL_DAMAGE);
+        if (lastFall > FALL_SAFE) {
+            /* The Stooper Talon, at 100, takes the whole of this. Written as a
+               percentage rather than as a flag so a partial version is a table
+               edit rather than a rewrite. */
+            const float guard = fallGuardPct >= 100 ? 0.0f
+                              : 1.0f - (float)fallGuardPct / 100.0f;
+            damage((lastFall - FALL_SAFE) * FALL_DAMAGE * guard);
+        }
         if (!alive) return;
     }
 
@@ -933,6 +962,13 @@ void Player::update(const World& w, const PlayerInput& in) {
        cells, but it means a player who steps off a ledge starts already falling
        at speed. Zeroing it keeps standing still genuinely still. */
     if (onGround && vy > 0.0f) vy = 0.0f;
+    /* Standing on something also refills the air-jump budget. Landing does it
+       above; this catches the other way onto solid ground -- being pushed onto
+       it, or a floor arriving under you -- which is the same fact and has to
+       give the same answer. */
+    if (onGround) airJumpsUsed = 0;
+    /* Last, so the edge test above reads the PREVIOUS frame's key. */
+    jumpHeld = in.jump;
 
     /* Refuel on the ground only, and clamp to whatever is equipped NOW -- swap
        a Mk III for boots and the tank has to shrink with it, or the boots

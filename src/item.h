@@ -403,6 +403,26 @@ enum {
     ITEM_EFFIGY_CALL,
     ITEM_EGG_EFFIGY,
     ITEM_ASCENT_CORE,
+
+    /* --- a charm for every creature --------------------------------------
+       The six layer-1 creatures have dropped a charm since charms existed;
+       every creature in layers 2 and 3 dropped nothing but currency. Ten of
+       them, one each, and each one is the answer to what its creature does to
+       you -- which is the rule the Bat's Swift Charm set and the reason the
+       roster teaches itself.
+
+       They are appended, like every id here, because ids are written into
+       saves. */
+    ITEM_SHAMBLER_BALLAST,
+    ITEM_THRESHING_SPURS,
+    ITEM_CULVERIN_LOADER,
+    ITEM_WISP_PRISM,
+    ITEM_STOOPER_TALON,
+    ITEM_SKIRMISHER_CELL,
+    ITEM_ASHHOUND_COLLAR,
+    ITEM_EMBERWING_FEATHER,
+    ITEM_SLAGMAW_GULLET,
+    ITEM_CINDERLING_ASH,
     ITEM_COUNT
 };
 
@@ -806,6 +826,27 @@ struct ItemDef {
     i16  damagePct;
     i16  cooldownPct;   /* subtracted; 25 means "fire in three quarters the time" */
 
+    /* --- the columns the layer-2 and layer-3 charms needed ----------------
+       Every one of the eight columns above was spoken for by the time the
+       layer-1 charms and the pedestal loot were done, which is worth stating
+       because it is the reason these exist: there was no ninth free stat, so a
+       new charm was either a new column or a new rule. These five are the
+       ones that could honestly be a number.
+
+       All five resolve LARGEST, never summed, on the same rule as reachBonus
+       -- see the note there. Two of the same charm is two slots spent on one
+       effect, which is a decision the player is allowed to make badly. */
+    /* Percentage off contact damage from creatures, applied where armour is. */
+    i16  contactResistPct;
+    /* Extra cells a fired shot punches through before it is spent. */
+    i16  piercePlus;
+    /* Added to a held tool's per-frame energy recharge. */
+    i16  energyBonus;
+    /* Jumps available in midair, on top of the one off the ground. */
+    i16  airJumps;
+    /* Percentage off fall damage; 100 is "falling never hurts". */
+    i16  fallGuardPct;
+
     /* --- ITEMK_MELEE only ---------------------------------------------
        Zero on everything else. `meleeDamage` is the one that is not: it shares
        the `damage` column above, because "health taken off a creature it hits"
@@ -937,7 +978,9 @@ extern ToolInst g_toolInst[MAX_TOOL_INST];
    full. Index 0 is deliberately never handed out so that 0 can mean "none". */
 u16  toolInstNew(ItemId tool = ITEM_NONE);
 void toolInstFree(u16 inst);
-void toolInstTick();
+/* `bonus` is added to every instance's recharge -- the Skirmisher Cell. See
+   the note at the definition for why it is not per-owner. */
+void toolInstTick(int bonus = 0);
 
 
 /* --- equipment slots -------------------------------------------------------
@@ -1099,6 +1142,13 @@ struct Inventory {
     int  shotSpeedPct() const;
     int  damagePct() const;
     int  cooldownPct() const;
+    /* The five charm columns added with the layer-2 and layer-3 charms. Same
+       largest-never-summed rule as everything above them. */
+    int  contactResistPct() const;
+    int  piercePlus()       const;
+    int  energyBonus()      const;
+    int  airJumps()         const;
+    int  fallGuardPct()     const;
 
     /* True only when this exact item is in an equipment slot. Kept out of the
        pack scan deliberately: accessories are choices competing for two

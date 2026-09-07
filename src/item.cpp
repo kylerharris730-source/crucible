@@ -75,14 +75,21 @@ void toolInstReconcile(Inventory& inv) {
         if (!referenced[i] && g_toolInst[i].used) toolInstFree(i);
 }
 
-void toolInstTick() {
+/* `bonus` is the Skirmisher Cell, and it is applied to EVERY instance rather
+   than only to the one in your hand. That is the honest reading of a charge
+   cell on your belt and it is also the only one this loop can express: tool
+   instances are a global pool with no idea whose pack they are in, and a
+   version that tried to find the wearer would be inventing an ownership
+   relation the pool deliberately does not have. In practice the difference is
+   invisible -- a tool you are not holding recharges to full either way. */
+void toolInstTick(int bonus) {
     for (int i = 1; i < MAX_TOOL_INST; ++i) {
         ToolInst& ti = g_toolInst[i];
         if (!ti.used) continue;
         if (ti.cooldown > 0) --ti.cooldown;
         if (ti.energy < ti.energyCapacity) {
             ti.energy = (u16)imin((int)ti.energyCapacity,
-                                  (int)ti.energy + (int)ti.energyRecharge);
+                                  (int)ti.energy + (int)ti.energyRecharge + bonus);
         }
     }
 }
@@ -1580,6 +1587,129 @@ void initItems() {
     ITEMS[ITEM_SPITTER_BRACER].colour       = 0xC8E060;
     ITEMS[ITEM_SPITTER_BRACER].sprite       = SPR_ACC_BRACER;
 
+    /* --- the layer-2 and layer-3 charms ----------------------------------
+       One per creature, and every one of them is the answer to what its
+       creature does to you. That rule is not decoration: it is what makes a
+       roster teach itself, and it is why the Bat drops the charm that outruns
+       a bat. */
+
+    /* Shambler. It is the creature you get HIT by -- 36 cells of it, walking
+       into you -- so the charm it leaves is the one that makes being hit cost
+       less. A percentage rather than more flat armour: the Carapace Charm
+       already owns subtraction, and a second charm doing the same arithmetic
+       with a different number would be the same charm twice. */
+    ITEMS[ITEM_SHAMBLER_BALLAST].name      = "Shambler Ballast";
+    ITEMS[ITEM_SHAMBLER_BALLAST].kind      = ITEMK_ACCESSORY;
+    ITEMS[ITEM_SHAMBLER_BALLAST].equipSlot = EQ_TRINKET_A;
+    ITEMS[ITEM_SHAMBLER_BALLAST].maxStack  = 1;
+    ITEMS[ITEM_SHAMBLER_BALLAST].contactResistPct = 30;
+    ITEMS[ITEM_SHAMBLER_BALLAST].colour    = 0x7A6E5A;
+    ITEMS[ITEM_SHAMBLER_BALLAST].sprite    = SPR_ACC_BALLAST;
+
+    /* Thresher. Its whole identity is the burst -- speed built up and then
+       spent -- so this is momentum made into damage: keep moving and your
+       shots hit harder, stop and it bleeds away. See accessoryMomentumPct. */
+    ITEMS[ITEM_THRESHING_SPURS].name      = "Threshing Spurs";
+    ITEMS[ITEM_THRESHING_SPURS].kind      = ITEMK_ACCESSORY;
+    ITEMS[ITEM_THRESHING_SPURS].equipSlot = EQ_TRINKET_A;
+    ITEMS[ITEM_THRESHING_SPURS].maxStack  = 1;
+    ITEMS[ITEM_THRESHING_SPURS].colour    = 0xC8A24A;
+    ITEMS[ITEM_THRESHING_SPURS].sprite    = SPR_ACC_SPURS;
+
+    /* Culverin. Three quick shots and a long reload, which is the creature's
+       own rhythm handed to the player: hold fire for a moment and the next
+       trigger pull is a burst. See accessoryBurstReady. */
+    ITEMS[ITEM_CULVERIN_LOADER].name      = "Culverin Loader";
+    ITEMS[ITEM_CULVERIN_LOADER].kind      = ITEMK_ACCESSORY;
+    ITEMS[ITEM_CULVERIN_LOADER].equipSlot = EQ_TRINKET_A;
+    ITEMS[ITEM_CULVERIN_LOADER].maxStack  = 1;
+    ITEMS[ITEM_CULVERIN_LOADER].colour    = 0x9AA6B4;
+    ITEMS[ITEM_CULVERIN_LOADER].sprite    = SPR_ACC_LOADER;
+
+    /* Wisp. Its shot is a beam you can see the whole length of, and what
+       makes a beam a beam is that it does not stop at the first thing it
+       meets. Two more cells of pierce, which is enough to punch a bolt through
+       a wall of creatures and not enough to make cover meaningless. */
+    ITEMS[ITEM_WISP_PRISM].name      = "Wisp Prism";
+    ITEMS[ITEM_WISP_PRISM].kind      = ITEMK_ACCESSORY;
+    ITEMS[ITEM_WISP_PRISM].equipSlot = EQ_TRINKET_A;
+    ITEMS[ITEM_WISP_PRISM].maxStack  = 1;
+    ITEMS[ITEM_WISP_PRISM].piercePlus = 2;
+    ITEMS[ITEM_WISP_PRISM].colour    = 0xE0A8FF;
+    ITEMS[ITEM_WISP_PRISM].sprite    = SPR_ACC_PRISM;
+
+    /* Stooper. It dives from the ceiling and is fine, so this is the charm
+       that makes YOU fine: falling never costs health while it is on. The
+       whole effect, not a percentage of it -- a charm that turned a lethal
+       drop into a survivable one would still leave the player checking the
+       depth of every shaft, and the point of it is not having to. */
+    ITEMS[ITEM_STOOPER_TALON].name      = "Stooper Talon";
+    ITEMS[ITEM_STOOPER_TALON].kind      = ITEMK_ACCESSORY;
+    ITEMS[ITEM_STOOPER_TALON].equipSlot = EQ_TRINKET_A;
+    ITEMS[ITEM_STOOPER_TALON].maxStack  = 1;
+    ITEMS[ITEM_STOOPER_TALON].fallGuardPct = 100;
+    ITEMS[ITEM_STOOPER_TALON].colour    = 0xB4BCCA;
+    ITEMS[ITEM_STOOPER_TALON].sprite    = SPR_ACC_TALON;
+
+    /* Skirmisher. It fires a volley, empties, and backs off to reload -- so
+       what it drops is the thing that shortens the backing-off. Two more
+       charge a frame is double the Multitool Mk II's own recharge, which is
+       felt on a weapon that runs dry and invisible on one that never does. */
+    ITEMS[ITEM_SKIRMISHER_CELL].name      = "Skirmisher Cell";
+    ITEMS[ITEM_SKIRMISHER_CELL].kind      = ITEMK_ACCESSORY;
+    ITEMS[ITEM_SKIRMISHER_CELL].equipSlot = EQ_TRINKET_A;
+    ITEMS[ITEM_SKIRMISHER_CELL].maxStack  = 1;
+    ITEMS[ITEM_SKIRMISHER_CELL].energyBonus = 2;
+    ITEMS[ITEM_SKIRMISHER_CELL].colour    = 0x9CE0FF;
+    ITEMS[ITEM_SKIRMISHER_CELL].sprite    = SPR_ACC_CELL;
+
+    /* Ashhound. It routes, it never stops, and it does not tire -- so this
+       is the charm that lets the player do the same: speed climbs the longer
+       you run in one direction and resets when you stop. See
+       accessorySprintPct. */
+    ITEMS[ITEM_ASHHOUND_COLLAR].name      = "Ashhound Collar";
+    ITEMS[ITEM_ASHHOUND_COLLAR].kind      = ITEMK_ACCESSORY;
+    ITEMS[ITEM_ASHHOUND_COLLAR].equipSlot = EQ_TRINKET_A;
+    ITEMS[ITEM_ASHHOUND_COLLAR].maxStack  = 1;
+    ITEMS[ITEM_ASHHOUND_COLLAR].colour    = 0xC8703A;
+    ITEMS[ITEM_ASHHOUND_COLLAR].sprite    = SPR_ACC_COLLAR;
+
+    /* Emberwing. The flier that actually pathfinds, and the only creature in
+       the game whose answer to terrain is to go over it. One extra jump in the
+       air, which is the smallest honest version of that: not flight, which the
+       jetpack owns, but the difference between a gap you can cross and one you
+       cannot. */
+    ITEMS[ITEM_EMBERWING_FEATHER].name      = "Emberwing Feather";
+    ITEMS[ITEM_EMBERWING_FEATHER].kind      = ITEMK_ACCESSORY;
+    ITEMS[ITEM_EMBERWING_FEATHER].equipSlot = EQ_TRINKET_A;
+    ITEMS[ITEM_EMBERWING_FEATHER].maxStack  = 1;
+    ITEMS[ITEM_EMBERWING_FEATHER].airJumps = 1;
+    ITEMS[ITEM_EMBERWING_FEATHER].colour    = 0xFFB86A;
+    ITEMS[ITEM_EMBERWING_FEATHER].sprite    = SPR_ACC_FEATHER;
+
+    /* Slagmaw. Its globs leave fire where they land, and so do yours while
+       this is on -- but only when the tool has no payload of its own loaded,
+       so it is a free effect on a bare weapon rather than something that
+       quietly overrides ammunition you paid for. */
+    ITEMS[ITEM_SLAGMAW_GULLET].name      = "Slagmaw Gullet";
+    ITEMS[ITEM_SLAGMAW_GULLET].kind      = ITEMK_ACCESSORY;
+    ITEMS[ITEM_SLAGMAW_GULLET].equipSlot = EQ_TRINKET_A;
+    ITEMS[ITEM_SLAGMAW_GULLET].maxStack  = 1;
+    ITEMS[ITEM_SLAGMAW_GULLET].colour    = 0xE0561C;
+    ITEMS[ITEM_SLAGMAW_GULLET].sprite    = SPR_ACC_GULLET;
+
+    /* Cinderling. It sets the floor alight behind it, which is the most
+       purely annoying thing in layer 3 and therefore the most satisfying to be
+       handed. You leave fire behind you while you run. It burns you too if you
+       double back into it: the charm is a hazard you are carrying, which is
+       what makes it a decision rather than a free upgrade. */
+    ITEMS[ITEM_CINDERLING_ASH].name      = "Cinderling Ash";
+    ITEMS[ITEM_CINDERLING_ASH].kind      = ITEMK_ACCESSORY;
+    ITEMS[ITEM_CINDERLING_ASH].equipSlot = EQ_TRINKET_A;
+    ITEMS[ITEM_CINDERLING_ASH].maxStack  = 1;
+    ITEMS[ITEM_CINDERLING_ASH].colour    = 0xFF8A3A;
+    ITEMS[ITEM_CINDERLING_ASH].sprite    = SPR_ACC_ASH;
+
     /* Pedestal loot. Both are flat combat multipliers, which is the reward that
        should sit lit in a chamber you chose to walk into rather than falling
        out of whatever wandered past -- a charm you can go and LOOK for wants to
@@ -1974,6 +2104,26 @@ void initItems() {
        thing it is waiting for reads as an ending you have not reached. */
     ITEMS[ITEM_ASCENT_CORE].description =
         "The last core, taken from the Effigy. The rocket will be built around it.";
+    ITEMS[ITEM_SHAMBLER_BALLAST].description =
+        "Creatures hurt you 30% less when they touch you.";
+    ITEMS[ITEM_THRESHING_SPURS].description =
+        "Your shots hit harder the longer you keep moving.";
+    ITEMS[ITEM_CULVERIN_LOADER].description =
+        "Hold fire for two seconds and your next shot is a burst of three.";
+    ITEMS[ITEM_WISP_PRISM].description =
+        "Your shots punch through two more cells before they are spent.";
+    ITEMS[ITEM_STOOPER_TALON].description =
+        "Falling never hurts you.";
+    ITEMS[ITEM_SKIRMISHER_CELL].description =
+        "A held tool recharges its energy twice as fast.";
+    ITEMS[ITEM_ASHHOUND_COLLAR].description =
+        "You get faster the longer you run without stopping.";
+    ITEMS[ITEM_EMBERWING_FEATHER].description =
+        "One extra jump while you are in the air.";
+    ITEMS[ITEM_SLAGMAW_GULLET].description =
+        "An unloaded tool's shots leave fire where they land.";
+    ITEMS[ITEM_CINDERLING_ASH].description =
+        "You leave fire behind you while you run. It burns you too.";
     ITEMS[ITEM_DRONE_BEACON].description =
         "Unlocks one additional combat-drone bay. Duplicate Beacons do not stack.";
     ITEMS[ITEM_OVERCLOCK_CHIP].description = "Install in an attack drone to reduce the delay between shots.";
@@ -2215,6 +2365,11 @@ int Inventory::pickupRadius() const { return bestWorn(*this, &ItemDef::pickupRad
 int Inventory::shotSpeedPct() const { return bestWorn(*this, &ItemDef::shotSpeedPct); }
 int Inventory::damagePct()    const { return bestWorn(*this, &ItemDef::damagePct); }
 int Inventory::cooldownPct()  const { return bestWorn(*this, &ItemDef::cooldownPct); }
+int Inventory::contactResistPct() const { return bestWorn(*this, &ItemDef::contactResistPct); }
+int Inventory::piercePlus()       const { return bestWorn(*this, &ItemDef::piercePlus); }
+int Inventory::energyBonus()      const { return bestWorn(*this, &ItemDef::energyBonus); }
+int Inventory::airJumps()         const { return bestWorn(*this, &ItemDef::airJumps); }
+int Inventory::fallGuardPct()     const { return bestWorn(*this, &ItemDef::fallGuardPct); }
 
 int Inventory::armour() const {
     int total = 0;

@@ -413,7 +413,7 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
     { "Shambler", SHAMBLER_SPR_W, SHAMBLER_SPR_H, 96, 32, 38,
       0.32f, 0.045f, false, 2, false,
       0, 0, 0.0f, 0.0f, false,
-      ITEM_ICHOR, 2, 4, ITEM_NONE, 0, SPR_NONE, 0x6F8062,
+      ITEM_ICHOR, 2, 4, ITEM_SHAMBLER_BALLAST, 50, SPR_NONE, 0x6F8062,
       ITEM_EGG_SHAMBLER, false, false, 0 },
     /* --- the Thresher, layer 2 --------------------------------------------
        The Shambler is a body that hits you. This is four limbs that do, and
@@ -448,7 +448,7 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
     { "Thresher", THRESHER_SPR_W, THRESHER_SPR_H, 52, 22, 30,
       1.45f, 0.16f, false, 2, false,
       0, 0, 0.0f, 0.0f, false,
-      ITEM_ICHOR, 1, 3, ITEM_NONE, 0, SPR_NONE, 0x9A5F94,
+      ITEM_ICHOR, 1, 3, ITEM_THRESHING_SPURS, 50, SPR_NONE, 0x9A5F94,
       ITEM_EGG_THRESHER, false, false, 0 },
     /* --- the Culverin, layer 2 ---------------------------------------------
        Layer 2 answer to the Spitter, and deliberately not a stronger one. The
@@ -464,7 +464,7 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
     { "Culverin", 12, 11, 70, 18, 34,
       0.16f, 0.03f, false, 2, false,
       12, 16, 4.4f, 108.0f, false,
-      ITEM_ICHOR, 1, 3, ITEM_NONE, 0, SPR_CULVERIN, 0x86A86A,
+      ITEM_ICHOR, 1, 3, ITEM_CULVERIN_LOADER, 50, SPR_CULVERIN, 0x86A86A,
       ITEM_EGG_CULVERIN, false, false, 0 },
     /* --- the Wisp, layer 2 --------------------------------------------------
        The relentless one. Slow enough to outrun on open ground, and completely
@@ -477,7 +477,7 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
     { "Wisp", 10, 10, 26, 16, 44,
       0.26f, 0.012f, true, 2, false,
       WISP_BEAM_EVERY, 14, 6.2f, 0.0f, false,
-      ITEM_ICHOR, 1, 2, ITEM_NONE, 0, SPR_WISP, 0xC98BB8,
+      ITEM_ICHOR, 1, 2, ITEM_WISP_PRISM, 50, SPR_WISP, 0xC98BB8,
       ITEM_EGG_WISP, false, false, 0 },
     /* --- the Stooper, layer 2 -----------------------------------------------
        Climbs above you, holds, and then falls. The Bat is fast and steers
@@ -491,7 +491,7 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
     { "Stooper", 12, 10, 34, 28, 40,
       0.95f, 0.05f, true, 2, false,
       0, 0, 0.0f, 0.0f, false,
-      ITEM_ICHOR, 1, 2, ITEM_NONE, 0, SPR_STOOPER, 0x5A7048,
+      ITEM_ICHOR, 1, 2, ITEM_STOOPER_TALON, 50, SPR_STOOPER, 0x5A7048,
       ITEM_EGG_STOOPER, false, false, 0 },
 
     /* --- bees -----------------------------------------------------------
@@ -535,7 +535,7 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
     { "Skirmisher", 11, 13, 44, 8, 32,
       0.58f, 0.075f, false, 2, false,
       74, 12, 4.6f, SKIRM_KEEP, false,
-      ITEM_ICHOR, 1, 3, ITEM_NONE, 0, SPR_SKIRMISHER, 0xB8A05A,
+      ITEM_ICHOR, 1, 3, ITEM_SKIRMISHER_CELL, 50, SPR_SKIRMISHER, 0xB8A05A,
       ITEM_EGG_SKIRMISHER, false, false, 0 },
 
     /* --- the Widow, layer 2's boss -----------------------------------------
@@ -585,7 +585,7 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
     { "Ashhound", 14, 10, 54, 26, 28,
       1.15f, 0.14f, false, 4, false,
       0, 0, 0.0f, 0.0f, false,
-      ITEM_CINDER_HEART, 1, 2, ITEM_NONE, 0, SPR_ASHHOUND, 0x8A3A22,
+      ITEM_CINDER_HEART, 1, 2, ITEM_ASHHOUND_COLLAR, 50, SPR_ASHHOUND, 0x8A3A22,
       ITEM_EGG_ASHHOUND, false, false, 210 },
 
     /* --- the Emberwing, layer 3 --------------------------------------------
@@ -605,7 +605,7 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
     { "Emberwing", 11, 9, 30, 22, 26,
       1.50f, 0.085f, true, 4, false,
       110, 14, 4.2f, 0.0f, false,
-      ITEM_CINDER_HEART, 1, 1, ITEM_NONE, 0, SPR_EMBERWING, 0xE8622A,
+      ITEM_CINDER_HEART, 1, 1, ITEM_EMBERWING_FEATHER, 50, SPR_EMBERWING, 0xE8622A,
       ITEM_EGG_EMBERWING, false, false, 210 },
 
     /* --- the Slagmaw, layer 3 ----------------------------------------------
@@ -623,7 +623,7 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
     { "Slagmaw", 13, 12, 96, 24, 34,
       0.18f, 0.03f, false, 4, false,
       96, 18, 4.6f, 96.0f, false,
-      ITEM_CINDER_HEART, 1, 2, ITEM_NONE, 0, SPR_SLAGMAW, 0xC8541C,
+      ITEM_CINDER_HEART, 1, 2, ITEM_SLAGMAW_GULLET, 50, SPR_SLAGMAW, 0xC8541C,
       ITEM_EGG_SLAGMAW, false, false, 210 },
 
     /* --- the Cinderling, layer 3 -------------------------------------------
@@ -642,7 +642,7 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
     { "Cinderling", 8, 7, 28, 18, 30,
       1.30f, 0.16f, false, 4, false,
       0, 0, 0.0f, 0.0f, false,
-      ITEM_CINDER_HEART, 1, 1, ITEM_NONE, 0, SPR_CINDERLING, 0xFF8A3A,
+      ITEM_CINDER_HEART, 1, 1, ITEM_CINDERLING_ASH, 50, SPR_CINDERLING, 0xFF8A3A,
       ITEM_EGG_CINDERLING, false, false, 230 },
 
     /* --- the Censer, layer 3's boss ----------------------------------------
@@ -3898,7 +3898,14 @@ static void entTickMode(World& w, Player& fallbackPlayer, Inventory& fallbackInv
         if (!d.tame && e.touchTimer == 0 && p.alive
             && e.right()  >= p.left() && e.left() <= p.right()
             && e.bottom() >= p.top()  && e.top()  <= p.bottom()) {
-            const int dmg = imax(1, d.touchDamage - inv.armour());
+            /* Armour first, then the Shambler Ballast's percentage off what
+               is left. Subtraction before proportion, because the other order
+               would make a percentage charm worth more the WORSE your armour
+               is -- and a trinket that rewards you for taking the plate off is
+               a trinket nobody can reason about. */
+            int dmg = imax(1, d.touchDamage - inv.armour());
+            const int soak = inv.contactResistPct();
+            if (soak > 0) dmg = imax(1, dmg - dmg * soak / 100);
             p.damage((float)dmg);
             p.hurtFlash = 10;
             e.touchTimer = d.touchCooldown;
