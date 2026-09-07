@@ -3916,6 +3916,27 @@ static void entTickMode(World& w, Player& fallbackPlayer, Inventory& fallbackInv
     pickupTickMode(w, fallbackPlayer, fallbackInv, multiplayer);
 }
 
+/* --- the roster answering the HUD ------------------------------------------
+   See the note in entity.h. One switch, beside the creatures it is about,
+   rather than the same knowledge written again in the drawing code. */
+void entBossParts(const Entity& boss, int* alive, int* total) {
+    int live = 0, all = 0;
+    const int self = (int)(&boss - g_entities);
+    if (boss.type == ENT_CENSER) {
+        all = CENSER_LIMBS;
+        live = censerLimbsAlive(self);
+    } else if (boss.type == ENT_EFFIGY) {
+        all = EFFIGY_ARMS + 1;
+        live = effigyPartsAlive(self);
+    }
+    if (alive) *alive = live;
+    if (total) *total = all;
+}
+
+bool entBossArmoured(const Entity& boss) {
+    return censerArmoured(boss) || effigyArmoured(boss);
+}
+
 void entTick(World& w, Player& p, Inventory& inv) {
     entTickMode(w, p, inv, false);
 }

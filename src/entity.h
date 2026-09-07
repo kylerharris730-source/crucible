@@ -220,6 +220,22 @@ static const u32 BOSS_FINAL  = 1u << 3;
    boss fight has -- so hive_bosses asserts the two lists agree. */
 u32 bossBitOf(int entityType);
 
+/* --- what the health bar has to be able to ask ------------------------------
+   How many of a boss's parts are still alive, and how many it started with.
+   Both zero for a boss that has none.
+
+   It lives here rather than in the UI because the answer is different for every
+   multi-part boss -- the Censer counts limbs, the Effigy counts two arms and a
+   crown -- and a HUD that reproduced those rules would be a second copy of them
+   that could disagree with the fight. The bar asks; the roster answers. */
+struct Entity;
+void entBossParts(const Entity& boss, int* alive, int* total);
+
+/* Whether this creature is currently shrugging off most of what it takes,
+   which is a thing the player has to be told: a health bar that barely moves
+   with no explanation reads as a bug rather than as an instruction. */
+bool entBossArmoured(const Entity& boss);
+
 /* 96 rather than a round 128, and the number is a budget rather than a limit
    anyone should be hitting: the spawner caps live creatures far below this (see
    ENT_MAX_ALIVE), so the pool only needs headroom for a cap's worth plus

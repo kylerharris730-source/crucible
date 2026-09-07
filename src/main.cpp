@@ -5787,6 +5787,192 @@ static void layoutHotbar() {
                 x0 + i * HOTBAR_SLOT + HOTBAR_SLOT - 3, y0 + HOTBAR_SLOT - 3);
 }
 
+/* --- the boss bar ------------------------------------------------------------
+   Asked for: "lets get healthbars with names that pop up when fighting bosses."
+
+   Top centre of the viewport, one strip per boss you are actually fighting.
+   Three things it says that the fight cannot say for itself:
+
+     WHICH creature this is. A boss is often bigger than the screen -- the
+     Effigy is 88 cells tall -- so "what am I looking at" is a real question,
+     and the name is the answer the world has no room to print.
+
+     How much is left. A 6000-point health bar is otherwise invisible: you
+     cannot tell a fight you are winning slowly from one you are not winning.
+
+     And whether it is ARMOURED. This is the important one. Both multi-part
+     bosses take a fraction of what you deal them while their parts live, so
+     the honest reading of an unlabelled bar that barely moves is "this is
+     broken" -- which is exactly the wrong lesson. The pips beside the name are
+     the parts, and the word is what they are doing.
+
+   The GHOST is the pale strip left behind when the bar drops: it catches up
+   over about a second, so a hit reads as a visible event rather than as the
+   number being slightly different next time you look. Terraria and every
+   fighting game do this, and for the reason both do -- damage the player
+   cannot see is damage they cannot learn from.
+
+   Per-slot state keyed by ENTITY INDEX, not by boss type: two of the same boss
+   can be summoned at once, and a ghost shared between them would jump between
+   two health bars. */
+struct BossBarSlot {
+    int   entity;      /* index into g_entities, -1 for unused */
+    /* And what was standing there when the slot was claimed. The pool reuses
+       slots, so an index on its own can silently become a different creature
+       between two frames -- and the bar would carry on with the previous
+       boss's ghost and pop-up as though nothing had happened. */
+    u8    type;
+    float ghost;       /* the trailing fraction */
+    int   appear;      /* frames since it came up, for the grow-in */
+};
+/* -1 rather than zero-initialised: a slot holding entity 0 by default would
+   claim whatever happens to be in the first pool entry. */
+static BossBarSlot g_bossBar[3] = { { -1, 0, 1.0f, 0 },
+                                    { -1, 0, 1.0f, 0 },
+                                    { -1, 0, 1.0f, 0 } };
+/* How far from the player a boss stays on the HUD. Generous: a boss you have
+   walked away from should drop off the screen, but the Effigy's own charge
+   covers a lot of ground and a bar that flickered out mid-fight would be worse
+   than no bar. */
+static const float BOSS_BAR_RANGE = 700.0f;
+static const int   BOSS_BAR_GROW  = 14;    /* frames of the pop-up */
+
+/* Which bosses the bar is showing, split out from the drawing so it can be
+   checked without a window. Returns how many slots are live.
+
+   Retires slots whose boss is gone, then claims slots for bosses in range. Two
+   passes rather than one rebuild, because the slot IS the animation state:
+   rebuilding the list every frame would restart the pop-up and the ghost on
+   whichever boss happened to be found first. */
+static int bossBarsUpdate() {
+    for (int k = 0; k < 3; ++k) {
+        BossBarSlot& b = g_bossBar[k];
+        if (b.entity < 0) continue;
+        const Entity& e = g_entities[b.entity];
+        const float dx = e.centreX() - g_player.centreX();
+        const float dy = e.centreY() - g_player.centreY();
+        if (!e.alive() || e.type != b.type || !ENT_DEFS[e.type].isBoss ||
+            dx * dx + dy * dy > BOSS_BAR_RANGE * BOSS_BAR_RANGE)
+            b.entity = -1;
+    }
+    for (int i = 0; i < MAX_ENTITIES; ++i) {
+        const Entity& e = g_entities[i];
+        if (!e.alive() || !ENT_DEFS[e.type].isBoss) continue;
+        const float dx = e.centreX() - g_player.centreX();
+        const float dy = e.centreY() - g_player.centreY();
+        if (dx * dx + dy * dy > BOSS_BAR_RANGE * BOSS_BAR_RANGE) continue;
+        bool held = false;
+        for (int k = 0; k < 3; ++k) if (g_bossBar[k].entity == i) held = true;
+        if (held) continue;
+        for (int k = 0; k < 3; ++k)
+            if (g_bossBar[k].entity < 0) {
+                g_bossBar[k].entity = i;
+                g_bossBar[k].type   = e.type;
+                g_bossBar[k].ghost  = 1.0f;
+                g_bossBar[k].appear = 0;
+                break;
+            }
+    }
+    int live = 0;
+    for (int k = 0; k < 3; ++k) if (g_bossBar[k].entity >= 0) ++live;
+    return live;
+}
+
+static void drawBossBars(HDC hdc) {
+    if (bossBarsUpdate() == 0) return;
+
+    HGDIOBJ oldFont = SelectObject(hdc, g_font);
+    SetBkMode(hdc, TRANSPARENT);
+
+    const int FULL_W = 320, BAR_H = 13;
+    int row = 0;
+    for (int k = 0; k < 3; ++k) {
+        BossBarSlot& b = g_bossBar[k];
+        if (b.entity < 0) continue;
+        const Entity& e = g_entities[b.entity];
+        const EntityDef& d = ENT_DEFS[e.type];
+
+        if (b.appear < BOSS_BAR_GROW) ++b.appear;
+        /* Grows from the middle outward. A bar that slid in from an edge would
+           be a second thing moving on a screen that already has a boss on it. */
+        const float grow = (float)b.appear / (float)BOSS_BAR_GROW;
+        const int w = (int)((float)FULL_W * grow);
+        if (w < 8) continue;
+
+        const float frac = d.hp > 0 ? (float)e.hp / (float)d.hp : 0.0f;
+        const float clamped = frac < 0.0f ? 0.0f : (frac > 1.0f ? 1.0f : frac);
+        /* The ghost only ever falls, and slowly. Rising instantly on a heal
+           would make the trail meaningless in the one direction it matters. */
+        if (b.ghost > clamped) {
+            b.ghost -= 0.010f;
+            if (b.ghost < clamped) b.ghost = clamped;
+        } else {
+            b.ghost = clamped;
+        }
+
+        const int cx = PANEL_W + VIEW_W / 2;
+        const int y0 = 18 + row * 38;
+        RECT bar = { cx - w / 2, y0, cx + w / 2, y0 + BAR_H };
+        FillRect(hdc, &bar, g_panelBg);
+
+        RECT ghost = bar;
+        ghost.right = bar.left + (int)((float)(bar.right - bar.left) * b.ghost);
+        if (ghost.right > ghost.left) {
+            HBRUSH gb = CreateSolidBrush(RGB(150, 96, 96));
+            FillRect(hdc, &ghost, gb);
+            DeleteObject(gb);
+        }
+        RECT fill = bar;
+        fill.right = bar.left + (int)((float)(bar.right - bar.left) * clamped);
+        if (fill.right > fill.left) {
+            /* Its own colour, so two bosses on screen are two colours rather
+               than two identical strips -- and the colour is the creature's
+               own colour from ENT_DEFS -- the same field the egg is tinted
+               with, which is the rule that note already states: one table
+               describing a creature, not two that can disagree about what
+               colour it is. */
+            HBRUSH fb = CreateSolidBrush(RGB((d.eggColour >> 16) & 0xFF,
+                                             (d.eggColour >> 8) & 0xFF,
+                                              d.eggColour & 0xFF));
+            FillRect(hdc, &fill, fb);
+            DeleteObject(fb);
+        }
+        FrameRect(hdc, &bar, g_accentBrush);
+
+        /* The name, centred over the bar, and only once it has finished
+           growing -- text that scales does not scale, it jitters. */
+        if (b.appear >= BOSS_BAR_GROW) {
+            RECT label = { cx - FULL_W / 2, y0 - 16, cx + FULL_W / 2, y0 };
+            SetTextColor(hdc, RGB(238, 226, 200));
+            DrawTextA(hdc, d.name, -1, &label, DT_CENTER | DT_TOP | DT_SINGLELINE);
+
+            int alive = 0, total = 0;
+            entBossParts(e, &alive, &total);
+            if (total > 0) {
+                /* One pip per part, filled while it lives. Drawn to the RIGHT
+                   of the bar rather than inside it: the bar is one quantity and
+                   the parts are another, and stacking them would invite reading
+                   the pips as segments of the health. */
+                for (int pip = 0; pip < total; ++pip) {
+                    RECT p = { bar.right + 6 + pip * 9, y0 + 3,
+                               bar.right + 12 + pip * 9, y0 + 9 };
+                    if (pip < alive) FillRect(hdc, &p, g_accentBrush);
+                    else             FrameRect(hdc, &p, g_borderBrush);
+                }
+                if (entBossArmoured(e)) {
+                    RECT ar = { cx - FULL_W / 2, y0 + BAR_H + 1,
+                                cx + FULL_W / 2, y0 + BAR_H + 15 };
+                    SetTextColor(hdc, RGB(226, 190, 90));
+                    DrawTextA(hdc, "ARMOURED", -1, &ar,
+                              DT_CENTER | DT_TOP | DT_SINGLELINE);
+                }
+            }
+        }
+        ++row;
+    }
+    SelectObject(hdc, oldFont);
+}
+
 static void drawHotbar(HDC hdc) {
     layoutHotbar();
     HGDIOBJ oldFont = SelectObject(hdc, g_font);
@@ -8159,6 +8345,10 @@ static void clientRender(HWND hwnd) {
     layoutPanel();
     drawPanel(g_backDC);
     if (g_survival && g_playerOn) drawHotbar(g_backDC);
+    /* After the hotbar so it is drawn over nothing, and inside the same
+       survival gate: a boss bar in the sandbox would be a HUD for a fight the
+       character is not in. */
+    if (g_survival && g_playerOn) drawBossBars(g_backDC);
     if (g_restBed >= 0) {
         RECT rest = { PANEL_W + 16, VIEW_H - 34, WIN_W - 16, VIEW_H - 14 };
         SetBkMode(g_backDC, TRANSPARENT);
@@ -8478,6 +8668,42 @@ static int runLocalCommandSmoke() {
     if (equipLaneOf(ITEM_IRON_HELMET) != equipLaneOfSlot(EQ_HEAD))     return 256;
     if (equipLaneOf(ITEM_SWIFT_CHARM) != equipLaneOfSlot(EQ_TRINKET_A)) return 257;
     if (equipLaneOf(ITEM_ORBIT_DRONE) != equipLaneOfSlot(EQ_DRONE_A))  return 258;
+
+    /* --- 260: the boss bar comes up and goes away --------------------------
+       Asked for: "lets get healthbars with names that pop up when fighting
+       bosses." What the drawing does cannot be checked without a window; what
+       CAN be checked is the bookkeeping behind it, which is where the bugs
+       would be -- a bar that never appears, one that never leaves, or one that
+       silently follows a reused pool slot into a different creature. */
+    entReset();
+    g_player.reset(400.0f, 400.0f);
+    g_player.alive = true;
+    if (bossBarsUpdate() != 0) return 260;              /* nothing to show */
+    {
+        const int boss = entSpawn(g_world, ENT_WIDOW,
+                                  g_player.centreX() + 60.0f, g_player.centreY());
+        if (boss < 0) return 261;
+        if (bossBarsUpdate() != 1) return 262;          /* it comes up */
+        /* An ordinary creature must NOT get one. */
+        if (entSpawn(g_world, ENT_HUSK, g_player.centreX() + 40.0f,
+                     g_player.centreY()) < 0) return 263;
+        if (bossBarsUpdate() != 1) return 264;
+        /* Walk away and it drops off. */
+        const float wasX = g_player.x;
+        g_player.x += BOSS_BAR_RANGE + 80.0f;
+        if (bossBarsUpdate() != 0) return 265;
+        g_player.x = wasX;
+        if (bossBarsUpdate() != 1) return 266;          /* and comes back */
+        /* And dying takes it away, which is the one that matters: a boss bar
+           for a dead boss is the last thing a player sees of a fight. */
+        /* Through the world's own damage path, so this is the death a player
+           would cause rather than a field poked to zero. */
+        entDamageDisc((int)g_entities[boss].centreX(),
+                      (int)g_entities[boss].centreY(), 8, 999999);
+        entTick(g_world, g_player, g_inv);
+        if (bossBarsUpdate() != 0) return 267;
+    }
+    entReset();
 
     puts("local command loopback smoke passed");
     return 0;
