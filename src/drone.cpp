@@ -25,24 +25,46 @@ static const float LEAD_MAX_FRAMES = 40.0f;
    It sits below the aimed/specialized chassis because it asks nothing of the
    player and its Twin and Overclock chips can multiply that output.
 
-   LANCE  -- 4 x 3 in a burst of three, then a long rest: 7.5/s, but only in the
-             direction the character faces. It is the highest of the three and
-             it is the only one you have to aim, by aiming yourself. Pierce 3,
+   LANCE  -- 4 x 3 in a burst of three, then a long rest: 7.5/s, in the half of
+             the world the character is facing. It is the highest of the three
+             and it is the only one that cares where you are pointed. Pierce 3,
              so a corridor of mites is one burst.
+
+             It used to fire a flat line along the facing from wherever the
+             drone happened to be hovering, which is above your head -- so the
+             burst sailed over everything. Measured against a pinned target at
+             four ranges: 0.0 damage a second at every one of them. Reported
+             from play as "lance drones basically never hit", which was
+             generous. It picks a target inside the facing hemisphere now and
+             aims at it.
    MORTAR -- 16 in one shell every 96 frames: 10/s on paper and far less in
              practice, because it is lobbed and lobbed shots miss things that
              move. What it buys is a blast radius and an ARC, so it is the only
              companion that can hit something standing behind cover.
-   ORBIT  -- 3 every 18 frames to everything the blade passes through: 10/s
-             against a crowd and nothing at all against something that stays
-             away. It is the answer to being swarmed and the wrong answer to
-             everything else, which is what makes choosing it a decision. */
+   ORBIT  -- 4 every 10 frames to everything the blade passes through: real
+             damage against a crowd and nothing at all against something that
+             stays away. It is the answer to being swarmed and the wrong answer
+             to everything else, which is what makes choosing it a decision.
+
+             The "10/s against a crowd" this note used to claim was arithmetic
+             rather than measurement. The cooldown is ONE counter for the whole
+             blade, so a sweep is worth one hit however many things it passes
+             through -- and at 0.075 radians a frame a full turn took eighty
+             frames, so anything standing beside you was struck about once a
+             revolution. Measured: 2.2 damage a second, the same as the drone
+             that asks nothing of you, and only inside touching distance.
+             Reported from play as "orbit drones kinda suck". */
 static const int   LANCE_DAMAGE      = 4;
 static const int   LANCE_PIERCE      = 3;
 static const float LANCE_SPEED       = 7.2f;
 static const int   LANCE_BURST       = 3;
 static const int   LANCE_GAP         = 7;    /* frames between shots in a burst */
 static const int   LANCE_REST        = 62;   /* frames between bursts */
+/* How far it will reach for a target. Comfortably past the attack drone's
+   acquire radius, because a lance shot travels at 7.2 and a line that arrives
+   is worth more the further away it starts -- but not so far that the chassis
+   starts answering for things the player has not met yet. */
+static const float LANCE_RANGE       = 260.0f;
 
 static const int   MORTAR_DAMAGE     = 16;
 static const int   MORTAR_BLAST      = 7;
@@ -55,11 +77,46 @@ static const int   MORTAR_COOLDOWN   = 96;
    0.075 it goes round in about a second and a half -- fast enough to read as a
    weapon, slow enough that you can see which side it is on and step the other
    way. */
-static const float ORBIT_RADIUS      = 26.0f;
-static const float ORBIT_SPEED       = 0.075f;
-static const int   ORBIT_DAMAGE      = 3;
-static const int   ORBIT_HIT_RADIUS  = 7;
-static const int   ORBIT_COOLDOWN    = 18;
+/* 22 rather than 26: the blade has to sweep the band where things actually
+   touch you, and 26 put it a body's width outside that -- a creature pressed
+   against the player was on the INSIDE of the circle. */
+static const float ORBIT_RADIUS      = 22.0f;
+/* 0.16, a touch over twice what it was. A full turn is about forty frames
+   rather than eighty, which is the difference between a weapon and a slowly
+   circling decoration. Still slow enough to see which side it is on and step
+   the other way, which was the point of the original number. */
+static const float ORBIT_SPEED       = 0.16f;
+static const int   ORBIT_DAMAGE      = 4;
+static const int   ORBIT_HIT_RADIUS  = 9;
+static const int   ORBIT_COOLDOWN    = 10;
+
+/* --- the shield ------------------------------------------------------------
+   It intercepts hostile shots inside this radius OF ITSELF, which is why where
+   it sits is the entire weapon. It used to sit at the ordinary drone home --
+   above the player's head -- and shots aimed at a body pass twenty cells under
+   that. Measured against four shooters at the compass points: 115 damage
+   through with the drone equipped, and 115 without. It was not a weak shield,
+   it was not a shield. Reported from play as "shield drones dont really work".
+
+   STANDOFF is how far out on the incoming line it tries to meet a shot. Far
+   enough that the interception happens clear of the body and near enough that
+   it can cross to the other side in the time a shot takes to arrive: at 4 cells
+   a frame a shot from 90 cells away is twenty frames out, and the drone's catch
+   -up speed covers the diameter in about that. */
+static const float SHIELD_RADIUS     = 15.0f;
+static const float SHIELD_STANDOFF   = 17.0f;
+static const float SHIELD_SPEED      = 7.5f;
+/* One shot per RECHARGE frames, and this number is what stops the fixed shield
+   from being total immunity to ranged fire. Interposing worked: measured
+   against four shooters, 115 damage through became 0, and at one shot every ten
+   frames it was still 0 -- one drone bay was cancelling every shooter in the
+   game, which is not a companion, it is a difficulty setting.
+
+   At 20 frames it stops three shots a second. That comfortably beats one
+   Spitter and visibly fails against a room of them, which is the shape this
+   was always meant to have: an answer to being shot at, not an answer to
+   ranged combat. */
+static const int   SHIELD_RECHARGE   = 20;
 
 static const int ATTACK_DRONE_DAMAGE = 1;
 static const int ATTACK_DRONE_COOLDOWN = 28;
@@ -156,14 +213,56 @@ static void pickupCollect(Drone& d, Inventory& inv) {
     }
 }
 
-static void shieldIntercept(const Drone& d) {
-    static const float RADIUS = 13.0f;
+/* Takes ONE shot and then has to recharge -- see SHIELD_RECHARGE. The nearest
+   one rather than the first in the array, because the array is spawn order and
+   "whichever happened to be created first" is not a defensible choice about
+   which of two bullets to eat. */
+static void shieldIntercept(Drone& d) {
+    if (d.shotCool > 0) { --d.shotCool; return; }
+    int best = -1;
+    float bestDist2 = SHIELD_RADIUS * SHIELD_RADIUS;
     for (int i = 0; i < MAX_PROJ; ++i) {
-        Projectile& shot = g_proj[i];
+        const Projectile& shot = g_proj[i];
         if (!shot.alive || !shot.hostile) continue;
         const float dx = shot.x - d.x, dy = shot.y - d.y;
-        if (dx * dx + dy * dy <= RADIUS * RADIUS) shot.alive = false;
+        const float dist2 = dx * dx + dy * dy;
+        if (dist2 <= bestDist2) { bestDist2 = dist2; best = i; }
     }
+    if (best < 0) return;
+    g_proj[best].alive = false;
+    d.shotCool = SHIELD_RECHARGE;
+}
+
+/* --- where to stand to catch something -------------------------------------
+   The most threatening hostile shot in flight, and "threatening" is measured as
+   TIME TO ARRIVAL rather than distance: a slow shell twenty cells away is less
+   urgent than a bolt sixty cells out at four cells a frame, and a shield that
+   sorted by distance would leave to meet the near one and let the fast one
+   through behind it.
+
+   Shots travelling AWAY are ignored outright. A projectile that has already
+   passed the player is not a threat, and chasing one is how a shield ends up
+   permanently out of position -- which is the failure mode of every naive
+   "fly at the nearest bullet" implementation. */
+static const Projectile* shieldThreat(const Player& p) {
+    const float px = p.centreX(), py = p.centreY();
+    const Projectile* best = 0;
+    float bestTime = 1e9f;
+    for (int i = 0; i < MAX_PROJ; ++i) {
+        const Projectile& shot = g_proj[i];
+        if (!shot.alive || !shot.hostile) continue;
+        const float dx = px - shot.x, dy = py - shot.y;
+        const float speed2 = shot.vx * shot.vx + shot.vy * shot.vy;
+        if (speed2 < 0.0001f) continue;
+        const float closing = dx * shot.vx + dy * shot.vy;
+        if (closing <= 0.0f) continue;              /* going the other way */
+        const float dist2 = dx * dx + dy * dy;
+        if (dist2 > 200.0f * 200.0f) continue;      /* not our problem yet */
+        /* Time along its own heading to the point of closest approach. */
+        const float t = closing / speed2;
+        if (t < bestTime) { bestTime = t; best = &shot; }
+    }
+    return best;
 }
 
 static bool shotOpen(const World& w, int x, int y) {
@@ -361,18 +460,55 @@ static void addSeparation(Drone* drones, Drone& d, int self) {
    Player::facing LATCHES (see player.h), so it is a stable heading rather than
    something that flickers while you shuffle -- which is what makes firing along
    it feel aimed rather than random. */
+/* The nearest enemy in the half of the world the player faces, with a clear
+   line from the drone. The hemisphere is what keeps this the chassis you point
+   -- it will not turn round and shoot behind you, so which way you face still
+   decides what it kills -- and the aiming inside that hemisphere is what makes
+   it hit anything at all. */
+static Entity* lanceTarget(const World& w, const Player& p, const Drone& d) {
+    const float face = p.facing >= 0 ? 1.0f : -1.0f;
+    Entity* best = 0;
+    float bestDist2 = LANCE_RANGE * LANCE_RANGE;
+    for (int i = 0; i < MAX_ENTITIES; ++i) {
+        Entity& e = g_entities[i];
+        if (!e.alive() || ENT_DEFS[e.type].tame) continue;
+        const float dx = e.centreX() - d.x, dy = e.centreY() - d.y;
+        if (dx * face <= 0.0f) continue;             /* behind the player */
+        const float dist2 = dx * dx + dy * dy;
+        if (dist2 >= bestDist2) continue;
+        if (!clearAttackShot(w, d.x, d.y, e)) continue;
+        bestDist2 = dist2; best = &e;
+    }
+    return best;
+}
+
 static void lanceFire(const World& w, const Player& p, Drone& d, const Inventory& inv) {
     if (d.shotCool > 0) { --d.shotCool; return; }
     if (!shotOpen(w, (int)d.x, (int)d.y)) return;
 
-    const float dirX = (float)(p.facing >= 0 ? 1 : -1);
-    /* A whisper of upward lean, so a flat burst does not scrape the floor the
-       drone happens to be hovering near. Not enough to be an arc: this shot has
-       to read as a line. */
-    const float dirY = -0.05f;
-    const float len  = sqrtf(dirX * dirX + dirY * dirY);
-    projSpawn(d.x + dirX * 4.0f, d.y,
-              dirX / len * LANCE_SPEED, dirY / len * LANCE_SPEED,
+    /* Nothing in front: hold the burst. A lance that fired into empty air
+       would spend its long rest on nothing and be silent for the second
+       afterwards, when something finally did arrive. Mid-burst is the one
+       exception -- a burst already started finishes along its own line, or the
+       three shots stop being one attack. */
+    Entity* target = lanceTarget(w, p, d);
+    if (!target && d.burst == 0) return;
+
+    float dirX, dirY;
+    if (target) {
+        dirX = target->centreX() - d.x;
+        dirY = target->centreY() - d.y;
+        /* Remembered for the rest of the burst, so the three shots travel as a
+           line rather than tracking a moving creature into three directions. */
+        d.aimX = dirX; d.aimY = dirY;
+    } else {
+        dirX = d.aimX; dirY = d.aimY;
+    }
+    const float len = sqrtf(dirX * dirX + dirY * dirY);
+    if (len < 0.001f) return;
+    dirX /= len; dirY /= len;
+    projSpawn(d.x + dirX * 4.0f, d.y + dirY * 4.0f,
+              dirX * LANCE_SPEED, dirY * LANCE_SPEED,
               0, LANCE_PIERCE, 80, 0xBFE9FF, 0, MAT_EMPTY,
               droneDamage(inv, LANCE_DAMAGE), false, 0.0f);
 
@@ -488,7 +624,32 @@ static void droneTickBank(Drone* drones, const World& w, const Player& p, Invent
             continue;
         }
 
-        if (d.type == DRONE_PICKUP) {
+        bool intercepting = false;
+        if (d.type == DRONE_SHIELD) {
+            /* Its task is a bullet. The point it flies to is on the line the
+               shot is travelling, one standoff out from the player -- not the
+               shot's current position, which is a point it has already left by
+               the time the drone arrives. */
+            const Projectile* threat = shieldThreat(p);
+            if (threat) {
+                float ax = threat->x - p.centreX(), ay = threat->y - p.centreY();
+                const float len = sqrtf(ax * ax + ay * ay);
+                if (len > 0.001f) {
+                    ax /= len; ay /= len;
+                    tx = p.centreX() + ax * SHIELD_STANDOFF;
+                    ty = p.centreY() + ay * SHIELD_STANDOFF;
+                    hasTask = intercepting = true;
+                }
+            } else {
+                /* Nothing in flight: sit ON the player rather than above them,
+                   so the first shot of the next exchange meets the bubble
+                   wherever it comes from. The old home is a head's height up,
+                   which is a fine place for a light and the wrong place for a
+                   shield. */
+                tx = p.centreX(); ty = p.centreY();
+                hasTask = true;
+            }
+        } else if (d.type == DRONE_PICKUP) {
             Pickup* drop = nearestPickupInEnvelope(g_taskX, g_taskY, d.x, d.y);
             if (drop) { tx = drop->x; ty = drop->y; hasTask = true; }
         } else if (d.type == DRONE_LIGHT) {
@@ -523,6 +684,11 @@ static void droneTickBank(Drone* drones, const World& w, const Player& p, Invent
             /* Catch-up is the only urgent motion. A task never drags a drone
                farther away from a player who has already left it behind. */
             steerArrive(d, g_homeX, g_homeY, 6.0f, 70.0f);
+        } else if (intercepting) {
+            /* Urgent, and it has to be: the thing it is racing is a bullet.
+               A small slow radius too, or it eases off exactly as it arrives at
+               the place it is supposed to be blocking. */
+            steerArrive(d, tx, ty, SHIELD_SPEED, 8.0f);
         } else if (hasTask) {
             steerArrive(d, tx, ty, 3.4f, 34.0f);
         } else if (!insideHome) {

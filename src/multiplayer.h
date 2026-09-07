@@ -61,6 +61,11 @@ struct Drone {
     /* Shots left in the current burst. Zero on everything that fires singly,
        which is every chassis but the lance. */
     int burst;
+    /* The heading a lance burst was aimed along, remembered so the three shots
+       travel as one line rather than tracking a moving creature into three
+       directions. Only the lance writes it; it is a direction, not a point, so
+       nothing has to keep it up to date as the drone drifts. */
+    float aimX, aimY;
 };
 
 struct PlayerSession {
