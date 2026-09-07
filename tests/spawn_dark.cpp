@@ -150,6 +150,56 @@ int main() {
     check(darkTotal > 100, "creatures do spawn in this cavern when it is dark");
     check(darkNear > 0, "including where the lamp used to be");
 
+    /* --- and it cannot FALL into the light -------------------------------
+       Reported from play: "enemies still spawned in my lit house."
+
+       The checks above are about where a candidate is FOUND. A walker does not
+       appear there: it falls up to SPAWN_DROP cells looking for a floor, so
+       every question asked of the probe point is a question about a place the
+       creature then leaves. A candidate in the solid rock above a lit room is
+       dark -- rock is dark -- and unclaimed, because a player's background
+       stops at their own ceiling. It fell through and stood up in the light.
+
+       The scene is that house: a lit chamber with a solid lid, and a ceiling
+       thin enough that a probe in the rock above it is inside the drop. */
+    lamp(w, false);
+    {
+        const int HX0 = CX + 170, HX1 = CX + 330;   /* off screen, past 150 */
+        const int HY0 = CY - 26,  HY1 = CY + 39;    /* down to the cavern floor */
+        /* A lid over it, thinner than SPAWN_DROP so the rock above is in
+           range, and lamps inside so the room is unambiguously lit. */
+        for (int y = HY0 - 20; y < HY0; ++y)
+            for (int x = HX0 - 2; x <= HX1 + 2; ++x) w.setCell(x, y, MAT_STONE);
+        for (int y = HY0; y <= HY1; ++y) {
+            w.setCell(HX0 - 1, y, MAT_STONE);
+            w.setCell(HX1 + 1, y, MAT_STONE);
+        }
+        for (int x = HX0 + 20; x < HX1; x += 40) w.setCell(x, HY0 + 2, MAT_LAMP);
+        lightClearDynamic();
+        lightCompute(w, camX, camY);
+        const int roomLight = lightAtWorld((HX0 + HX1) / 2, HY1 - 4);
+        printf("the walled room reads light %d at its floor\n", roomLight);
+        check(roomLight > 40, "the room really is lit (else this proves nothing)");
+
+        int inside = 0, placed = 0;
+        for (int f = 0; f < 40000; ++f) {
+            if (entSpawnReady()) { lightClearDynamic(); lightCompute(w, camX, camY); }
+            entSpawnTick(w, p, camX, camY, true);
+            for (int k = 0; k < MAX_ENTITIES; ++k) {
+                Entity& e = g_entities[k];
+                if (e.type == ENT_NONE) continue;
+                ++placed;
+                if (e.centreX() >= HX0 && e.centreX() <= HX1 &&
+                    e.centreY() >= HY0 && e.centreY() <= HY1) ++inside;
+                e.type = ENT_NONE;
+            }
+        }
+        printf("%d placements in the cavern, %d of them inside the lit room\n",
+               placed, inside);
+        check(placed > 100, "the run placed enough creatures to mean anything");
+        check(inside == 0, "nothing falls through the rock into a lit room");
+    }
+
     if (failures) {
         fprintf(stderr, "%d spawn darkness check(s) failed\n", failures);
         return 1;

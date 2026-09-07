@@ -4164,26 +4164,21 @@ void entSpawnTick(World& w, const Player& p, int camX, int camY, bool lightField
         const u8 zone = w.zoneAt(x, y);
         const bool surface = (zone == ZONE_SKY);
         if (surface && !isNight()) continue;
-        /* Sampled in WORLD space. This used to read lightRow(ly)[lx], and every
-           candidate reaching this line is off screen by construction -- the
-           loop above rejects the ones that are not. A view row is VIEW_CELLS_W
-           bytes long, so an off-screen lx indexed past the end of it and the
-           darkness test was reading whatever sat next to that array. It let
-           creatures appear in lit rooms, which is the one thing this check
-           exists to prevent. */
-        if (lightFieldValid && g_lightOn && lightAtWorld(x, y) > SPAWN_DARK) continue;
+        /* The darkness and ownership tests USED to be here, on the probe
+           point, and that was the bug behind "enemies still spawned in my lit
+           house". A walker does not appear at the probe: it falls up to
+           SPAWN_DROP cells looking for a floor, and everything the probe was
+           asked about is a fact about a point the creature then leaves.
 
-        /* --- yours? -------------------------------------------------------
-           Player-placed background makes a place safe. Checked over the whole
-           box the creature would occupy rather than at the one probe cell, so
-           standing at the edge of your own wall is not a loophole. */
-        bool claimed = false;
-        for (int yy = y - 8; yy <= y + 8 && !claimed; ++yy)
-            for (int xx = x - 8; xx <= x + 8; ++xx) {
-                if (xx < 0 || xx >= SIM_W || yy < 0 || yy >= SIM_H) continue;
-                if (w.bgPlaced(xx, yy)) { claimed = true; break; }
-            }
-        if (claimed) continue;
+           So a candidate inside the solid rock above a lit room reads as dark
+           -- rock is dark -- and as unclaimed, because the player's background
+           stops at their own ceiling. Then it falls through into the room and
+           stands up in the light. Measured in a lit hall with placed
+           background on every cell of it: thirty arrivals in sixty thousand
+           frames, at light 113 to 121 against a threshold of 40.
+
+           Both tests now run below, against the box the creature will actually
+           occupy. See the note there. */
 
         /* --- which creature? ---------------------------------------------- */
         const int layer = surface ? 0 : caveLayerOf(zone);
@@ -4223,6 +4218,43 @@ void entSpawnTick(World& w, const Player& p, int camX, int camY, bool lightField
         if (solidBox(w, bx, by, d.w, d.h)) continue;
         if (liquidBox(w, bx, by, d.w, d.h)) continue;
         if (!d.flies && !solidBox(w, bx, by + d.h, d.w, 1, SOLID_FLOOR)) continue;
+
+        /* --- dark, and not yours? -----------------------------------------
+           Asked HERE, of the place the creature will really stand, rather than
+           of the probe point it was found from -- see the note above where
+           these used to be.
+
+           Over the whole box rather than at one cell, and the box is what a
+           player builds against: a room lit at head height with a dark strip
+           along the floor should not be a spawner, and neither should the one
+           cell of your wall that happens to have no background behind it. Any
+           lit sample, or any claimed cell, refuses the site. */
+        {
+            const int x0 = bx, x1 = bx + d.w - 1;
+            const int y0 = by, y1 = by + d.h - 1;
+            bool lit = false, claimed = false;
+            for (int yy = y0; yy <= y1 && !lit && !claimed; ++yy)
+                for (int xx = x0; xx <= x1; ++xx) {
+                    if (xx <= PLAY_X0 || xx >= PLAY_X1 ||
+                        yy <= PLAY_Y0 || yy >= PLAY_Y1) continue;
+                    if (lightFieldValid && g_lightOn &&
+                        lightAtWorld(xx, yy) > SPAWN_DARK) { lit = true; break; }
+                    if (w.bgPlaced(xx, yy)) { claimed = true; break; }
+                }
+            if (lit || claimed) continue;
+            /* And a margin of claimed ground around it, which is what stops a
+               creature appearing in the doorway of a room rather than in it.
+               Eight cells, the same reach the probe-point version used, kept
+               because that part of it was right. */
+            bool near = false;
+            for (int yy = y0 - 8; yy <= y1 + 8 && !near; ++yy)
+                for (int xx = x0 - 8; xx <= x1 + 8; ++xx) {
+                    if (xx <= PLAY_X0 || xx >= PLAY_X1 ||
+                        yy <= PLAY_Y0 || yy >= PLAY_Y1) continue;
+                    if (w.bgPlaced(xx, yy)) { near = true; break; }
+                }
+            if (near) continue;
+        }
 
         if (entSpawn(w, type, (float)(bx + d.w / 2), (float)(by + d.h / 2)) >= 0) {
             g_spawnCool = SPAWN_COOL;
