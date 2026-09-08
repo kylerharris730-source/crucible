@@ -545,17 +545,30 @@ const Recipe RECIPES[] = {
     { { { (ItemId)MAT_TITANIUM, 6 }, { ITEM_SILK_GLAND, 1 }, { (ItemId)MAT_GOLD, 4 } },
       ITEM_MULTITOOL3, 1, "Multitool Mk III", STATION_ASSEMBLY },
 
-    /* Cheap, because doubling spends the spells' own energy rather than its
+    /* --- WAX, not silk ----------------------------------------------------
+       Every one of these asked for spider silk until it was pointed out that
+       there is no way to get any: web exists only as the strands the Widow
+       lays mid-fight, and it decays with a mean life around four seconds. It
+       could be mined -- g_matDropsAs is identity and it is STR_LOOSE -- but
+       "cut eight cells of it out of the arena inside four seconds, six times
+       over" is a collection minigame nobody designed.
+
+       Wax is the honest answer and needs no new mechanism: hives make it, bees
+       fill them, and worldgen now seeds three of them on the surface so the
+       supply exists before you have built anything. Silk goes back to being a
+       pure hazard, which is what it is good at.
+
+       Cheap, because doubling spends the spells' own energy rather than its
        own -- see the note on the item. */
-    { { { (ItemId)MAT_WEB, 6 }, { (ItemId)MAT_GOLD, 2 }, { ITEM_NONE, 0 } },
+    { { { (ItemId)MAT_WAX, 6 }, { (ItemId)MAT_GOLD, 2 }, { ITEM_NONE, 0 } },
       ITEM_MOD_DOUBLE, 1, "Double Shot", STATION_ASSEMBLY },
-    { { { (ItemId)MAT_WEB, 4 }, { (ItemId)MAT_COAL, 6 }, { (ItemId)MAT_GLASS, 2 } },
+    { { { (ItemId)MAT_WAX, 4 }, { (ItemId)MAT_COAL, 6 }, { (ItemId)MAT_GLASS, 2 } },
       ITEM_MOD_TRAIL_FIRE, 1, "Fire Trail", STATION_ASSEMBLY },
     /* The arcs need the conductor, and graphene is the one that survives being
        run hot -- which is what an arc is. */
-    { { { (ItemId)MAT_WEB, 8 }, { (ItemId)MAT_GRAPHENE, 3 }, { (ItemId)MAT_GOLD, 4 } },
+    { { { (ItemId)MAT_WAX, 8 }, { (ItemId)MAT_GRAPHENE, 3 }, { (ItemId)MAT_GOLD, 4 } },
       ITEM_MOD_ARC_LIGHTNING, 1, "Lightning Arc", STATION_ASSEMBLY },
-    { { { (ItemId)MAT_WEB, 8 }, { (ItemId)MAT_GRAPHENE, 2 }, { (ItemId)MAT_FUEL, 6 } },
+    { { { (ItemId)MAT_WAX, 8 }, { (ItemId)MAT_GRAPHENE, 2 }, { (ItemId)MAT_FUEL, 6 } },
       ITEM_MOD_ARC_FIRE, 1, "Fire Arc", STATION_ASSEMBLY },
     /* Seeking costs a second Silk Gland, which is the most expensive thing any
        recipe asks for: it means a second Widow. The module removes aiming from
@@ -563,9 +576,9 @@ const Recipe RECIPES[] = {
        cost a fight rather than a shopping list. */
     { { { ITEM_SILK_GLAND, 1 }, { (ItemId)MAT_TITANIUM, 3 }, { (ItemId)MAT_GLASS, 4 } },
       ITEM_MOD_SEEK, 1, "Seeking", STATION_ASSEMBLY },
-    { { { (ItemId)MAT_WEB, 4 }, { (ItemId)MAT_GLASS, 4 }, { (ItemId)MAT_GOLD, 2 } },
+    { { { (ItemId)MAT_WAX, 4 }, { (ItemId)MAT_GLASS, 4 }, { (ItemId)MAT_GOLD, 2 } },
       ITEM_MOD_SEEK_MOUSE, 1, "Point Seeking", STATION_ASSEMBLY },
-    { { { (ItemId)MAT_TITANIUM, 4 }, { (ItemId)MAT_GRAPHENE, 4 }, { (ItemId)MAT_WEB, 4 } },
+    { { { (ItemId)MAT_TITANIUM, 4 }, { (ItemId)MAT_GRAPHENE, 4 }, { (ItemId)MAT_WAX, 4 } },
       ITEM_MOD_QUICKEN, 1, "Quicken", STATION_ASSEMBLY },
     { { { (ItemId)MAT_GOLD, 2 }, { (ItemId)MAT_CHITIN, 4 }, { (ItemId)MAT_GLASS, 1 } },
       ITEM_MOD_HOMING, 1, "Homing Module", STATION_ASSEMBLY },

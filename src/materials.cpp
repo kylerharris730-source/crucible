@@ -1029,7 +1029,22 @@ MatInfo MATS[MAT_COUNT] = {
 
      Cools to ASH rather than back to brimstone, so a seam you have burnt is
      spent. Rock that repaired itself would make the whole hazard free. */
-  { "Brimfire", KIND_STATIC, 255,  0,   0,   0,   0,   0,  0,  210,  4,   0, degC(195), degC(80), MAT_ASH, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, 0xFFB03A, 0xC03408, 0xFFB03A, 0xC03408, 0 },
+  /* 215 rather than 195, and mass 5 rather than 4. Reported from play: "brimstone
+     fire should be hotter, its not hot enough to damage an armored player enough,
+     also it doesnt melt stone into lava."
+
+     Both were measurable. Stone beside a burning seam peaked at 156 C against a
+     melting point of 185 and never once turned to lava; a player in the Fumarole
+     plate, whose burn line is 180, took three points in three hundred frames --
+     the fire was five degrees over the threshold, which is a rounding error
+     rather than a hazard.
+
+     215 is the top of the scale, the same as lava, and that is the right place
+     for it: burning rock is molten rock that has not run yet. Mass 5 matches
+     fuelfire, and that is the half that actually moves heat -- see the coal
+     note on heatMassShift, which is the lever deciding how much a source can
+     DELIVER before it cools rather than how hot it reads. */
+  { "Brimfire", KIND_STATIC, 255,  0,   0,   0,   0,   0,  0,  210,  5,   0, degC(215), degC(80), MAT_ASH, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, 0xFFB03A, 0xC03408, 0xFFB03A, 0xC03408, 0 },
   /* Ash. Lighter than sand and slides further, so it drifts into the corners
      of a burnt chamber instead of standing in heaps -- which is what makes a
      place look like it burned rather than like somebody poured grey sand in
@@ -2025,6 +2040,13 @@ static void initDrive() {
     g_matDrive[MAT_EMBER]    = 10;
     g_matDrive[MAT_WAX_EMBER] = 6;
     g_matDrive[MAT_FUELFIRE] = 40;
+    /* Burning brimstone had NO drive at all, which is why a seam could sit at
+       195 C against stone that melts at 185 and never melt any of it: without
+       a drive a source only conducts, and conduction into cold rock settles
+       well below the source. 24 puts it between the coal ember's 10 and the
+       fuelfire's 40 -- a wall of burning rock should do what a good firebox
+       does, and it should not do what a purpose-built furnace does. */
+    g_matDrive[MAT_BRIMFIRE] = 24;
 }
 
 static void initPassable() {

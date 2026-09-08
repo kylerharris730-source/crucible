@@ -302,6 +302,7 @@ static const int   CAVE_ROOF     = 40;
 static const int   CAVE_ROCK     = 12;
 /* Deepest a cave may reach, clear of the world's border wall. */
 static void generateTrees(World& w);
+static void generateHives(World& w);
 static void generateWildCrops(World& w);
 
 static const int   CAVE_FLOOR_Y  = SIM_H - 60;
@@ -1724,6 +1725,12 @@ void generateWorld(World& w) {
 
     generateTrees(w);
     generateWildCrops(w);
+    /* After the trees and the crops, and for the reason the pedestal note
+       gives: a hive is an OBJECT, and a later pass that wrote cells where it
+       stands would leave a device record with nothing to show for it. It also
+       wants the flowers the crops put down -- a hive with nothing to forage is
+       a hive that makes nothing. */
+    generateHives(w);
 
     /* --- zones ------------------------------------------------------------
        A chunk is underground only if it is ENTIRELY below the ground, using
@@ -1881,6 +1888,133 @@ static void generateTrees(World& w) {
         }
     }
     g_treesPlanted = planted;
+}
+
+/* --- wild hives --------------------------------------------------------------
+   Asked for: "lets have some hives spawn naturally in little divots in the
+   ground, in like 3 places in the world, so theres a way to get some wax."
+
+   The reason they are needed is a supply problem, not a scenery one. Every
+   shot modifier was made of spider silk, and silk has no survival source --
+   the Widow lays it mid-fight and it rots in about four seconds. They are made
+   of WAX now, and wax comes out of a hive, and a hive was something you had to
+   build before you could have one. Three standing in the world is the smallest
+   thing that closes the loop: enough to find one, few enough that finding one
+   is an event.
+
+   THREE, spread across the world's width rather than dropped at random. With a
+   count this small a lottery is a bad instrument -- three uniform draws land
+   two of them next to each other about a third of the time -- so each takes a
+   third of the map and is jittered inside it.
+
+   IN A DIVOT, which is the request and is also what makes them findable: a hive
+   sitting on open flat ground reads as a placed object, and one nestled in a
+   dip in the terrain reads as something that grew there. The dip is measured
+   rather than dug -- the surface is what worldgen already made it, and a site
+   is accepted only where the ground genuinely falls away on both sides. */
+/* The first solid cell in a column, searched around the recorded surface. The
+   generator and anything checking it have to agree on where the ground is, and
+   g_surfaceY is the terrain pass's answer from before trees and crops put cells
+   on top of it. -1 if this column has no ground near where it should. */
+static int groundRowAt(const World& w, int x) {
+    if (x <= PLAY_X0 || x >= PLAY_X1) return -1;
+    const int from = imax(PLAY_Y0 + 1, g_surfaceY[x] - 40);
+    const int to   = imin(PLAY_Y1 - 1, g_surfaceY[x] + 40);
+    for (int y = from; y <= to; ++y) {
+        const u8 m = w.at(x, y).mat;
+        if (m == MAT_DIRT || m == MAT_GRASS || m == MAT_SAND || m == MAT_STONE)
+            return y;
+    }
+    return -1;
+}
+
+static const int HIVE_COUNT    = 3;
+/* The bowl the hive sits in: how wide it is and how deep its middle goes. A
+   dip you can see from a screen away and step out of without jumping. */
+static const int HIVE_BOWL_W   = 26;
+/* Eight, not five. The bowl is dug into ground that is allowed to be four
+   cells off level across its width, so a five-cell hollow could be cancelled
+   outright by the terrain's own slope -- measured, one of three hives came out
+   exactly level with its own rim. Eight is deeper than any slope this site
+   test admits. */
+static const int HIVE_BOWL_D   = 8;
+
+static void generateHives(World& w) {
+    for (int i = 0; i < HIVE_COUNT; ++i) {
+        /* A third of the world each, jittered inside it, with the edges kept
+           clear so a hive never lands where the map runs out. */
+        const int span = (PLAY_X1 - PLAY_X0 - 800) / HIVE_COUNT;
+        const int lo = PLAY_X0 + 400 + i * span;
+        const u32 seed = 0x81EEu + (u32)i * 7717u;
+
+        bool placed = false;
+        for (int t = 0; t < 400 && !placed; ++t) {
+            const int cx = lo + (int)(hash1(i * 512 + t, seed) % (u32)imax(1, span));
+            if (cx - HIVE_BOWL_W < PLAY_X0 || cx + HIVE_BOWL_W > PLAY_X1) continue;
+
+            /* Level ground to start from. The divot is CARVED rather than
+               searched for, and that is the decision worth recording: hunting
+               the terrain for a natural bowl found nothing in a real world --
+               a dip deep enough to read at the shoulders is almost never also
+               level enough across its middle to seat a fourteen-cell box, so
+               the two conditions were very nearly exclusive. Rather than tune
+               a threshold until one seed cooperated, worldgen makes the dip.
+               It is a world that has been here a while; something lived in it
+               and wore a hollow. */
+            /* Measured off the WORLD rather than off g_surfaceY, and that is
+               the fix for a real failure rather than a preference. The surface
+               map is what the terrain pass recorded; by the time this runs,
+               trees and crops have put cells above it, so the two disagree by
+               however tall the grass is. The generator carved a bowl against
+               one and the harness measured the other, and reported three hives
+               standing on peaks. Ask the cells. */
+            const int here = groundRowAt(w, cx);
+            if (here < 0) continue;
+            bool flat = true;
+            for (int q = -HIVE_BOWL_W; q <= HIVE_BOWL_W && flat; ++q) {
+                const int g = groundRowAt(w, cx + q);
+                if (g < 0) { flat = false; break; }
+                const int d = g - here;
+                if (d < -2 || d > 2) flat = false;
+            }
+            if (!flat) continue;
+            if (here - HIVE_BOWL_D - DEV_H < PLAY_Y0) continue;
+
+            /* --- the bowl -----------------------------------------------
+               A cosine-ish profile done with integers: deepest in the middle,
+               feathering to nothing at the rim, so it reads as worn rather
+               than as a rectangular pit. Only soil and stone are removed --
+               anything else here is something another pass put down, and a
+               hollow that ate a tree trunk would be worse than no hollow. */
+            for (int q = -HIVE_BOWL_W; q <= HIVE_BOWL_W; ++q) {
+                const int ax = q < 0 ? -q : q;
+                const int depth = HIVE_BOWL_D - (HIVE_BOWL_D * ax) / HIVE_BOWL_W;
+                const int col = cx + q;
+                const int top = groundRowAt(w, col);
+                if (top < 0) continue;
+                for (int d = 0; d < depth; ++d) {
+                    const int y = top + d;
+                    if (y <= PLAY_Y0 || y >= PLAY_Y1) continue;
+                    const u8 m = w.at(col, y).mat;
+                    if (m != MAT_DIRT && m != MAT_GRASS && m != MAT_SAND &&
+                        m != MAT_STONE) continue;
+                    w.setCell(col, y, MAT_EMPTY);
+                }
+                /* The surface map follows the digging too, so every later pass
+                   reads a ground line that is still there. */
+                if (col >= 0 && col < SIM_W) g_surfaceY[col] += depth;
+            }
+
+            /* Standing ON the new floor: devPlace centres what it is given, so
+               the footprint's bottom row is the cell above the ground. */
+            const int floorY = groundRowAt(w, cx);
+            if (floorY < 0) continue;
+            const int cy = floorY - 1 - DEV_H / 2;
+            if (cy - DEV_H / 2 < PLAY_Y0) continue;
+            if (!devPlace(w, DEV_HIVE, cx, cy)) continue;
+            placed = true;
+        }
+    }
 }
 
 /* Crops need a way into survival before farming becomes a closed loop. Sparse
