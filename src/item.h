@@ -1467,7 +1467,13 @@ void initDiscTable();   /* called by initItems() */
    A parameter rather than a global, even though exactly one caller in the game
    passes it: digInto is also the miner device's and a dozen harnesses' way of
    removing cells, and a hidden mode switch that silently changed what a MACHINE
-   digs would be a bug nobody could see from the machine. */
+   digs would be a bug nobody could see from the machine.
+
+   A filter also refuses MACHINES and torches outright. They are objects rather
+   than materials, so no entry in a MAT_COUNT table could ever admit one, and
+   "not on the list" is the rule everything else here follows. It is also what
+   the feature is for: the reason to turn a filter on is to dig near things you
+   built without eating them. */
 /* Which ITEMK_DEVICE item places this machine, or ITEM_NONE if none does.
    Used when a dig meets a machine and has to hand the machine back. */
 ItemId itemForDeviceType(u8 deviceType);

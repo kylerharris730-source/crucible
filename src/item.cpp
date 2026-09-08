@@ -3040,6 +3040,9 @@ int digInto(World& w, Inventory& inv, int cx, int cy, int r, int maxCells,
            the device itself, return its item, and leave the water untouched. */
         const int fixture = torchAt(x, y);
         if (fixture >= 0) {
+            /* Not while a filter is on -- see the note on the machine branch
+               below, which is the same rule and the same reason. */
+            if (whitelist) continue;
             if (inv.add(ITEM_TORCH_DEV, 1) != 0) continue;
             torchRemoveAt(fixture);
             ++dug;
@@ -3055,6 +3058,28 @@ int digInto(World& w, Inventory& inv, int cx, int cy, int r, int maxCells,
            which then either limped on or was silently destroyed by devIntact,
            losing the machine with nothing returned. */
         if (Device* dev = devAt(x, y)) {
+            /* --- a filter protects machines ------------------------------
+               Reported from play: "when using the filter you still break
+               devices."
+
+               It did, and the ordering is the whole bug: this branch and the
+               torch one above run BEFORE the whitelist test, and neither ever
+               consulted it. So a sweep with only Copper ticked still picked up
+               every chest, hive, pedestal and torch it passed over -- which is
+               the opposite of what a filter is for, and worse than no filter,
+               because the reason you turn one on is to dig safely near things
+               you built.
+
+               A filter refuses machines OUTRIGHT rather than checking them
+               against the list, and that is not a shortcut: the whitelist is
+               indexed by MATERIAL and a machine hands back an ITEM, so there
+               is no entry that could ever say yes. "Not on the list, skip" is
+               exactly the rule the three tests below already follow -- see the
+               whitelist note in item.h -- and a machine is never on it.
+
+               Turn the filter off to pick machines up. That is the same
+               gesture as putting the tool away, and it is one keypress. */
+            if (whitelist) continue;
             const ItemId back = itemForDeviceType(dev->type);
             /* No item means no way to hand it back, so it is not diggable at
                all -- better an immovable machine than one that evaporates. */

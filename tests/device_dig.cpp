@@ -183,6 +183,60 @@ int main() {
         }
     }
 
+    /* --- 5. a filter leaves machines alone -------------------------------
+       Reported from play: "when using the filter you still break devices."
+
+       The machine branch runs before the whitelist test and never consulted
+       it, so a sweep with only Stone ticked picked the machine up anyway. The
+       reason to turn a filter on is to dig near things you built without
+       eating them, which made this worse than having no filter at all.
+
+       Two halves, and the second is what stops the fix being "the filter does
+       nothing": the machine survives, and the material on the list is still
+       taken out from around it in the same sweep. */
+    {
+        Device* d = setup(w, inv);
+        if (!d) { fprintf(stderr, "could not place the spout\n"); return 2; }
+        /* Stone around the machine's edge, so one sweep touches both. */
+        for (int y = d->y - 2; y < d->y + DEV_H + 2; ++y)
+            for (int x = d->x - 2; x < d->x + DEV_W + 2; ++x)
+                if (!devAt(x, y)) w.setCell(x, y, MAT_STONE);
+
+        bool onlyStone[MAT_COUNT];
+        memset(onlyStone, 0, sizeof(onlyStone));
+        onlyStone[MAT_STONE] = true;
+
+        int stoneBefore = 0;
+        for (int y = d->y - 2; y < d->y + DEV_H + 2; ++y)
+            for (int x = d->x - 2; x < d->x + DEV_W + 2; ++x)
+                if (w.at(x, y).mat == MAT_STONE) ++stoneBefore;
+
+        digInto(w, inv, d->x + 3, d->y + 3, 6, 64, false, 255, onlyStone);
+
+        Device* survived = devAt(CX + DEV_W / 2, CY + DEV_H / 2);
+        int stoneAfter = 0;
+        for (int y = d->y - 2; y < d->y + DEV_H + 2; ++y)
+            for (int x = d->x - 2; x < d->x + DEV_W + 2; ++x)
+                if (w.at(x, y).mat == MAT_STONE) ++stoneAfter;
+
+        printf("filtered sweep over a machine: machine survived %s, stone "
+               "taken %d of %d\n", survived ? "yes" : "NO",
+               stoneBefore - stoneAfter, stoneBefore);
+        if (!survived) {
+            fprintf(stderr, "FAIL: a filtered dig picked the machine up\n");
+            ++failures;
+        }
+        if (held(inv, spoutItem) != 0) {
+            fprintf(stderr, "FAIL: a filtered dig banked the machine\n");
+            ++failures;
+        }
+        if (stoneAfter >= stoneBefore) {
+            fprintf(stderr, "FAIL: the filtered dig took no stone either, so "
+                            "it is refusing everything rather than machines\n");
+            ++failures;
+        }
+    }
+
     if (failures) {
         fprintf(stderr, "\n%d device dig check(s) failed\n", failures);
         return 1;
