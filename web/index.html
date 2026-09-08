@@ -27,6 +27,23 @@
 <meta name="description" content="Cinderlift is a falling-sand sandbox with real heat, pressure, fluids and circuits. Melt iron, run steam, wire machines, and build your way off the planet. Play free in your browser.">
 <link rel="canonical" href="https://cinderlift.com/">
 
+<!-- The site icon: the amber blob beside the result in Google, and the
+     tab icon. Without one Google draws a grey globe, which is what it
+     was doing.
+
+     Drawn as 16x16 pixel art and scaled by whole numbers, because a
+     favicon is USED at 16 pixels -- authoring it there means what ships
+     is what was drawn rather than whatever a downscaler made of a big
+     picture. Regenerate with scripts/make_favicon.py.
+
+     96 is the size Google asks for (a multiple of 48). favicon.ico is
+     here because browsers and crawlers request /favicon.ico whether or
+     not anything links to it, and without it every visit takes a 404. -->
+<link rel="icon" type="image/png" sizes="96x96" href="/icon-96.png">
+<link rel="icon" type="image/png" sizes="32x32" href="/icon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/icon-16.png">
+<link rel="apple-touch-icon" sizes="192x192" href="/icon-192.png">
+
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Cinderlift">
 <meta property="og:title" content="Cinderlift — falling-sand physics sandbox">
@@ -57,6 +74,7 @@
   "@context": "https://schema.org",
   "@type": "VideoGame",
   "name": "Cinderlift",
+  "alternateName": ["Cinder Lift", "cinder lift"],
   "url": "https://cinderlift.com/",
   "description": "A falling-sand sandbox with real heat, pressure, fluids and circuits. Melt iron, run steam, wire machines, and build your way off the planet.",
   "genre": ["Sandbox", "Simulation", "Falling sand"],
@@ -436,6 +454,13 @@
 
 <section id="faq">
   <h2>QUESTIONS</h2>
+
+  <h3>Is it &ldquo;Cinderlift&rdquo; or &ldquo;Cinder Lift&rdquo;?</h3>
+  <p>
+    One word: <b>Cinderlift</b>. Plenty of people type it as two, so if you
+    searched for <b>cinder lift</b> and ended up here, you are in the right
+    place &mdash; it is the same game either way.
+  </p>
 
   <h3>Does the browser version save my world?</h3>
   <p>
