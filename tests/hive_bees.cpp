@@ -404,6 +404,56 @@ int main() {
         check(!g_entities[hot].alive(), "too much heat kills a bee");
     }
 
+    /* --- soot washes off --------------------------------------------------
+       Reported from play: "when i walk away my bees turn un coal, i guess when
+       they get unloaded."
+
+       The unloading was a red herring; the report was right. Coal at a hive's
+       mouth converts the colony in a fifth of a second, and it converted the
+       REPLACEMENTS too -- a bee is born at the mouth and flies straight
+       through whatever is there -- so walking away and coming back handed you
+       five coal bees you never chose. And it was permanent: nothing ever
+       turned one back, so one stray lump of coal converted a hive for good.
+
+       Both directions checked. A conversion that reversed too easily would be
+       just as wrong: a sooted hive is a thing you make on purpose. */
+    {
+        buildApiary(0);
+        const int clean = entSpawn(g_world, ENT_COAL_BEE,
+                                   (float)HX, (float)(HY - 30));
+        const int dirty = entSpawn(g_world, ENT_COAL_BEE,
+                                   (float)(HX + 90), (float)(HY - 30));
+        if (clean < 0 || dirty < 0) { fprintf(stderr, "no bees\n"); return 2; }
+        g_entities[clean].home = -1;
+        g_entities[dirty].home = -1;
+        /* One of them sits on coal the whole time. */
+        for (int y = HY - 34; y <= HY - 26; ++y)
+            for (int x = HX + 86; x <= HX + 94; ++x)
+                g_world.setCell(x, y, MAT_COAL);
+
+        int flipped = -1;
+        for (int f = 0; f < 900 && flipped < 0; ++f) {
+            /* Pinned, so this measures the soot clock rather than a bee
+               wandering off its coal. */
+            g_entities[dirty].x = (float)(HX + 90);
+            g_entities[dirty].y = (float)(HY - 30);
+            entTick(g_world, g_p, g_testInv);
+            if (g_entities[clean].type == ENT_BEE) flipped = f;
+        }
+        printf("a coal bee away from coal turned back after %d frames; the one "
+               "sitting on coal is %s\n", flipped,
+               g_entities[dirty].type == ENT_COAL_BEE ? "still coal" : "CLEAN");
+        check(flipped > 0, "soot washes off a coal bee left alone");
+        /* 48, which is four times the twelve frames of contact that convert
+           one. The constant itself is private to entity.cpp -- a test that
+           imported it would pass by construction whatever it was changed to,
+           which is the opposite of what pinning a ratio is for. */
+        check(flipped > 48,
+              "and far more slowly than it goes on, so souring a hive still works");
+        check(g_entities[dirty].type == ENT_COAL_BEE,
+              "while a bee sitting on coal stays sooted");
+    }
+
     if (failures == 0) { puts("PASS"); return 0; }
     fprintf(stderr, "%d hive check(s) failed\n", failures);
     return 1;
