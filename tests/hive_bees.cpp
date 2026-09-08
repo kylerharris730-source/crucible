@@ -404,54 +404,85 @@ int main() {
         check(!g_entities[hot].alive(), "too much heat kills a bee");
     }
 
-    /* --- soot washes off --------------------------------------------------
-       Reported from play: "when i walk away my bees turn un coal, i guess when
-       they get unloaded."
+    /* --- a soured colony stays soured ------------------------------------
+       Reported from play: "they de-coaled when i walked away which i dont
+       want, bees should never de-coal."
 
-       The unloading was a red herring; the report was right. Coal at a hive's
-       mouth converts the colony in a fifth of a second, and it converted the
-       REPLACEMENTS too -- a bee is born at the mouth and flies straight
-       through whatever is there -- so walking away and coming back handed you
-       five coal bees you never chose. And it was permanent: nothing ever
-       turned one back, so one stray lump of coal converted a hive for good.
+       A hive's only memory of soot was a count of coal bees INDOORS. A bee
+       that is outside when the player walks away is despawned by distance --
+       deleted rather than admitted -- so the count never saw it and the hive
+       rebuilt the colony out of ordinary bees. Measured before the fix: a
+       colony soured on purpose to three coal bees came back from one walk as
+       five plain ones.
 
-       Both directions checked. A conversion that reversed too easily would be
-       just as wrong: a sooted hive is a thing you make on purpose. */
+       The scene deliberately REMOVES the coal before walking away. Leaving it
+       would re-sour the colony on its own and the test would pass without any
+       memory existing at all, which is the trap the scratch version fell into
+       first: a sooted hive extrudes coal wax, and there is a path from that
+       back to loose coal at its mouth. */
     {
-        buildApiary(0);
-        const int clean = entSpawn(g_world, ENT_COAL_BEE,
-                                   (float)HX, (float)(HY - 30));
-        const int dirty = entSpawn(g_world, ENT_COAL_BEE,
-                                   (float)(HX + 90), (float)(HY - 30));
-        if (clean < 0 || dirty < 0) { fprintf(stderr, "no bees\n"); return 2; }
-        g_entities[clean].home = -1;
-        g_entities[dirty].home = -1;
-        /* One of them sits on coal the whole time. */
-        for (int y = HY - 34; y <= HY - 26; ++y)
-            for (int x = HX + 86; x <= HX + 94; ++x)
+        Device* d = buildApiary(40);
+        if (!d) { fprintf(stderr, "could not place a hive\n"); return 2; }
+        d->value = 3;
+        /* Sour it on purpose: coal at the mouth, where every bee passes. */
+        for (int y = HY - DEV_H / 2 - 4; y <= HY - DEV_H / 2 - 2; ++y)
+            for (int x = HX - 1; x <= HX + 1; ++x)
                 g_world.setCell(x, y, MAT_COAL);
+        stepWorld(600);
+        int coal = 0;
+        for (int i = 0; i < MAX_ENTITIES; ++i)
+            if (g_entities[i].alive() && g_entities[i].type == ENT_COAL_BEE) ++coal;
+        check(coal > 0, "coal at the mouth sours a colony, which is the point");
 
-        int flipped = -1;
-        for (int f = 0; f < 900 && flipped < 0; ++f) {
-            /* Pinned, so this measures the soot clock rather than a bee
-               wandering off its coal. */
-            g_entities[dirty].x = (float)(HX + 90);
-            g_entities[dirty].y = (float)(HY - 30);
-            entTick(g_world, g_p, g_testInv);
-            if (g_entities[clean].type == ENT_BEE) flipped = f;
+        /* Every trace of coal gone, so nothing can re-sour them. */
+        for (int y = HY - 80; y < HY + 40; ++y)
+            for (int x = HX - 80; x < HX + 80; ++x) {
+                const u8 m = g_world.at(x, y).mat;
+                if (m == MAT_COAL || m == MAT_COAL_WAX || m == MAT_COAL_HONEY)
+                    g_world.setCell(x, y, MAT_EMPTY);
+            }
+
+        /* Walk out of despawn range, wait for the colony to be cleared, and
+           come back. */
+        const float home = g_p.x;
+        g_p.x = home + (float)(ENT_DESPAWN_DIST + 200);
+        for (int f = 0; f < 400; ++f) {
+            for (int y = HY - 80; y < HY + 40; ++y)
+                for (int x = HX - 80; x < HX + 80; ++x) {
+                    const u8 m = g_world.at(x, y).mat;
+                    if (m == MAT_COAL || m == MAT_COAL_WAX || m == MAT_COAL_HONEY)
+                        g_world.setCell(x, y, MAT_EMPTY);
+                }
+            devTick(g_world); entTick(g_world, g_p, g_testInv); g_world.step();
         }
-        printf("a coal bee away from coal turned back after %d frames; the one "
-               "sitting on coal is %s\n", flipped,
-               g_entities[dirty].type == ENT_COAL_BEE ? "still coal" : "CLEAN");
-        check(flipped > 0, "soot washes off a coal bee left alone");
-        /* 48, which is four times the twelve frames of contact that convert
-           one. The constant itself is private to entity.cpp -- a test that
-           imported it would pass by construction whatever it was changed to,
-           which is the opposite of what pinning a ratio is for. */
-        check(flipped > 48,
-              "and far more slowly than it goes on, so souring a hive still works");
-        check(g_entities[dirty].type == ENT_COAL_BEE,
-              "while a bee sitting on coal stays sooted");
+        int during = 0;
+        for (int i = 0; i < MAX_ENTITIES; ++i)
+            if (g_entities[i].alive() &&
+                (g_entities[i].type == ENT_BEE ||
+                 g_entities[i].type == ENT_COAL_BEE)) ++during;
+        check(during == 0, "walking away really does clear the colony");
+
+        g_p.x = home;
+        int plain = 0;
+        coal = 0;
+        for (int f = 0; f < 2000; ++f) {
+            for (int y = HY - 80; y < HY + 40; ++y)
+                for (int x = HX - 80; x < HX + 80; ++x) {
+                    const u8 m = g_world.at(x, y).mat;
+                    if (m == MAT_COAL || m == MAT_COAL_WAX || m == MAT_COAL_HONEY)
+                        g_world.setCell(x, y, MAT_EMPTY);
+                }
+            devTick(g_world); entTick(g_world, g_p, g_testInv); g_world.step();
+        }
+        for (int i = 0; i < MAX_ENTITIES; ++i) {
+            if (!g_entities[i].alive()) continue;
+            if (g_entities[i].type == ENT_BEE) ++plain;
+            if (g_entities[i].type == ENT_COAL_BEE) ++coal;
+        }
+        printf("after walking away and back, with every trace of coal removed: "
+               "%d coal bees, %d plain\n", coal, plain);
+        check(coal > 0, "the colony comes back sooted");
+        check(plain == 0, "and not one of them de-coaled");
     }
 
     if (failures == 0) { puts("PASS"); return 0; }

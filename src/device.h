@@ -504,6 +504,9 @@ void hiveDeliver(Device& d, bool coal);
    were COAL bees, because going in destroys the entity and dawn has to bring
    back the colony that went to bed rather than a fresh ordinary one. */
 void hiveAdmit(Device& d, bool coal);
+/* Mark a hive as sooted, permanently. Called when any bee of its colony turns
+   -- see the note at the definition. */
+void hiveSour(Device& d);
 
 u16  pedestalItem(const Device& d);
 int  pedestalCount(const Device& d);

@@ -1535,9 +1535,34 @@ void hiveDeliver(Device& d, bool coal) {
    all for the two material slots, so one of them carries this. */
 static int hiveCoalIndoors(const Device& d) { return (int)d.mat2; }
 
+/* --- and whether this hive is a COAL hive, kept in `mat`, for good ----------
+   Reported from play: "they de-coaled when i walked away which i dont want,
+   bees should never de-coal."
+
+   The count above is bees currently INDOORS, and it was the only memory a hive
+   had. A bee that is outside when the player walks away is despawned by
+   distance -- deleted rather than admitted -- so the count never saw it, and
+   the hive rebuilt the colony out of ordinary bees. Measured: a colony soured
+   on purpose to three coal bees came back from one walk as five plain ones.
+
+   So souring is remembered by the HIVE and it is permanent. `mat` is the other
+   material slot the note above says a hive has no use for. Set the moment any
+   bee of this colony turns -- in the field, on the way in, or on its way out
+   of existence -- and never cleared: convert once, and every bee that hive
+   ever makes is a coal bee. Rebuilding the hive is what un-sours a colony,
+   which is a decision the player makes with a pickaxe rather than one the
+   simulation makes for them while they are not looking. */
+static bool hiveSoured(const Device& d) { return d.mat != MAT_EMPTY; }
+
+void hiveSour(Device& d) {
+    if (d.type != DEV_HIVE) return;
+    d.mat = MAT_COAL;
+}
+
 void hiveAdmit(Device& d, bool coal) {
     if (d.type != DEV_HIVE) return;
     if (coal && d.mat2 < 255) ++d.mat2;
+    if (coal) hiveSour(d);
 }
 
 static int hiveBeeCount(int index) {
@@ -1752,7 +1777,11 @@ static void devHive(World& w, Device& d, int index) {
                comes out at dawn is the colony that went to bed: without this
                the hive replaced every resident with an ordinary bee and a
                sootied hive quietly reverted overnight. */
-            const bool coal = hiveCoalIndoors(d) > 0;
+            /* Soured hives make coal bees, whatever the indoor count says.
+               The count still governs the night shift -- as many come out as
+               went in -- but a hive that has ever turned is a coal hive, so
+               the colony survives being despawned and rebuilt. */
+            const bool coal = hiveSoured(d) || hiveCoalIndoors(d) > 0;
             const int slot = entSpawn(w, coal ? ENT_COAL_BEE : ENT_BEE, bx, by);
             if (slot >= 0) {
                 if (coal) --d.mat2;
