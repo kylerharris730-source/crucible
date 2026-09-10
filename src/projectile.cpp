@@ -755,7 +755,14 @@ int projUpdate(World& w) {
                line of them at once. */
             if (p.damage > 0) {
                 if (!p.hostile) {
-                    if (entDamageAt(cx, cy, p.damage)) {
+                    /* A friendly shot passes over tame creatures -- see
+                       sparingTame in entity.h. It is `!p.hostile` rather than
+                       "was it a drone" because the annoyance is the same
+                       whoever pulled the trigger: a bee crossing your line of
+                       fire should not eat the bolt meant for what you were
+                       aiming at. A creature's OWN shots still hit bees, which
+                       is how a mite gets to be a threat to a hive. */
+                    if (entDamageAt(cx, cy, p.damage, !p.hostile)) {
                         p.alive = false; blocked = true;
                         dropX = px_; dropY = py_;
                         break;
@@ -855,7 +862,7 @@ int projUpdate(World& w) {
                would be strictly worse than the ordinary shot it costs 24 extra
                frames of delay to fire. */
             if (p.damage > 0 && !p.hostile)
-                entDamageDisc((int)p.x, (int)p.y, p.blast, p.damage);
+                entDamageDisc((int)p.x, (int)p.y, p.blast, p.damage, !p.hostile);
             ++projExplosionsThisFrame;
         }
 

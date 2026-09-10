@@ -213,6 +213,68 @@ int main() {
         check(stopped < 90.0f, "but a barrage gets through, so it is not immunity");
     }
 
+    /* --- 6. and none of it touches your bees ------------------------------
+       Reported from play: "drones shoot bees, stop that."
+
+       Nothing in the damage layer knew what a tame creature was. The drones'
+       targeting took the nearest ENTITY -- a bee is an entity -- and the orbit
+       blade, the shield pulse and the garlic field damaged every body in a
+       radius. A player who keeps bees was running a machine that killed them.
+
+       Every chassis is checked, not just the two that were obviously shooting,
+       because the bug was in the shared targeting rather than in any one of
+       them. */
+    {
+        static const ItemId CHASSIS[5] = {
+            ITEM_ATTACK_DRONE, ITEM_LANCE_DRONE, ITEM_ORBIT_DRONE,
+            ITEM_MORTAR_DRONE, ITEM_SHIELD_DRONE
+        };
+        static const char* NAMES[5] = { "Attack", "Lance", "Orbit", "Mortar",
+                                        "Shield" };
+        int killed = 0;
+        for (int k = 0; k < 5; ++k) {
+            World& w = g_testWorld;
+            arena(w);
+            Inventory& inv = g_inv;
+            equipDrone(inv, CHASSIS[k]);
+            /* Bees all round the player: in contact, at the blade's radius,
+               and out where a bolt would have to travel. */
+            int bees[6];
+            static const float AT[6] = { -14, 14, -26, 26, -70, 70 };
+            for (int b = 0; b < 6; ++b)
+                bees[b] = entSpawn(w, ENT_BEE, (float)CX + AT[b],
+                                   (float)(FLOOR - 20));
+            for (int f = 0; f < 900; ++f) {
+                for (int b = 0; b < 6; ++b) {
+                    if (bees[b] < 0) continue;
+                    Entity& e = g_entities[bees[b]];
+                    if (e.type == ENT_NONE) continue;
+                    /* Pinned, so this measures what the drone does to them
+                       rather than where they wandered. */
+                    e.x = (float)CX + AT[b];
+                    e.y = (float)(FLOOR - 20);
+                    e.vx = e.vy = 0.0f;
+                }
+                droneTick(w, g_player, inv);
+                projUpdate(w);
+                entTick(w, g_player, inv);
+            }
+            int alive = 0, hurt = 0;
+            for (int b = 0; b < 6; ++b) {
+                if (bees[b] < 0) continue;
+                const Entity& e = g_entities[bees[b]];
+                if (e.type == ENT_BEE && e.alive()) {
+                    ++alive;
+                    if (e.hp < ENT_DEFS[ENT_BEE].hp) ++hurt;
+                }
+            }
+            printf("  %-7s drone: %d of 6 bees alive, %d of them hurt\n",
+                   NAMES[k], alive, hurt);
+            if (alive < 6 || hurt > 0) ++killed;
+        }
+        check(killed == 0, "no chassis harms a bee, at any range");
+    }
+
     if (failures) {
         fprintf(stderr, "\n%d drone check(s) failed\n", failures);
         return 1;

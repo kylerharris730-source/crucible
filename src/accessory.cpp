@@ -206,7 +206,11 @@ void accessoryTickFor(int playerSlot, const Player& player, const Inventory& inv
         return;
     }
     if (cooldown > 0) { --cooldown; return; }
+    /* Sparing tame creatures, like every other passive: the garlic field fires
+       on its own clock whether or not you meant it to, and a charm that quietly
+       killed your own bees while you stood in your apiary is the same complaint
+       the drones got. */
     entDamageDisc((int)player.centreX(), (int)player.centreY(),
-                  ACCESSORY_GARLIC_RADIUS, ACCESSORY_GARLIC_DAMAGE);
+                  ACCESSORY_GARLIC_RADIUS, ACCESSORY_GARLIC_DAMAGE, true);
     cooldown = ACCESSORY_GARLIC_COOLDOWN;
 }

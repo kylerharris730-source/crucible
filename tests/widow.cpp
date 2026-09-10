@@ -190,7 +190,7 @@ int main() {
         }
         printf("after 900 frames at 80 cells: %d shots fired, silk peaked at %d\n",
                g_hostileSeen, silk);
-        check(g_hostileSeen > 20, "it spits, repeatedly");
+        check(g_hostileSeen > 10, "it repeats volleys with recovery between moves");
         check(silk > 4, "and the silk reaches the ground");
         check(g_matContactDamage[MAT_WEB] > 0.0f, "and standing in one hurts");
         /* It must not be free damage at any range. Silk that arrives through a
@@ -369,7 +369,7 @@ int main() {
         printf("kited at full sprint for 900 frames: gap %.0f, worst %.0f, "
                "%d shots fired\n", gap, worst, g_hostileSeen);
         check(gap < 260.0f, "a straight-line sprint does not leave it behind");
-        check(g_hostileSeen > 10, "and it keeps shooting the whole way");
+        check(g_hostileSeen >= 6, "and mixes repeated web volleys into pursuit");
     }
 
     /* --- 4. a web is never a wall ----------------------------------------- */
@@ -468,6 +468,48 @@ int main() {
                   "and the Brood Mother is NOT credited with its death");
             check(after < before, "the layer 2 seal is opened");
         }
+    }
+
+    /* Discrete choreography: a locked tell, one attack, then an opening. */
+    {
+        int slot=arena(w,100);
+        if (slot<0) return 2;
+        Entity& e=g_entities[slot];
+        e.phase=WIDOW_APPROACH; e.actTimer=0; e.shotTimer=0; e.onGround=true;
+        entTick(w,g_player,g_inv);
+        check(e.phase==WIDOW_WEB_WIND,"medium-range opening chooses a web tell");
+        const float target=e.aimX;
+        g_player.x-=50;
+        for (int f=0;f<29;++f) entTick(w,g_player,g_inv);
+        int shots=0; for (int i=0;i<MAX_PROJ;++i) shots+=g_proj[i].alive;
+        check(shots==0 && e.aimX==target && e.phase==WIDOW_WEB_WIND,
+              "web wind-up locks aim and cannot overlap a pounce");
+        entTick(w,g_player,g_inv);
+        check(e.phase==WIDOW_RECOVER,"volley enters an explicit recovery");
+        projClear();
+        bool rested=true;
+        for (int f=0;f<40;++f) {
+            entTick(w,g_player,g_inv);
+            rested=rested && e.phase==WIDOW_RECOVER && fabsf(e.vx)<0.1f;
+        }
+        check(rested,"recovery provides forty uninterrupted punish frames");
+        e.phase=WIDOW_APPROACH; e.actTimer=0; e.shotTimer=1; e.onGround=true;
+        entTick(w,g_player,g_inv);
+        check(e.phase==WIDOW_LEAP_WIND,"next move gathers for a pounce");
+        float leapAim=e.aimX;
+        g_player.x+=160;
+        for (int f=0;f<32;++f) entTick(w,g_player,g_inv);
+        check(e.phase==WIDOW_LEAP && e.aimX==leapAim && e.vx<0,
+              "pounce commits to the old position after the player dodges");
+        float launchVX=e.vx;
+        for (int f=0;f<5;++f) entTick(w,g_player,g_inv);
+        check(e.phase==WIDOW_LEAP && fabsf(e.vx-launchVX)<0.1f,
+              "airborne pounce does not home onto the player");
+        e.phase=WIDOW_APPROACH; e.hp=ENT_DEFS[ENT_WIDOW].hp/2; e.onGround=true;
+        entTick(w,g_player,g_inv);
+        check(e.phase==WIDOW_MOULT,"half health creates a readable phase break");
+        for (int f=0;f<60;++f) entTick(w,g_player,g_inv);
+        check(e.phase==WIDOW_APPROACH && e.aimHold==1,"phase break happens once, then returns to approach");
     }
 
     /* --- and it is reachable at all --------------------------------------- */

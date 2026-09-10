@@ -39,6 +39,11 @@
    The visible consequence is that quitting inside a cave clears whatever was
    chasing you. That is a fair trade, and arguably the kinder behaviour. */
 
+enum WidowMove {
+    WIDOW_APPROACH=0, WIDOW_REPOSITION, WIDOW_WEB_WIND,
+    WIDOW_LEAP_WIND, WIDOW_LEAP, WIDOW_RECOVER, WIDOW_MOULT
+};
+
 enum EntityType {
     ENT_NONE = 0,        /* a free slot; never a real creature */
     /* --- layer 1 --------------------------------------------------------
@@ -490,14 +495,33 @@ void entTickPlayers(World& w);
 /* Hurt whatever creature covers this cell, if any. Returns true if something
    was hit, so a projectile can spend itself on a body rather than sailing
    through it. */
-bool entDamageAt(int x, int y, int damage);
+bool entDamageAt(int x, int y, int damage, bool sparingTame = false);
 
 /* Area damage, for explosions. Returns how many creatures were hit. */
-int  entDamageDisc(int cx, int cy, int radius, int damage);
+/* --- sparingTame ------------------------------------------------------------
+   Reported from play: "drones shoot bees, stop that."
+
+   Nothing in the damage layer knew what a tame creature was. A drone's targeting
+   picked the nearest ENTITY, which is a bee as often as a mite; the orbit
+   blade, the shield pulse and the garlic field damaged every body in a radius;
+   and a friendly bolt hurt whatever it overlapped. A player who keeps bees was
+   running a machine that killed them.
+
+   The rule is about AUTOMATION rather than about bees being invulnerable:
+   anything that picks its own target -- a companion, a passive, a shot you
+   already fired -- passes over tame creatures. A swing of your own sword or a
+   pick still kills a bee, because that is a thing you did on purpose.
+
+   A defaulted parameter rather than a second function, because every one of
+   these has non-automatic callers too: the same disc is a grenade's blast when
+   the player throws it, and a grenade is the player's own doing. */
+int  entDamageDisc(int cx, int cy, int radius, int damage,
+                   bool sparingTame = false);
 
 /* Disc damage with a gentle radial push. Used by close-range companions: the
    hit is intentionally small, but creating space is tangible protection. */
-int  entDamageKnockbackDisc(int cx, int cy, int radius, int damage, float knockback);
+int  entDamageKnockbackDisc(int cx, int cy, int radius, int damage,
+                            float knockback, bool sparingTame = false);
 
 /* --- a blade passing through the world -------------------------------------
    Damage every creature whose box the segment (x0,y0)-(x1,y1) crosses, pushing

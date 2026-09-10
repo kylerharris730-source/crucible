@@ -145,9 +145,7 @@ static const float WIDOW_SPIT_RANGE  = 180.0f;
    with the scuttle on top. Under a hundred and the creature is airborne more
    often than not, which stops reading as a pounce; over about a hundred and
    forty it loses the footrace and the fight is a walk backwards. */
-static const int   WIDOW_POUNCE_EVERY = 100;  /* frames between leaps */
-static const int   WIDOW_POUNCE_WIND  = 24;   /* it gathers first */
-static const float WIDOW_POUNCE_MIN   = 30.0f;/* nearer than this, just walk */
+static const int   WIDOW_POUNCE_WIND  = 32;   /* a planted, readable gather */
 /* Its own reach, and far beyond the spit's. A boss that stops chasing the
    moment you are out of spitting range is a boss you walk away from. */
 static const float WIDOW_POUNCE_RANGE = 280.0f;
@@ -224,10 +222,6 @@ static const float CENSER_HOP   = 3.6f;
    room that ploughs through the wall behind it, and one that also outran you
    comfortably would leave nothing to do but die. */
 static const float CENSER_SURGE = 3.4f;
-/* Its own scuttle, slower and longer than the Thresher's: at forty cells wide
-   a short burst would be a twitch, and this creature is meant to arrive. */
-static const int   WIDOW_BURST       = 90;
-static const int   WIDOW_PAUSE       = 34;
 
 /* Defined beside the beam it belongs to; declared here because both the def
    table's neighbours and entityPixelMotion come earlier in this file. */
@@ -713,7 +707,13 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
 
        No layerMask and no rareDrop: it is summoned, it drops the Ascent Core,
        and it opens no seal because there is nothing under it. */
-    { "The Effigy", EFFIGY_SPR_W, EFFIGY_SPR_H, 6000, 55, 24,
+    /* Contact 36, down from 55. Reported from play as too much, and the table
+       agrees with the report: the Censer hits for 34 after its own reduction
+       and this was two thirds again on top of that, on a creature you cannot
+       always avoid touching because it is 96 cells wide and walks through the
+       terrain you would back into. Still the hardest hit in the game, and by a
+       margin you can survive learning. */
+    { "The Effigy", EFFIGY_SPR_W, EFFIGY_SPR_H, 6000, 36, 24,
       0.22f, 0.025f, false, 0, false,
       EFFIGY_ERUPT_EVERY, 30, 0.0f, 0.0f, true,
       ITEM_ASCENT_CORE, 1, 1, ITEM_ASCENT_SIGIL, 1, SPR_NONE, 0xE85A14,
@@ -1130,10 +1130,14 @@ void entApplyDamage(Entity& e, int damage) {
     e.hurtFlash = 6;
 }
 
-bool entDamageAt(int x, int y, int damage) {
+bool entDamageAt(int x, int y, int damage, bool sparingTame) {
     for (int i = 0; i < MAX_ENTITIES; ++i) {
         Entity& e = g_entities[i];
         if (!e.alive()) continue;
+        /* See sparingTame in entity.h. Skipped rather than absorbing the hit,
+           so a bolt that meets a bee carries on to whatever was behind it --
+           a bee should not be cover for a mite. */
+        if (sparingTame && ENT_DEFS[e.type].tame) continue;
         if (x < e.left() || x > e.right() || y < e.top() || y > e.bottom()) continue;
         entApplyDamage(e, damage);
         return true;
@@ -1141,12 +1145,13 @@ bool entDamageAt(int x, int y, int damage) {
     return false;
 }
 
-int entDamageDisc(int cx, int cy, int radius, int damage) {
+int entDamageDisc(int cx, int cy, int radius, int damage, bool sparingTame) {
     int hit = 0;
     const int r2 = radius * radius;
     for (int i = 0; i < MAX_ENTITIES; ++i) {
         Entity& e = g_entities[i];
         if (!e.alive()) continue;
+        if (sparingTame && ENT_DEFS[e.type].tame) continue;
         const float dx = e.centreX() - (float)cx, dy = e.centreY() - (float)cy;
         if (dx * dx + dy * dy > (float)r2) continue;
         entApplyDamage(e, damage);
@@ -2024,6 +2029,7 @@ static const int BEE_HOME_ARRIVE = 8;
    turns. */
 static const int BEE_SOOT_FULL   = 12;
 
+
 /* Can a bee see this from where it is? Sampled, like every other sight line in
    this file. */
 static bool beeSees(const World& w, float cx, float cy, int tx, int ty) {
@@ -2186,6 +2192,14 @@ static void beeTick(World& w, Entity& e) {
                 e.type = ENT_COAL_BEE;
                 e.soot = 0;
                 e.hp   = ENT_DEFS[ENT_COAL_BEE].hp;
+                /* And the hive remembers, from this moment. A bee that turns
+                   in the field and is then killed or despawned before it ever
+                   gets home would otherwise leave no trace of having turned --
+                   see hiveSour. */
+                if (e.home >= 0 && e.home < MAX_DEVICES &&
+                    g_devices[e.home].used &&
+                    g_devices[e.home].type == DEV_HIVE)
+                    hiveSour(g_devices[e.home]);
             }
         } else if (e.soot > 0) {
             /* It wears off. Without this a bee that once flew past a lump of
@@ -2664,28 +2678,17 @@ static void broodTick(World& w, Entity& e, const Player& p) {
 }
 
 
-/* --- the Widow: scuttle, and spit silk over the ground you backed onto ------
+/* Widow choreography: phase is the current move, actTimer its remaining time,
+   shotTimer selects the next move, and aimHold latches the half-health break.
+   Only approach/reposition choose movement; attacks commit and then recover. */
 
-   Two counters that do not know about each other, which is deliberate. actTimer
-   runs the scuttle (burst, then pause, exactly as the Thresher's does, counting
-   down through zero into the negatives so one counter carries both halves) and
-   shotTimer runs the volley. Because they are independent and their periods do
-   not divide, the creature never settles into a repeating bar of music -- it
-   spits mid-burst, then while stopped, then mid-burst again, and the fight does
-   not become a pattern you can stand in one place and read.
-
-   The one place they DO meet is the wind-up: it plants itself to throw. A boss
-   that spat while charging would be throwing an attack you cannot dodge from
-   an attack you cannot dodge, and the telegraph is the whole reason either of
-   them is fair. */
-
-/* Returns whether it actually threw. The caller MUST reset the clock either
-   way -- see the note there. */
+/* A failed ballistic solve still leads to recovery, never a stuck attack. */
 static bool widowSpit(World& w, Entity& e, const Player& p) {
+    (void)w; (void)p;
     const EntityDef& d = ENT_DEFS[e.type];
     const bool wounded = e.hp * 2 <= d.hp;
 
-    float dx = p.centreX() - e.centreX(), dy = p.centreY() - e.centreY();
+    float dx = e.aimX - e.centreX(), dy = e.aimY - e.centreY();
 
     /* The same closed-form ballistic solve the Spitter uses, and for the same
        reason -- see the long note in lobAtPlayer. A slow shot over a long
@@ -2729,190 +2732,89 @@ static bool widowSpit(World& w, Entity& e, const Player& p) {
                   STR_NOTHING, 1, 300, 0xD8DCE4, 0, MAT_WEB,
                   d.shotDamage, true, PROJ_GRAVITY);
     }
-    e.shotTimer = wounded ? (d.shotEvery * 2) / 3 : d.shotEvery;
     return true;
 }
 
 static void widowTick(World& w, Entity& e, const Player& p) {
-    const EntityDef& d = ENT_DEFS[e.type];
-    const bool wounded = e.hp * 2 <= d.hp;
-
-    /* --- the volley clock ------------------------------------------------
-       Counts down to zero and then holds NEGATIVE through the wind-up, which
-       is the same one-counter-two-phases shape the Thresher's burst uses. */
-    --e.shotTimer;
-    const bool winding = e.shotTimer <= 0 && e.shotTimer > -WIDOW_SPIT_WINDUP;
-    const bool throwing = e.shotTimer <= -WIDOW_SPIT_WINDUP;
-
-    /* Only bothers if you are close enough to be worth silk, and only if it
-       can see you -- webbing a wall you are standing behind teaches nothing.
-       Sampled rather than walked, as everywhere else in this file. */
-    /* Line of sight FIRST, and range second, as two separate questions.
-
-       They used to be one, and the bug that made was the whole of the second
-       kiting report. The spit's range is 180; the leap's is 280; and with a
-       single `inSight` flag gated on the shorter of them, a player who backed
-       past 180 cells could never be leapt at again -- so the creature dropped
-       to a walk it can never catch anybody with and simply fell out of the
-       fight. Measured: kited at a flat sprint the gap went to 920 cells and it
-       fired NOTHING in nine hundred frames.
-
-       A creature that can see you should not stop chasing because you are too
-       far away to spit at. */
-    float sightDist = 0.0f;
-    bool  los = false;
-    {
-        const float sx = p.centreX() - e.centreX(), sy = p.centreY() - e.centreY();
-        sightDist = sqrtf(sx * sx + sy * sy);
-        los = true;
-        /* Sampled rather than walked, as everywhere else in this file. More
-           samples than the six a short-range check needed, because the line is
-           now up to 280 cells long and six points across that is a probe every
-           forty-six cells -- which sees through most walls in the game. */
-        for (int k = 1; k <= 14; ++k) {
-            const int px = (int)(e.centreX() + sx * (float)k / 15.0f);
-            const int py = (int)(e.centreY() + sy * (float)k / 15.0f);
-            if (px < 0 || px >= SIM_W || py < 0 || py >= SIM_H ||
-                playerSolid(w, px, py)) { los = false; break; }
-        }
+    const EntityDef& d=ENT_DEFS[e.type];
+    const bool wounded=e.hp*2<=d.hp;
+    const float dx=p.centreX()-e.centreX(), dy=p.centreY()-e.centreY();
+    const float distance=sqrtf(dx*dx+dy*dy);
+    const auto enter=[&](int move,int ticks) {
+        e.phase=move; e.actTimer=ticks; e.telegraph=0;
+    };
+    if (e.phase<WIDOW_APPROACH || e.phase>WIDOW_MOULT) enter(WIDOW_APPROACH,24);
+    // One visible phase transition, delayed until a committed leap has landed.
+    if (wounded && e.aimHold!=1 && e.onGround && e.phase!=WIDOW_LEAP) {
+        e.aimHold=1; enter(WIDOW_MOULT,60);
     }
-    const bool inSight = los && sightDist < WIDOW_SPIT_RANGE;
-
-    if (throwing) {
-        /* THE CLOCK IS RESET WHETHER OR NOT IT THREW, and that is the whole
-           reason widowSpit reports back.
-
-           It used to return silently when the ballistic solve failed -- out of
-           range, or a target it cannot arc to -- leaving shotTimer where it
-           was. Which leaves `throwing` true, so this branch returns again next
-           frame, and again: the creature stops walking, stops pouncing, and
-           stands in one place retrying a shot it has already worked out it
-           cannot make. Reported from play as the boss letting you stand and
-           shoot it, and it is the more embarrassing half of that report -- not
-           a creature that attacks too little, a creature that has hung. */
-        if (!inSight || !widowSpit(w, e, p))
-            e.shotTimer = d.shotEvery / 2;    /* try again sooner, not never */
-        e.telegraph = 0;
-        /* NOT a return. It throws on the move, and keeping the creature's legs
-           going through its own attack is what makes the fight a chase rather
-           than a series of poses -- see the note below. */
-    }
-
-    if (winding) {
-        /* Telegraphed but NOT planted, which is the difference between this and
-           the leap below, and it is what decides whether the creature can be
-           kited.
-
-           It used to plant: shed its speed and return, thirty frames a volley.
-           Add the leap's own twenty-four-frame gather and the creature stood
-           still for more than half of every cycle -- so a player walking
-           backwards at 1.2 pulled away from a creature that spent most of its
-           life winding up. Measured, the gap went from 61 cells to 920 with the
-           creature never once catching up.
-
-           Only one of the two attacks needs a plant. The leap keeps it, because
-           a leap you cannot see coming is a leap you cannot dodge and the
-           creature crosses the whole arena with it. A thrown web arrives on a
-           visible arc from up to 180 cells away, which is its own warning. */
-        e.telegraph = -e.shotTimer;
-        if (!inSight) e.shotTimer = d.shotEvery / 2;
-    } else {
-        e.telegraph = 0;
-    }
-
-    /* --- committed, while the leap is in the air --------------------------
-       The scuttle below calls groundChase, which sets vx toward the player at a
-       WALKING pace -- so without this the frame after a leap overwrote the
-       leap. Measured before it existed: a jump solved to cover 121 cells moved
-       the creature thirteen in the following fifty frames, and the trace showed
-       it leaving the ground with vy = -3.2 and vx = -0.62.
-
-       It is also the right behaviour rather than only the fix. A pounce that
-       can be steered mid-air is a pounce that cannot be dodged, which is the
-       same rule the Brood Mother's charge and the Stooper's dive are both
-       written to: commit on the way out, and the wind-up is where the decision
-       was made. */
-    if (!e.onGround && e.aimHold > WIDOW_POUNCE_EVERY - 45) {
-        if (e.vx > 0.05f) e.facing = 1; else if (e.vx < -0.05f) e.facing = -1;
+    e.telegraph=0;
+    if (e.phase==WIDOW_RECOVER || e.phase==WIDOW_MOULT) {
+        e.vx*=0.72f;
+        if (--e.actTimer<=0) enter(WIDOW_APPROACH,18);
         return;
     }
-
-    /* --- the pounce -------------------------------------------------------
-       Its answer to being kited. Runs on its OWN clock (aimHold) rather than
-       sharing the volley's, so the two attacks drift against each other and the
-       fight does not settle into a bar of music you can stand in one place and
-       read -- the same reasoning as the scuttle and the spit below.
-
-       Checked after the spit, so a creature part-way through a throw finishes
-       it rather than cancelling into a leap. Winding up two attacks at once
-       would make the telegraph mean nothing, and the telegraph is the whole
-       reason either of them is fair. */
-    --e.aimHold;
-    {
-        const float dx = p.centreX() - e.centreX();
-        const float dy = p.centreY() - e.centreY();
-        const float dist = sqrtf(dx * dx + dy * dy);
-        /* The LEAP's range, not the spit's -- see the note on the sight test
-           above. This is the one that keeps it in the fight. */
-        const bool worth = los && dist > WIDOW_POUNCE_MIN &&
-                           dist < WIDOW_POUNCE_RANGE;
-
-        if (e.aimHold <= 0 && worth && e.onGround) {
-            /* Airborne for 2*v/g frames, so the horizontal speed that lands it
-               on the player is simply the gap over that. Capped both ways. */
-            const float air = 2.0f * WIDOW_POUNCE_UP / ENT_GRAVITY;
-            float vx = dx / air;
-            if (vx >  WIDOW_POUNCE_MAXVX) vx =  WIDOW_POUNCE_MAXVX;
-            if (vx < -WIDOW_POUNCE_MAXVX) vx = -WIDOW_POUNCE_MAXVX;
-            e.vx = vx;
-            e.vy = -WIDOW_POUNCE_UP;
-            e.facing = dx > 0.0f ? 1 : -1;
-            e.aimHold = WIDOW_POUNCE_EVERY;
-            e.telegraph = 0;
-            /* The scuttle restarts from its pause, so it lands and gathers
-               rather than sprinting out of the leap. */
-            e.actTimer = -WIDOW_PAUSE / 2;
-            return;
-        }
-        /* Gathering. It plants and shows the wind-up, and does NOT walk while
-           it does -- a leap that begins out of a run is one you cannot read the
-           start of. */
-        if (e.aimHold <= WIDOW_POUNCE_WIND && worth && e.onGround) {
-            e.vx *= 0.70f;
-            e.telegraph = e.aimHold;
-            return;
-        }
-        /* Nothing to leap at: hold the clock at the wind-up boundary rather
-           than letting it run to a huge negative, or the first moment the
-           player comes into view the creature leaps with no telegraph at all. */
-        if (!worth && e.aimHold < WIDOW_POUNCE_WIND)
-            e.aimHold = WIDOW_POUNCE_WIND;
+    if (e.phase==WIDOW_LEAP) {
+        // Do not steer or shoot in flight. Landing always buys a punish window.
+        if (e.vx>0.05f) e.facing=1; else if (e.vx<-0.05f) e.facing=-1;
+        if ((e.onGround && e.actTimer<78) || --e.actTimer<=0)
+            enter(WIDOW_RECOVER,wounded ? 42 : 54);
+        return;
     }
-
-    /* --- the scuttle ------------------------------------------------------ */
-    --e.actTimer;
-    if (e.actTimer < -WIDOW_PAUSE) e.actTimer = WIDOW_BURST;
-    const bool bursting = e.actTimer > 0;
-
-    /* Wounded, it stops less. The pause is the window you fight in, so taking
-       some of it away is the cheapest possible way to make the second half
-       harder without giving the creature a new move nobody has seen. */
-    const float pace = bursting ? (wounded ? 1.25f : 1.0f) : 0.0f;
-
-    bool climb = false;
-    groundChase(e, p, d.speed * pace, d.accel * (bursting ? 1.0f : 0.4f),
-                0.0f, &climb);
-
-    /* Eight legs climb what two cannot -- the Thresher's rule, and a spider has
-       more claim to it than anything else in the game. Only while bursting, so
-       a planted Widow does not levitate. */
-    if (bursting && e.onGround && climb) {
-        const int probeX = e.facing > 0 ? e.right() + 1 : e.left() - 1;
-        if (probeX > PLAY_X0 && probeX < PLAY_X1) {
-            bool low = false;
-            for (int y = e.bottom(); y > e.bottom() - 4 && y > PLAY_Y0; --y)
-                if (playerSolid(w, probeX, y, SOLID_ANY)) { low = true; break; }
-            if (low) e.vy = -2.0f;
+    if (e.phase==WIDOW_WEB_WIND || e.phase==WIDOW_LEAP_WIND) {
+        e.vx*=0.68f;
+        const bool web=e.phase==WIDOW_WEB_WIND;
+        e.telegraph=(web ? WIDOW_SPIT_WINDUP : WIDOW_POUNCE_WIND)-e.actTimer+1;
+        if (--e.actTimer>0) return;
+        if (web) {
+            widowSpit(w,e,p);
+            enter(WIDOW_RECOVER,wounded ? 42 : 54);
+        } else {
+            const float air=2.0f*WIDOW_POUNCE_UP/ENT_GRAVITY;
+            e.vx=fmaxf(-WIDOW_POUNCE_MAXVX,fminf(WIDOW_POUNCE_MAXVX,(e.aimX-e.centreX())/air));
+            e.vy=-WIDOW_POUNCE_UP;
+            enter(WIDOW_LEAP,80);
+        }
+        return;
+    }
+    bool los=true;
+    for (int k=1;k<=14;++k) {
+        int x=(int)(e.centreX()+dx*k/15),y=(int)(e.centreY()+dy*k/15);
+        if (x<0 || x>=SIM_W || y<0 || y>=SIM_H || playerSolid(w,x,y)) { los=false; break; }
+    }
+    if (dx>2) e.facing=1; else if (dx<-2) e.facing=-1;
+    if (e.phase==WIDOW_REPOSITION) {
+        // Back off briefly, keeping the face toward the player. A wall ends the
+        // retreat rather than trapping the boss in an endless backpedal.
+        e.vx=dx>0 ? -0.85f : 0.85f;
+        if (--e.actTimer<=0 || distance>=95 ||
+            (e.actTimer<26 && fabsf(e.x-e.prevX)<0.05f)) enter(WIDOW_APPROACH,-1);
+        return;
+    }
+    if (e.actTimer>0) --e.actTimer;
+    if (e.onGround && los && e.actTimer<=0 && distance<WIDOW_POUNCE_RANGE) {
+        // Alternate at medium range; use a pounce to close a large gap.
+        // After a volley, even a close target gets a leap rather than another
+        // retreat/volley loop. Both moves snapshot aim before their tell.
+        if (distance<65 && (e.shotTimer&1)==0 && e.actTimer!=-1) {
+            enter(WIDOW_REPOSITION,32); return;
+        }
+        bool web=distance<WIDOW_SPIT_RANGE && ((e.shotTimer&1)==0 || e.actTimer==-1);
+        ++e.shotTimer;
+        e.aimX=p.centreX(); e.aimY=p.centreY();
+        enter(web ? WIDOW_WEB_WIND : WIDOW_LEAP_WIND,
+              web ? WIDOW_SPIT_WINDUP : WIDOW_POUNCE_WIND);
+        e.telegraph=1;
+        return;
+    }
+    bool climb=false;
+    const float approachPace=distance>130.0f ? (wounded ? 3.1f : 2.8f) : (wounded ? 1.55f : 1.35f);
+    groundChase(e,p,d.speed*approachPace,d.accel,0.0f,&climb);
+    if (e.onGround && climb) {
+        const int probeX=e.facing>0 ? e.right()+1 : e.left()-1;
+        if (probeX>PLAY_X0 && probeX<PLAY_X1) {
+            for (int y=e.bottom();y>e.bottom()-4 && y>PLAY_Y0;--y)
+                if (playerSolid(w,probeX,y,SOLID_ANY)) { e.vy=-2.0f; break; }
         }
     }
 }
@@ -3607,15 +3509,36 @@ static void effigyTick(World& w, Entity& e, const Player& p) {
         && overhead < EFFIGY_DIG_OVERHEAD && e.onGround)
         broodPlough(w, e, 0.0f, 1.0f);
 
-    /* A grounded recovery step, not a jump whenever its slow gait falls below
-       the other bosses' threshold. Never retrigger while airborne. */
+    /* --- and when it is WEDGED, it cuts its way out ------------------------
+       Reported from play: "the effigy needs to destroy blocks if hes stuck."
+
+       The per-frame plough above only cuts the face it is walking into, which
+       answers a wall and nothing else. A creature 96 by 88 gets caught on
+       things that are not in front of it -- a lip under its feet, a ceiling on
+       its shoulders, a notch it has settled into -- and for those the cut has
+       to go every way at once.
+
+       Two separate decisions on one counter, and separating them is the fix.
+       The counter used to be reset whenever the hop was on cooldown, so a
+       wedged boss did nothing for the three seconds after each attempt. It now
+       accumulates whatever the cooldown says: the CUT is free and happens every
+       time it trips, and only the HOP waits, because a hop is a movement the
+       player has to be able to read and a hole in the rock is not. */
     const float moved = fabsf(e.x - e.prevX) + fabsf(e.y - e.prevY);
-    if (walking && e.onGround && e.aimHold==0 && moved < EFFIGY_STUCK_CELLS) {
+    if (walking && e.onGround && moved < EFFIGY_STUCK_CELLS) {
         if (++e.stuck >= EFFIGY_STUCK) {
             e.stuck = 0;
-            e.vy = -EFFIGY_HOP;
-            e.aimHold=EFFIGY_HOP_COOLDOWN;
+            /* Every direction. Forward is what it is trying to go, up clears a
+               ceiling it has caught on, and down drops it out of a notch --
+               and it is still strength-gated, so a layer barrier stops all
+               three and the boss cannot cut its way out of its own arena. */
+            broodPlough(w, e, (float)e.facing, 0.0f);
             broodPlough(w, e, 0.0f, -1.0f);
+            broodPlough(w, e, 0.0f,  1.0f);
+            if (e.aimHold == 0) {
+                e.vy = -EFFIGY_HOP;
+                e.aimHold = EFFIGY_HOP_COOLDOWN;
+            }
         }
     } else {
         e.stuck = 0;
@@ -3807,6 +3730,16 @@ static void entTickMode(World& w, Player& fallbackPlayer, Inventory& fallbackInv
             const float dy = e.centreY() - p.centreY();
             if (dx * dx + dy * dy >
                 (float)(ENT_DESPAWN_DIST * ENT_DESPAWN_DIST)) {
+                /* A coal bee hands its soot back to its hive on the way out.
+                   Without this, walking away deleted the only record that the
+                   colony had ever turned and the hive rebuilt it out of
+                   ordinary bees -- which is exactly what "they de-coaled when
+                   i walked away" was. hiveSour is idempotent and permanent, so
+                   this is a note rather than a count. */
+                if (e.type == ENT_COAL_BEE && e.home >= 0 &&
+                    e.home < MAX_DEVICES && g_devices[e.home].used &&
+                    g_devices[e.home].type == DEV_HIVE)
+                    hiveSour(g_devices[e.home]);
                 e.type = ENT_NONE;
                 e.hp   = 0;
                 continue;
@@ -4007,12 +3940,14 @@ int entHitSegment(float x0, float y0, float x1, float y1,
     return struck;
 }
 
-int entDamageKnockbackDisc(int cx, int cy, int radius, int damage, float knockback) {
+int entDamageKnockbackDisc(int cx, int cy, int radius, int damage,
+                           float knockback, bool sparingTame) {
     int hit = 0;
     const float r2 = (float)(radius * radius);
     for (int i = 0; i < MAX_ENTITIES; ++i) {
         Entity& e = g_entities[i];
         if (!e.alive()) continue;
+        if (sparingTame && ENT_DEFS[e.type].tame) continue;
         float dx = e.centreX() - (float)cx, dy = e.centreY() - (float)cy;
         const float d2 = dx * dx + dy * dy;
         if (d2 > r2) continue;
@@ -4679,6 +4614,9 @@ void entDraw(u32* px, int camX, int camY, bool lit) {
             const bool moving = fabsf(e.vx) > 0.04f || fabsf(e.vy) > 0.04f;
             if (e.type==ENT_EFFIGY && e.telegraph>0)
                 art=g_effigyRitual[imin(EFFIGY_RITUAL_FRAMES-1,e.telegraph*EFFIGY_RITUAL_FRAMES/EFFIGY_ERUPT_WIND)];
+            else if (e.type==ENT_WIDOW && (e.phase==WIDOW_WEB_WIND || e.phase==WIDOW_LEAP_WIND ||
+                     e.phase==WIDOW_RECOVER || e.phase==WIDOW_MOULT))
+                art=g_widowIdle[0];
             else if (e.type == ENT_SHAMBLER && !e.onGround)
                 art = e.vy < 0.0f ? g_shamblerJump : g_shamblerFall;
             else if (moving) {
@@ -4699,12 +4637,24 @@ void entDraw(u32* px, int camX, int camY, bool lit) {
                     const int vx = ox + sx, vy = oy + sy;
                     if (vx < 0 || vx >= VIEW_CELLS_W || vy < 0 || vy >= VIEW_CELLS_H)
                         continue;
-                    u32 out = art[sy * art3.w +
-                                  (e.facing < 0 ? art3.w - 1 - sx : sx)];
+                    const int sourceX=e.facing<0 ? art3.w-1-sx : sx;
+                    int sourceY=sy;
+                    if (e.type==ENT_WIDOW) {
+                        const int crouch=e.phase==WIDOW_LEAP_WIND ? 5 :
+                                         e.phase==WIDOW_RECOVER ? 2 : 0;
+                        if (sy<crouch) continue;
+                        if (crouch) sourceY=(sy-crouch)*art3.h/(art3.h-crouch);
+                        if (e.phase==WIDOW_WEB_WIND && sourceX>art3.w/2) sourceY=imin(art3.h-1,sy+2);
+                    }
+                    u32 out = art[sourceY * art3.w + sourceX];
                     if (!out) continue;
                     if (e.type==ENT_EFFIGY && e.telegraph>0 && out==RIG_EFFIGY[3])
                         out=lerpColor(out,0xFFF0B4,imin(220,e.telegraph*2));
                     if (lit) out = shadeColor(out, viewShade(vx, vy));
+                    if (e.type==ENT_WIDOW && e.telegraph>0 && sourceX>art3.w/2 && sourceY<art3.h*2/3)
+                        out=lerpColor(out,e.phase==WIDOW_WEB_WIND ? 0xE8D9FF : 0xFFC286,150);
+                    if (e.type==ENT_WIDOW && e.phase==WIDOW_MOULT)
+                        out=lerpColor(out,0xB888DA,80);
                     if (e.hurtFlash > 0) out = 0xFFFFFF;
                     px[vy * VIEW_CELLS_W + vx] = out;
                 }

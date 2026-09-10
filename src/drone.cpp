@@ -177,6 +177,12 @@ static Entity* nearestEnemy(float x, float y) {
     for (int i = 0; i < MAX_ENTITIES; ++i) {
         Entity& e = g_entities[i];
         if (!e.alive()) continue;
+        /* ENEMY, which this function has been called since it was written
+           without ever checking: it took the nearest entity, and a bee is an
+           entity. Reported as "drones shoot bees". The lance already asked --
+           see lanceTarget -- and this is the same question in the one place
+           every other chassis asks it. */
+        if (ENT_DEFS[e.type].tame) continue;
         const float dx = e.centreX() - x, dy = e.centreY() - y;
         const float d2 = dx * dx + dy * dy;
         if (d2 < best2) { best2 = d2; best = &e; }
@@ -588,7 +594,7 @@ static void orbitTick(Drone& d, const Player& p, int bay, const Inventory& inv) 
 
     if (d.effectCool > 0) { --d.effectCool; return; }
     if (entDamageDisc((int)d.x, (int)d.y, ORBIT_HIT_RADIUS,
-                      droneDamage(inv, ORBIT_DAMAGE)) > 0)
+                      droneDamage(inv, ORBIT_DAMAGE), true) > 0)
         d.effectCool = ORBIT_COOLDOWN;
 }
 
@@ -781,9 +787,9 @@ static void droneTickBank(Drone* drones, const World& w, const Player& p, Invent
             if (d.effectCool > 0) --d.effectCool;
             if (d.effectCool == 0) {
                 entDamageKnockbackDisc((int)p.centreX(), (int)p.centreY(), 34,
-                                       droneDamage(inv, 1), 1.25f);
+                                       droneDamage(inv, 1), 1.25f, true);
                 if (hasChip(inv, i, ITEM_GARLIC_FIELD_CHIP))
-                    entDamageDisc((int)d.x, (int)d.y, 14, droneDamage(inv, 1));
+                    entDamageDisc((int)d.x, (int)d.y, 14, droneDamage(inv, 1), true);
                 d.effectCool = 24;
             }
         }

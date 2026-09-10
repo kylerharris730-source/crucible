@@ -109,6 +109,27 @@ the repeated trim without making the three slot roles look interchangeable. The
 Drone Beacon repeats that cyan signal colour but uses antenna arcs and a cased
 puck, so it reads as the set's controller rather than a fourth armour piece.
 
+## Widow encounter rhythm
+
+The Widow uses a single replicated `WidowMove` state, not independent attack
+clocks. Approach and short backpedals establish spacing. A web volley raises
+the front with pale silk light for 30 ticks; a pounce gathers into a low amber
+crouch for 32 ticks. Both snapshot the target before the tell. No spit during
+a pounce and no steering after takeoff. Recovery settles the body for 54 ticks
+(42 below half health), providing an opening rather than another immediate attack.
+A one-time 60-tick violet moult marks half health; afterwards pursuit is faster
+and the existing web fan wider, but commitment and recovery remain.
+
+At large gaps the approach scuttle is faster, rather than shortening tells or
+removing recovery to win a footrace. Nearby targets provoke spacing for silk;
+midrange alternates volleys and pounces, and distant visible targets provoke a
+pounce. Occluded or out-of-range targets are approached rather than attacked
+without warning. Failed ballistic solves still exit into recovery.
+
+`tests/widow.cpp` checks move exclusivity, aim commitment, recovery, the half-health
+break, and the existing silk/pursuit behavior. `tests/widow_art.cpp` with
+`scripts/preview_widow.py` renders the actual in-game tells for visual review.
+
 ## Effigy final boss
 
 The Effigy uses a 96×112 world canvas (formerly 72×88), with 16 distance-driven
