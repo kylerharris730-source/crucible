@@ -4597,6 +4597,27 @@ static void applyDeviceAction(PlayerSession& session, const NetAction& action) {
             else                   d.value = action.b;
         }
         break;
+    /* --- the rocket ------------------------------------------------------
+       The rules are in device.cpp with the machine, not here with the button:
+       the same decisions are made by the countdown's own recheck every frame,
+       and a copy of them at the click site is a copy that can disagree. This
+       is the plumbing only.
+
+       `slot` is which session sent it, which on the host is the host's own and
+       on a client is the guest's -- the action is applied on the authority
+       either way, so the host test inside rocketBeginLaunch means the same
+       thing wherever the press happened. */
+    case NDEV_READY:
+        if (d.type == DEV_ROCKET && rocketStage(d) == ROCKET_IDLE)
+            rocketToggleReady(d, (int)(&session - g_playerSessions));
+        break;
+    case NDEV_LAUNCH:
+        if (d.type != DEV_ROCKET) break;
+        /* Anyone may call one off; only the host may start one. See ENDGAME.md
+           and the note on rocketCancel. */
+        if (rocketStage(d) == ROCKET_COUNTING) rocketCancel(d);
+        else rocketBeginLaunch(g_world, d, (int)(&session - g_playerSessions));
+        break;
     case NDEV_DEPTH_DEC: devSetBoxDepth(d, devBoxDepth(d) - 1); break;
     case NDEV_DEPTH_INC: devSetBoxDepth(d, devBoxDepth(d) + 1); break;
     case NDEV_MODE:      devSetRunMode(d, devRunMode(d) + 1);   break;
@@ -5497,13 +5518,18 @@ static const int DEVP_BOX_H = 128;
    machine that has earned the exception, because it is the only one whose
    panel is a list of things you have not done yet. See ENDGAME.md: "Show
    missing requirements directly, not only after pressing Launch." */
-static const int DEVP_ROCKET_H = 176;
+static const int DEVP_ROCKET_H = 190;
 static RECT g_devpBox, g_devpDec, g_devpInc, g_devpTake, g_devpTurn, g_devpClose;
 /* A second control row, for the miner and the placer only. They are the one
    pair with more to say than "read it, nudge it" -- a direction, a depth, a
    filter and a trigger mode -- and cramming that onto the single row every
    other machine uses would make the row unreadable for all of them. */
 static RECT g_devpDepthDec, g_devpDepthBox, g_devpDepthInc, g_devpFilter, g_devpMode;
+/* The rocket's own two, beside the load button on its bottom row. Named rather
+   than borrowed from the steppers: "the minus button means Ready on this one
+   machine" is exactly the sort of reuse that reads fine when it is written and
+   is wrong the first time somebody adds a stepper to it. */
+static RECT g_devpReady, g_devpLaunch;
 
 static void layoutDevPanel(const Device& d) {
     /* Sit it just above and right of the machine, in screen pixels. */
@@ -5530,6 +5556,18 @@ static void layoutDevPanel(const Device& d) {
     SetRect(&g_devpTake,  px + 138, by, px + 228, by + 22);
     SetRect(&g_devpTurn,  px + 232, by, px + 340, by + 22);
     SetRect(&g_devpClose, px + DEVP_W - 40, by, px + DEVP_W - 10, by + 22);
+
+    if (d.type == DEV_ROCKET) {
+        /* Three controls of unequal weight, sized by what they say: loading is
+           the one you press many times, Ready is a toggle, and Launch is the
+           one that should be hard to hit by accident, so it sits furthest from
+           the other two and nearest the close button. */
+        SetRect(&g_devpTake,   px + 10,  by, px + 150, by + 22);
+        SetRect(&g_devpReady,  px + 154, by, px + 244, by + 22);
+        SetRect(&g_devpLaunch, px + 248, by, px + DEVP_W - 50, by + 22);
+    } else {
+        SetRectEmpty(&g_devpReady); SetRectEmpty(&g_devpLaunch);
+    }
 
     if (devHasBox(d.type)) {
         /* [-] [deep N] [+], with the middle a READOUT rather than a button.
@@ -5587,6 +5625,12 @@ static bool handleDevPanelClick(int mx, int my) {
         return true;
     }
     if (d.type == DEV_PIPE || d.type == DEV_CROSSOVER) return true;
+    if (d.type == DEV_ROCKET) {
+        if (PtInRect(&g_devpTake, pt))        sendClientAction(NACT_DEVICE, 0, NDEV_TAKE);
+        else if (PtInRect(&g_devpReady, pt))  sendClientAction(NACT_DEVICE, 0, NDEV_READY);
+        else if (PtInRect(&g_devpLaunch, pt)) sendClientAction(NACT_DEVICE, 0, NDEV_LAUNCH);
+        return true;
+    }
     if (devHasBox(d.type)) {
         if (PtInRect(&g_devpDepthDec, pt)) {
             sendClientAction(NACT_DEVICE, 0, NDEV_DEPTH_DEC); return true;
@@ -5635,6 +5679,11 @@ static void drawCircuitPortSignals(HDC hdc, int device, int port, int x, int y) 
     }
     if (!shown) drawText(hdc, x, y, RGB(112, 122, 138), "(no signals)");
 }
+
+/* Defined with the rest of the multiplayer drawing, further down. Declared
+   here because the rocket's crew row is the one panel that names other
+   players, and it should name them in the colour they are drawn in. */
+static u32 playerIdentityColour(PlayerId id);
 
 static void drawDevPanel(HDC hdc) {
     if (g_devPanel < 0) return;
@@ -5722,7 +5771,9 @@ static void drawDevPanel(HDC hdc) {
         const int fuel = rocketFuel(d);
         const bool core = rocketCore(d);
         const bool corridor = rocketCorridorClear(g_world, d);
-        char line[112];
+        const int stage = rocketStage(d);
+        const int fault = (int)rocketFault(g_world, d);
+        char line[128];
         drawText(hdc, tx, g_devpBox.top + 6, RGB(245, 224, 150), di.name);
         drawText(hdc, tx, g_devpBox.top + 28, DONE, "hull assembled");
         drawText(hdc, tx, g_devpBox.top + 46, core ? DONE : MISSING,
@@ -5732,12 +5783,52 @@ static void drawDevPanel(HDC hdc) {
                  fuel >= ROCKET_FUEL_NEED ? DONE : MISSING, line);
         drawText(hdc, tx, g_devpBox.top + 82, corridor ? DONE : MISSING,
                  corridor ? "launch corridor clear" : "launch corridor blocked");
-        drawText(hdc, tx, g_devpBox.top + 100, MISSING, "crew not aboard");
-        /* Said outright rather than implied by a greyed-out Launch button. A
-           dead control is a promise the build cannot keep; a sentence is
-           honest and takes the same room. */
-        drawText(hdc, tx, g_devpBox.top + 122, RGB(112, 122, 138),
-                 "Ignition is not wired up yet.");
+
+        /* --- the crew ------------------------------------------------------
+           One row of marks, one per player at the pad, in the colour that
+           player is drawn in -- ENDGAME.md asks for the number and the colour,
+           and the colour is the half that matters: in a four-player world the
+           question is "who are we waiting for", and a name nobody chose
+           answers it worse than the figure you can see standing there. */
+        int crew = 0, ready = 0;
+        for (int i = 0; i < MAX_PLAYERS; ++i) {
+            if (!rocketCrew(d, i)) continue;
+            const bool yes = rocketReady(d, i);
+            ++crew; ready += yes ? 1 : 0;
+            RECT mark = { tx + crew * 22 - 10, g_devpBox.top + 102,
+                          tx + crew * 22 + 4,  g_devpBox.top + 116 };
+            HBRUSH brush = CreateSolidBrush(
+                netRole() != NET_OFF
+                    ? (COLORREF)playerIdentityColour(g_playerSessions[i].networkId)
+                    : RGB(200, 206, 218));
+            if (yes) FillRect(hdc, &mark, brush);
+            FrameRect(hdc, &mark, brush);
+            DeleteObject(brush);
+        }
+        sprintf(line, crew ? "crew  %d of %d aboard have said go"
+                           : "crew  nobody is standing at the pad", ready, crew);
+        drawText(hdc, tx + (crew ? crew * 22 + 12 : 0), g_devpBox.top + 102,
+                 crew && ready == crew ? DONE : MISSING, line);
+
+        /* The headline: the countdown if one is running, otherwise the first
+           thing standing in its way. Straight off rocketFault, so this cannot
+           say ready and then be refused. */
+        if (stage == ROCKET_COUNTING) {
+            sprintf(line, "LAUNCH IN  %.1f s   (anyone can cancel)",
+                    rocketCountdown(d) / 60.0f);
+            drawText(hdc, tx, g_devpBox.top + 124, RGB(255, 230, 140), line);
+        } else if (stage == ROCKET_LIT) {
+            /* Said outright rather than implied by a dead button. A control
+               that does nothing is a promise the build cannot keep. */
+            drawText(hdc, tx, g_devpBox.top + 124, RGB(255, 230, 140),
+                     "IGNITION -- the ascent itself is not built yet.");
+        } else {
+            drawText(hdc, tx, g_devpBox.top + 124,
+                     fault == ROCKET_READY ? DONE : RGB(112, 122, 138),
+                     fault == ROCKET_READY ? "ready to launch"
+                                           : rocketFaultText(fault));
+        }
+
         const ItemStack& held = g_inv.held();
         const char* what =
             (!held.empty() && held.item == ITEM_ASCENT_CORE && !core) ? "install core" :
@@ -5746,7 +5837,13 @@ static void drawDevPanel(HDC hdc) {
             (fuel > 0)                                                ? "take fuel back" :
             core                                                      ? "take core back" :
                                                                         "nothing to load";
+        const int me = 0;   /* the panel is drawn for whoever is looking at it */
         drawButton(hdc, g_devpTake, what, 0, false, PtInRect(&g_devpTake, pt) != 0);
+        drawButton(hdc, g_devpReady, rocketReady(d, me) ? "stand down" : "ready",
+                   0, rocketReady(d, me), PtInRect(&g_devpReady, pt) != 0);
+        drawButton(hdc, g_devpLaunch,
+                   stage == ROCKET_COUNTING ? "CANCEL" : "LAUNCH", 0,
+                   stage == ROCKET_COUNTING, PtInRect(&g_devpLaunch, pt) != 0);
         drawButton(hdc, g_devpClose, "x", 0, false, PtInRect(&g_devpClose, pt) != 0);
         SelectObject(hdc, oldFont);
         return;

@@ -1,10 +1,12 @@
 # Ascent: proposed rocket and ending
 
-**Stage one is built** (2026-09-10): the hull art, the assembly device, its
-recipe, placement, the checklist panel, loading, and recoverable cargo. What is
-still a draft is everything from the launch sequence down -- readiness,
-countdown, ignition, cinematic, and the win screen. The panel says so outright
-rather than offering a dead Launch button.
+**Stages one and two are built** (2026-09-10): the hull art, the assembly
+device, its recipe, placement, the checklist panel, loading, recoverable cargo,
+and now readiness, the host-confirmed countdown, and every recheck that calls
+one off. What is still a draft is what happens AFTER ignition -- the cinematic,
+victory, and the win screen. The panel says so outright rather than offering a
+dead button, and nothing is consumed at ignition yet, because there is nothing
+to spend it on until stage three exists.
 
 The rest of this file is the design. The Effigy unlocks escape; building and launching
 the machine finishes it. First playable version should suit a full co-op run
@@ -87,7 +89,15 @@ to their own menu without ending the host's game.
    button that installs the core, loads fuel, and gives both back; and mining
    it returns the assembly with its cargo. `tests/rocket.cpp` and
    `tests/rocket_art.cpp`.
-2. Save-backed, host-authoritative readiness/countdown/launch state.
+2. ~~Save-backed, host-authoritative readiness/countdown/launch state.~~
+   **Done.** The whole launch state lives in `Device` fields the rocket does
+   not otherwise use -- stage, countdown, and a ready bit per player slot --
+   which needed no new packet, no new save section and no version gate: a
+   Device is already replicated field by field and already written to the save.
+   The host confirms, anyone cancels, and `rocketFault` is the one definition
+   of "ready" that the panel, the button and the per-frame recheck all read, so
+   the pad cannot say ready and then refuse. Cancels on a blocked corridor, a
+   destroyed pad, a death, or a crewmate walking away. `tests/rocket_launch.cpp`.
 3. Launch cinematic, victory screen, and safe return to the world.
 
 Test single player, two-player desktop, and browser co-op before the full run.

@@ -594,6 +594,87 @@ static const int ROCKET_CORRIDOR = 120;
 int  rocketProbeCount();
 void rocketProbe(int i, int* dx, int* dy);
 
+/* --- the launch state ------------------------------------------------------
+   Stage two of ENDGAME.md: readiness, the countdown, and the rechecks that
+   call one off. All of it lives in Device fields the rocket does not otherwise
+   use, and that is not only the save argument the notes above give -- it is
+   also the whole of the multiplayer story.
+
+   A Device is written into the network overlay field by field (see
+   codecDevice) and into the save as a raw block. So a countdown kept in
+   `phase` and a ready set kept in `received` are replicated to every client and
+   persisted across a reload with no new packet, no new save section and no new
+   version check. The host runs devTick and its devices ARE the truth; a client
+   advances the same fields locally for presentation and is corrected by the
+   next state packet, exactly like every other machine in the game.
+
+   That is why there is no "launch server" here. The authority already exists.
+
+     reading   the stage below
+     phase     frames left in the countdown
+     received  one bit per player slot: who has marked themselves ready
+
+   The alternative was a launch controller object owning all three, and it
+   would have needed replicating, saving and version-gating by hand -- three
+   new ways to lose somebody's ending. */
+enum RocketStage {
+    ROCKET_IDLE = 0,
+    ROCKET_COUNTING,   /* the countdown is running; anyone may cancel */
+    ROCKET_LIT         /* it reached zero. Stage three flies it away */
+};
+
+/* Five seconds, which is ENDGAME.md's number. Long enough to change your mind
+   and short enough not to be a chore in a world where nothing else is
+   happening. */
+static const int ROCKET_COUNTDOWN_FRAMES = 300;
+/* How near a player has to be to count as aboard. Generous -- the hull is
+   eighty cells tall and standing at its feet should qualify -- but finite, so
+   a crewmate two screens away mining is not silently launched into space. */
+static const int ROCKET_CREW_RANGE = 90;
+
+/* Why this rocket cannot launch, or ROCKET_READY if it can.
+
+   ONE function, for the reason heatLampCells is one function: the panel's
+   checklist, the button that starts the countdown, and the recheck that runs
+   every frame OF that countdown must never disagree about what "ready" means.
+   Three copies of these rules is three chances for the pad to say ready and
+   then refuse, or worse, to say ready and then cancel silently at two seconds.
+
+   Ordered by what a player should fix first, because the panel shows the first
+   fault as its headline. */
+enum RocketFault {
+    ROCKET_READY = 0,
+    ROCKET_FAULT_NO_CORE,
+    ROCKET_FAULT_NO_FUEL,
+    ROCKET_FAULT_NO_PAD,       /* the ground under it has gone */
+    ROCKET_FAULT_BLOCKED,      /* something is over the corridor */
+    ROCKET_FAULT_NO_CREW,      /* nobody living is standing near it */
+    ROCKET_FAULT_NOT_READY     /* somebody who is here has not said yes */
+};
+RocketFault rocketFault(const World& w, const Device& d);
+const char* rocketFaultText(int fault);
+
+int  rocketStage(const Device& d);
+int  rocketCountdown(const Device& d);
+/* Is this player marked ready? Slots, not network ids: the mask is indexed the
+   same way g_playerSessions is. */
+bool rocketReady(const Device& d, int slot);
+/* Near enough, alive, and connected -- the three things that make somebody
+   crew. Readiness is dropped rather than remembered when one stops being true,
+   which is what stops a ready bit set by somebody who then walked off into a
+   cave from launching the rocket without them. */
+bool rocketCrew(const Device& d, int slot);
+void rocketToggleReady(Device& d, int slot);
+
+/* Start the countdown. Refused unless the pad is ready and `slot` is the host,
+   because a guest starting a five-second countdown on somebody else's world is
+   the one part of this that is not a group decision -- see ENDGAME.md, "Host
+   confirms Launch". Returns whether it started. */
+bool rocketBeginLaunch(const World& w, Device& d, int slot);
+/* Stop it. Anyone may, which IS the group decision half: a countdown that only
+   the host could call off would make every guest a passenger. */
+void rocketCancel(Device& d);
+
 bool rocketCore(const Device& d);
 void rocketSetCore(Device& d, bool installed);
 int  rocketFuel(const Device& d);

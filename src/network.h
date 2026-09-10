@@ -70,7 +70,17 @@ enum NetDeviceOperation {
        every other id that crosses a wire in this codebase. */
     NDEV_DEPTH_DEC,
     NDEV_DEPTH_INC,
-    NDEV_MODE
+    NDEV_MODE,
+    /* The rocket. READY toggles the sender's own place in the crew; LAUNCH
+       starts the countdown, and pressed during one it calls it off. Appended,
+       like every other id that crosses a wire in this codebase.
+
+       Two operations rather than three, because "cancel" is not a different
+       decision from "launch" -- it is the same button, and which one it means
+       is a thing the pad already knows. A separate id would let the two get
+       out of step with what the panel is drawing. */
+    NDEV_READY,
+    NDEV_LAUNCH
 };
 
 enum NetSlotContainer {

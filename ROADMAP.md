@@ -82,10 +82,11 @@ Measured, not guessed:
 
 ## 3. The rocket, and winning
 
-- [ ] **There is no win condition of any kind yet.** Nothing LAUNCHES yet --
+- [ ] **There is no win condition of any kind yet.** Nothing FLIES yet --
       but as of 2026-09-10 the rocket itself exists: see ENDGAME.md, which is
-      the design, and stage one of it is built. What is missing is readiness,
-      ignition, and what winning does.
+      the design, and stages one and two of it are built: the rocket, and the
+      countdown that reaches ignition. What is missing is what happens after
+      ignition, and what winning DOES.
 - [x] Design the rocket as a **build**, not a purchase: a multi-part structure
       assembled from the deepest materials, so finishing the game is the last
       and largest engineering problem rather than a crafting recipe. The device

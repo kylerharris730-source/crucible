@@ -5,6 +5,7 @@
 #include "entity.h"    /* g_entities and entSpawn, for the hive's bees */
 #include "light.h"     /* isNight(), so the hive keeps daylight hours */
 #include "projectile.h"
+#include "multiplayer.h"  /* g_playerSessions, for who is standing at the pad */
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>   /* fabsf, for the shed spark's fall */
@@ -498,6 +499,116 @@ int  rocketProbeCount() { return 5; }
 void rocketProbe(int i, int* dx, int* dy) {
     if (i < 0 || i >= 5) { *dx = *dy = 0; return; }
     *dx = ROCKET_PROBES[i][0]; *dy = ROCKET_PROBES[i][1];
+}
+
+int rocketStage(const Device& d) {
+    return (d.reading >= ROCKET_IDLE && d.reading <= ROCKET_LIT) ? (int)d.reading
+                                                                 : ROCKET_IDLE;
+}
+int rocketCountdown(const Device& d) { return d.phase > 0 ? (int)d.phase : 0; }
+
+bool rocketCrew(const Device& d, int slot) {
+    if (slot < 0 || slot >= MAX_PLAYERS) return false;
+    const PlayerSession& s = g_playerSessions[slot];
+    if (!s.connected || !s.body.alive) return false;
+    const float dx = s.body.centreX() - (float)(d.x + ROCKET_W / 2);
+    const float dy = s.body.centreY() - (float)(d.y + ROCKET_H / 2);
+    return dx * dx + dy * dy <= (float)(ROCKET_CREW_RANGE * ROCKET_CREW_RANGE);
+}
+
+bool rocketReady(const Device& d, int slot) {
+    if (slot < 0 || slot >= MAX_PLAYERS) return false;
+    /* Crew AND the bit. Kept as one question rather than two, because every
+       caller wants the same answer -- a ready bit belonging to somebody who
+       has since died or walked away is not readiness, it is a stale flag, and
+       the whole point of rechecking is that it cannot decide anything. */
+    return rocketCrew(d, slot) && (d.received & (1 << slot)) != 0;
+}
+
+void rocketToggleReady(Device& d, int slot) {
+    if (slot < 0 || slot >= MAX_PLAYERS) return;
+    d.received ^= (1 << slot);
+}
+
+RocketFault rocketFault(const World& w, const Device& d) {
+    if (!rocketCore(d))                     return ROCKET_FAULT_NO_CORE;
+    if (rocketFuel(d) < ROCKET_FUEL_NEED)   return ROCKET_FAULT_NO_FUEL;
+    /* The pad, rechecked. devIntact already deletes a machine somebody has dug
+       INTO; this is the other half, and ENDGAME.md asks for it by name --
+       "destroyed support ... cancel safely". Digging the ground out from under
+       a fuelled rocket at three seconds should stop the launch, not tip it
+       over, and certainly not launch it out of a hole. */
+    {
+        int support = 0;
+        for (int x = d.x; x < d.x + ROCKET_W; ++x) {
+            const u8 k = MATS[w.at(x, d.y + ROCKET_H).mat].kind;
+            if (k == KIND_STATIC || k == KIND_POWDER) ++support;
+        }
+        if (support < ROCKET_W / 2) return ROCKET_FAULT_NO_PAD;
+    }
+    if (!rocketCorridorClear(w, d))         return ROCKET_FAULT_BLOCKED;
+
+    int crew = 0, ready = 0;
+    for (int i = 0; i < MAX_PLAYERS; ++i) {
+        if (!rocketCrew(d, i)) continue;
+        ++crew;
+        if (rocketReady(d, i)) ++ready;
+    }
+    if (!crew)             return ROCKET_FAULT_NO_CREW;
+    /* Everybody who is HERE, not everybody connected. A crewmate three hundred
+       cells down a mineshaft is not refusing to board, they are busy, and a
+       launch that could be vetoed by somebody who has no idea it is happening
+       would be a worse rule than either. The range check is what makes this
+       fair: to hold the launch up you have to be standing at the pad. */
+    if (ready < crew)      return ROCKET_FAULT_NOT_READY;
+    return ROCKET_READY;
+}
+
+const char* rocketFaultText(int fault) {
+    switch (fault) {
+    case ROCKET_FAULT_NO_CORE:   return "no Ascent Core aboard";
+    case ROCKET_FAULT_NO_FUEL:   return "not enough fuel";
+    case ROCKET_FAULT_NO_PAD:    return "the pad has gone";
+    case ROCKET_FAULT_BLOCKED:   return "launch corridor blocked";
+    case ROCKET_FAULT_NO_CREW:   return "nobody aboard";
+    case ROCKET_FAULT_NOT_READY: return "crew not ready";
+    default:                     return "ready to launch";
+    }
+}
+
+bool rocketBeginLaunch(const World& w, Device& d, int slot) {
+    if (d.type != DEV_ROCKET) return false;
+    if (rocketStage(d) != ROCKET_IDLE) return false;
+    /* The host, and slot zero IS the host -- see playerSessionsReset. On a
+       client this action is applied on the host machine against the guest's
+       own session, so the test is the same one on both sides of the wire. */
+    if (slot != 0) return false;
+    if (rocketFault(w, d) != ROCKET_READY) return false;
+    d.reading = ROCKET_COUNTING;
+    d.phase   = ROCKET_COUNTDOWN_FRAMES;
+    return true;
+}
+
+void rocketCancel(Device& d) {
+    d.reading = ROCKET_IDLE;
+    d.phase   = 0;
+}
+
+/* One frame of a launch. Nothing is consumed here, and that is deliberate on
+   two counts. ENDGAME.md says the core and the fuel are spent at ignition and
+   not when the countdown starts, so that a cancel costs nothing -- and until
+   stage three exists there is nothing to spend them ON. A rocket that ate an
+   Ascent Core and then sat on its pad because the ascent had not been written
+   yet would be the worst possible half-finished feature, so ROCKET_LIT keeps
+   its cargo and the panel says outright that this is where the build stops. */
+static void rocketTick(World& w, Device& d) {
+    if (rocketStage(d) != ROCKET_COUNTING) return;
+    /* Rechecked EVERY frame, against the same function the button used. A
+       countdown is exactly the window in which the world changes underneath a
+       decision: somebody dies, a wall is built overhead, the pad is mined, a
+       crewmate wanders off. */
+    if (rocketFault(w, d) != ROCKET_READY) { rocketCancel(d); return; }
+    if (--d.phase <= 0) { d.phase = 0; d.reading = ROCKET_LIT; }
 }
 
 bool rocketCore(const Device& d) { return d.count2 != 0; }
@@ -2206,11 +2317,13 @@ void devTick(World& w) {
         /* A machine's centre chooses its chunk. Its entire 14-cell footprint is
            then frozen with that chunk, so an off-screen clock cannot fire into a
            wire that the material simulation has stopped cooling. */
-        if (!w.electricalLive(d.x + DEV_W / 2, d.y + DEV_H / 2)) continue;
+        if (!w.electricalLive(d.x + devTypeW(d.type) / 2,
+                              d.y + devTypeH(d.type) / 2)) continue;
 
         if (!devIntact(w, d)) { devRemove(w, &d); continue; }
 
         d.firing = false;
+        if (d.type == DEV_ROCKET) { rocketTick(w, d); continue; }
         if ((d.type == DEV_DRAIN || d.type == DEV_SPOUT) && d.poked)
             d.enabled = !d.enabled;
         switch (d.type) {
