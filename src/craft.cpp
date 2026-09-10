@@ -127,6 +127,24 @@ const Recipe RECIPES[] = {
     { { { (ItemId)MAT_FLOWER, 2 }, { ITEM_NONE, 0 }, { ITEM_NONE, 0 } },
       ITEM_FLOWER_SEED, 3, "3 Flower Seed", STATION_HAND },
 
+    /* --- rendering the coal back out ------------------------------------
+       Asked for: "you should be able to craft coal honey and coal wax into
+       coal."
+
+       A soured hive makes these instead of wax and honey, and until now they
+       were a dead end -- a colony you turned on purpose produced two materials
+       with no use, which quietly made souring one a mistake rather than a
+       choice. The coal is in there; this gets it out.
+
+       Wax renders better than honey, and the ratio says so: wax is the solid
+       the soot settles into, honey is a liquid it is merely suspended in. Both
+       are lossy, because a hive is not a coal mine -- the point is that the
+       residue is worth carrying home, not that bees are a fuel industry. */
+    { { { (ItemId)MAT_COAL_WAX, 4 }, { ITEM_NONE, 0 }, { ITEM_NONE, 0 } },
+      (ItemId)MAT_COAL, 2, "2 Coal", STATION_BENCH },
+    { { { (ItemId)MAT_COAL_HONEY, 6 }, { ITEM_NONE, 0 }, { ITEM_NONE, 0 } },
+      (ItemId)MAT_COAL, 2, "2 Coal", STATION_BENCH },
+
     /* Honey keeps; a draught of it is the keeping. Wax for the stopper is
        what stops this being a straight relabel of the raw material. */
     { { { (ItemId)MAT_HONEY, 8 }, { (ItemId)MAT_BEESWAX, 2 }, { ITEM_NONE, 0 } },
@@ -558,17 +576,25 @@ const Recipe RECIPES[] = {
        supply exists before you have built anything. Silk goes back to being a
        pure hazard, which is what it is good at.
 
+       BEESWAX specifically, and the distinction is not pedantry -- it is the
+       same bug twice. The first version of this swap asked for MAT_WAX, which
+       is a different material with no source of its own: it exists in the
+       creative palette and in the physics tables and nothing in the world ever
+       makes any. Six recipes went from asking for something you cannot keep to
+       asking for something that does not exist, which is not an improvement.
+       A hive extrudes MAT_BEESWAX, so that is what these ask for.
+
        Cheap, because doubling spends the spells' own energy rather than its
        own -- see the note on the item. */
-    { { { (ItemId)MAT_WAX, 6 }, { (ItemId)MAT_GOLD, 2 }, { ITEM_NONE, 0 } },
+    { { { (ItemId)MAT_BEESWAX, 6 }, { (ItemId)MAT_GOLD, 2 }, { ITEM_NONE, 0 } },
       ITEM_MOD_DOUBLE, 1, "Double Shot", STATION_ASSEMBLY },
-    { { { (ItemId)MAT_WAX, 4 }, { (ItemId)MAT_COAL, 6 }, { (ItemId)MAT_GLASS, 2 } },
+    { { { (ItemId)MAT_BEESWAX, 4 }, { (ItemId)MAT_COAL, 6 }, { (ItemId)MAT_GLASS, 2 } },
       ITEM_MOD_TRAIL_FIRE, 1, "Fire Trail", STATION_ASSEMBLY },
     /* The arcs need the conductor, and graphene is the one that survives being
        run hot -- which is what an arc is. */
-    { { { (ItemId)MAT_WAX, 8 }, { (ItemId)MAT_GRAPHENE, 3 }, { (ItemId)MAT_GOLD, 4 } },
+    { { { (ItemId)MAT_BEESWAX, 8 }, { (ItemId)MAT_GRAPHENE, 3 }, { (ItemId)MAT_GOLD, 4 } },
       ITEM_MOD_ARC_LIGHTNING, 1, "Lightning Arc", STATION_ASSEMBLY },
-    { { { (ItemId)MAT_WAX, 8 }, { (ItemId)MAT_GRAPHENE, 2 }, { (ItemId)MAT_FUEL, 6 } },
+    { { { (ItemId)MAT_BEESWAX, 8 }, { (ItemId)MAT_GRAPHENE, 2 }, { (ItemId)MAT_FUEL, 6 } },
       ITEM_MOD_ARC_FIRE, 1, "Fire Arc", STATION_ASSEMBLY },
     /* Seeking costs a second Silk Gland, which is the most expensive thing any
        recipe asks for: it means a second Widow. The module removes aiming from
@@ -576,9 +602,9 @@ const Recipe RECIPES[] = {
        cost a fight rather than a shopping list. */
     { { { ITEM_SILK_GLAND, 1 }, { (ItemId)MAT_TITANIUM, 3 }, { (ItemId)MAT_GLASS, 4 } },
       ITEM_MOD_SEEK, 1, "Seeking", STATION_ASSEMBLY },
-    { { { (ItemId)MAT_WAX, 4 }, { (ItemId)MAT_GLASS, 4 }, { (ItemId)MAT_GOLD, 2 } },
+    { { { (ItemId)MAT_BEESWAX, 4 }, { (ItemId)MAT_GLASS, 4 }, { (ItemId)MAT_GOLD, 2 } },
       ITEM_MOD_SEEK_MOUSE, 1, "Point Seeking", STATION_ASSEMBLY },
-    { { { (ItemId)MAT_TITANIUM, 4 }, { (ItemId)MAT_GRAPHENE, 4 }, { (ItemId)MAT_WAX, 4 } },
+    { { { (ItemId)MAT_TITANIUM, 4 }, { (ItemId)MAT_GRAPHENE, 4 }, { (ItemId)MAT_BEESWAX, 4 } },
       ITEM_MOD_QUICKEN, 1, "Quicken", STATION_ASSEMBLY },
     { { { (ItemId)MAT_GOLD, 2 }, { (ItemId)MAT_CHITIN, 4 }, { (ItemId)MAT_GLASS, 1 } },
       ITEM_MOD_HOMING, 1, "Homing Module", STATION_ASSEMBLY },

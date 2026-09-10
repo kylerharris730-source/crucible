@@ -58,7 +58,14 @@ int main() {
     initSprites();
     playerSessionsReset();
 
-    /* --- 1. nothing needs silk, and the modifiers need wax ---------------- */
+    /* --- 1. the modifiers are made of something a hive makes -------------
+       MAT_BEESWAX, spelled out, and checked against what a hive EXTRUDES
+       rather than against "some kind of wax". The first version of this swap
+       asked for MAT_WAX, which is a different material with no source at all
+       -- creative palette only -- so six recipes went from asking for
+       something you cannot keep to asking for something that does not exist.
+       This check is written the way it is because the looser version passed
+       that build. */
     {
         int webRecipes = 0, waxModifiers = 0, modifiers = 0;
         for (int r = 0; r < N_RECIPES; ++r) {
@@ -66,7 +73,7 @@ int main() {
             for (int i = 0; i < CRAFT_MAX_IN; ++i) {
                 if (RECIPES[r].in[i].count <= 0) continue;
                 if (RECIPES[r].in[i].item == (ItemId)MAT_WEB) web = true;
-                if (RECIPES[r].in[i].item == (ItemId)MAT_WAX) wax = true;
+                if (RECIPES[r].in[i].item == (ItemId)MAT_BEESWAX) wax = true;
             }
             if (web) { ++webRecipes; printf("  %s still needs web\n", RECIPES[r].label); }
             if (ITEMS[RECIPES[r].out].kind == ITEMK_MODULE &&
@@ -75,10 +82,29 @@ int main() {
                 if (wax) ++waxModifiers;
             }
         }
-        printf("%d recipes need web, %d of %d shot modifiers are made of wax\n",
-               webRecipes, waxModifiers, modifiers);
+        printf("%d recipes need web, %d of %d shot modifiers are made of "
+               "beeswax\n", webRecipes, waxModifiers, modifiers);
         check(webRecipes == 0, "nothing in the crafting table asks for silk");
-        check(waxModifiers > 0, "and the shot modifiers ask for wax instead");
+        check(waxModifiers > 0, "and the shot modifiers ask for beeswax instead");
+    }
+
+    /* --- 1b. and the coal residue is worth carrying home ------------------
+       Asked for: "you should be able to craft coal honey and coal wax into
+       coal." A soured hive makes those two instead of wax and honey, and they
+       had no use at all -- which quietly made souring a colony a mistake
+       rather than a choice. */
+    {
+        bool fromWax = false, fromHoney = false;
+        for (int r = 0; r < N_RECIPES; ++r) {
+            if (RECIPES[r].out != (ItemId)MAT_COAL) continue;
+            for (int i = 0; i < CRAFT_MAX_IN; ++i) {
+                if (RECIPES[r].in[i].count <= 0) continue;
+                if (RECIPES[r].in[i].item == (ItemId)MAT_COAL_WAX) fromWax = true;
+                if (RECIPES[r].in[i].item == (ItemId)MAT_COAL_HONEY) fromHoney = true;
+            }
+        }
+        check(fromWax, "coal wax renders back into coal");
+        check(fromHoney, "and so does coal honey");
     }
 
     /* --- 2. a world has hives in it, in dips ------------------------------ */
