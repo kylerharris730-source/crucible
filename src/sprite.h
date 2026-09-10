@@ -309,6 +309,10 @@ enum SpriteId {
     SPR_ARMOUR_HOARFROST_PLATE,
     SPR_EFFIGY_CALL,
     SPR_ASCENT_CORE,
+    /* The launch assembly's inventory icon, appended like everything else. The
+       hull itself is 28x80 and lives in its own canvas below; this is the
+       14x14 thing you carry it as. */
+    SPR_ROCKET,
 
     SPR_COUNT
 };
@@ -445,5 +449,34 @@ static const int EFFIGY_RITUAL_FRAMES = 8;
 extern u32 g_effigyRitual[EFFIGY_RITUAL_FRAMES][EFFIGY_SPR_W * EFFIGY_SPR_H];
 extern u32 g_effigyIdle[EFFIGY_IDLE_FRAMES][EFFIGY_SPR_W * EFFIGY_SPR_H];
 extern u32 g_effigyWalk[EFFIGY_WALK_FRAMES][EFFIGY_SPR_W * EFFIGY_SPR_H];
+
+/* --- the rocket ------------------------------------------------------------
+   Not a creature and not an icon: the one piece of art in the game that is a
+   PLACED OBJECT bigger than a screenful of anything else. 28 x 80 -- wider than
+   three players standing side by side and nearly four tall -- and it is drawn
+   at one art pixel per cell like every creature, so what is written below is
+   what stands in the world.
+
+   Hand-written character rows rather than a rig, because it does not move. A
+   skeleton buys poses, and this thing has exactly one until it leaves.
+
+   The MASK is the other half of it, and it is why this is baked as two arrays
+   from one table rather than as three separate pictures. A rocket has to show
+   what has been loaded into it -- see ENDGAME.md, "Installation and fuel
+   loading should visibly illuminate different parts of the rocket" -- and the
+   obvious way to do that is a lit and an unlit copy of the whole hull, which
+   is two 2240-pixel pictures to keep in agreement by hand. Instead the art
+   names its own lit parts: every pixel is tagged with what it BELONGS to, and
+   the draw dims the parts that are not filled yet. One picture, and the glass
+   cannot drift away from the hull around it. */
+static const int ROCKET_SPR_W = 28;
+static const int ROCKET_SPR_H = 80;
+enum RocketPart {
+    ROCKET_PART_HULL = 0,   /* structure: always drawn as it is written */
+    ROCKET_PART_CORE,       /* the Ascent Core's window: dark until installed */
+    ROCKET_PART_FUEL        /* the inlet and its line: dark until fuelled */
+};
+extern u32 g_rocketHull[ROCKET_SPR_W * ROCKET_SPR_H];
+extern u8  g_rocketPart[ROCKET_SPR_W * ROCKET_SPR_H];
 
 void initSprites();

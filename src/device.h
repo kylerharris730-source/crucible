@@ -161,8 +161,49 @@ enum DeviceType {
     /* Warms a cone of world toward a setpoint. Appended, like every
        device type: the number is written into saves. */
     DEV_HEAT_LAMP,
+    /* --- the rocket -------------------------------------------------------
+       The ending, as an object. See ENDGAME.md for the whole design; what
+       matters here is that it is the first device that is NOT fourteen cells
+       square, and the reason the footprint had to stop being a constant.
+
+       It could have been six stacked pieces on the existing grid, and that was
+       the first plan -- ROADMAP calls the rocket "a multi-part structure", and
+       a lattice of 14-cell parts is what this system is already good at. What
+       killed it is that the parts would each need their own art, their own
+       placement order and their own answer to "what happens when you mine the
+       third one", and none of that is the game: the rocket is meant to be the
+       last ENGINEERING problem, not the last inventory-management one. One
+       object you build, fuel and leave in.
+
+       Appended, like every device type before it, because the number is
+       written into every save. */
+    DEV_ROCKET,
     DEV_COUNT
 };
+
+/* --- when a machine is not fourteen cells square ---------------------------
+
+   Every device was DEV_W by DEV_H until the rocket, and the note above still
+   holds for all of them: a lattice of mixed sizes either has gaps or needs a
+   packing rule, and a difference nobody would read as meaningful is not worth
+   either. The rocket is the exception the rule was waiting for -- it is not
+   equipment, it does not tile, and nothing will ever be bolted to its side.
+
+   A pair of functions rather than two more fields on DeviceInfo, and that is a
+   safety argument rather than a style one. DEVS[] is a positional aggregate of
+   two dozen rows; adding fields to it means every row needs two more numbers,
+   and a row that quietly did not get them would be initialised to a footprint
+   of ZERO -- a machine that occupies nothing, overlaps nothing, and is drawn
+   nowhere. A switch cannot be silently wrong in that direction: a type that is
+   not named here is fourteen, which is what every existing type is.
+
+   DEV_W remains the constant for everything that is genuinely about the grid:
+   the logistics lattice, the width of a miner's bite, the length of a face. */
+static const int ROCKET_W = 28;
+static const int ROCKET_H = 80;
+
+static inline int devTypeW(int type) { return type == DEV_ROCKET ? ROCKET_W : DEV_W; }
+static inline int devTypeH(int type) { return type == DEV_ROCKET ? ROCKET_H : DEV_H; }
 
 /* Kept just above a torch in the rebalanced producer ladder: the displayed
    object should still call attention to itself without lighting the biome. */
@@ -507,6 +548,59 @@ void hiveAdmit(Device& d, bool coal);
 /* Mark a hive as sooted, permanently. Called when any bee of its colony turns
    -- see the note at the definition. */
 void hiveSour(Device& d);
+
+/* --- what the rocket is holding --------------------------------------------
+   The same trick the pedestal uses, and for the same reason: Device is written
+   to the save as one raw sized block, so a new field would make every existing
+   world's machines fail their length check and vanish. See the note above
+   pedestalItem.
+
+     count / mat   the fuel aboard, exactly as a chest holds a stack. This is
+                   not thrift either -- it means loading fuel is literally the
+                   chest's own code path, so a rocket accepts, caps and hands
+                   back a stack the way every other container in the game does.
+     count2        whether the Ascent Core is installed. A bool in an i32,
+                   because the alternative was `value`, and `value` is clamped
+                   to the panel's range every time any control is touched.
+
+   ROCKET_FUEL_NEED is what a launch will cost. It is named here rather than in
+   the launch code because the PANEL has to show it -- a checklist that cannot
+   say how much fuel is missing is the thing ENDGAME.md specifically asks not
+   to build ("Show missing requirements directly"). */
+static const int ROCKET_FUEL_NEED = 400;
+/* How far above the hull has to be open sky. Not the whole way to the top of
+   the world: the rocket needs a corridor it can leave through, and a check
+   that fails because of a bridge four hundred cells up would be unreadable
+   from the pad. */
+static const int ROCKET_CORRIDOR = 120;
+
+/* --- the footprint is the PICTURE ------------------------------------------
+   A rocket's cells are written only where its art is opaque, which is the one
+   place a device's footprint is not simply its rectangle. Filling all 2240
+   cells put a dark slab of MAT_DEVICE behind the cone, between the legs and
+   around the fins -- the machine came out standing in its own bounding box,
+   which is the sort of thing that is invisible in a sprite sheet and obvious
+   the moment you look at it in the world.
+
+   Shaping it costs one thing, and this is it: devIntact samples five cells to
+   decide whether a machine has been dug into, and four of the five it would
+   pick for a rectangle are now empty sky. So the rocket names its own five,
+   all of them well inside the hull. tests/rocket_art.cpp checks that they are
+   still opaque, because "the machine collapses the frame after it is placed"
+   is what a wrong one looks like.
+
+   devAt stays a rectangle test: clicking the gap between the legs should open
+   the rocket's panel, not miss it. */
+int  rocketProbeCount();
+void rocketProbe(int i, int* dx, int* dy);
+
+bool rocketCore(const Device& d);
+void rocketSetCore(Device& d, bool installed);
+int  rocketFuel(const Device& d);
+/* Is the launch corridor open? ONE definition, in the same spirit as
+   heatLampCells: the panel's checklist and the launch itself must never
+   disagree about what "clear" means, or the pad lies to you. */
+bool rocketCorridorClear(const World& w, const Device& d);
 
 u16  pedestalItem(const Device& d);
 int  pedestalCount(const Device& d);

@@ -470,6 +470,14 @@ enum {
     ITEM_PELT_COAT,
     ITEM_HOARFROST_HELM,
     ITEM_HOARFROST_PLATE,
+
+    /* --- the way out ------------------------------------------------------
+       The launch assembly: the rocket, as the thing you carry to where you
+       want it. An ordinary ITEMK_DEVICE, which is the whole point of it being
+       one -- placing, picking up and previewing all come free, and what makes
+       it the last object in the game is what it is made of and what has to go
+       into it, not a new verb. See ENDGAME.md and DEV_ROCKET. */
+    ITEM_LAUNCH_ASSEMBLY,
     ITEM_COUNT
 };
 

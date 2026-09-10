@@ -4540,6 +4540,36 @@ static void applyDeviceAction(PlayerSession& session, const NetAction& action) {
         break;
     case NDEV_TAKE: {
         ItemStack& held = session.inventory.held();
+        /* --- loading the rocket --------------------------------------------
+           One button, and what it does depends on what you are holding, in the
+           order a launch is prepared: core first, then fuel, and with empty
+           hands it gives back what is aboard. That is deliberately the same
+           gesture as a chest's -- ENDGAME.md accepts inventory loading for the
+           first version, and the whole reason to accept it is that it needs no
+           new verb.
+
+           Unloading takes the fuel before the core, so a player emptying a
+           rocket by clicking does not have to be told which order to do it
+           in: the reversible, bulky thing comes out first. */
+        if (d.type == DEV_ROCKET) {
+            if (!held.empty() && held.item == ITEM_ASCENT_CORE && !rocketCore(d)) {
+                rocketSetCore(d, true);
+                if (--held.count == 0) held = ItemStack();
+            } else if (!held.empty() && held.item == (ItemId)MAT_FUEL &&
+                       rocketFuel(d) < ROCKET_FUEL_NEED) {
+                const int moved = imin((int)held.count, ROCKET_FUEL_NEED - rocketFuel(d));
+                d.mat = (u8)MAT_FUEL; d.count = rocketFuel(d) + moved;
+                held.count -= moved;
+                if (!held.count) held = ItemStack();
+            } else if (rocketFuel(d) > 0) {
+                const int left = session.inventory.add((ItemId)MAT_FUEL, rocketFuel(d));
+                d.count = left;
+                if (d.count <= 0) { d.count = 0; d.mat = MAT_EMPTY; }
+            } else if (rocketCore(d)) {
+                if (session.inventory.add(ITEM_ASCENT_CORE, 1) == 0) rocketSetCore(d, false);
+            }
+            break;
+        }
         if ((d.type == DEV_CHEST || d.type == DEV_SPOUT) && !held.empty() &&
             ITEMS[held.item].kind == ITEMK_MATERIAL && (d.count == 0 || d.mat == held.item)) {
             const int cap = d.type == DEV_CHEST ? CHEST_CAP : DEV_CAP;
@@ -4547,8 +4577,12 @@ static void applyDeviceAction(PlayerSession& session, const NetAction& action) {
             d.mat = (u8)held.item; d.count += moved; held.count -= moved;
             if (!held.count) held = ItemStack();
         } else if (d.count > 0) {
-            const int moved = session.inventory.add((ItemId)d.mat, (int)d.count);
-            d.count -= moved;
+            /* add() returns what did NOT fit -- see the note on Inventory::add
+               -- so what is left in the machine IS that number. This read it
+               as "how many moved" and subtracted it, which meant a buffer that
+               fitted entirely into the pack was handed over and KEPT: the
+               common case duplicated the stack. */
+            d.count = session.inventory.add((ItemId)d.mat, (int)d.count);
             if (d.count <= 0) { d.count = 0; d.mat = MAT_EMPTY; }
         }
         break;
@@ -5128,8 +5162,15 @@ static void placeDeviceStrokeFor(Inventory& inventory, int& previousX, int& prev
         if (undoSlot >= 0) {
             undoBegin(undoSlot, consume ? &inventory : 0);
             /* Covers centred devices and the at-most-one-footprint logistics
-               lattice snap. Only genuinely changed cells survive finish. */
-            undoCaptureDisc(undoSlot, x, y, DEV_W * 2);
+               lattice snap. Only genuinely changed cells survive finish.
+
+               Sized off the machine rather than off DEV_W, because the rocket
+               is 80 cells tall and stands UP from the cell you clicked: a disc
+               of 28 would leave most of what it displaced outside the capture,
+               so undoing its placement would put the machine away and not the
+               ground it was pushed into. */
+            undoCaptureDisc(undoSlot, x, y,
+                            imax(devTypeW(type), devTypeH(type)) * 2);
         }
         if (devPlace(g_world, type, x, y)) {
             if (undoSlot >= 0) {
@@ -5451,6 +5492,12 @@ static void drawCircuitSignalButton(HDC hdc, const RECT& r, const char* prefix,
 static const int DEVP_W = 420, DEVP_H = 96, DEVP_CIRCUIT_H = 218;
 /* One row taller, for the box controls. */
 static const int DEVP_BOX_H = 128;
+/* The rocket's checklist. Five requirements and a line saying what the one
+   button will do, which is more than "read it, nudge it" -- and it is the one
+   machine that has earned the exception, because it is the only one whose
+   panel is a list of things you have not done yet. See ENDGAME.md: "Show
+   missing requirements directly, not only after pressing Launch." */
+static const int DEVP_ROCKET_H = 176;
 static RECT g_devpBox, g_devpDec, g_devpInc, g_devpTake, g_devpTurn, g_devpClose;
 /* A second control row, for the miner and the placer only. They are the one
    pair with more to say than "read it, nudge it" -- a direction, a depth, a
@@ -5461,13 +5508,14 @@ static RECT g_devpDepthDec, g_devpDepthBox, g_devpDepthInc, g_devpFilter, g_devp
 static void layoutDevPanel(const Device& d) {
     /* Sit it just above and right of the machine, in screen pixels. */
     const int h = circuitIsCombinator(d.type) ? DEVP_CIRCUIT_H
+                : d.type == DEV_ROCKET         ? DEVP_ROCKET_H
                 : devHasBox(d.type)            ? DEVP_BOX_H
                                                : DEVP_H;
-    int px = PANEL_W + (d.x + DEV_W - g_camX) * cellPixels() + 8;
+    int px = PANEL_W + (d.x + devTypeW(d.type) - g_camX) * cellPixels() + 8;
     int py = (d.y - g_camY) * cellPixels() - h - 6;
     if (px + DEVP_W > WIN_W - 6) px = PANEL_W + (d.x - g_camX) * cellPixels() - DEVP_W - 8;
     if (px < PANEL_W + 6)        px = PANEL_W + 6;
-    if (py < 6)                  py = (d.y + DEV_H - g_camY) * cellPixels() + 6;
+    if (py < 6)                  py = (d.y + devTypeH(d.type) - g_camY) * cellPixels() + 6;
     if (py + h > WIN_H - 6) py = WIN_H - 6 - h;
 
     SetRect(&g_devpBox, px, py, px + DEVP_W, py + h);
@@ -5659,6 +5707,46 @@ static void drawDevPanel(HDC hdc) {
                     d.count2 ? MATS[d.mat2].name : "items");
             drawText(hdc, tx, g_devpBox.top + 48, RGB(160, 200, 230), pipeBuf);
         }
+        drawButton(hdc, g_devpClose, "x", 0, false, PtInRect(&g_devpClose, pt) != 0);
+        SelectObject(hdc, oldFont);
+        return;
+    }
+    /* --- the rocket's checklist -------------------------------------------
+       Every requirement, always, with the ones already met stated as plainly
+       as the ones that are not. A panel that only listed what was MISSING
+       would be shorter and worse: half the value of standing in front of this
+       thing is being told that the corridor above you is clear, which is not
+       a fact you can otherwise check by eye across eighty cells of sky. */
+    if (d.type == DEV_ROCKET) {
+        const COLORREF DONE = RGB(130, 220, 150), MISSING = RGB(232, 116, 100);
+        const int fuel = rocketFuel(d);
+        const bool core = rocketCore(d);
+        const bool corridor = rocketCorridorClear(g_world, d);
+        char line[112];
+        drawText(hdc, tx, g_devpBox.top + 6, RGB(245, 224, 150), di.name);
+        drawText(hdc, tx, g_devpBox.top + 28, DONE, "hull assembled");
+        drawText(hdc, tx, g_devpBox.top + 46, core ? DONE : MISSING,
+                 core ? "Ascent Core installed" : "Ascent Core missing");
+        sprintf(line, "fuel  %d / %d", fuel, ROCKET_FUEL_NEED);
+        drawText(hdc, tx, g_devpBox.top + 64,
+                 fuel >= ROCKET_FUEL_NEED ? DONE : MISSING, line);
+        drawText(hdc, tx, g_devpBox.top + 82, corridor ? DONE : MISSING,
+                 corridor ? "launch corridor clear" : "launch corridor blocked");
+        drawText(hdc, tx, g_devpBox.top + 100, MISSING, "crew not aboard");
+        /* Said outright rather than implied by a greyed-out Launch button. A
+           dead control is a promise the build cannot keep; a sentence is
+           honest and takes the same room. */
+        drawText(hdc, tx, g_devpBox.top + 122, RGB(112, 122, 138),
+                 "Ignition is not wired up yet.");
+        const ItemStack& held = g_inv.held();
+        const char* what =
+            (!held.empty() && held.item == ITEM_ASCENT_CORE && !core) ? "install core" :
+            (!held.empty() && held.item == (ItemId)MAT_FUEL &&
+             fuel < ROCKET_FUEL_NEED)                                 ? "load fuel" :
+            (fuel > 0)                                                ? "take fuel back" :
+            core                                                      ? "take core back" :
+                                                                        "nothing to load";
+        drawButton(hdc, g_devpTake, what, 0, false, PtInRect(&g_devpTake, pt) != 0);
         drawButton(hdc, g_devpClose, "x", 0, false, PtInRect(&g_devpClose, pt) != 0);
         SelectObject(hdc, oldFont);
         return;

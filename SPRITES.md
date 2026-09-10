@@ -130,6 +130,27 @@ without warning. Failed ballistic solves still exit into recovery.
 break, and the existing silk/pursuit behavior. `tests/widow_art.cpp` with
 `scripts/preview_widow.py` renders the actual in-game tells for visual review.
 
+## Launch assembly
+
+The rocket is 28x80 on its own canvas -- the largest single piece of art in the
+game, and the only placed object drawn from something other than the shared
+14x14 device sprite. Pale titanium hull with one lit flank, a banded tube, a
+dark tungsten engine and bell, copper pipework down both sides, two swept fins
+and four legs standing it clear of the pad. Every colour is a character the
+shared palette already defined; nothing new was added to `paletteOf`, which is
+full.
+
+Two parts of it are state rather than structure. The amber core window and the
+cyan fuel line are tagged in a mask baked from the same art table, and devDraw
+draws them as dark metal until the Ascent Core and the fuel are aboard -- so a
+rocket read from across the valley says how far along it is before you open its
+panel. The footprint follows the picture rather than the bounding box: cells are
+written only where the art is opaque, so the machine does not stand in a slab of
+its own sky.
+
+`tests/rocket_art.cpp` with `scripts/preview_rocket.py` renders all three states;
+`tests/rocket.cpp` covers the object.
+
 ## Effigy final boss
 
 The Effigy uses a 96×112 world canvas (formerly 72×88), with 16 distance-driven

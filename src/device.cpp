@@ -475,7 +475,60 @@ const DeviceInfo DEVS[DEV_COUNT] = {
        only interesting thing about placing one. Capped at 100 in the table
        itself, so the panel cannot even offer a smelting temperature. */
     { "Heat Lamp", "warm to", "C", 20, 100, 5, 60, SPR_HEAT_LAMP, MAT_DEVICE, true },
+    /* The rocket. Nothing to adjust -- vMin == vMax, so the panel offers no
+       steppers -- because none of what it holds is a number you dial: a core
+       is in or it is not, and fuel is loaded from the pack a stack at a time.
+       Its sprite is the 14x14 icon, which is what the hotbar and the crafting
+       list show; the hull it becomes in the world is ART_ROCKET and is drawn
+       by devDraw, which is the one place a device does not simply blit
+       DEVS[type].sprite. */
+    { "Launch Assembly", "", "", 0, 0, 0, 0, SPR_ROCKET, MAT_DEVICE, false },
 };
+
+/* --- the rocket ------------------------------------------------------------
+   See the note in device.h for why these live in fields the type does not
+   otherwise use. Accessors rather than raw field access at the call sites, so
+   the one place that knows about the aliasing is here. */
+/* Five cells that are hull in ART_ROCKET: nose, mid-body, the band above the
+   engine, and both flanks. See the note in device.h. */
+static const int ROCKET_PROBES[5][2] = {
+    { 14, 6 }, { 14, 30 }, { 14, 58 }, { 6, 50 }, { 21, 50 }
+};
+int  rocketProbeCount() { return 5; }
+void rocketProbe(int i, int* dx, int* dy) {
+    if (i < 0 || i >= 5) { *dx = *dy = 0; return; }
+    *dx = ROCKET_PROBES[i][0]; *dy = ROCKET_PROBES[i][1];
+}
+
+bool rocketCore(const Device& d) { return d.count2 != 0; }
+void rocketSetCore(Device& d, bool installed) { d.count2 = installed ? 1 : 0; }
+int  rocketFuel(const Device& d) {
+    /* The buffer is a stack like any other container's, so it is only fuel if
+       what is in it IS fuel -- a rocket that reported a hundred units after
+       being fed a hundred cells of sand would be the checklist lying. */
+    return (d.mat == MAT_FUEL) ? d.count : 0;
+}
+
+bool rocketCorridorClear(const World& w, const Device& d) {
+    const int top = d.y;
+    for (int y = imax(PLAY_Y0, top - ROCKET_CORRIDOR); y < top; ++y)
+        for (int x = d.x; x < d.x + devTypeW(d.type); ++x) {
+            /* Rock and heaped powder obstruct; gas and liquid do not. A
+               rocket does not have to be stood in a vacuum -- rain, smoke and
+               a drifting cloud of ash are weather, and a corridor that a
+               passing cloud closed would make the checklist flicker between
+               ready and not while you watched it.
+
+               g_matPassable is the wrong table for this and it is worth saying
+               why, because it is the one that sounds right: it is a whitelist
+               of things a PLAYER may walk through -- a torch, a platform, a
+               station's own cells -- and MAT_EMPTY is not in it at all, since
+               nothing ever asks whether you can walk through air. */
+            const u8 k = MATS[w.at(x, y).mat].kind;
+            if (k == KIND_STATIC || k == KIND_POWDER) return false;
+        }
+    return true;
+}
 
 u16 pedestalItem(const Device& d) {
     if (d.type != DEV_PEDESTAL || d.count <= 0) return ITEM_NONE;
@@ -1017,7 +1070,8 @@ Device* devAt(int cx, int cy) {
     for (int i = 0; i < MAX_DEVICES; ++i) {
         Device& d = g_devices[i];
         if (!d.used) continue;
-        if (cx >= d.x && cx < d.x + DEV_W && cy >= d.y && cy < d.y + DEV_H)
+        if (cx >= d.x && cx < d.x + devTypeW(d.type) &&
+            cy >= d.y && cy < d.y + devTypeH(d.type))
             return &d;
     }
     return 0;
@@ -1028,7 +1082,20 @@ static void logisticsMarkDirty();
 
 bool devPlace(World& w, u8 type, int cx, int cy) {
     if (type >= DEV_COUNT) return false;
-    int x0 = devOriginX(cx), y0 = devOriginY(cy);
+    const int dw = devTypeW(type), dh = devTypeH(type);
+    int x0 = cx - dw / 2, y0 = devOriginY(cy);
+    /* --- a tall machine stands ON the cursor -------------------------------
+       Everything else is centred on the click, which is right for a box you
+       are bolting to a wall: the machine appears under the cursor rather than
+       down and to the right of it. Centring an eighty-cell rocket means aiming
+       forty cells above the ground you want it to stand on, at a point in
+       empty sky with nothing to judge the position against -- and then the
+       placement fails, because the bottom half is inside the hill.
+
+       So anything taller than the standard footprint is placed by its FEET:
+       the cell you are pointing at is the ground it lands on, and the hull
+       goes up from there. */
+    if (dh > DEV_H) y0 = cy - dh;
     /* Logistics pieces use a coarse, shared lattice. Their connection rule is
        literal edge contact, so snapping is what makes a run of pipes a thing
        you can lay reliably rather than a pixel-perfect placement exercise.
@@ -1048,7 +1115,7 @@ bool devPlace(World& w, u8 type, int cx, int cy) {
         y0 = PLAY_Y0 + ((cy - PLAY_Y0) / DEV_H) * DEV_H;
     }
     if (x0 < PLAY_X0 || y0 < PLAY_Y0) return false;
-    if (x0 + DEV_W > PLAY_X1 || y0 + DEV_H > PLAY_Y1) return false;
+    if (x0 + dw > PLAY_X1 || y0 + dh > PLAY_Y1) return false;
 
     /* No overlapping another machine. A rectangle test against the list rather
        than a lattice-slot lookup -- see the note in device.h for why the lattice
@@ -1057,24 +1124,55 @@ bool devPlace(World& w, u8 type, int cx, int cy) {
     for (int i = 0; i < MAX_DEVICES; ++i) {
         const Device& o = g_devices[i];
         if (!o.used) continue;
-        if (x0 < o.x + DEV_W && o.x < x0 + DEV_W &&
-            y0 < o.y + DEV_H && o.y < y0 + DEV_H) return false;
+        if (x0 < o.x + devTypeW(o.type) && o.x < x0 + dw &&
+            y0 < o.y + devTypeH(o.type) && o.y < y0 + dh) return false;
     }
     for (int i = 0; i < (int)g_torches.size(); ++i) {
         const TorchFixture& t = g_torches[i];
-        if (x0 < t.x + DEV_W && t.x < x0 + DEV_W &&
-            y0 < t.y + DEV_H && t.y < y0 + DEV_H) return false;
+        if (x0 < t.x + DEV_W && t.x < x0 + dw &&
+            y0 < t.y + DEV_H && t.y < y0 + dh) return false;
     }
 
     /* And nothing solid may be in the way. Powders and liquids ARE allowed to be
        displaced -- you should be able to bolt a machine into a heap of sand or a
        shallow pool without excavating first -- but rock and other machinery are
        not, so a device can never be shoved into a wall. */
-    for (int y = y0; y < y0 + DEV_H; ++y)
-        for (int x = x0; x < x0 + DEV_W; ++x) {
+    for (int y = y0; y < y0 + dh; ++y)
+        for (int x = x0; x < x0 + dw; ++x) {
+            /* Only the cells this machine will really occupy. A rocket's
+               bounding box includes the air beside its cone and between its
+               legs, and refusing to stand it next to a rock face because the
+               rock overlapped a corner of nothing would be a placement rule
+               nobody could see the reason for. */
+            if (type == DEV_ROCKET &&
+                !g_rocketHull[(y - y0) * ROCKET_SPR_W + (x - x0)]) continue;
             const u8 k = MATS[w.at(x, y).mat].kind;
             if (k == KIND_STATIC) return false;
         }
+
+    /* --- and a rocket needs ground under it --------------------------------
+       ENDGAME.md: "Place it on a solid surface." Every other machine may hang
+       in the air, and that is deliberate -- a thermocouple bolted to the
+       ceiling is a reasonable thing to build. A rocket floating two cells
+       above a lake is not, and worse, it is the sort of thing you would only
+       notice at ignition.
+
+       Most of the base rather than all of it, because the ground under a
+       twenty-eight-cell footprint is never perfectly flat and refusing every
+       slightly uneven surface would mean levelling a runway before you could
+       put the thing down. */
+    if (type == DEV_ROCKET) {
+        int support = 0;
+        for (int x = x0; x < x0 + dw; ++x) {
+            /* Rock or heaped powder. Dirt and sand hold a rocket up as well as
+               stone does -- the first version of this asked for KIND_STATIC
+               and refused every surface in the game that is not bare rock,
+               which is most of the ground you would ever build on. */
+            const u8 k = MATS[w.at(x, y0 + dh).mat].kind;
+            if (k == KIND_STATIC || k == KIND_POWDER) ++support;
+        }
+        if (support < dw / 2) return false;
+    }
 
     /* A fixture is all position and no machine state. It intentionally does
        not consume a circuit/device slot, so a network can be lit without an
@@ -1108,8 +1206,15 @@ bool devPlace(World& w, u8 type, int cx, int cy) {
     d.used    = true;
     circuitInitDevice(slot, type);
 
-    for (int y = y0; y < y0 + DEV_H; ++y)
-        for (int x = x0; x < x0 + DEV_W; ++x) w.setCell(x, y, DEVS[type].cellMat);
+    for (int y = y0; y < y0 + dh; ++y)
+        for (int x = x0; x < x0 + dw; ++x) {
+            /* Shaped, for the rocket alone -- see the note in device.h. Every
+               other device fills its whole rectangle, which is right for a box
+               of machinery and wrong for an object with legs. */
+            if (type == DEV_ROCKET &&
+                !g_rocketHull[(y - y0) * ROCKET_SPR_W + (x - x0)]) continue;
+            w.setCell(x, y, DEVS[type].cellMat);
+        }
     if (isLogistics(type)) logisticsMarkDirty();
     return true;
 }
@@ -1117,8 +1222,8 @@ bool devPlace(World& w, u8 type, int cx, int cy) {
 void devRemove(World& w, Device* d) {
     if (!d || !d->used) return;
     const int index = (int)(d - g_devices);
-    for (int y = d->y; y < d->y + DEV_H; ++y)
-        for (int x = d->x; x < d->x + DEV_W; ++x)
+    for (int y = d->y; y < d->y + devTypeH(d->type); ++y)
+        for (int x = d->x; x < d->x + devTypeW(d->type); ++x)
             if (w.at(x, y).mat == DEVS[d->type].cellMat) w.setCell(x, y, MAT_EMPTY);
     const bool wasLogistics = isLogistics(d->type);
     d->used = false;
@@ -1138,6 +1243,15 @@ void devRegisterLights() {
         if (!d.used || d.type != DEV_PEDESTAL || pedestalItem(d) == ITEM_NONE) continue;
         lightAddDynamic(d.x + DEV_W / 2, d.y + DEV_H / 2, PEDESTAL_LIGHT);
     }
+    /* A rocket with its core aboard is lit from inside, at the window rather
+       than at the middle of the hull -- the light should come from the part of
+       the machine that is visibly glowing. An empty frame throws nothing, for
+       the same reason an empty pedestal does not: the glow IS the readout. */
+    for (int i = 0; i < MAX_DEVICES; ++i) {
+        const Device& d = g_devices[i];
+        if (!d.used || d.type != DEV_ROCKET || !rocketCore(d)) continue;
+        lightAddDynamic(d.x + ROCKET_W / 2, d.y + 38, PEDESTAL_LIGHT);
+    }
 }
 
 /* Mean temperature over the device's own cells, in stored units. Averaged rather
@@ -1146,8 +1260,8 @@ void devRegisterLights() {
    on which way round you placed it. */
 static int devTemp(const World& w, const Device& d) {
     long sum = 0; int n = 0;
-    for (int y = d.y; y < d.y + DEV_H; ++y)
-        for (int x = d.x; x < d.x + DEV_W; ++x) {
+    for (int y = d.y; y < d.y + devTypeH(d.type); ++y)
+        for (int x = d.x; x < d.x + devTypeW(d.type); ++x) {
             sum += w.temp[y * SIM_W + x];
             ++n;
         }
@@ -1163,8 +1277,19 @@ static bool devIntact(const World& w, const Device& d) {
     /* A torch is a fixture with no physical footprint: it deliberately remains
        intact while water or a falling powder occupies the cells behind it. */
     if (d.type == DEV_TORCH) return true;
-    const int xs[5] = { d.x, d.x + DEV_W - 1, d.x, d.x + DEV_W - 1, d.x + DEV_W / 2 };
-    const int ys[5] = { d.y, d.y, d.y + DEV_H - 1, d.y + DEV_H - 1, d.y + DEV_H / 2 };
+    /* The rocket's footprint is shaped, so four of the five cells a rectangle
+       would sample are empty sky and it would drop on its first frame. It
+       names its own -- see the note in device.h. */
+    if (d.type == DEV_ROCKET) {
+        for (int k = 0; k < rocketProbeCount(); ++k) {
+            int dx, dy; rocketProbe(k, &dx, &dy);
+            if (w.at(d.x + dx, d.y + dy).mat != DEVS[d.type].cellMat) return false;
+        }
+        return true;
+    }
+    const int dw = devTypeW(d.type), dh = devTypeH(d.type);
+    const int xs[5] = { d.x, d.x + dw - 1, d.x, d.x + dw - 1, d.x + dw / 2 };
+    const int ys[5] = { d.y, d.y, d.y + dh - 1, d.y + dh - 1, d.y + dh / 2 };
     for (int k = 0; k < 5; ++k)
         if (w.at(xs[k], ys[k]).mat != DEVS[d.type].cellMat) return false;
     return true;
@@ -2319,7 +2444,7 @@ void devDraw(const World& w, u32* px, int camX, int camY, bool lit) {
            walked every frame this is what keeps a world full of machines from
            costing anything while you are somewhere else. */
         const int bx = d.x - camX, by = d.y - camY;
-        if (bx + DEV_W <= 0 || by + DEV_H <= 0) continue;
+        if (bx + devTypeW(d.type) <= 0 || by + devTypeH(d.type) <= 0) continue;
         if (bx >= VIEW_CELLS_W || by >= VIEW_CELLS_H) continue;
 
         /* Pipes are drawn as connections, not as little black boxes.  The
@@ -2385,6 +2510,50 @@ void devDraw(const World& w, u32* px, int camX, int camY, bool lit) {
                     }
                 }
             }
+        }
+
+        /* --- the rocket ---------------------------------------------------
+           The one device drawn from something other than the shared 14x14
+           table: it is 28 by 80 and has its own canvas. See ART_ROCKET.
+
+           What the extra pass buys is the readout ENDGAME.md asks for --
+           "Installation and fuel loading should visibly illuminate different
+           parts of the rocket". The core's window and the fuel line are dark
+           metal until the thing they hold is aboard, so a rocket across the
+           valley tells you how far along it is before you have walked over to
+           read its panel. That is the same argument the pedestal makes: an
+           object whose state you can see from a distance is worth more than
+           one you have to interrogate.
+
+           Neither lit part is shaded by the light field, for the reason the
+           indicator lamp below is not: they are lights. */
+        if (d.type == DEV_ROCKET) {
+            const int fuel = rocketFuel(d);
+            const bool core = rocketCore(d);
+            for (int yy = 0; yy < ROCKET_SPR_H; ++yy)
+                for (int xx = 0; xx < ROCKET_SPR_W; ++xx) {
+                    const int k = yy * ROCKET_SPR_W + xx;
+                    u32 c = g_rocketHull[k];
+                    if (c == 0) continue;
+                    const int vx = bx + xx, vy = by + yy;
+                    if (vx < 0 || vx >= VIEW_CELLS_W) continue;
+                    if (vy < 0 || vy >= VIEW_CELLS_H) continue;
+                    const u8 part = g_rocketPart[k];
+                    bool glowing = false;
+                    if (part == ROCKET_PART_CORE) glowing = core;
+                    else if (part == ROCKET_PART_FUEL) glowing = fuel > 0;
+                    if (part != ROCKET_PART_HULL && !glowing) {
+                        /* Cold, not absent. The window and the inlet keep
+                           their shape when they are empty -- a hole in the
+                           hull would read as damage rather than as a socket
+                           waiting for something. */
+                        const u32 r = (c >> 16) & 0xFF, g = (c >> 8) & 0xFF, b = c & 0xFF;
+                        c = ((r / 5) << 16) | ((g / 5) << 8) | (b / 4 + 24);
+                    }
+                    px[vy * VIEW_CELLS_W + vx] =
+                        (glowing || !lit) ? c : shadeColor(c, viewShade(vx, vy));
+                }
+            continue;
         }
 
         const u32* art = g_sprite[DEVS[d.type].sprite];

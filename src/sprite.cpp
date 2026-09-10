@@ -21,6 +21,8 @@ u32 g_censerWalk[CENSER_WALK_FRAMES][CENSER_SPR_W * CENSER_SPR_H];
 u32 g_effigyIdle[EFFIGY_IDLE_FRAMES][EFFIGY_SPR_W * EFFIGY_SPR_H];
 u32 g_effigyWalk[EFFIGY_WALK_FRAMES][EFFIGY_SPR_W * EFFIGY_SPR_H];
 u32 g_effigyRitual[EFFIGY_RITUAL_FRAMES][EFFIGY_SPR_W * EFFIGY_SPR_H];
+u32 g_rocketHull[ROCKET_SPR_W * ROCKET_SPR_H];
+u8  g_rocketPart[ROCKET_SPR_W * ROCKET_SPR_H];
 
 /* One palette shared by every sprite, so a colour means the same thing
    everywhere: T is always a highlight, S is always steel, and the two handle
@@ -2794,6 +2796,137 @@ static const char* ART_SKIRMISHER[SPR_H] = {
     "..............",
 };
 
+/* The launch assembly as you carry it: the same object at a fifth of the size,
+   which means the hull's detail is gone and only the silhouette survives -- a
+   cone, two fins, a bell, and the one amber pixel that says which machine this
+   is. Same characters as the big canvas, so the icon and the thing it becomes
+   are made of the same metal. */
+static const char* ART_ROCKET_ICON[SPR_H] = {
+    "......UU......",
+    ".....uWUu.....",
+    ".....uWUu.....",
+    "....uWUUUu....",
+    "....uWVVUu....",
+    "....uWUUUu....",
+    "....uW**Uu....",
+    "....uWUUUu....",
+    "...GuWUUUuG...",
+    "..GGuW11UuGG..",
+    ".GG.unnnnu.GG.",
+    "....BkkkkB....",
+    "....&e&e&e....",
+    "..............",
+};
+
+/* --- the rocket ------------------------------------------------------------
+   28 x 80, drawn at one pixel per cell, and every colour in it is a character
+   that already meant that colour somewhere else -- see the note at the end of
+   paletteOf, which is the rule rather than a coincidence. Pale titanium is the
+   suit's own U/W/u/S, the engine is the instrument casing's B/n/k/D, the
+   pipework is bronze, the cockpit is a visor and the core window is the light
+   inside a forge core. A machine built by the same hands that made everything
+   else in the pack should be made of the same metals.
+
+   Read it as a silhouette first: a tall cone, a banded tube with two windows,
+   two swept fins, a bell, and four legs standing it clear of the pad. Those
+   are the parts ENDGAME.md asks to be legible at world scale -- the pad, the
+   fuel connection, the hatch and the engine -- and they are the parts the
+   fifty-odd rows below spend their pixels on.
+
+   Two characters carry meaning beyond their colour, and rocketPartOf is where
+   that is written down: '*' and 'f' are the Ascent Core's window, 'c' is the
+   fuel line. Both are drawn dark until the thing they stand for is aboard. */
+static const char* ART_ROCKET[ROCKET_SPR_H] = {
+    "...........SSSu.............",
+    "............SSSu............",
+    "............SSSu............",
+    "...........uWSSSu...........",
+    "...........uWSSSu...........",
+    "..........uWUUSSSu..........",
+    ".........uWUUUUSSSu.........",
+    ".........uWUUUUSSSu.........",
+    "........uWUUUUUUSSSu........",
+    "........uWUUUUUUSSSu........",
+    ".......uWUUUUUUUUSSSu.......",
+    ".......uWUUUUUUUUSSSu.......",
+    "......uWUUUUUUUUUUSSSu......",
+    "......uWUUUUUUUUUUSSSu......",
+    "......uWUUUUUUUUUUSSSu......",
+    "......uWUUUUUUUUUUSSSu......",
+    "......gGGGGGGGGGGGGGGg......",
+    "......uWUUUUUUUUUUSSSu......",
+    "......uWUUGGGGGGGGSSSu......",
+    "......uWUGVVVVVVVVGSSu......",
+    "......uWUGVvvVVVVVGSSu......",
+    "......uWUGVvVVVVVVGSSu......",
+    "......uWUGVVVVVVVVGSSu......",
+    "......uWUGVVVVVVVVGSSu......",
+    "......uWUGVVVVVVVVGSSu......",
+    "......uWUUGGGGGGGGSSSu......",
+    "......uWUUUUUUUUUUSSSu......",
+    "......uWUUUUUUUUUUSSSu......",
+    "......uWUUUUUUUUUUSSSu......",
+    "......uWUUUUUUUUUUSSSu......",
+    "......gGGGGGGGGGGGGGGg......",
+    "......uWUUUUUUUUUUSSSu......",
+    "......uWOOOUUUUUUOOOSu......",
+    "......uW1UUUUUUUUUS1Su......",
+    "......uW1UggggggggS1Su......",
+    "......uWOUG******GSOSu......",
+    "......uW1UG******GS1Su......",
+    "......uW1UG*ffff*GS1Su......",
+    "......uW1UG*ffff*GS1Su......",
+    "......uW1UG*ffff*GS1Su......",
+    "......uW1UG*ffff*GS1Su......",
+    "......uW1UG******GS1Su......",
+    "......uWOUG******GSOSu......",
+    "......uW1UggggggggS1Sggggg..",
+    ".....guWOOOUUUUUUOOOSggGGg..",
+    ".....guW1UUUUUUUUUS1Sugcg...",
+    ".....ggG1GGGGGGGGGG1ccgcG...",
+    ".....guW1UUUUUUUUUS1SugcG...",
+    ".....guW1UUUUUUUUUS1SugcG...",
+    ".....guWOUUUUUUUUUSOccgcG...",
+    "....gguW1UUUUUUUUUS1SuggG...",
+    "....gguW1UUUUUUUUUS1Suggg...",
+    "....gguW1UUUUUUUUUS1SuggG...",
+    "....gguW1UUUUUUUUUS1Sggggg..",
+    "...gDguW1UUUUUUUUUS1SugDg...",
+    "...gDguW1UUUUUUUUUS1SugDg...",
+    "...gDguWOOOUUUUUUOOOSugDg...",
+    "..gDGguWUUUUUUUUUUSSSugGDg..",
+    "..gDGggGGGGGGGGGGGGGGggGDg..",
+    ".gDGGgBDnnnnnnnnnnBBBBgGGDg.",
+    ".gDGGg.BDnnnnnnnnBBBB.gGGDg.",
+    "gDGGGg.BDnnnnnnnnBBBB.gGGGDg",
+    "gDGGGg..BDnnnnnnBBBB..gGGGDg",
+    "........BDnnnnnnBBBB........",
+    "........BDnnnnnnBBBB........",
+    "....Dg..BDnnnnnnBBBB..gD....",
+    "....Dg...BDnnnnBBBB...gD....",
+    "....Dg...BDnnnnBBBB...gD....",
+    "....Dg....BkkkkkkB....gD....",
+    "...Dg....BkkkkkkkkB....gD...",
+    "...Dg...BkkkkkkkkkkB...gD...",
+    "...Dg...BkkkBBBBkkkB...gD...",
+    "...Dg...BkkkBBBBkkkB...gD...",
+    "..Dg...BkkkkBBBBkkkkB...gD..",
+    "..Dg..BkkkkkBBBBkkkkkB..gD..",
+    "..Dg..BkkkkkBBBBkkkkkB..gD..",
+    "..Dg..BkkkkkBBBBkkkkkB..gD..",
+    ".Dg..B&e&e&e&e&e&e&e&eB..gD.",
+    ".Dg..BBBBBBBBBBBBBBBBBB..gD.",
+    "GGGGkkkkkkkkkkkkkkkkkkkkGGGG",
+};
+
+/* Which part of the machine a character belongs to. Only two answers are not
+   "the hull", and they are the two the panel's checklist can change. */
+static u8 rocketPartOf(char c) {
+    if (c == '*' || c == 'f') return ROCKET_PART_CORE;
+    if (c == 'c')             return ROCKET_PART_FUEL;
+    return ROCKET_PART_HULL;
+}
+
 void initSprites() {
     memset(g_sprite, 0, sizeof(g_sprite));
     expand(SPR_MITE,      ART_MITE);
@@ -2834,6 +2967,15 @@ void initSprites() {
     expand(SPR_PYRE_CORE,    ART_PYRE_CORE);
     expand(SPR_EFFIGY_CALL,  ART_EFFIGY_CALL);
     expand(SPR_ASCENT_CORE,  ART_ASCENT_CORE);
+    expand(SPR_ROCKET,       ART_ROCKET_ICON);
+    /* The rocket, onto its own canvas. Not expand(): that writes into the
+       shared 14x14 table, and this is neither 14 wide nor an icon. */
+    for (int y = 0; y < ROCKET_SPR_H; ++y)
+        for (int x = 0; x < ROCKET_SPR_W; ++x) {
+            const char c = ART_ROCKET[y][x];
+            g_rocketHull[y * ROCKET_SPR_W + x] = paletteOf(c);
+            g_rocketPart[y * ROCKET_SPR_W + x] = rocketPartOf(c);
+        }
     expand(SPR_WARP_WAND, ART_WARP_WAND);
     expand(SPR_SPARK, ART_SPARK);
     expandMetal(SPR_ARMOUR_DRONE_VISOR,   ART_ARMOUR_HELM,    0x6FAFBE, 0x3D6C78);

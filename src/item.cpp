@@ -1998,6 +1998,16 @@ void initItems() {
     ITEMS[ITEM_HEAT_LAMP].colour     = 0xE8503A;
     ITEMS[ITEM_HEAT_LAMP].sprite     = SPR_HEAT_LAMP;
 
+    /* The launch assembly. maxStack is 1 and that is not a balance decision:
+       a rocket is 28 by 80 cells and the second one you put down would have
+       nowhere to stand. */
+    ITEMS[ITEM_LAUNCH_ASSEMBLY].name       = "Launch Assembly";
+    ITEMS[ITEM_LAUNCH_ASSEMBLY].kind       = ITEMK_DEVICE;
+    ITEMS[ITEM_LAUNCH_ASSEMBLY].deviceType = DEV_ROCKET;
+    ITEMS[ITEM_LAUNCH_ASSEMBLY].maxStack   = 1;
+    ITEMS[ITEM_LAUNCH_ASSEMBLY].colour     = 0xCBD3E0;
+    ITEMS[ITEM_LAUNCH_ASSEMBLY].sprite     = SPR_ROCKET;
+
     /* A bee in a jar. ITEMK_EGG because that is exactly what it is: an item
        that consumes itself and puts a creature in the world. Reusing the egg
        path rather than inventing a `release` verb means catching a bee and
@@ -2296,7 +2306,12 @@ void initItems() {
        with no recipe and no explanation reads as a bug; one that names the
        thing it is waiting for reads as an ending you have not reached. */
     ITEMS[ITEM_ASCENT_CORE].description =
-        "The last core, taken from the Effigy. The rocket will be built around it.";
+        "The last core, taken from the Effigy. The rocket is built around it.";
+    /* It says what it needs, because the checklist on the pad is the only
+       other place that says it and you have to have built one to read that. */
+    ITEMS[ITEM_LAUNCH_ASSEMBLY].description =
+        "The hull, the engine and the plumbing, folded flat. Stand it on solid "
+        "ground with clear sky above, then feed it the Ascent Core and fuel.";
     ITEMS[ITEM_SHAMBLER_BALLAST].description =
         "Creatures hurt you 30% less when they touch you.";
     ITEMS[ITEM_THRESHING_SPURS].description =
@@ -3097,6 +3112,19 @@ int digInto(World& w, Inventory& inv, int cx, int cy, int r, int maxCells,
                 if (displayed != ITEM_NONE && displayedCount > 0 &&
                     pickedUp.add(displayed, displayedCount) != 0)
                     continue;
+            }
+            /* A rocket owns what has been loaded into it, and the same
+               argument applies with more force: ENDGAME.md is explicit that
+               "mining an idle assembly returns the rocket and its stored
+               cargo", because the alternative is that moving a half-built
+               rocket six cells to the left destroys an Ascent Core -- an item
+               that costs a boss fight and of which there is exactly one per
+               Effigy. All-or-nothing in the same staged copy, so a full pack
+               leaves the rocket standing rather than eating the core. */
+            if (dev->type == DEV_ROCKET) {
+                const int fuel = rocketFuel(*dev);
+                if (fuel > 0 && pickedUp.add((ItemId)MAT_FUEL, fuel) != 0) continue;
+                if (rocketCore(*dev) && pickedUp.add(ITEM_ASCENT_CORE, 1) != 0) continue;
             }
             inv = pickedUp;
             devRemove(w, dev);

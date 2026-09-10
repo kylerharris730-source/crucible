@@ -357,6 +357,28 @@ const Recipe RECIPES[] = {
     { { { ITEM_PYRE_CORE, 1 }, { (ItemId)MAT_TUNGSTEN, 24 }, { (ItemId)MAT_BRIMSTONE, 32 } },
       ITEM_EFFIGY_CALL, 1, "Effigy Call", STATION_ASSEMBLY },
 
+    /* --- the launch assembly ---------------------------------------------
+       The last recipe in the game, and the only one whose output is a way to
+       stop playing it.
+
+       Three ingredients is the table's ceiling (CRAFT_MAX_IN), which turns out
+       to be the right shape for this rather than a constraint to work around:
+       titanium is the hull, tungsten is the engine that has to survive being
+       lit, and a Field Relay is the avionics -- the one part of it that is a
+       made object rather than a bar of something. It is deliberately NOT
+       gated on the Ascent Core. You can build the airframe the moment you can
+       work the metals, stand it on a pad, and look at a checklist that tells
+       you exactly what is still missing; the core is what the Effigy is for,
+       and the rocket is what tells you so.
+
+       The quantities are the largest in the table by a distance -- a hundred
+       and forty cells of worked metal against the twenty-four the Effigy's own
+       call asks for. That is the point: ROADMAP asks for the ending to be the
+       last and largest ENGINEERING problem, and the honest way to say that in
+       a crafting table is to make it cost a mine. */
+    { { { (ItemId)MAT_TITANIUM, 90 }, { (ItemId)MAT_TUNGSTEN, 50 }, { ITEM_RELAY, 1 } },
+      ITEM_LAUNCH_ASSEMBLY, 1, "Launch Assembly", STATION_ASSEMBLY },
+
     /* --- the post-Censer three ------------------------------------------
        A Pyre Core in every piece, so every one of them is a Censer killed.
        Three kills for a suit is a real price and it is the intended one: this

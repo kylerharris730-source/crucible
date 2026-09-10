@@ -1,6 +1,12 @@
 # Ascent: proposed rocket and ending
 
-Design draft, not implemented. The Effigy unlocks escape; building and launching
+**Stage one is built** (2026-09-10): the hull art, the assembly device, its
+recipe, placement, the checklist panel, loading, and recoverable cargo. What is
+still a draft is everything from the launch sequence down -- readiness,
+countdown, ignition, cinematic, and the win screen. The panel says so outright
+rather than offering a dead Launch button.
+
+The rest of this file is the design. The Effigy unlocks escape; building and launching
 the machine finishes it. First playable version should suit a full co-op run
 without introducing another material tier or a long post-boss grind.
 
@@ -73,7 +79,14 @@ to their own menu without ending the host's game.
 
 ## Implementation order and acceptance
 
-1. Rocket art, assembly recipe, placement, loading UI, and recoverable cargo.
+1. ~~Rocket art, assembly recipe, placement, loading UI, and recoverable
+   cargo.~~ **Done.** 28x80 hull on its own canvas with a lit core window and
+   fuel line; `DEV_ROCKET`, the first device that is not 14 cells square, with
+   a footprint shaped to its art; 90 titanium, 50 tungsten and a Field Relay at
+   the Assembly Table; placed by its feet on ground that can hold it; one
+   button that installs the core, loads fuel, and gives both back; and mining
+   it returns the assembly with its cargo. `tests/rocket.cpp` and
+   `tests/rocket_art.cpp`.
 2. Save-backed, host-authoritative readiness/countdown/launch state.
 3. Launch cinematic, victory screen, and safe return to the world.
 
