@@ -161,11 +161,10 @@ int main() {
               "and the clock has actually moved");
         run(w, ROCKET_COUNTDOWN_FRAMES);
         check(rocketStage(*d) == ROCKET_LIT, "and it reaches ignition on its own");
-        /* Stage two ends here, and it ends holding everything it was given --
-           see the note on rocketTick. Nothing is spent until there is an
-           ascent to spend it on. */
-        check(rocketCore(*d) && rocketFuel(*d) == ROCKET_FUEL_NEED,
-              "with its core and fuel still aboard, because nothing flew yet");
+        /* Which is where this file stops caring. What ignition COSTS, what the
+           ascent does and what it leaves behind are tests/rocket_ascent.cpp;
+           all that matters here is that the countdown handed over. */
+        check(rocketAscent(*d) >= 0.0f, "and hands over to the ascent");
     }
 
     /* --- 5. a roof over the corridor -------------------------------------- */

@@ -1633,6 +1633,10 @@ void generateWorld(World& w) {
        in the same session inherits the first one's explored map, and the caves
        under it are lit before anybody has been down there. */
     seenReset();
+    /* And has not been won. Same argument as seenReset above: the flag is a
+       global, so a second world generated in the same session would otherwise
+       be born finished. */
+    rocketSetVictory(false);
 
     /* --- columns --------------------------------------------------------- */
     for (int x = PLAY_X0; x <= PLAY_X1; ++x) {

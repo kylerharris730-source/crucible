@@ -1127,6 +1127,13 @@ enum ScreenKind {
     SCREEN_CHEST, SCREEN_DEVICE, SCREEN_MAP
 };
 static void screenExclusive(int keep);
+/* The ending. Defined with the other full-screen panels, a long way below;
+   declared here because the click router runs before any of them. */
+static bool handleWinClick(int mx, int my);
+static void winScreenTick();
+/* Whether the ending is on screen. Up here with them, because half a dozen
+   things below the click router ask whether a panel is up. */
+static bool g_winOpen = false;
 static int  g_closeDevicePending = -1; /* client-side close until host echoes it */
 static bool handleDevPanelClick(int mx, int my);
 static bool handleCraftClick(int mx, int my);
@@ -3079,6 +3086,7 @@ static bool handlePanelClick(int mx, int my) {
     /* The save screen is drawn over the menu, so it takes the click first --
        otherwise a slot in the top row would land on the menu button behind it. */
     if (g_saveScreen != SAVESCREEN_OFF) return handleSaveScreenClick(mx, my);
+    if (g_winOpen && handleWinClick(mx, my)) return true;
     if (g_menuOpen) {
         if (inRect(g_menuResume, mx, my)) { g_menuOpen = false; return true; }
         if (inRect(g_menuHost, mx, my)) {
@@ -5772,6 +5780,20 @@ static void drawDevPanel(HDC hdc) {
         const bool core = rocketCore(d);
         const bool corridor = rocketCorridorClear(g_world, d);
         const int stage = rocketStage(d);
+        /* A pad whose rocket has left is a memorial, not a machine: no
+           checklist, no controls, and nothing to load. Everything below this
+           would be describing a rocket that is not there. */
+        if (stage == ROCKET_GONE) {
+            drawText(hdc, tx, g_devpBox.top + 6, RGB(240, 202, 112), "Launch Pad");
+            drawText(hdc, tx, g_devpBox.top + 34, RGB(214, 216, 224),
+                     "A rocket left from here.");
+            drawText(hdc, tx, g_devpBox.top + 56, RGB(160, 168, 182),
+                     "The Effigy defeated  -  Rocket launched");
+            drawButton(hdc, g_devpClose, "x", 0, false,
+                       PtInRect(&g_devpClose, pt) != 0);
+            SelectObject(hdc, oldFont);
+            return;
+        }
         const int fault = (int)rocketFault(g_world, d);
         char line[128];
         drawText(hdc, tx, g_devpBox.top + 6, RGB(245, 224, 150), di.name);
@@ -5818,10 +5840,11 @@ static void drawDevPanel(HDC hdc) {
                     rocketCountdown(d) / 60.0f);
             drawText(hdc, tx, g_devpBox.top + 124, RGB(255, 230, 140), line);
         } else if (stage == ROCKET_LIT) {
-            /* Said outright rather than implied by a dead button. A control
-               that does nothing is a promise the build cannot keep. */
             drawText(hdc, tx, g_devpBox.top + 124, RGB(255, 230, 140),
-                     "IGNITION -- the ascent itself is not built yet.");
+                     "IGNITION  -  she is climbing");
+        } else if (stage == ROCKET_GONE) {
+            drawText(hdc, tx, g_devpBox.top + 124, RGB(240, 202, 112),
+                     "This pad launched a rocket.");
         } else {
             drawText(hdc, tx, g_devpBox.top + 124,
                      fault == ROCKET_READY ? DONE : RGB(112, 122, 138),
@@ -5838,7 +5861,8 @@ static void drawDevPanel(HDC hdc) {
             core                                                      ? "take core back" :
                                                                         "nothing to load";
         const int me = 0;   /* the panel is drawn for whoever is looking at it */
-        drawButton(hdc, g_devpTake, what, 0, false, PtInRect(&g_devpTake, pt) != 0);
+        drawButton(hdc, g_devpTake, what, 0, stage == ROCKET_LIT,
+                   PtInRect(&g_devpTake, pt) != 0);
         drawButton(hdc, g_devpReady, rocketReady(d, me) ? "stand down" : "ready",
                    0, rocketReady(d, me), PtInRect(&g_devpReady, pt) != 0);
         drawButton(hdc, g_devpLaunch,
@@ -7774,6 +7798,183 @@ static void drawCraft(HDC hdc) {
     SelectObject(hdc, oldFont);
 }
 
+/* --- the win screen ---------------------------------------------------------
+
+   ENDGAME.md's ending, drawn in the game's own furniture: a charcoal panel, an
+   amber border, pale text, and a lot of empty space. It is the one screen in
+   this program whose job is to be looked at rather than used, so it says four
+   things and offers two buttons and nothing else.
+
+   It opens on a TRANSITION, never on a state. The check watches for a rocket
+   this player is aboard leaving the ground, and shows the screen when that
+   same rocket is gone -- so loading a world you have already finished does not
+   greet you with your own ending again, which is what keying it off the
+   victory flag would have done.
+
+   The crew are already standing at the pad by the time this appears; see
+   rocketReturnCrew for why the world is put right before the screen rather
+   than when the player dismisses it. */
+static int  g_winPad   = -1;   /* the pad they left from */
+static int  g_winWatch = -1;   /* a rocket we watched light, waiting for it to go */
+static RECT g_winPanel, g_winContinue, g_winMenu;
+
+/* Which player slot the crew mask means by "me". The mask is indexed by the
+   authority's slots -- see rocketCrewSession -- and on a client the local
+   session is slot zero with the host's number in networkId. */
+static int localCrewSlot() {
+    return netRole() == NET_CLIENT ? (int)g_playerSessions[0].networkId : 0;
+}
+
+static void winScreenTick() {
+    for (int i = 0; i < MAX_DEVICES; ++i) {
+        const Device& d = g_devices[i];
+        if (!d.used || d.type != DEV_ROCKET) continue;
+        const int stage = rocketStage(d);
+        const bool mine = (d.received & (1 << localCrewSlot())) != 0;
+        if (stage == ROCKET_LIT && mine) g_winWatch = i;
+        else if (stage == ROCKET_GONE && g_winWatch == i) {
+            g_winWatch = -1;
+            g_winPad = i;
+            g_winOpen = true;
+            screenExclusive(SCREEN_NONE);
+        }
+    }
+}
+
+/* One crew member, in the armour they are actually wearing.
+
+   Rendered through Player::draw rather than from a canned portrait, which is
+   the whole point of showing them: the figure on the ending screen is the
+   character you finished the game in, down to which greaves you settled on.
+   Drawn into a scratch view buffer and blitted, because that function speaks
+   view pixels and GDI does not. */
+static void drawCrewPortrait(HDC hdc, const RECT& r, int hostSlot) {
+    const int slot = playerSessionSlotForNetworkId((PlayerId)hostSlot) >= 0
+                   ? playerSessionSlotForNetworkId((PlayerId)hostSlot) : hostSlot;
+    if (slot < 0 || slot >= MAX_PLAYERS) return;
+    PlayerSession& s = g_playerSessions[slot];
+    if (!s.connected) return;
+
+    static u32 scratch[VIEW_CELLS_W * VIEW_CELLS_H];
+    const int PW = 16, PH = 26;
+    for (int y = 0; y < PH; ++y)
+        for (int x = 0; x < PW; ++x) scratch[y * VIEW_CELLS_W + x] = 0x20242D;
+
+    /* A copy, posed and stood upright: the real body may be mid-fall, facing
+       away, or flashing red from the last thing that hit it, and none of that
+       belongs in a portrait. */
+    Player pose = s.body;
+    pose.alive = true;
+    pose.facing = 1;
+    pose.crouching = false;
+    pose.hurtFlash = 0;
+    pose.frame = PF_IDLE;
+    const int camX = (int)pose.left() - 3, camY = (int)pose.top() - 2;
+    pose.draw(scratch, camX, camY, false,
+              netRole() != NET_OFF ? playerIdentityColour(s.networkId) : 0,
+              &s.inventory);
+
+    static u8 bgr[16 * 26 * 3];
+    for (int y = 0; y < PH; ++y)
+        for (int x = 0; x < PW; ++x) {
+            const u32 c = scratch[y * VIEW_CELLS_W + x];
+            u8* out = bgr + (y * PW + x) * 3;
+            out[0] = (u8)(c & 0xFF); out[1] = (u8)((c >> 8) & 0xFF);
+            out[2] = (u8)((c >> 16) & 0xFF);
+        }
+    BITMAPINFOHEADER bi;
+    memset(&bi, 0, sizeof(bi));
+    bi.biSize = sizeof(bi); bi.biWidth = PW; bi.biHeight = -PH;
+    bi.biPlanes = 1; bi.biBitCount = 24; bi.biCompression = BI_RGB;
+    SetStretchBltMode(hdc, COLORONCOLOR);
+    StretchDIBits(hdc, r.left, r.top, r.right - r.left, r.bottom - r.top,
+                  0, 0, PW, PH, bgr, (BITMAPINFO*)&bi, DIB_RGB_COLORS, SRCCOPY);
+}
+
+static void layoutWin() {
+    const int w = imin(uiScaled(520), VIEW_W - 40);
+    const int h = imin(uiScaled(340), WIN_H - 40);
+    const int x = PANEL_W + (VIEW_W - w) / 2, y = (WIN_H - h) / 2;
+    SetRect(&g_winPanel, x, y, x + w, y + h);
+    const int bw = (w - 60) / 2;
+    SetRect(&g_winContinue, x + 20, y + h - 52, x + 20 + bw, y + h - 22);
+    SetRect(&g_winMenu, x + w - 20 - bw, y + h - 52, x + w - 20, y + h - 22);
+}
+
+static void drawWinScreen(HDC hdc) {
+    if (!g_winOpen) return;
+    layoutWin();
+    FillRect(hdc, &g_winPanel, g_panelBg);
+    FrameRect(hdc, &g_winPanel, g_accentBrush);
+
+    HGDIOBJ oldFont = SelectObject(hdc, g_font);
+    SetBkMode(hdc, TRANSPARENT);
+
+    RECT t = g_winPanel; t.top += 26;
+    SetTextColor(hdc, RGB(240, 202, 112));
+    DrawTextA(hdc, "ASCENT COMPLETE", -1, &t, DT_CENTER | DT_TOP | DT_SINGLELINE);
+    t.top += 26;
+    SetTextColor(hdc, RGB(214, 216, 224));
+    DrawTextA(hdc, "You made it home.", -1, &t, DT_CENTER | DT_TOP | DT_SINGLELINE);
+
+    /* The crew, centred as a row. Nothing is written under them: a portrait
+       with a slot number under it would be a table, and this is a photograph. */
+    if (g_winPad >= 0 && g_winPad < MAX_DEVICES) {
+        const Device& d = g_devices[g_winPad];
+        int aboard = 0;
+        for (int i = 0; i < MAX_PLAYERS; ++i) if (d.received & (1 << i)) ++aboard;
+        const int pw = uiScaled(48), gap = uiScaled(16);
+        int px = (g_winPanel.left + g_winPanel.right) / 2
+               - (aboard * pw + (aboard - 1) * gap) / 2;
+        for (int i = 0; i < MAX_PLAYERS; ++i) {
+            if (!(d.received & (1 << i))) continue;
+            RECT p = { px, g_winPanel.top + 84, px + pw,
+                       g_winPanel.top + 84 + pw * 26 / 16 };
+            drawCrewPortrait(hdc, p, i);
+            px += pw + gap;
+        }
+    }
+
+    /* Two facts, and both of them are true by construction rather than
+       tracked: the rocket is built round an Ascent Core, and the only thing
+       that drops one is the Effigy. ENDGAME.md is firm that nothing invented
+       goes here -- no completion time, no death count -- and the way to keep
+       that promise is to state only what having launched already proves. */
+    RECT line = g_winPanel;
+    line.top = g_winPanel.bottom - 96;
+    SetTextColor(hdc, RGB(160, 168, 182));
+    DrawTextA(hdc, "The Effigy defeated  -  Rocket launched", -1, &line,
+              DT_CENTER | DT_TOP | DT_SINGLELINE);
+
+    drawButton(hdc, g_winContinue, "Continue Exploring", NULL, false,
+               inRect(g_winContinue, g_mx, g_my));
+    drawButton(hdc, g_winMenu, "Menu", NULL, false, inRect(g_winMenu, g_mx, g_my));
+    SelectObject(hdc, oldFont);
+}
+
+static bool handleWinClick(int mx, int my) {
+    if (!g_winOpen) return false;
+    layoutWin();
+    if (inRect(g_winContinue, mx, my)) {
+        /* Nothing to undo. The crew were put back on the pad when the ascent
+           finished, their packs were never touched, and the victory flag is
+           permanent -- so continuing is only a matter of taking the screen
+           away. See rocketReturnCrew. */
+        g_winOpen = false;
+        return true;
+    }
+    if (inRect(g_winMenu, mx, my)) {
+        g_winOpen = false;
+        g_menuOpen = true;
+        screenExclusive(SCREEN_MENU);
+        return true;
+    }
+    /* Everything else on the panel is scenery, but it still eats the click:
+       painting into the world through the ending would be a poor last
+       impression. */
+    return inRect(g_winPanel, mx, my);
+}
+
 static void drawMenu(HDC hdc) {
     layoutMenu();
 
@@ -8247,6 +8448,7 @@ static void serverTick(const LARGE_INTEGER& perfFrequency) {
         projUpdate(g_world);
         roomsTick(g_world);
         devTick(g_world);
+        winScreenTick();
         treesTick(g_world);
         dayAdvance();
         if (g_playerOn) {
@@ -8266,9 +8468,14 @@ static void serverTick(const LARGE_INTEGER& perfFrequency) {
         return;
     }
     const bool onlineHost = netRole() == NET_HOST;
-    const bool menuPausesWorld = g_menuOpen && !onlineHost;
+    /* The ending stops the world for the same reason the pause menu does, and
+       with the same exception: a host cannot freeze a world other people are
+       playing in, so online it is a panel and nothing more. Offline it means
+       nobody comes back from space to find a Husk has been chewing on them
+       while they read their own credits. */
+    const bool menuPausesWorld = (g_menuOpen || g_winOpen) && !onlineHost;
     const bool uiPausesActors = !onlineHost &&
-        (g_menuOpen || g_creativeOpen || g_craftOpen || g_chestOpen >= 0);
+        (g_menuOpen || g_winOpen || g_creativeOpen || g_craftOpen || g_chestOpen >= 0);
 
     toolInstTick(g_inv.energyBonus());
     /* Survival always uses PlayerCommand. The direct brush remains only for
@@ -8309,6 +8516,11 @@ static void serverTick(const LARGE_INTEGER& perfFrequency) {
         devTick(g_world);
         treesTick(g_world);
     }
+    /* Outside the pause gate on purpose: it is watching for a transition that
+       has already happened, and a screen that only appears while the world is
+       running would never appear at all -- the ascent is the last thing the
+       world does before this stops it. */
+    winScreenTick();
     if (!g_paused && !uiPausesActors) {
         bool everyoneResting = true;
         for (int slot = 0; slot < MAX_PLAYERS; ++slot)
@@ -8486,6 +8698,11 @@ static void clientRender(HWND hwnd) {
             drawPlayerIdentity(g_pixels, body, other.networkId);
         }
     }
+    /* And the one machine drawn over the top of the characters, because its
+       crew are inside it rather than standing in front of it. Costs a walk
+       over the device list and draws nothing at all unless a rocket is in the
+       air. See devDrawAscent. */
+    devDrawAscent(g_world, g_pixels, g_camX, g_camY, g_lightOn);
     /* The map, over the world and the machines and under every panel. Last
        of the PIXEL-BUFFER passes and before StretchDIBits, which is the
        part that matters: these write into g_pixels, and once the blit has
@@ -8570,6 +8787,7 @@ static void clientRender(HWND hwnd) {
     if (g_creativeOpen) drawCreative(g_backDC);
     if (g_craftOpen)    drawCraft(g_backDC);
     if (g_chestOpen >= 0) drawChest(g_backDC);
+    if (g_winOpen)      drawWinScreen(g_backDC);
     if (g_menuOpen)     drawMenu(g_backDC);
     if (g_saveScreen != SAVESCREEN_OFF) drawSaveScreen(g_backDC);
     drawItemTooltip(g_backDC);

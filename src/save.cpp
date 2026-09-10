@@ -414,6 +414,17 @@ bool saveWrite(const char* path, const World& w, const u8* thumbRgb) {
         s.end();
     }
     {
+        /* Whether a rocket has left this world. Four bytes, in a section of
+           its own rather than as a field on something -- a world made before
+           the ending existed simply has no WON tag and loads with the flag
+           false, which is exactly right and needed no version gate. See the
+           note on SAVE_VERSION. */
+        SectionWriter s; s.begin(f, "WON ", "victory");
+        const u32 won = rocketVictory() ? 1u : 0u;
+        fwrite(&won, sizeof(won), 1, f);
+        s.end();
+    }
+    {
         SectionWriter s; s.begin(f, "TORC", "torch fixtures");
         const i32 count = torchCount();
         fwrite(&count, sizeof(count), 1, f);
@@ -631,6 +642,11 @@ bool saveRead(const char* path, World& w) {
     g_playerSessions[0].respawnBedX = g_playerSessions[0].respawnBedY = -1;
     g_playerSessions[0].respawnFrames = 0;
     g_playerSessions[0].healCooldown = 0;
+    /* A world that has not been won until its own WON section says so. Without
+       this, loading a world you had not finished after playing one you had
+       would carry the victory across -- the flag is a global, and every other
+       default here exists for the same reason. */
+    rocketSetVictory(false);
 
     bool haveMats = false;
     for (;;) {
@@ -881,6 +897,11 @@ bool saveRead(const char* path, World& w) {
                     if (g_devices[i].used) g_devices[i].mat = g_remap[g_devices[i].mat];
             }
             statAdd("machines", len + 12);
+        } else if (tag == fourcc("WON ")) {
+            u32 won = 0;
+            if (len == sizeof(won)) fread(&won, sizeof(won), 1, f);
+            rocketSetVictory(won != 0);
+            statAdd("victory", len + 12);
         } else if (tag == fourcc("TORC")) {
             i32 count = 0;
             if (len >= sizeof(count)) {

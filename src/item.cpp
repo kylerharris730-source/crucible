@@ -3095,6 +3095,14 @@ int digInto(World& w, Inventory& inv, int cx, int cy, int r, int maxCells,
                Turn the filter off to pick machines up. That is the same
                gesture as putting the tool away, and it is one keypress. */
             if (whitelist) continue;
+            /* A rocket that has left is a landmark, not a machine. Its cells
+               are gone -- see rocketTick -- so its footprint is now eighty
+               cells of ordinary air that devAt still answers for, and without
+               this every dig anywhere in that column would hand back a Launch
+               Assembly the player no longer owns. Skipped rather than refused,
+               so digging there goes on to mine whatever is actually in the
+               cell. */
+            if (dev->type == DEV_ROCKET && rocketStage(*dev) >= ROCKET_LIT) continue;
             const ItemId back = itemForDeviceType(dev->type);
             /* No item means no way to hand it back, so it is not diggable at
                all -- better an immovable machine than one that evaporates. */

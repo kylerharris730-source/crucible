@@ -1,12 +1,14 @@
 # Ascent: proposed rocket and ending
 
-**Stages one and two are built** (2026-09-10): the hull art, the assembly
-device, its recipe, placement, the checklist panel, loading, recoverable cargo,
-and now readiness, the host-confirmed countdown, and every recheck that calls
-one off. What is still a draft is what happens AFTER ignition -- the cinematic,
-victory, and the win screen. The panel says so outright rather than offering a
-dead button, and nothing is consumed at ignition yet, because there is nothing
-to spend it on until stage three exists.
+**Built** (2026-09-10), all three stages: the hull and the assembly device, the
+readiness and countdown, and the ascent, the victory flag and the win screen.
+
+Two deliberate departures from what is written below, both recorded here rather
+than quietly done. There is no five-second cinematic separate from the world --
+the ascent IS the cinematic, played in the live view with the crew riding the
+hull -- and the second button says "Menu" rather than "Main Menu", because this
+game has no title screen to return to; it opens the pause menu, which is where
+Quit lives. Everything else is as designed.
 
 The rest of this file is the design. The Effigy unlocks escape; building and launching
 the machine finishes it. First playable version should suit a full co-op run
@@ -98,7 +100,17 @@ to their own menu without ending the host's game.
    of "ready" that the panel, the button and the per-frame recheck all read, so
    the pad cannot say ready and then refuse. Cancels on a blocked corridor, a
    destroyed pad, a death, or a crewmate walking away. `tests/rocket_launch.cpp`.
-3. Launch cinematic, victory screen, and safe return to the world.
+3. ~~Launch cinematic, victory screen, and safe return to the world.~~
+   **Done.** Ignition spends the core and the fuel and lifts the hull out of
+   the grid; it is drawn climbing rather than moved, over the top of the crew
+   pinned inside it, with a short plume and fire into the pad. When it clears
+   the sky the crew are put back on the ground at the pad -- at that moment
+   rather than when the screen is dismissed, because the ending is exactly when
+   somebody might close the game, and a crew parked in the sky by a quit would
+   be a lost save. The victory flag is its own additive save section, so a world
+   made before any of this loads unwon and nothing needed version-gating. What
+   is left standing is the pad, drawn from the bottom rows of the same art, and
+   digging it hands back nothing. `tests/rocket_ascent.cpp`.
 
 Test single player, two-player desktop, and browser co-op before the full run.
 Cover missing fuel/core, blocked sky, mixed readiness, cancellation, disconnects,

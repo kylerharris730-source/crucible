@@ -501,15 +501,29 @@ void rocketProbe(int i, int* dx, int* dy) {
     *dx = ROCKET_PROBES[i][0]; *dy = ROCKET_PROBES[i][1];
 }
 
+static bool g_rocketVictory = false;
+bool rocketVictory() { return g_rocketVictory; }
+void rocketSetVictory(bool won) { g_rocketVictory = won; }
+
 int rocketStage(const Device& d) {
-    return (d.reading >= ROCKET_IDLE && d.reading <= ROCKET_LIT) ? (int)d.reading
+    return (d.reading >= ROCKET_IDLE && d.reading <= ROCKET_GONE) ? (int)d.reading
                                                                  : ROCKET_IDLE;
 }
 int rocketCountdown(const Device& d) { return d.phase > 0 ? (int)d.phase : 0; }
 
+/* The crew mask is indexed by the AUTHORITY's player slots, because the host
+   is where a launch is decided -- so on a client the bit for "player 2" is
+   player 2 as the host numbers them, and the local session holding that body
+   may be in a different slot. Resolved rather than assumed: on a host and
+   offline this is the identity mapping and costs a compare. */
+static int rocketCrewSession(int slot) {
+    const int local = playerSessionSlotForNetworkId((PlayerId)slot);
+    return local >= 0 ? local : slot;
+}
+
 bool rocketCrew(const Device& d, int slot) {
     if (slot < 0 || slot >= MAX_PLAYERS) return false;
-    const PlayerSession& s = g_playerSessions[slot];
+    const PlayerSession& s = g_playerSessions[rocketCrewSession(slot)];
     if (!s.connected || !s.body.alive) return false;
     const float dx = s.body.centreX() - (float)(d.x + ROCKET_W / 2);
     const float dy = s.body.centreY() - (float)(d.y + ROCKET_H / 2);
@@ -594,21 +608,117 @@ void rocketCancel(Device& d) {
     d.phase   = 0;
 }
 
-/* One frame of a launch. Nothing is consumed here, and that is deliberate on
-   two counts. ENDGAME.md says the core and the fuel are spent at ignition and
-   not when the countdown starts, so that a cancel costs nothing -- and until
-   stage three exists there is nothing to spend them ON. A rocket that ate an
-   Ascent Core and then sat on its pad because the ascent had not been written
-   yet would be the worst possible half-finished feature, so ROCKET_LIT keeps
-   its cargo and the panel says outright that this is where the build stops. */
+float rocketAscent(const Device& d) {
+    if (rocketStage(d) == ROCKET_GONE) return 1.0f;
+    if (rocketStage(d) != ROCKET_LIT)  return 0.0f;
+    const float t = (float)d.phase / (float)ROCKET_ASCENT_FRAMES;
+    return t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t);
+}
+
+/* How far the hull has climbed, in cells. Squared rather than linear, because
+   a rocket does not leave at a constant speed: the first second should be a
+   thing you can watch clear the ground, and the last should be too fast to
+   follow. */
+static int rocketRise(const Device& d) {
+    const float t = rocketAscent(d);
+    return (int)(t * t * (float)ROCKET_ASCENT_RISE);
+}
+
+void rocketReturnCrew(const Device& d) {
+    /* Beside the pad and on the ground, not inside the footprint: the hull is
+       gone but the legs are drawn there, and a body standing in the middle of
+       its own landmark reads as debris.
+
+       Called when the ascent ENDS rather than when the player presses Continue
+       Exploring, and that is a safety decision rather than a style one. The win
+       screen is a moment somebody might close the game on, and a crew left
+       parked two hundred cells above their world by a quit would be the sort of
+       bug that eats a save. The world is put right first; the screen is just a
+       screen. */
+    for (int i = 0; i < MAX_PLAYERS; ++i) {
+        if (!(d.received & (1 << i))) continue;
+        PlayerSession& s = g_playerSessions[rocketCrewSession(i)];
+        if (!s.connected) continue;
+        s.body.x  = (float)(d.x + ROCKET_W / 2);
+        s.body.y  = (float)(d.y + ROCKET_H - PLAYER_H / 2 - 1);
+        s.body.vx = s.body.vy = 0.0f;
+        s.body.alive = true;
+        if (s.body.hp <= 0) s.body.hp = PLAYER_HP_MAX;
+    }
+}
+
+/* One frame of a launch or of an ascent.
+
+   Ignition is where the cargo is finally spent -- ENDGAME.md is explicit that
+   it happens here and not when the countdown starts, which is what makes every
+   cancel free. Stage two shipped without this because there was nothing to
+   spend it on yet; there is now. */
 static void rocketTick(World& w, Device& d) {
-    if (rocketStage(d) != ROCKET_COUNTING) return;
-    /* Rechecked EVERY frame, against the same function the button used. A
-       countdown is exactly the window in which the world changes underneath a
-       decision: somebody dies, a wall is built overhead, the pad is mined, a
-       crewmate wanders off. */
-    if (rocketFault(w, d) != ROCKET_READY) { rocketCancel(d); return; }
-    if (--d.phase <= 0) { d.phase = 0; d.reading = ROCKET_LIT; }
+    const int stage = rocketStage(d);
+    if (stage == ROCKET_COUNTING) {
+        /* Rechecked EVERY frame, against the same function the button used. A
+           countdown is exactly the window in which the world changes underneath
+           a decision: somebody dies, a wall is built overhead, the pad is
+           mined, a crewmate wanders off. */
+        if (rocketFault(w, d) != ROCKET_READY) { rocketCancel(d); return; }
+        if (--d.phase > 0) return;
+
+        /* --- ignition -----------------------------------------------------
+           The cargo is spent, the hull leaves the grid, and `received` stops
+           meaning "who said yes" and starts meaning "who went". It is the same
+           set of people either way, which is why it is the same field: the
+           crew of a launch is exactly the crew that was ready for it. */
+        rocketSetCore(d, false);
+        d.mat = MAT_EMPTY;
+        d.count = 0;
+        for (int i = 0; i < MAX_PLAYERS; ++i)
+            if (!rocketCrew(d, i)) d.received &= ~(1 << i);
+        /* Out of the simulation. The cells go now rather than gradually,
+           because a hull that vacated its cells row by row as it climbed would
+           spend four seconds as a solid object with a hole in the bottom, and
+           the first thing to fall into that hole would be the pad. */
+        for (int y = d.y; y < d.y + ROCKET_H; ++y)
+            for (int x = d.x; x < d.x + ROCKET_W; ++x)
+                if (w.at(x, y).mat == DEVS[d.type].cellMat) w.setCell(x, y, MAT_EMPTY);
+        d.reading = ROCKET_LIT;
+        d.phase   = 0;
+        return;
+    }
+    if (stage != ROCKET_LIT) return;
+
+    /* --- the climb -------------------------------------------------------- */
+    ++d.phase;
+    const int rise = rocketRise(d);
+    /* The crew ride it up, pinned to the hull. Their own physics ran earlier
+       this frame -- see the order in serverTick -- so this is the last word on
+       where they are, which is what makes it hold against gravity without
+       anything having to be told to stop applying gravity. */
+    for (int i = 0; i < MAX_PLAYERS; ++i) {
+        if (!(d.received & (1 << i))) continue;
+        PlayerSession& s = g_playerSessions[rocketCrewSession(i)];
+        if (!s.connected) continue;
+        s.body.x  = (float)(d.x + ROCKET_W / 2);
+        s.body.y  = (float)(d.y - rise + 34);
+        s.body.vx = s.body.vy = 0.0f;
+    }
+    /* Fire into the pad, and only while the bell is still near it. A rocket
+       that left a clean pad would be the one thing in this world that did not
+       touch the simulation it lives in -- but the first version wrote fire at
+       the bell every few frames all the way up, and what that drew was a
+       two-hundred-cell dashed line hanging in the sky long after the rocket
+       had gone. The exhaust belongs to the ground it is pushing against. */
+    if (rise < 10 && (d.phase & 3) == 0) {
+        const int fx = d.x + ROCKET_W / 2, fy = d.y - rise + ROCKET_H;
+        for (int k = -4; k <= 4; ++k)
+            if (fy < SIM_H - 1 && w.at(fx + k, fy).mat == MAT_EMPTY)
+                w.setCell(fx + k, fy, MAT_FIRE);
+    }
+    if (d.phase >= ROCKET_ASCENT_FRAMES) {
+        d.reading = ROCKET_GONE;
+        d.phase   = 0;
+        rocketReturnCrew(d);
+        rocketSetVictory(true);
+    }
 }
 
 bool rocketCore(const Device& d) { return d.count2 != 0; }
@@ -1392,6 +1502,10 @@ static bool devIntact(const World& w, const Device& d) {
        would sample are empty sky and it would drop on its first frame. It
        names its own -- see the note in device.h. */
     if (d.type == DEV_ROCKET) {
+        /* A rocket that has left has no cells at all, by design -- see
+           rocketTick. Checking its hull after ignition would delete the
+           landmark, and with it the record of what happened here. */
+        if (rocketStage(d) >= ROCKET_LIT) return true;
         for (int k = 0; k < rocketProbeCount(); ++k) {
             int dx, dy; rocketProbe(k, &dx, &dy);
             if (w.at(d.x + dx, d.y + dy).mat != DEVS[d.type].cellMat) return false;
@@ -2496,8 +2610,35 @@ void circuitDraw(u32* px, int camX, int camY, bool lit, int selectedDevice, int 
     }
 }
 
+/* --- why there are two passes ----------------------------------------------
+   Everything in this file is drawn before the characters are, which is right:
+   walking in front of a machine should put you in front of it. A rocket in
+   flight is the one exception, because the crew are INSIDE it -- pinned to the
+   hull as it climbs -- and a figure drawn over the hull reads as somebody
+   clinging to the outside of a rocket rather than sitting in one.
+
+   So devDraw takes a flag, and main calls it twice: once for the world's
+   machines before the characters, and once for a climbing rocket after them.
+   The alternative was hiding the crew for the length of the ascent, which
+   means a rule somewhere that a living player is sometimes not drawn -- a far
+   more expensive idea than one more walk over a list of 128. */
+static void devDrawPass(const World& w, u32* px, int camX, int camY, bool lit,
+                        bool ascentPass);
+
+void devDrawAscent(const World& w, u32* px, int camX, int camY, bool lit) {
+    devDrawPass(w, px, camX, camY, lit, true);
+}
+
 void devDraw(const World& w, u32* px, int camX, int camY, bool lit) {
+    devDrawPass(w, px, camX, camY, lit, false);
+}
+
+static void devDrawPass(const World& w, u32* px, int camX, int camY, bool lit,
+                        bool ascentPass) {
     (void)w;
+    /* The second pass draws exactly one thing -- a rocket in flight -- so the
+       scenery half is skipped outright rather than culled a thousand times. */
+    if (!ascentPass) {
     /* Fixtures are drawn separately from machines because they deliberately
        have no Device record to tick, wire, or occupy a circuit slot. */
     const u32* torchArt = g_sprite[DEVS[DEV_TORCH].sprite];
@@ -2549,6 +2690,8 @@ void devDraw(const World& w, u32* px, int camX, int camY, bool lit) {
         }
     }
 
+    }
+
     for (int i = 0; i < MAX_DEVICES; ++i) {
         const Device& d = g_devices[i];
         if (!d.used) continue;
@@ -2557,8 +2700,11 @@ void devDraw(const World& w, u32* px, int camX, int camY, bool lit) {
            walked every frame this is what keeps a world full of machines from
            costing anything while you are somewhere else. */
         const int bx = d.x - camX, by = d.y - camY;
+        /* A climbing rocket is drawn well above its own footprint, so the box
+           this is culled against is the footprint plus the whole ascent. */
+        const int lift = (d.type == DEV_ROCKET) ? ROCKET_ASCENT_RISE : 0;
         if (bx + devTypeW(d.type) <= 0 || by + devTypeH(d.type) <= 0) continue;
-        if (bx >= VIEW_CELLS_W || by >= VIEW_CELLS_H) continue;
+        if (bx >= VIEW_CELLS_W || by - lift >= VIEW_CELLS_H) continue;
 
         /* Pipes are drawn as connections, not as little black boxes.  The
            underlying footprint remains a solid machine for the simulation;
@@ -2641,19 +2787,89 @@ void devDraw(const World& w, u32* px, int camX, int camY, bool lit) {
            Neither lit part is shaded by the light field, for the reason the
            indicator lamp below is not: they are lights. */
         if (d.type == DEV_ROCKET) {
+            const int stage = rocketStage(d);
+            /* A rocket in flight is drawn LAST, over the top of the crew
+               riding inside it -- see devDrawAscent, which is called after the
+               characters. Skipped here so it is not drawn twice, once under
+               them and once over. */
+            if (stage == ROCKET_LIT && !ascentPass) continue;
+            if (stage != ROCKET_LIT && ascentPass) continue;
+            /* --- the empty pad ---------------------------------------------
+               What is left when it has gone. The bottom rows of the same art,
+               dimmed: the leg feet and the scorch under where the bell stood,
+               which is exactly what a launch would leave and costs no second
+               picture to say it. ENDGAME.md asks for a small commemorative
+               landmark, and the strongest version of that is the real thing
+               with the rocket subtracted. */
+            if (stage == ROCKET_GONE) {
+                for (int yy = ROCKET_SPR_H - 12; yy < ROCKET_SPR_H; ++yy)
+                    for (int xx = 0; xx < ROCKET_SPR_W; ++xx) {
+                        const int k = yy * ROCKET_SPR_W + xx;
+                        const u32 c = g_rocketHull[k];
+                        if (!c) continue;
+                        /* The legs and the pad line only. The bell went with
+                           the rocket, and painting its dark trapezoid here
+                           would leave what looks like a hole in the ground. */
+                        if (xx > 4 && xx < ROCKET_SPR_W - 5 && yy < ROCKET_SPR_H - 2) continue;
+                        const int vx = bx + xx, vy = by + yy;
+                        if (vx < 0 || vx >= VIEW_CELLS_W) continue;
+                        if (vy < 0 || vy >= VIEW_CELLS_H) continue;
+                        const u32 r = (c >> 16) & 0xFF, g = (c >> 8) & 0xFF, bl = c & 0xFF;
+                        const u32 dim = ((r * 3 / 5) << 16) | ((g * 3 / 5) << 8) | (bl * 3 / 5);
+                        px[vy * VIEW_CELLS_W + vx] =
+                            lit ? shadeColor(dim, viewShade(vx, vy)) : dim;
+                    }
+                continue;
+            }
+
             const int fuel = rocketFuel(d);
             const bool core = rocketCore(d);
+            const int rise = (int)(rocketAscent(d) * rocketAscent(d) *
+                                   (float)ROCKET_ASCENT_RISE);
+            const int topY = by - rise;
+            /* --- the plume --------------------------------------------------
+               Drawn before the hull so the bell sits on top of its own fire,
+               and only while it is climbing. It flickers on the frame counter
+               and narrows with height, which is enough: at one pixel per cell
+               a plume is a shape, not a particle system. */
+            if (stage == ROCKET_LIT) {
+                const int fx = bx + ROCKET_SPR_W / 2;
+                /* Fourteen cells, tapering. Short on purpose: at one pixel per
+                   cell a long plume is a stripe, and a stripe behind a rising
+                   object reads as a wire it is hanging from rather than as
+                   thrust. What sells the climb is the hull moving, not the
+                   length of what is under it. */
+                const int len = 14;
+                for (int k = 0; k < len; ++k) {
+                    const int vy = topY + ROCKET_SPR_H + k;
+                    if (vy < 0 || vy >= VIEW_CELLS_H) continue;
+                    /* Flickers as a WHOLE rather than per pixel -- the plume
+                       pulses in length, which is what a rocket engine looks
+                       like from a distance, where speckling every cell just
+                       looks like a broken sprite. */
+                    const int pulse = ((int)d.phase / 3) & 1;
+                    if (k > len - 3 - pulse) continue;
+                    const int wide = 4 - (k * 4) / len;
+                    for (int o = -wide; o <= wide; ++o) {
+                        const int vx = fx + o;
+                        if (vx < 0 || vx >= VIEW_CELLS_W) continue;
+                        const bool edge = (o <= -wide + 1 || o >= wide - 1);
+                        px[vy * VIEW_CELLS_W + vx] =
+                            k < 3 ? 0xFFF0B0 : (edge ? 0xE05A20 : 0xFFC24A);
+                    }
+                }
+            }
             for (int yy = 0; yy < ROCKET_SPR_H; ++yy)
                 for (int xx = 0; xx < ROCKET_SPR_W; ++xx) {
                     const int k = yy * ROCKET_SPR_W + xx;
                     u32 c = g_rocketHull[k];
                     if (c == 0) continue;
-                    const int vx = bx + xx, vy = by + yy;
+                    const int vx = bx + xx, vy = topY + yy;
                     if (vx < 0 || vx >= VIEW_CELLS_W) continue;
                     if (vy < 0 || vy >= VIEW_CELLS_H) continue;
                     const u8 part = g_rocketPart[k];
                     bool glowing = false;
-                    if (part == ROCKET_PART_CORE) glowing = core;
+                    if (part == ROCKET_PART_CORE) glowing = core || stage == ROCKET_LIT;
                     else if (part == ROCKET_PART_FUEL) glowing = fuel > 0;
                     if (part != ROCKET_PART_HULL && !glowing) {
                         /* Cold, not absent. The window and the inlet keep

@@ -148,8 +148,15 @@ panel. The footprint follows the picture rather than the bounding box: cells are
 written only where the art is opaque, so the machine does not stand in a slab of
 its own sky.
 
+When it launches, the hull leaves the grid and is drawn climbing at a rising
+offset -- and drawn AFTER the characters, which is the one exception to devices
+being painted under them: the crew are pinned inside it while it climbs, and a
+figure over the hull reads as somebody clinging to the outside. What is left
+afterwards is the bottom rows of the same art, dimmed: the leg feet and the
+scorch line, which is what a launch would leave and costs no second picture.
+
 `tests/rocket_art.cpp` with `scripts/preview_rocket.py` renders all three states;
-`tests/rocket.cpp` covers the object.
+`tests/rocket.cpp` covers the object, and `tests/rocket_ascent.cpp` the ending.
 
 ## Effigy final boss
 

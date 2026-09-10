@@ -82,18 +82,20 @@ Measured, not guessed:
 
 ## 3. The rocket, and winning
 
-- [ ] **There is no win condition of any kind yet.** Nothing FLIES yet --
-      but as of 2026-09-10 the rocket itself exists: see ENDGAME.md, which is
-      the design, and stages one and two of it are built: the rocket, and the
-      countdown that reaches ignition. What is missing is what happens after
-      ignition, and what winning DOES.
+- [x] **The game can be won.** Build the rocket, fuel it, put an Ascent Core
+      in it, get your crew aboard and launch: it climbs out of the world, the
+      screen says ASCENT COMPLETE, and the world is permanently marked won.
+      Built 2026-09-10; ENDGAME.md is the design and the record of what was
+      changed on the way.
 - [x] Design the rocket as a **build**, not a purchase: a multi-part structure
       assembled from the deepest materials, so finishing the game is the last
       and largest engineering problem rather than a crafting recipe. The device
       and station systems already support multi-cell placed machines.
-- [ ] Decide what winning does — credits, a new-game-plus, or simply a marked
-      save. Worth deciding early, because it determines whether the rocket is
-      consumed.
+- [x] Decide what winning does. **A marked save.** "Continue Exploring" puts
+      the crew back on the pad with their gear and every world edit intact and
+      the victory flag permanent; the empty pad stays as a landmark. The rocket
+      IS consumed -- the core and the fuel are spent at ignition -- so a second
+      ending costs a second Effigy.
 
 ---
 

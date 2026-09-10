@@ -620,13 +620,28 @@ void rocketProbe(int i, int* dx, int* dy);
 enum RocketStage {
     ROCKET_IDLE = 0,
     ROCKET_COUNTING,   /* the countdown is running; anyone may cancel */
-    ROCKET_LIT         /* it reached zero. Stage three flies it away */
+    ROCKET_LIT,        /* lit and climbing: the ascent is playing */
+    ROCKET_GONE        /* it left. What stands here now is the empty pad */
 };
 
 /* Five seconds, which is ENDGAME.md's number. Long enough to change your mind
    and short enough not to be a chore in a world where nothing else is
    happening. */
 static const int ROCKET_COUNTDOWN_FRAMES = 300;
+/* --- the ascent ------------------------------------------------------------
+   Four seconds of climb, and the rocket is drawn rather than moved: its cells
+   are cleared from the grid at ignition and the hull is painted at a rising
+   offset. Moving it would mean rewriting thirteen hundred cells a frame for a
+   machine that is on its way out of the world, and every one of those writes
+   would dirty a chunk and wake the simulation under it.
+
+   The crew ride it. They are pinned to the hull each frame while it climbs,
+   which is what ENDGAME.md means by not leaving players standing defenceless
+   in the live world during the cinematic -- it needs no invulnerability rule,
+   because two hundred cells of sky is not somewhere a Husk can reach. */
+static const int ROCKET_ASCENT_FRAMES = 240;
+static const int ROCKET_ASCENT_RISE   = 260;   /* cells, by the last frame */
+
 /* How near a player has to be to count as aboard. Generous -- the hull is
    eighty cells tall and standing at its feet should qualify -- but finite, so
    a crewmate two screens away mining is not silently launched into space. */
@@ -674,6 +689,27 @@ bool rocketBeginLaunch(const World& w, Device& d, int slot);
 /* Stop it. Anyone may, which IS the group decision half: a countdown that only
    the host could call off would make every guest a passenger. */
 void rocketCancel(Device& d);
+
+/* How far up the ascent is, 0 at ignition and 1 when it is out of sight. The
+   renderer's only input, and the tick's only clock. */
+float rocketAscent(const Device& d);
+/* Where the crew are put down again: the ground beside the pad. Called when
+   the ascent finishes rather than when the player dismisses the win screen,
+   deliberately -- see the note at the definition. */
+void rocketReturnCrew(const Device& d);
+
+/* --- the victory flag ------------------------------------------------------
+   Whether a rocket has left this world. It lives here rather than on World or
+   in the save code because the rocket is the only thing that can set it and
+   everything that reads it is asking the same question: did it leave.
+
+   Written into its own additive save section, so a world made before any of
+   this existed loads with it false and nothing has to be version-gated. It is
+   permanent by design: ENDGAME.md's "Continue Exploring" returns the crew to
+   the pad with the flag intact, because a victory you can un-win by playing on
+   is not a victory, it is a score. */
+bool rocketVictory();
+void rocketSetVictory(bool won);
 
 bool rocketCore(const Device& d);
 void rocketSetCore(Device& d, bool installed);
@@ -786,6 +822,11 @@ void devTick(World& w);
 /* Draw every device that falls in the view, over the top of the world. `lit`
    shades them by the light field, on the same contract as Player::draw. */
 void devDraw(const World& w, u32* px, int camX, int camY, bool lit);
+/* The second pass: a rocket in flight, drawn AFTER the characters because its
+   crew are inside it. See the note above devDrawPass. Draws nothing at all
+   unless something is climbing, which is true for about four seconds in the
+   life of a world. */
+void devDrawAscent(const World& w, u32* px, int camX, int camY, bool lit);
 
 /* --- circuit network ------------------------------------------------------ */
 void circuitClear();
