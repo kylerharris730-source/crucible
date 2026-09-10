@@ -591,7 +591,8 @@ static int equipLaneOf(ItemId item) {
     switch (d.equipSlot) {
     case EQ_HEAD: case EQ_BODY: case EQ_FEET: case EQ_BACK: return LANE_WORN;
     case EQ_TRINKET_A: case EQ_TRINKET_B:
-    case EQ_TRINKET_C: case EQ_TRINKET_D: return LANE_TRINKET;
+    case EQ_TRINKET_C: case EQ_TRINKET_D:
+    case EQ_TRINKET_E: case EQ_TRINKET_F: return LANE_TRINKET;
     case EQ_LIGHT_DRONE: case EQ_DRONE_A:
     case EQ_DRONE_B: case EQ_DRONE_C: return LANE_DRONE;
     default: return LANE_NONE;
@@ -1480,11 +1481,12 @@ static int  g_toolPackSlot  = -1;   /* which inventory slot the bench is showing
    honoured. */
 static const int EQ_ORDER[EQ_COUNT] = {
     EQ_FEET, EQ_BACK, EQ_HEAD, EQ_BODY,
-    EQ_TRINKET_A, EQ_TRINKET_B, EQ_TRINKET_C, EQ_TRINKET_D,
+    EQ_TRINKET_A, EQ_TRINKET_B, EQ_TRINKET_C,
+    EQ_TRINKET_D, EQ_TRINKET_E, EQ_TRINKET_F,
     EQ_LIGHT_DRONE, EQ_DRONE_A, EQ_DRONE_B, EQ_DRONE_C
 };
 /* First screen position of each group, and one past the end. */
-static const int EQ_GROUP_AT[4]      = { 0, 4, 8, EQ_COUNT };
+static const int EQ_GROUP_AT[4]      = { 0, 4, 10, EQ_COUNT };
 static const char* const EQ_GROUP_NAME[3] = { "WORN", "TRINKETS", "DRONES" };
 static const int EQ_SLOT_PITCH = 50;
 static const int EQ_GROUP_GAP  = 16;
@@ -9084,6 +9086,11 @@ static int runLocalCommandSmoke() {
     if (equipLaneOfSlot(EQ_HEAD)      != LANE_WORN)    return 251;
     if (equipLaneOfSlot(EQ_BACK)      != LANE_WORN)    return 252;
     if (equipLaneOfSlot(EQ_TRINKET_D) != LANE_TRINKET) return 253;
+    /* The last one in the enum, which is the one a new slot appended after the
+       drone bays would be: it has to land in the TRINKETS group on screen even
+       though it sits past the drones in EquipSlot. That gap between enum order
+       and screen order is exactly what EQ_ORDER exists for. */
+    if (equipLaneOfSlot(EQ_TRINKET_F) != LANE_TRINKET) return 258;
     if (equipLaneOfSlot(EQ_DRONE_C)   != LANE_DRONE)   return 254;
     if (equipLaneOfSlot(EQ_LIGHT_DRONE) != LANE_DRONE) return 255;
     /* And an item's lane matches the lane of the slot it names, or the icon

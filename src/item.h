@@ -1096,11 +1096,24 @@ enum EquipSlot {
        Four rather than two because the trinkets are now where the creature
        drops land. With two slots and six charms in the world, five of them are
        dead weight the moment you own the two you like; with four, a loadout is
-       a choice between good options rather than a shortlist. */
+       a choice between good options rather than a shortlist. (Six, now -- see
+       EQ_TRINKET_E below. The argument did not change, the drop table did.) */
     EQ_TRINKET_C,
     EQ_TRINKET_D,
     /* Appended so every older equipment-slot number keeps its meaning. */
     EQ_DRONE_C,
+    /* A fifth and a sixth, appended for the third time and for the third time
+       for the same reason: the number is what a save stores. Where they sit on
+       the SCREEN is EQ_ORDER's business, and the panel goes on showing all six
+       together under one heading.
+
+       Six because the drop table kept growing. Every creature in three layers
+       drops a charm now, and there are four boss sigils on top of that -- more
+       than twenty passives against four slots, which had stopped being a
+       loadout and started being a shortlist of the two or three that are
+       simply best. */
+    EQ_TRINKET_E,
+    EQ_TRINKET_F,
     EQ_COUNT
 };
 
@@ -1112,7 +1125,8 @@ static const int DRONE_BAY_COUNT = 4;
 /* The interchangeable trinket slots, in the order the screen shows them. One
    table rather than a chain of ORs in equipFits, so adding a fifth is a line
    here instead of a condition that has to be found in three places. */
-static const int EQ_TRINKETS[] = { EQ_TRINKET_A, EQ_TRINKET_B, EQ_TRINKET_C, EQ_TRINKET_D };
+static const int EQ_TRINKETS[] = { EQ_TRINKET_A, EQ_TRINKET_B, EQ_TRINKET_C,
+                                   EQ_TRINKET_D, EQ_TRINKET_E, EQ_TRINKET_F };
 static const int EQ_TRINKET_COUNT = (int)(sizeof(EQ_TRINKETS) / sizeof(EQ_TRINKETS[0]));
 bool eqIsTrinket(int eqSlot);
 

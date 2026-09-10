@@ -2409,17 +2409,18 @@ void initItems() {
 
 const char* const EQ_NAMES[EQ_COUNT] = { "Feet", "Back", "Trinket 1", "Trinket 2",
                                         "Head", "Body", "Light Drone", "Drone A", "Drone B",
-                                        "Trinket 3", "Trinket 4", "Drone C" };
+                                        "Trinket 3", "Trinket 4", "Drone C",
+                                        "Trinket 5", "Trinket 6" };
 /* What is actually PAINTED in an empty slot. The long names above are for the
    tooltip, where there is room for them; drawn into the square itself they were
    clipped to "rinke" and "ht Dr", which is worse than no label at all because
    it looks like a rendering fault rather than an abbreviation. The trinkets are
    bare numerals because the panel groups them under one TRINKETS heading, so
-   the word is already on screen once and repeating it four times says
+   the word is already on screen once and repeating it six times says
    nothing. */
 const char* const EQ_SHORT[EQ_COUNT] = { "Feet", "Back", "1", "2",
                                          "Head", "Body", "Lamp", "A", "B",
-                                         "3", "4", "C" };
+                                         "3", "4", "C", "5", "6" };
 
 bool eqIsTrinket(int eqSlot) {
     for (int i = 0; i < EQ_TRINKET_COUNT; ++i) if (EQ_TRINKETS[i] == eqSlot) return true;

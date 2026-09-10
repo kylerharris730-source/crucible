@@ -600,6 +600,105 @@ bool savePeek(const char* path, SaveSlotInfo* out) {
     return true;
 }
 
+/* ==========================================================================
+   Shapes of files that already exist
+   ==========================================================================
+
+   Every struct here describes bytes on somebody's disk rather than anything
+   this build uses, which is why they are at file scope beside each other:
+   the roster embeds an Inventory too, so the same frozen shape is needed in
+   two places and having two copies of it would be one more thing that can
+   drift.
+   ========================================================================== */
+
+/* FORTY, spelled out, and not INV_SLOTS. Every one of these
+   structs describes a file that already exists on somebody's disk,
+   so its numbers have to be frozen at what they were when it was
+   written -- and INV_SLOTS is exactly the kind of constant that
+   looks stable until the day it is not. The pack went from four
+   rows to six, and had these said INV_SLOTS they would have
+   silently stopped describing any real file, which reads as every
+   old save losing its inventory for no visible reason.
+
+   EVERY number here is frozen now, for the same reason and because
+   the rule was already broken once: InventoryV3 was written with
+   `equip[EQ_COUNT]` and `droneModule[DRONE_BAY_COUNT]`, which was
+   correct on the day it was written and stopped being correct the
+   moment a fifth trinket slot was added -- at which point V3
+   described no file anywhere and every four-row save would have
+   quietly lost its equipment. A shape that describes a file on
+   disk cannot be spelled with a constant that is still allowed to
+   move. */
+static const int INV_SLOTS_4ROW = 40;
+static const int INV_SLOTS_6ROW = 60;
+static const int EQ_SLOTS_V3 = 12;      /* before trinkets 5 and 6 */
+static const int DRONE_BAYS_V3 = 4;
+static const int DRONE_CHIPS_V3 = 3;
+struct InventoryV1 {
+    ItemStack slot[INV_SLOTS_4ROW];
+    ItemStack equip[9];          /* before EQ_TRINKET_C/D */
+    int       selected;
+    ItemStack droneModule[3][DRONE_CHIPS_V3];
+    u8        droneLevel[3];
+};
+struct InventoryV2 {
+    ItemStack slot[INV_SLOTS_4ROW];
+    ItemStack equip[11];         /* before Drone C */
+    int       selected;
+    ItemStack droneModule[3][DRONE_CHIPS_V3];
+    u8        droneLevel[3];
+};
+/* Four-row pack, twelve equipment slots: the shape between Drone C
+   and the sixth trinket. */
+struct InventoryV3 {
+    ItemStack slot[INV_SLOTS_4ROW];
+    ItemStack equip[EQ_SLOTS_V3];
+    int       selected;
+    ItemStack droneModule[DRONE_BAYS_V3][DRONE_CHIPS_V3];
+    u8        droneLevel[DRONE_BAYS_V3];
+};
+/* Six-row pack, twelve equipment slots. This is the one every save
+   written between the pack growing and the trinkets growing will
+   match, which today means most of them. */
+struct InventoryV4 {
+    ItemStack slot[INV_SLOTS_6ROW];
+    ItemStack equip[EQ_SLOTS_V3];
+    int       selected;
+    ItemStack droneModule[DRONE_BAYS_V3][DRONE_CHIPS_V3];
+    u8        droneLevel[DRONE_BAYS_V3];
+};
+
+/* The roster as it was written before the trinket slots grew, which is the
+   only thing about it that changed: it embeds an Inventory by value, so its
+   size moved when the pack did. Without this every LAN host's remembered
+   guests -- their packs, their tools, where they logged out -- would be
+   dropped on the first load after the update, silently and for a reason no
+   player could possibly guess at. */
+struct RememberedPlayerV1 {
+    char        id[PLAYER_IDENTITY_CHARS + 1];
+    InventoryV4 inventory;
+    ToolInst    tools[REMEMBERED_TOOLS];
+    u8          toolCount;
+    float       x, y;
+    u32         lastSeen;
+    bool        used;
+};
+
+/* One old pack into a new one. The equipment array is the only part that
+   changed length, and the two new slots are simply left empty -- a character
+   who has never had a fifth trinket slot cannot have had anything in it. */
+static void inventoryFromV4(const InventoryV4& old, Inventory& out) {
+    out.clear();
+    for (int i = 0; i < INV_SLOTS_6ROW && i < INV_SLOTS; ++i) out.slot[i] = old.slot[i];
+    for (int i = 0; i < EQ_SLOTS_V3; ++i) out.equip[i] = old.equip[i];
+    out.selected = old.selected;
+    for (int d = 0; d < DRONE_BAYS_V3; ++d) {
+        for (int i = 0; i < DRONE_CHIPS_V3; ++i)
+            out.droneModule[d][i] = old.droneModule[d][i];
+        out.droneLevel[d] = old.droneLevel[d];
+    }
+}
+
 bool saveRead(const char* path, World& w) {
     g_nStats = 0; g_total = 0; g_err[0] = 0;
     /* Cleared before anything is read, so a world loaded on top of another does
@@ -738,7 +837,8 @@ bool saveRead(const char* path, World& w) {
                 /* The count and the length have to agree. A file claiming a
                    thousand entries in twelve bytes is corruption, and
                    trusting it would read the rest of the save as players. */
-                const u64 want = sizeof(n) + (u64)n * sizeof(RememberedPlayer);
+                const u64 want   = sizeof(n) + (u64)n * sizeof(RememberedPlayer);
+                const u64 wantV1 = sizeof(n) + (u64)n * sizeof(RememberedPlayerV1);
                 if (n <= (u32)MAX_REMEMBERED && len == want) {
                     for (u32 i = 0; i < n; ++i) {
                         if (fread(&g_roster[i], sizeof(RememberedPlayer), 1, f) != 1) break;
@@ -746,6 +846,23 @@ bool saveRead(const char* path, World& w) {
                         g_roster[i].id[PLAYER_IDENTITY_CHARS] = 0;
                         if (g_roster[i].toolCount > REMEMBERED_TOOLS)
                             g_roster[i].toolCount = REMEMBERED_TOOLS;
+                        remapStacksIn(g_roster[i].inventory);
+                    }
+                } else if (n <= (u32)MAX_REMEMBERED && len == wantV1) {
+                    /* Written before the trinket slots grew. Converted rather
+                       than skipped -- see RememberedPlayerV1. */
+                    for (u32 i = 0; i < n; ++i) {
+                        RememberedPlayerV1 old;
+                        if (fread(&old, sizeof(old), 1, f) != 1) break;
+                        memcpy(g_roster[i].id, old.id, sizeof(old.id));
+                        g_roster[i].id[PLAYER_IDENTITY_CHARS] = 0;
+                        inventoryFromV4(old.inventory, g_roster[i].inventory);
+                        memcpy(g_roster[i].tools, old.tools, sizeof(old.tools));
+                        g_roster[i].toolCount = old.toolCount > REMEMBERED_TOOLS
+                                              ? REMEMBERED_TOOLS : old.toolCount;
+                        g_roster[i].x = old.x; g_roster[i].y = old.y;
+                        g_roster[i].lastSeen = old.lastSeen;
+                        g_roster[i].used = true;
                         remapStacksIn(g_roster[i].inventory);
                     }
                 }
@@ -766,51 +883,23 @@ bool saveRead(const char* path, World& w) {
                calculation because this is the same compiler with the same
                padding rules, and copying field by field cannot be off by a
                pad byte the way arithmetic over `len` can. */
-            /* FORTY, spelled out, and not INV_SLOTS. Every one of these
-               structs describes a file that already exists on somebody's disk,
-               so its numbers have to be frozen at what they were when it was
-               written -- and INV_SLOTS is exactly the kind of constant that
-               looks stable until the day it is not. The pack went from four
-               rows to six, and had these said INV_SLOTS they would have
-               silently stopped describing any real file, which reads as every
-               old save losing its inventory for no visible reason. */
-            static const int INV_SLOTS_4ROW = 40;
-            struct InventoryV1 {
-                ItemStack slot[INV_SLOTS_4ROW];
-                ItemStack equip[9];          /* before EQ_TRINKET_C/D */
-                int       selected;
-                ItemStack droneModule[3][Inventory::DRONE_MODULE_SLOTS_MAX];
-                u8        droneLevel[3];
-            };
-            struct InventoryV2 {
-                ItemStack slot[INV_SLOTS_4ROW];
-                ItemStack equip[11];         /* before Drone C */
-                int       selected;
-                ItemStack droneModule[3][Inventory::DRONE_MODULE_SLOTS_MAX];
-                u8        droneLevel[3];
-            };
-            /* Today's shape with yesterday's pack: everything else about the
-               inventory is current, and only the forty slots are old. This is
-               the one every save written before the pack grew will match. */
-            struct InventoryV3 {
-                ItemStack slot[INV_SLOTS_4ROW];
-                ItemStack equip[EQ_COUNT];
-                int       selected;
-                ItemStack droneModule[DRONE_BAY_COUNT][Inventory::DRONE_MODULE_SLOTS_MAX];
-                u8        droneLevel[DRONE_BAY_COUNT];
-            };
             if (len == sizeof(Inventory)) {
                 fread(&g_inv, 1, (size_t)len, f);
+                remapInventoryItems();
+            } else if (len == sizeof(InventoryV4)) {
+                InventoryV4 old;
+                fread(&old, 1, sizeof(old), f);
+                inventoryFromV4(old, g_inv);
                 remapInventoryItems();
             } else if (len == sizeof(InventoryV3)) {
                 InventoryV3 old;
                 fread(&old, 1, sizeof(old), f);
                 g_inv.clear();
                 for (int i = 0; i < INV_SLOTS_4ROW; ++i) g_inv.slot[i] = old.slot[i];
-                for (int i = 0; i < EQ_COUNT; ++i)       g_inv.equip[i] = old.equip[i];
+                for (int i = 0; i < EQ_SLOTS_V3; ++i)    g_inv.equip[i] = old.equip[i];
                 g_inv.selected = old.selected;
-                for (int d = 0; d < DRONE_BAY_COUNT; ++d) {
-                    for (int i = 0; i < Inventory::DRONE_MODULE_SLOTS_MAX; ++i)
+                for (int d = 0; d < DRONE_BAYS_V3; ++d) {
+                    for (int i = 0; i < DRONE_CHIPS_V3; ++i)
                         g_inv.droneModule[d][i] = old.droneModule[d][i];
                     g_inv.droneLevel[d] = old.droneLevel[d];
                 }
@@ -823,7 +912,7 @@ bool saveRead(const char* path, World& w) {
                 for (int i = 0; i < 11; ++i)        g_inv.equip[i] = old.equip[i];
                 g_inv.selected = old.selected;
                 for (int d = 0; d < 3; ++d) {
-                    for (int i = 0; i < Inventory::DRONE_MODULE_SLOTS_MAX; ++i)
+                    for (int i = 0; i < DRONE_CHIPS_V3; ++i)
                         g_inv.droneModule[d][i] = old.droneModule[d][i];
                     g_inv.droneLevel[d] = old.droneLevel[d];
                 }
@@ -837,7 +926,7 @@ bool saveRead(const char* path, World& w) {
                 for (int i = 0; i < 9; ++i)         g_inv.equip[i] = old.equip[i];
                 g_inv.selected = old.selected;
                 for (int d = 0; d < 3; ++d) {
-                    for (int i = 0; i < Inventory::DRONE_MODULE_SLOTS_MAX; ++i)
+                    for (int i = 0; i < DRONE_CHIPS_V3; ++i)
                         g_inv.droneModule[d][i] = old.droneModule[d][i];
                     g_inv.droneLevel[d] = old.droneLevel[d];
                 }
