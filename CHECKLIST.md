@@ -126,23 +126,37 @@ Released: **v0.5.0** (2026-09-06). `main` is level with it.
 What *done* looks like -- bosses, populating all three layers, the rocket, and
 the bees-and-wax idea -- lives in [ROADMAP.md](ROADMAP.md).
 
-- [ ] **Wax and web have no survival source.** Both exist only in the creative
-      palette. Aqua regia used to be on this list and is not any more: it was
-      removed outright on 2026-09-06 rather than given a source, because it did
-      not feel right in play -- the transmute table and rule went with it, since
-      a mechanism with nothing using it is worse than no mechanism.
+- [x] **Wax and web had no survival source.** Closed 2026-09-10, the second
+      way round: the modifiers are made of something else and silk stays a pure
+      hazard. Aqua regia was on this list too and was removed outright on
+      2026-09-06 rather than given a source, because it did not feel right in
+      play -- the transmute table and rule went with it, since a mechanism with
+      nothing using it is worse than no mechanism.
 
-      Web is the awkward one, and not for the reason it first looks: mining it
-      DOES bank it (g_matDropsAs is identity), so a web can be collected -- but
-      it decays with a mean life around 255 frames, so the
-      window is roughly four seconds, mid-boss-fight, and the recipes want four
-      to eight cells each across six of the seven modifiers. That is a
-      collection minigame nobody asked for rather than an impossibility.
+      Web was never unobtainable -- mining it banks it, `g_matDropsAs` is
+      identity -- but it decays with a mean life around 255 frames, so the
+      window was about four seconds, mid-boss-fight, against recipes wanting
+      four to eight cells each across six of the seven modifiers. A collection
+      minigame nobody asked for.
 
-      Worth deciding rather than tuning: either silk stops decaying once it has
-      been mined into a pack (it is an ITEM at that point, not a cell, so this
-      is free), or the modifiers are made of something else and silk stays a
-      pure hazard.
+      What shipped:
+
+      - All six modifier recipes ask for `MAT_BEESWAX`. **Beeswax, not
+        `MAT_WAX`** -- they are different materials and the first attempt at
+        this swap used the wrong one, which has no source either, so six
+        recipes went from asking for something you cannot keep to asking for
+        something that does not exist. A hive extrudes beeswax; that is what
+        they ask for, and `tests/wild_hives.cpp` names the material explicitly
+        because the loose version of that check passed the broken build.
+      - Worldgen seeds **three wild hives**, one per third of the map, each in
+        a carved bowl. A hive used to be something you built, and building one
+        is not a thing you can do before you have any wax to want -- so the
+        supply now exists before you have made anything.
+      - Coal wax and coal honey render back into coal at the bench, which stops
+        souring a colony being a quiet mistake.
+
+      Nothing in the crafting table asks for web any more, and the test enforces
+      that rather than trusting it.
 
 ## Known and deliberate
 
