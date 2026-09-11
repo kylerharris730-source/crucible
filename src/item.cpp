@@ -1,5 +1,6 @@
 #include "item.h"
 #include "entity.h"
+#include "material_icon.h"  /* the 21x21 generated art a dropped material is resampled from */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -2422,6 +2423,73 @@ const char* const EQ_NAMES[EQ_COUNT] = { "Feet", "Back", "Trinket 1", "Trinket 2
 const char* const EQ_SHORT[EQ_COUNT] = { "Feet", "Back", "1", "2",
                                          "Head", "Body", "Lamp", "A", "B",
                                          "3", "4", "C", "5", "6" };
+
+/* --- a dropped stack's art ---------------------------------------------------
+   See the note on dropArt in item.h.
+
+   The material half is a 21-to-14 box resample, and the averaging matters more
+   than it sounds: nearest-neighbour at two thirds throws away every third row
+   and column, which on art this small is the difference between a heap of ore
+   and a heap of ore with a bite out of it. Transparent source pixels are left
+   out of the average rather than averaged in as black, or every edge would get
+   a dark fringe. */
+static u32 g_dropMat[MAT_COUNT][SPR_W * SPR_H];
+static bool g_dropMatReady[MAT_COUNT];
+
+static void buildDropMat(int mat) {
+    static u32 icon[INV_SPR_W * INV_SPR_H];
+    renderMaterialIcon(mat, icon);
+    for (int y = 0; y < SPR_H; ++y)
+        for (int x = 0; x < SPR_W; ++x) {
+            const int sx0 = x * INV_SPR_W / SPR_W, sx1 = (x + 1) * INV_SPR_W / SPR_W;
+            const int sy0 = y * INV_SPR_H / SPR_H, sy1 = (y + 1) * INV_SPR_H / SPR_H;
+            u32 r = 0, g = 0, b = 0, n = 0;
+            for (int sy = sy0; sy < sy1 && sy < INV_SPR_H; ++sy)
+                for (int sx = sx0; sx < sx1 && sx < INV_SPR_W; ++sx) {
+                    const u32 c = icon[sy * INV_SPR_W + sx];
+                    if (!c) continue;
+                    r += (c >> 16) & 0xFF; g += (c >> 8) & 0xFF; b += c & 0xFF;
+                    ++n;
+                }
+            g_dropMat[mat][y * SPR_W + x] =
+                n ? (((r / n) << 16) | ((g / n) << 8) | (b / n)) : 0;
+        }
+    g_dropMatReady[mat] = true;
+}
+
+const u32* dropArt(u16 item) {
+    if (item <= ITEM_NONE || item >= ITEM_COUNT) return 0;
+    /* A hand-drawn sprite always wins, including for the handful of MATERIALS
+       that have one -- the torch and the stations are materials with real
+       14x14 art, and resampling their generated icon instead would be throwing
+       away the better picture. */
+    const int spr = ITEMS[item].sprite;
+    if (spr > SPR_NONE && spr < SPR_COUNT) return g_sprite[spr];
+    if (item < MAT_COUNT) {
+        if (!g_dropMatReady[item]) buildDropMat(item);
+        return g_dropMat[item];
+    }
+    return 0;
+}
+
+int dropArtBottom(u16 item) {
+    static u8 cached[ITEM_COUNT];
+    static bool ready[ITEM_COUNT];
+    if (item <= ITEM_NONE || item >= ITEM_COUNT) return SPR_H - 1;
+    if (ready[item]) return cached[item];
+    const u32* art = dropArt(item);
+    int bottom = SPR_H - 1;
+    if (art) {
+        for (int y = SPR_H - 1; y >= 0; --y) {
+            bool any = false;
+            for (int x = 0; x < SPR_W && !any; ++x) any = art[y * SPR_W + x] != 0;
+            if (any) { bottom = y; break; }
+        }
+    }
+    cached[item] = (u8)bottom;
+    ready[item] = true;
+    return bottom;
+}
 
 bool eqIsTrinket(int eqSlot) {
     for (int i = 0; i < EQ_TRINKET_COUNT; ++i) if (EQ_TRINKETS[i] == eqSlot) return true;

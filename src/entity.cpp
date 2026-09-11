@@ -4721,14 +4721,36 @@ void entDraw(u32* px, int camX, int camY, bool lit) {
     for (int i = 0; i < MAX_PICKUPS; ++i) {
         const Pickup& p = g_pickups[i];
         if (!p.used) continue;
-        const int x = (int)p.x - camX, y = (int)p.y - camY;
-        if (x < 1 || x >= VIEW_CELLS_W - 1 || y < 1 || y >= VIEW_CELLS_H - 1) continue;
-        u32 c = ITEMS[p.item].colour;
-        if (lit) c = shadeColor(c, viewShade(x, y));
-        px[y * VIEW_CELLS_W + x] = c;
-        px[y * VIEW_CELLS_W + x - 1] = c;
-        px[y * VIEW_CELLS_W + x + 1] = c;
-        px[(y - 1) * VIEW_CELLS_W + x] = c;
-        px[(y + 1) * VIEW_CELLS_W + x] = c;
+        const int cx = (int)p.x - camX, cy = (int)p.y - camY;
+        if (cx < -SPR_W || cx >= VIEW_CELLS_W + SPR_W) continue;
+        if (cy < -SPR_H || cy >= VIEW_CELLS_H + SPR_H) continue;
+        /* --- the item's own picture ---------------------------------------
+           It used to be five cells of ITEMS[].colour in a plus shape: every
+           object in the game, from a titanium bar to a loaf of bread, reduced
+           to the same smudge in a different hue. You could not tell what was
+           on the floor without walking over it.
+
+           The art already existed and was already the right size -- see
+           dropArt, which hands back the same 14x14 canvas the hotbar draws
+           from, and resamples the generated icon for a material that has no
+           sprite of its own. Transparent pixels are skipped rather than filled,
+           so a drop is the SHAPE of the thing rather than a square of it. */
+        const u32* art = dropArt(p.item);
+        if (!art) continue;
+        /* Stood on the ground, not centred on it: a pickup's position is a
+           point that comes to rest just above the floor, so a canvas centred
+           there puts half the picture underground. dropArtBottom is where the
+           art actually ends, which is not the bottom of the canvas -- every
+           sprite pads a different amount of empty space beneath itself. */
+        const int bx = cx - SPR_W / 2, by = cy - dropArtBottom(p.item);
+        for (int ay = 0; ay < SPR_H; ++ay)
+            for (int ax = 0; ax < SPR_W; ++ax) {
+                const u32 c = art[ay * SPR_W + ax];
+                if (!c) continue;
+                const int vx = bx + ax, vy = by + ay;
+                if (vx < 0 || vx >= VIEW_CELLS_W) continue;
+                if (vy < 0 || vy >= VIEW_CELLS_H) continue;
+                px[vy * VIEW_CELLS_W + vx] = lit ? shadeColor(c, viewShade(vx, vy)) : c;
+            }
     }
 }

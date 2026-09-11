@@ -1131,6 +1131,29 @@ static const int EQ_TRINKETS[] = { EQ_TRINKET_A, EQ_TRINKET_B, EQ_TRINKET_C,
 static const int EQ_TRINKET_COUNT = (int)(sizeof(EQ_TRINKETS) / sizeof(EQ_TRINKETS[0]));
 bool eqIsTrinket(int eqSlot);
 
+/* --- what a dropped stack looks like ----------------------------------------
+   The 14x14 canvas a loose item is drawn from in the WORLD, with 0 meaning
+   transparent, or null for something that has no art at all.
+
+   It exists because a drop used to be five cells of the item's flat colour in
+   a plus shape -- every object in the game, from a titanium bar to a bee,
+   reduced to the same little smudge in a different hue. The art already exists
+   and is already the right size: fourteen cells against a character eleven
+   wide reads as a thing lying on the ground rather than as a pixel.
+
+   Materials have no 14x14 sprite of their own -- their inventory art is
+   generated at 21x21 by material_icon.cpp -- so those are resampled once, on
+   first use, and kept. That is the whole reason this is a function rather than
+   a table lookup at the call site. */
+const u32* dropArt(u16 item);
+/* The lowest row of that canvas with anything drawn on it, so a drop can be
+   stood ON the ground rather than centred on it. A pickup's position is a
+   point and it comes to rest just above the floor, so a 14-tall canvas centred
+   there buries half the picture -- and every sprite pads a different amount of
+   empty space under its art, which is why this is measured rather than
+   assumed. */
+int dropArtBottom(u16 item);
+
 extern const char* const EQ_NAMES[EQ_COUNT];
 /* The same slot named in four characters or fewer, which is what actually fits
    inside a 34-pixel square. Kept beside the long names rather than derived from

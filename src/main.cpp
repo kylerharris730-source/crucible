@@ -1304,7 +1304,21 @@ static bool g_joinIpFocus = false;
    Right-click removes rather than adds, because the tedious half of testing an
    item is getting rid of it again. */
 static bool g_creativeOpen = false;
-static const int CRE_COLS = 4;
+/* --- how many columns the list gets ----------------------------------------
+   Four, once, and it stayed four while everything below it grew. The panel's
+   width is set by the WIDEST thing in it, which since the pack went to fifteen
+   columns has been the pack -- so the list sat in the left two thirds of a
+   panel it was not allowed to fill, with a stripe of empty charcoal beside
+   every row.
+
+   So it is derived rather than declared: however many entries fit in the width
+   the rest of the panel already demands. That makes the list free when there
+   is room and costs nothing when there is not, and it cannot be left behind
+   again the next time a row below it gets wider. The floor keeps it readable
+   in the signal picker, which has no pack to be wide. */
+static const int CRE_COLS_MIN = 4;
+static const int CRE_COLS_MAX = 12;
+static int g_creCols = CRE_COLS_MIN;
 /* These rows carry full names, so the icon is a quick visual index rather than
    the only way to identify an item. Keep them materially smaller than the
    icon-only pack/equipment squares, which still need the larger art. */
@@ -1355,7 +1369,13 @@ static const int CRE_ENTRY_ICON_W = 22;
    screen at once; the ceiling stops a nearly empty panel from turning into one
    enormous list, and is what the scroll-page jump is measured against. */
 static const int CRE_MIN_ROWS = 3;
-static const int CRE_MAX_ROWS = 8;
+/* Sixteen, not eight. The ceiling exists to stop a nearly empty panel becoming
+   one enormous list, and eight was doing a second job it was never meant to
+   do: on a tall window it, rather than the available height, was what decided
+   the list stopped. The height calculation below already gives the list
+   exactly the space nothing else is using, so this only has to be a sanity
+   bound above it. */
+static const int CRE_MAX_ROWS = 16;
 /* Breathing room top and bottom so the panel never sits flush against the
    canvas edge. */
 static const int CRE_PANEL_MARGIN = 10;
@@ -2380,7 +2400,44 @@ static void layoutCreative() {
     const int cw = CRE_ENTRY_W, ch = CRE_ENTRY_H;
     const int gap = CRE_ENTRY_GAP, pad = 14;
     const int ps = 50, pgap = 3;
-    g_creRowCount = (g_creCount + CRE_COLS - 1) / CRE_COLS;
+    const int barW = 10;
+    /* --- what else in this panel needs, before the list is sized -----------
+       These three used to be computed further down, after the list had already
+       chosen its own width. That order is what kept the list at four columns
+       forever: it sized itself first and the panel then grew around it to fit
+       the pack, leaving the difference empty. Asking the other rows first and
+       fitting the list into their answer is the same information in the useful
+       order. */
+    int equipW = 0;
+    if (!signalPicker) {
+        for (int row = 0; row < EQ_ROWS; ++row) {
+            int need = eqRowWidth(row);
+            if (row == eqBinRow()) need += EQ_BIN_GAP + 46;
+            if (need > equipW) equipW = need;
+        }
+        equipW += pad * 2;
+    }
+    const int benchW = (signalPicker || g_toolPackSlot < 0)
+                     ? 0 : pad * 2 + (g_toolSlotCount + 1) * 52 - 6;
+    const int packW = signalPicker ? 0
+                    : pad * 2 + INV_COLS * ps + (INV_COLS - 1) * pgap;
+    /* --- and how wide the list is allowed to be ----------------------------
+       The VIEWPORT, not the pack. Fitting the list to whatever the widest row
+       below it happened to need would have bought one column and left the
+       panel exactly as wide as before -- which is tidy and is not what the
+       space is for. The list is the part you scroll hundreds of entries
+       through; the pack is fifteen fixed squares. Where there is room for
+       another column of things to find, the list should have it, and the pack
+       simply sits at the left of a slightly wider panel.
+
+       Bounded by the viewport because the panel is centred in it, so anything
+       past this is drawn off the side of the screen. */
+    const int availW = VIEW_W - CRE_PANEL_MARGIN * 2;
+    g_creCols = (availW - pad * 2 - barW - 6 + gap) / (cw + gap);
+    if (g_creCols < CRE_COLS_MIN) g_creCols = CRE_COLS_MIN;
+    if (g_creCols > CRE_COLS_MAX) g_creCols = CRE_COLS_MAX;
+
+    g_creRowCount = (g_creCount + g_creCols - 1) / g_creCols;
 
     const int benchH = g_toolSlotCount ? 74 : 0;
     /* Taller than it was, and every one of the extra pixels is text: two lines
@@ -2420,37 +2477,17 @@ static void layoutCreative() {
     if (g_creScroll < 0) g_creScroll = 0;
 
     const int paletteH = visRows * (ch + gap);
-    const int barW     = 10;
-    const int paletteW = pad * 2 + CRE_COLS * cw + (CRE_COLS - 1) * gap + barW + 6;
-    /* The palette used to decide this alone, which is how the equipment row
-       came to hang off the side of the panel containing it. Ask the rows how
-       much they need as well and take the larger: a layout that cannot state
-       its own width will eventually be given the wrong one. */
-    int equipW = 0;
-    if (!signalPicker) {
-        for (int row = 0; row < EQ_ROWS; ++row) {
-            int need = eqRowWidth(row);
-            if (row == eqBinRow()) need += EQ_BIN_GAP + 46;
-            if (need > equipW) equipW = need;
-        }
-        equipW += pad * 2;
-    }
-    /* The bench row states its own width too, for exactly the reason the note
-       above gives. It was left out while the widest tool held five modules and
-       the equipment strip happened to be wider than five sockets anyway -- a
-       coincidence, not a margin. Mk III holds six, plus the payload slot, which
-       is seven squares at 52px and comfortably past what the strip guarantees.
-       The slot rects are laid out from this same origin, so a panel narrower
-       than its own bench puts the last socket outside the frame it is drawn
-       in. */
-    const int benchW = (signalPicker || g_toolPackSlot < 0)
-                     ? 0 : pad * 2 + (g_toolSlotCount + 1) * 52 - 6;
-    /* And the pack states its own, for the third time and the same reason: the
-       palette decided this alone once and the equipment row hung off the side.
-       At ten columns the pack was narrower than the palette and never came up;
-       at fifteen it is the widest thing in the panel. */
-    const int packW = signalPicker ? 0
-                    : pad * 2 + INV_COLS * ps + (INV_COLS - 1) * pgap;
+    const int paletteW = pad * 2 + g_creCols * cw + (g_creCols - 1) * gap + barW + 6;
+    /* The palette used to decide the panel's width alone, which is how the
+       equipment row came to hang off the side of the panel containing it. Now
+       it is the other way round -- the rows state their widths above, before
+       the list picks its column count -- and this is only the final choice
+       between them. A layout that cannot state its own width will eventually
+       be given the wrong one, and the list is no longer the one stating it
+       first.
+
+       paletteW can still win: the signal picker has no pack, no equipment row
+       and no bench, so the four-column floor is the widest thing in it. */
     const int w = imax(imax(paletteW, equipW), imax(benchW, packW));
     const int h = pad + 56 + groupH + paletteH + 10 + packH + equipH + droneModuleH + benchH + 38;
     const int cx = PANEL_W + VIEW_W / 2, cy = VIEW_H / 2;
@@ -2468,7 +2505,7 @@ static void layoutCreative() {
         SetRect(&g_creGroupRect[group], tx, ty, tx + tabW - 3, ty + 22);
     }
     for (int i = 0; i < g_creCount; ++i) {
-        const int c = i % CRE_COLS, r = i / CRE_COLS - g_creScroll;
+        const int c = i % g_creCols, r = i / g_creCols - g_creScroll;
         if (r < 0 || r >= visRows) { SetRectEmpty(&g_creRect[i]); continue; }
         const int bx = x0 + pad + c * (cw + gap);
         const int by = listTop + r * (ch + gap);
@@ -9383,6 +9420,38 @@ static int runLocalCommandSmoke() {
         if (bossBarsUpdate() != 0) return 267;
     }
     entReset();
+
+    /* --- the creative panel fills the panel it is in -----------------------
+       Reported from play: "see how it isn't filling the space." The list held
+       four columns while the panel's width was set by the pack below it, which
+       has been fifteen columns wide since the inventory grew -- so a third of
+       every row was empty charcoal.
+
+       Checked here rather than by eye because the failure is silent in both
+       directions: too few columns wastes the space, too many push the list out
+       through the side of the panel drawn around it. Both are arithmetic, and
+       both are exactly what a smoke test can hold still. */
+    {
+        g_signalPickerDevice = -1; g_filterDevice = -1; g_digFilterPicking = false;
+        g_creSearch[0] = 0; g_creGroup = CAT_ALL; g_creScroll = 0;
+        g_inv.clear();
+        layoutCreative();
+        /* More than the old fixed four, because the pack is wider than four
+           entries and always will be. */
+        if (g_creCols <= 4) return 268;
+        if (g_creCount <= 0) return 269;
+        /* And the last column is inside the panel. g_creRect holds the laid-out
+           rows; the widest is the one that must fit. */
+        for (int i = 0; i < g_creCount; ++i) {
+            if (IsRectEmpty(&g_creRect[i])) continue;
+            if (g_creRect[i].right > g_crePanel.right) return 270;
+            if (g_creRect[i].bottom > g_crePanel.bottom) return 271;
+        }
+        /* And the panel is inside the viewport, which is the failure a taller
+           row ceiling could cause. */
+        if (g_crePanel.right - g_crePanel.left > VIEW_W) return 272;
+        if (g_crePanel.bottom - g_crePanel.top > VIEW_H) return 273;
+    }
 
     puts("local command loopback smoke passed");
     return 0;
