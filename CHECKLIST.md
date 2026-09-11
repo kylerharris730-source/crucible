@@ -5,7 +5,7 @@ chat, which meant it was re-derived from memory every session and quietly lost
 things. `HANDOFF.md` is **not** this file: it is gitignored scratch, is usually
 stale, and should not be trusted for release state.
 
-Released: **v0.6.0** (2026-09-10). `main` is level with it.
+Released: **v0.6.1** (2026-09-11). `main` is level with it.
 
 ---
 
@@ -25,6 +25,23 @@ Released: **v0.6.0** (2026-09-10). `main` is level with it.
       unset, so nothing renders.
 
 ## Ship it
+
+- [x] **Cut v0.6.1.** Tagged 2026-09-11 from `c0f21eb`. A patch release for one
+      bug that was reported twice and was worth shipping on its own: creatures
+      spawning in lit areas.
+
+      Neither half of it was in the spawner or in the light solver. The
+      renderer registered the four dynamic light sources and then solved the
+      field; the spawner cleared that list and solved without registering any
+      of them, so it judged darkness by a field holding every lamp that is a
+      CELL and none that is an OBJECT -- your light drone, a pedestal, a worn
+      lantern. And the spawn rule consulted `g_lightOn`, which is whether
+      lighting is DRAWN, so turning the lights off to inspect a contraption
+      also turned off what your torches were buying.
+
+      Carried in with it, from work in flight at the time: the fuel-to-coke
+      retort chain, the Cinderling Ash's own ember material, and the bat's
+      double jump.
 
 - [x] **Cut v0.6.0.** Tagged 2026-09-10 from `fcc7586`, forty-three commits
       past v0.5.0. The release the game can be FINISHED in: layer 3 is a place
