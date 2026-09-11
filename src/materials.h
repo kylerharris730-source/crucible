@@ -502,6 +502,8 @@ enum MatId {
        pointless. This is the cooler, shorter-lived one. */
     MAT_WOOD_EMBER,
 
+    MAT_FLOWER_SEED, /* falling seed; shares the tree/crop rooting system */
+
     MAT_COUNT
 };
 

@@ -710,7 +710,8 @@ MatInfo MATS[MAT_COUNT] = {
      decision, not a free ride. ignite/burnsTo copied from Wood deliberately:
      if wood's numbers ever move, these should move with them, and the way to
      notice is that they are written the same. */
-  { "Rope",  KIND_STATIC, 255,   0,    0,   0,   0,   0,  0,   14,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY, degC(90), MAT_FIRE,   0,  0xA8814A, 0x7E5C32, 0xA8814A, 0x7E5C32, 0 },
+  /* Dark brown rope stays distinct from the golden platform beside it. */
+  { "Rope",  KIND_STATIC, 255,   0,    0,   0,   0,   0,  0,   14,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY, degC(90), MAT_FIRE,   0,  0x765536, 0x543C28, 0x765536, 0x543C28, 0 },
   { "Platform",KIND_STATIC,255,  0,    0,   0,   0,   0,  0,   14,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY, degC(90), MAT_FIRE,   0,  0xB08A50, 0x8A6A3A, 0xB08A50, 0x8A6A3A, 0 },
   /* --- the tree ------------------------------------------------------------
      The seed is a POWDER, which is the whole of "dropped on wet soil": you let
@@ -1083,6 +1084,7 @@ MatInfo MATS[MAT_COUNT] = {
      precisely the bind the fuelfire note describes -- a sealed fire that
      reached equilibrium with itself and burned forever. */
   { "Wood Ember", KIND_STATIC, 255, 0,  0,   0,   0,   0,  0,  120,  2,   0, degC(130),  0,  MAT_EMPTY,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0xC85A18, 0x8A3208, 0xC85A18, 0x8A3208, 0 },
+  { "Flower Seed",KIND_POWDER,120,60,30,0,0,0,0,12,0,0,0,0,MAT_EMPTY,0,MAT_EMPTY,degC(85),MAT_FIRE,0,0xAD7691,0x725367,0xAD7691,0x725367,0 },
 };
 
 u32 g_colorLut[MAT_COUNT * 256];
@@ -1201,6 +1203,7 @@ static void initStrength() {
        them, and present in the table at all so that a shot does not sail
        through a field leaving it standing. */
     g_matStrength[MAT_STALK]       = STR_LOOSE;
+    g_matStrength[MAT_FLOWER]      = STR_LOOSE;
     g_matStrength[MAT_STALK_DRY]   = STR_LOOSE;
     g_matStrength[MAT_WHEAT]       = STR_LOOSE;
     g_matStrength[MAT_FLAX]        = STR_LOOSE;
@@ -2138,6 +2141,7 @@ static void initPassable() {
     g_matPassable[MAT_WHEAT]         = 1;
     g_matPassable[MAT_FLAX]          = 1;
     g_matPassable[MAT_COTTON]        = 1;
+    g_matPassable[MAT_FLOWER]        = 1;
 }
 
 static void initClimb() {
@@ -2157,6 +2161,7 @@ static void initSeeds() {
     g_matIsSeed[MAT_WHEAT_SEED]  = 1;
     g_matIsSeed[MAT_FLAX_SEED]   = 1;
     g_matIsSeed[MAT_COTTON_SEED] = 1;
+    g_matIsSeed[MAT_FLOWER_SEED] = 1;
 
     for (int m = 0; m < MAT_COUNT; ++m) g_matIsLeaf[m] = g_matIsWood[m] = 0;
     g_matIsLeaf[MAT_OAK_LEAF]   = 1;
@@ -2210,6 +2215,7 @@ static void initSheer() {
     g_matSheer[MAT_WHEAT]       = 3;
     g_matSheer[MAT_FLAX]        = 3;
     g_matSheer[MAT_COTTON]      = 3;
+    g_matSheer[MAT_FLOWER]      = 3;
 }
 
 static void initDrops() {
@@ -2234,6 +2240,7 @@ static void initDrops() {
        is the harvest. */
     g_matDropsAs[MAT_OAK_POD]     = MAT_OAK_SEED;
     g_matDropsAs[MAT_BIRCH_POD]   = MAT_BIRCH_SEED;
+    g_matDropsAs[MAT_FLOWER]      = MAT_FLOWER_SEED;
     /* And a sapling gives back the seed you planted, so changing your mind
        about where the tree goes costs nothing. */
     g_matDropsAs[MAT_OAK_SAPLING]   = MAT_OAK_SEED;
@@ -2263,6 +2270,7 @@ static void initDrops() {
     g_matIsPlant[MAT_WHEAT]     = 1;
     g_matIsPlant[MAT_FLAX]      = 1;
     g_matIsPlant[MAT_COTTON]    = 1;
+    g_matIsPlant[MAT_FLOWER]    = 1;
 
     /* --- how far a seed wanders on the way down --------------------------
        Tree seeds nearly always drift, because they have the height to make use
@@ -2276,12 +2284,11 @@ static void initDrops() {
        only ever move them a few cells -- which is exactly the spacing a row
        wants. A tree-sized number here would do nothing at all, since there is
        no fall to do it in. */
-    for (int m = 0; m < MAT_COUNT; ++m) g_matDrift[m] = 0;
+    /* Every seed fans out by default; new species must not silently fall
+       straight down just because they were omitted from a second list. */
+    for (int m = 0; m < MAT_COUNT; ++m) g_matDrift[m] = g_matIsSeed[m] ? 150 : 0;
     g_matDrift[MAT_OAK_SEED]    = 240;
     g_matDrift[MAT_BIRCH_SEED]  = 240;
-    g_matDrift[MAT_WHEAT_SEED]  = 150;
-    g_matDrift[MAT_FLAX_SEED]   = 150;
-    g_matDrift[MAT_COTTON_SEED] = 150;
 }
 
 static void initUnseen() {
@@ -2307,14 +2314,8 @@ void initMaterials() {
     }
     g_matThermalExpansionQ8[MAT_WAX] = 52;
 
-    /* --- the hive materials --------------------------------------------
-       A flower is a plant like the crops are: passable, weak, and counted as
-       plant matter so it does not stop a shot. Wax and honey are ordinary
-       solids and liquids otherwise; only their phase points are unusual. */
-    g_matPassable[MAT_FLOWER]  = 1;
-    g_matIsPlant[MAT_FLOWER]   = 1;
-    g_matStrength[MAT_FLOWER]  = STR_LOOSE;
-    g_matSheer[MAT_FLOWER]     = 3;
+    /* Flower properties live in each table's initializer, after its reset.
+       Setting them here made them disappear when those initializers ran. */
     g_matStrength[MAT_BEESWAX]  = STR_LOOSE;
     g_matStrength[MAT_COAL_WAX] = STR_LOOSE;
 

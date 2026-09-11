@@ -424,11 +424,36 @@ int main() {
         Device* d = buildApiary(40);
         if (!d) { fprintf(stderr, "could not place a hive\n"); return 2; }
         d->value = 3;
-        /* Sour it on purpose: coal at the mouth, where every bee passes. */
-        for (int y = HY - DEV_H / 2 - 4; y <= HY - DEV_H / 2 - 2; ++y)
-            for (int x = HX - 1; x <= HX + 1; ++x)
-                g_world.setCell(x, y, MAT_COAL);
-        stepWorld(600);
+        /* Sour it on purpose: coal across the DOOR, which is where every bee
+           passes by construction.
+
+           It used to be a patch of coal in the air a few cells above the hive,
+           on the assumption that bees milled about up there -- and they did,
+           because flowers were invisible to them. MAT_FLOWER was being set
+           passable in a block that later initialisers overwrote, so every
+           sight test against a flower failed and a bee never had anywhere to
+           go. Once flowers started working, bees flew a direct line to the
+           one in this scene and stopped drifting through the patch, and this
+           case began failing for a reason that had nothing to do with soot.
+
+           hiveTarget is the same function the bees themselves use to find the
+           door, so the coal is now where they are rather than where a scene
+           once guessed they would be. */
+        {
+            float doorX = 0.0f, doorY = 0.0f;
+            hiveTarget(g_world, *d, &doorX, &doorY);
+            for (int y = (int)doorY - 2; y <= (int)doorY + 2; ++y)
+                for (int x = (int)doorX - 2; x <= (int)doorX + 2; ++x)
+                    if (g_world.at(x, y).mat == MAT_EMPTY)
+                        g_world.setCell(x, y, MAT_COAL);
+        }
+        /* Twice as long as this used to run, for the same reason the coal
+           moved: a bee with a flower to visit is AWAY from the hive most of
+           the time. Six hundred frames was enough while they milled around
+           the door with nowhere to go; a colony that actually forages needs
+           longer to put three bees through the coal. Traced at frame 700 for
+           the first conversion and 900 for the third. */
+        stepWorld(1400);
         int coal = 0;
         for (int i = 0; i < MAX_ENTITIES; ++i)
             if (g_entities[i].alive() && g_entities[i].type == ENT_COAL_BEE) ++coal;

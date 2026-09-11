@@ -308,7 +308,7 @@ enum {
     ITEM_BEE,
     ITEM_COAL_BEE,
     ITEM_HONEY_POTION,
-    ITEM_FLOWER_SEED,
+    ITEM_FLOWER_SEED_LEGACY, /* reserved for old saves; do not reuse */
     ITEM_HEAT_LAMP,
     /* Appended: item ids are serialized directly. */
     ITEM_EGG_SKIRMISHER,
@@ -480,6 +480,7 @@ enum {
     ITEM_LAUNCH_ASSEMBLY,
     ITEM_COUNT
 };
+static const ItemId ITEM_FLOWER_SEED = MAT_FLOWER_SEED;
 
 enum ArmourSet {
     ARMOUR_SET_NONE = 0,

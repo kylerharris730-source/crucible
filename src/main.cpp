@@ -24,6 +24,7 @@
 #include "render.h"
 #include "player.h"
 #include "item.h"
+#include "spear_art.h"
 #include "material_icon.h"
 #include "projectile.h"
 #include "worldgen.h"
@@ -1139,6 +1140,10 @@ static int  g_closeDevicePending = -1; /* client-side close until host echoes it
 static bool handleDevPanelClick(int mx, int my);
 static bool handleCraftClick(int mx, int my);
 static void layoutCraft();
+static void craftSearchChanged();
+static char g_craftSearch[64] = "";
+static bool g_craftSearchFocus = false;
+static RECT g_craftSearchBox;
 extern bool g_craftOpen;
 extern int  g_craftScroll;
 static void drawDevPanel(HDC hdc);
@@ -1369,6 +1374,15 @@ static int  g_creCount = 0;              /* entries actually laid out */
 static int g_creItem[CRE_MAX_ENTRIES];    /* item id or CircuitSignal in picker mode */
 static char g_creSearch[32] = "";
 static bool g_creSearchFocus = false;
+enum CatalogGroup { CAT_ALL, CAT_MATERIALS, CAT_FLUIDS, CAT_NATURE,
+    CAT_BUILDING, CAT_MACHINES, CAT_TOOLS, CAT_WEAPONS, CAT_MODULES,
+    CAT_GEAR, CAT_SUPPLIES, CAT_CREATURES, CAT_COUNT };
+static const char* const CATALOG_NAMES[CAT_COUNT] = {
+    "All", "Materials", "Fluids & gas", "Nature", "Building", "Machines",
+    "Tools", "Weapons", "Modules", "Gear", "Supplies", "Creatures"
+};
+static int g_creGroup = CAT_ALL;
+static RECT g_creGroupRect[CAT_COUNT];
 static int  g_filterDevice = -1;         /* drain/watcher material picker */
 
 /* --- the dig filter --------------------------------------------------------
@@ -2267,18 +2281,64 @@ static void layoutMenu() {
    centred on the viewport and nothing else depends on where it lands. The row
    count is derived from how many items there are, so the panel grows with the
    material table instead of clipping it. */
-static bool creativeMatches(const char* name) {
-    for (int a = 0; g_creSearch[a]; ++a) {
+/* Each space-separated word must occur in the name, ignoring case. */
+static bool searchMatches(const char* name, const char* query) {
+    while (*query) {
+        while (*query == ' ') ++query;
+        const char* word = query;
+        while (*query && *query != ' ') ++query;
+        const int length = (int)(query - word);
+        if (!length) break;
         bool found = false;
-        for (int b = 0; name[b]; ++b) {
-            char x = name[b], q = g_creSearch[a];
-            if (x >= 'A' && x <= 'Z') x = (char)(x + ('a' - 'A'));
-            if (q >= 'A' && q <= 'Z') q = (char)(q + ('a' - 'A'));
-            if (x == q) { found = true; break; }
+        for (const char* p = name; *p && !found; ++p) {
+            int k = 0;
+            for (; k < length && p[k]; ++k) {
+                char a = p[k], b = word[k];
+                if (a >= 'A' && a <= 'Z') a += 'a' - 'A';
+                if (b >= 'A' && b <= 'Z') b += 'a' - 'A';
+                if (a != b) break;
+            }
+            found = k == length;
         }
         if (!found) return false;
     }
     return true;
+}
+
+static bool creativeMatches(const char* name) {
+    return searchMatches(name, g_creSearch);
+}
+
+static int catalogGroup(int id) {
+    switch (ITEMS[id].kind) {
+    case ITEMK_TOOL: case ITEMK_MINING: case ITEMK_IGNITE: return CAT_TOOLS;
+    case ITEMK_MELEE: case ITEMK_THROWABLE: return CAT_WEAPONS;
+    case ITEMK_MODULE: case ITEMK_DRONE_MODULE: return CAT_MODULES;
+    case ITEMK_WORN: case ITEMK_ACCESSORY: return CAT_GEAR;
+    case ITEMK_DEVICE: case ITEMK_SPARK: return CAT_MACHINES;
+    case ITEMK_SEED: return CAT_NATURE;
+    case ITEMK_EGG: return CAT_CREATURES;
+    case ITEMK_FOOD: case ITEMK_COMPONENT: return CAT_SUPPLIES;
+    default: break;
+    }
+    if (id > MAT_EMPTY && id < MAT_COUNT) {
+        if (MATS[id].kind == KIND_LIQUID || MATS[id].kind == KIND_GAS) return CAT_FLUIDS;
+        if (g_matIsPlant[id] || id == MAT_WOOD || id == MAT_GRASS) return CAT_NATURE;
+        if (g_matStation[id]) return CAT_MACHINES;
+        switch (id) {
+        case MAT_CLONE: case MAT_VOID: case MAT_HEATER: case MAT_COOLER:
+        case MAT_SIEVE: case MAT_GAS_SIEVE: return CAT_MACHINES;
+        case MAT_WALL: case MAT_GLASS: case MAT_CERAMIC: case MAT_DOOR:
+        case MAT_DOOR_OPEN: case MAT_ROPE: case MAT_PLATFORM:
+        case MAT_LAMP: case MAT_TORCH: return CAT_BUILDING;
+        default: return CAT_MATERIALS;
+        }
+    }
+    return CAT_SUPPLIES;
+}
+
+static bool creativeHasGroups() {
+    return g_signalPickerDevice < 0 && g_filterDevice < 0 && !g_digFilterPicking;
 }
 
 static void layoutCreative() {
@@ -2291,10 +2351,14 @@ static void layoutCreative() {
             if (material == MAT_DEVICE) continue;
             if (creativeMatches(circuitSignalName(material))) g_creItem[g_creCount++] = material;
         }
-    } else for (int i = 0; i < ITEM_COUNT; ++i) {
-        if (ITEMS[i].maxStack == 0 || !creativeMatches(ITEMS[i].name)) continue;
-        g_creItem[g_creCount++] = i;
+    } else for (int group = 1; group < CAT_COUNT; ++group) {
+        if (creativeHasGroups() && g_creGroup != CAT_ALL && g_creGroup != group) continue;
+        for (int i = 0; i < ITEM_COUNT; ++i) {
+            if (catalogGroup(i) != group || ITEMS[i].maxStack == 0 || !creativeMatches(ITEMS[i].name)) continue;
+            g_creItem[g_creCount++] = i;
+        }
     }
+    const int groupH = creativeHasGroups() ? 52 : 0;
     /* The bench only appears when there is a tool to show, and its height is
        part of the panel's height rather than an overlay -- so picking up a
        multitool makes the window taller instead of pushing the grid under it. */
@@ -2340,10 +2404,10 @@ static void layoutCreative() {
        it -- a bench appearing takes a row away rather than pushing the panel
        off the canvas, which is what a fixed count sized for the light case
        would have done. */
-    const int fixedH = pad + 56 + 10 + packH + equipH + droneModuleH + benchH + 38;
+    const int fixedH = pad + 56 + groupH + 10 + packH + equipH + droneModuleH + benchH + 38;
     const int roomH  = VIEW_H - CRE_PANEL_MARGIN * 2 - fixedH;
     int visRows = roomH / (ch + gap);
-    if (visRows < CRE_MIN_ROWS) visRows = CRE_MIN_ROWS;
+    if (visRows < 1) visRows = 1;
     if (visRows > CRE_MAX_ROWS) visRows = CRE_MAX_ROWS;
     if (visRows > g_creRowCount) visRows = g_creRowCount;
     if (visRows < 1) visRows = 1;
@@ -2388,13 +2452,21 @@ static void layoutCreative() {
     const int packW = signalPicker ? 0
                     : pad * 2 + INV_COLS * ps + (INV_COLS - 1) * pgap;
     const int w = imax(imax(paletteW, equipW), imax(benchW, packW));
-    const int h = pad + 56 + paletteH + 10 + packH + equipH + droneModuleH + benchH + 38;
+    const int h = pad + 56 + groupH + paletteH + 10 + packH + equipH + droneModuleH + benchH + 38;
     const int cx = PANEL_W + VIEW_W / 2, cy = VIEW_H / 2;
     const int x0 = cx - w / 2, y0 = cy - h / 2;
     SetRect(&g_crePanel, x0, y0, x0 + w, y0 + h);
 
-    const int listTop = y0 + pad + 56;
+    const int listTop = y0 + pad + 56 + groupH;
     SetRect(&g_creSearchBox, x0 + pad, y0 + pad + 24, x0 + w - pad - 18, y0 + pad + 46);
+    for (int group = 0; group < CAT_COUNT; ++group) {
+        SetRectEmpty(&g_creGroupRect[group]);
+        if (!groupH) continue;
+        const int tabW = (w - 2 * pad) / 6;
+        const int tx = x0 + pad + (group % 6) * tabW;
+        const int ty = y0 + pad + 52 + (group / 6) * 25;
+        SetRect(&g_creGroupRect[group], tx, ty, tx + tabW - 3, ty + 22);
+    }
     for (int i = 0; i < g_creCount; ++i) {
         const int c = i % CRE_COLS, r = i / CRE_COLS - g_creScroll;
         if (r < 0 || r >= visRows) { SetRectEmpty(&g_creRect[i]); continue; }
@@ -2755,6 +2827,11 @@ static void openCircuitSignalPicker(int device, CircuitPickField field) {
 
 static bool handleCreativeClick(int mx, int my, bool remove) {
     if (inRect(g_creSearchBox, mx, my)) { g_creSearchFocus = true; return true; }
+    for (int group = 0; group < CAT_COUNT; ++group)
+        if (creativeHasGroups() && inRect(g_creGroupRect[group], mx, my)) {
+            g_creGroup = group; g_creScroll = 0;
+            layoutCreative(); return true;
+        }
     if (inRect(g_creClear, mx, my)) {
         if (g_signalPickerDevice >= 0) { closeSignalPicker(); return true; }
         if (g_filterDevice >= 0) {
@@ -3273,6 +3350,16 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
 
     case WM_CHAR:
+        if (g_craftOpen && g_craftSearchFocus) {
+            const char ch = (char)wp;
+            const int n = (int)strlen(g_craftSearch);
+            if (ch == '\b' && n > 0) g_craftSearch[n - 1] = 0;
+            else if (ch >= 32 && ch < 127 && n < (int)sizeof(g_craftSearch) - 1) {
+                g_craftSearch[n] = ch; g_craftSearch[n + 1] = 0;
+            } else return 0;
+            craftSearchChanged();
+            return 0;
+        }
         if (g_menuOpen && g_joinIpFocus) {
             const char ch = (char)wp; int n = (int)strlen(g_joinIp);
             if (ch == '\b' && n > 0) g_joinIp[n - 1] = 0;
@@ -3472,7 +3559,14 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if ((lp & (1L << 30)) == 0) toggleFullscreen(hwnd);
             return 0;
         }
-        if (wp == 'Z' && (GetKeyState(VK_CONTROL) & 0x8000)) {
+        if (g_craftOpen) {
+            if (wp == VK_ESCAPE || (wp == 'C' && !g_craftSearchFocus)) {
+                g_craftOpen = false; g_craftSearchFocus = false;
+            } else if (wp == VK_RETURN) g_craftSearchFocus = false;
+            return 0;
+        }
+        if (wp == 'Z' && (GetKeyState(VK_CONTROL) & 0x8000)
+            && !(g_creativeOpen && g_creSearchFocus)) {
             if ((lp & (1L << 30)) == 0) {
                 if (g_survival && g_playerOn) sendClientAction(NACT_UNDO);
                 else undoApply(LOCAL_PLAYER_ID, 0);
@@ -3486,7 +3580,7 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (wp == VK_ESCAPE) {
                 if (g_chestOpen >= 0) closeChest();
                 else { g_creativeOpen = false; g_filterDevice = -1; g_digFilterPicking = false; g_signalPickerDevice = -1; g_signalPickerField = CIR_PICK_NONE; g_creSearchFocus = false; dragStow(); }
-            } else if (wp == 'Q') {
+            } else if (wp == 'Q' && !g_creSearchFocus) {
                 /* The reason this key is handled inside the block that
                    otherwise swallows the keyboard: throwing something away is
                    an inventory gesture, and the stack you want to be rid of is
@@ -3527,6 +3621,7 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case 'C':
             g_craftOpen = !g_craftOpen;
             if (g_craftOpen) {
+                g_craftSearchFocus = false;
                 screenExclusive(SCREEN_CRAFT);
                 layoutCraft();
                 g_lmb = g_rmb = false;
@@ -5112,18 +5207,28 @@ static void fireToolFor(Player& player, Inventory& inventory, const Aim& aim) {
     }
 
     /* --- the Culverin Loader ---------------------------------------------
-       Two more shots, fanned, when the trigger has been held for two seconds.
-       Spawned before the delay is committed and before the clock is noted, so
-       the volley is one trigger pull rather than three -- and they cost no
-       payload for the same reason the twin charm's second shot does not: a
-       modifier duplicates the SHOT, never the ammunition.
+       Extra shots, fanned, for having held the trigger: one for a beat, two
+       for a real pause. Spawned before the delay is committed and before the
+       clock is noted, so the volley is one trigger pull rather than three --
+       and they cost no payload for the same reason the twin charm's second
+       shot does not: a modifier duplicates the SHOT, never the ammunition.
+
+       How many is accessoryBurstBolts' business and not this function's. It
+       used to be a flat two behind a two-second gate, which measured out at
+       zero volleys per hundred shots at every rate anybody actually fights
+       at -- see the note there.
 
        Deliberately the plain shot rather than the full companion treatment.
        This is a burst, and three bolts arriving together should read as one
        loud answer to holding fire, not as a light show. */
-    if (accessoryBurstReady(shooter, inventory)) {
-        for (int k = 0; k < 2; ++k) {
-            const float fan = (k == 0 ? -1.0f : 1.0f) * VOLLEY_FAN * 1.5f;
+    {
+        const int extra = accessoryBurstBolts(shooter, inventory);
+        for (int k = 0; k < extra; ++k) {
+            /* One bolt fans left, two fan both ways. With a single extra shot
+               a symmetric pair would be the wrong picture -- the volley should
+               read as "and one more", not as a narrower spread. */
+            const float fan = (extra == 1 ? 1.0f : (k == 0 ? -1.0f : 1.0f))
+                            * VOLLEY_FAN * 1.5f;
             const float fanX = -dy * fan, fanY = dx * fan;
             projSpawn(pcx + dx * MUZZLE - fanX * 2.0f,
                       pcy + dy * MUZZLE - fanY * 2.0f,
@@ -6493,6 +6598,12 @@ static void drawMeleeSegment(u32* px, bool lit, ItemId item,
                              float x0, float y0, float x1, float y1) {
     const ItemDef& def = ITEMS[item];
     const bool sword = def.meleeStyle == MELEE_SWING;
+    if (!sword) {
+        const auto lighting=[](u32 c,int x,int y)->u32 { return shadeColor(c,viewShade(x,y)); };
+        drawHeldSpear(px,VIEW_CELLS_W,VIEW_CELLS_H,item,x0,y0,x1,y1,
+                      lit ? +lighting : 0);
+        return;
+    }
     const float dx = x1 - x0, dy = y1 - y0;
     const float len = sqrtf(dx * dx + dy * dy);
     if (len < 0.5f) return;
@@ -6501,7 +6612,7 @@ static void drawMeleeSegment(u32* px, bool lit, ItemId item,
     /* Fixed-size furniture keeps the doubled swords looking like weapons.
        Percentage furniture made a thirty-cell blade grow a five-cell handle
        and an eight-cell guard region, which read as a striped pole. */
-    const int grip = sword ? 4 : imax(3, imin(5, steps / 4));
+    const int grip = 4;
 
     const auto put = [&](float fx, float fy, u32 colour) {
         const int x = (int)fx, y = (int)fy;
@@ -6521,20 +6632,11 @@ static void drawMeleeSegment(u32* px, bool lit, ItemId item,
         /* Long swords get a symmetric three-cell blade for their lower half,
            narrowing to a single-cell point. The former one-sided thickness
            made the blade visibly wobble around its hit segment as it rotated.
-
-           A spear used to be drawn one cell wide down its whole length,
-           which at forty-odd cells read as a thread rather than as a shaft --
-           the longest weapon in the game was also the faintest thing on
-           screen. It now has a body, tapering over the last two cells so the
-           point stays a point. Still narrower than a sword, which has a
-           crossguard as well as a blade; the difference between them is
-           meant to be shape, not visibility. */
+           Spears have their own shaft/socket/head renderer above. */
         int halfWidth = 0;
         if (sword) {
             if (i > grip && i < steps - 2 &&
                 i < grip + (steps - grip) * 3 / 5) halfWidth = 1;
-        } else if (i > grip && i < steps - 2) {
-            halfWidth = 1;
         }
         for (int w = -halfWidth; w <= halfWidth; ++w)
             put(fx + nx * (float)w, fy + ny * (float)w, colour);
@@ -7020,6 +7122,28 @@ static void drawCursor(HDC hdc) {
     else if (g_digFilterOn) drawFilterReticle(hdc, gx, gy);
     else                    drawCross(hdc, gx, gy, RGB(236, 240, 248), 3, 5);
 
+    /* --- the Culverin Loader, on the reticle -------------------------------
+       One tick per bolt the next pull will add, drawn as short marks above the
+       crosshair.
+
+       Without this the charm is a rule with no surface: how long you have held
+       fire is a number the game knows and the player is asked to feel, and
+       "very inconsistent" is what a hidden threshold feels like even when it
+       is working exactly as written. Here rather than on the hotbar because it
+       is a fact about the NEXT SHOT, and the next shot is where you are
+       looking.
+
+       Only in survival with a character, like everything else that belongs to
+       a player rather than to the sandbox. */
+    if (g_survival && g_playerOn && !g_wireMode && !g_circuitWireMode) {
+        const int bolts = accessoryBurstBolts(0, g_inv);
+        for (int i = 0; i < bolts; ++i) {
+            const int bx = gx - 4 + i * 8;
+            RECT tick = { bx, gy - 14, bx + 3, gy - 8 };
+            FillRect(hdc, &tick, g_accentBrush);
+        }
+    }
+
     /* The line preview. Solid rather than dotted, and drawn on top of the
        tether, because the tether means "you cannot reach that" and this means
        "this is what will happen" -- two different messages that should not look
@@ -7102,6 +7226,17 @@ static void drawCreative(HDC hdc) {
     char searchLabel[64]; sprintf(searchLabel, "search: %s", g_creSearch[0] ? g_creSearch : "");
     SetTextColor(hdc, RGB(200, 206, 218));
     DrawTextA(hdc, searchLabel, -1, &g_creSearchBox, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+
+    if (creativeHasGroups()) for (int group = 0; group < CAT_COUNT; ++group) {
+        RECT r = g_creGroupRect[group];
+        FillRect(hdc, &r, group == g_creGroup ? g_btnBgSel : g_btnBg);
+        FrameRect(hdc, &r, group == g_creGroup ? g_accentBrush : g_borderBrush);
+        DrawTextA(hdc, CATALOG_NAMES[group], -1, &r, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    }
+    if (!g_creCount) {
+        RECT r = g_crePanel; r.top = g_creTrack.top; r.bottom = g_creTrack.bottom;
+        DrawTextA(hdc, "No matching items", -1, &r, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    }
 
     for (int i = 0; i < g_creCount; ++i) {
         const int it = g_creItem[i];
@@ -7581,10 +7716,19 @@ static int g_craftOrder[CRAFT_MAX_ROWS];
 static int g_craftOrderCount = 0;
 static bool g_craftOrdered = false;
 
+static void craftSearchChanged() {
+    g_craftScroll = 0;
+    g_craftHeldRow = -1;
+    g_craftHeldFor = g_craftCool = 0;
+    g_craftOrdered = false;
+    layoutCraft();
+}
+
 static void craftSortOrder() {
     int n = 0;
     for (int pass = 0; pass < 2; ++pass)
         for (int i = 0; i < N_RECIPES && n < CRAFT_MAX_ROWS; ++i) {
+            if (!searchMatches(ITEMS[RECIPES[i].out].name, g_craftSearch)) continue;
             /* Craftable means BOTH -- the station is there and the ingredients
                are there -- which is what craftCan already answers. A row you
                are only short of a station for stays down with the rest: it is
@@ -7619,13 +7763,16 @@ static void layoutCraft() {
     if (!g_craftOrdered || !g_lmb) craftSortOrder();
 
     const int rows = g_craftOrderCount;
-    const int visRows = imin(CRAFT_VIS_ROWS, rows);
-    const int maxScroll = imax(0, rows - CRAFT_VIS_ROWS);
+    /* Keep the search box stationary as results change, including no matches. */
+    const int visRows = imax(1, imin(CRAFT_VIS_ROWS, (VIEW_H - 110) / CRAFT_ROW_PITCH));
+    const int maxScroll = imax(0, rows - visRows);
     g_craftScroll = imax(0, imin(g_craftScroll, maxScroll));
 
-    const int h = 46 + visRows * CRAFT_ROW_PITCH + 12;
+    const int h = 78 + visRows * CRAFT_ROW_PITCH + 12;
     const int cx = PANEL_W + VIEW_W / 2, cy = VIEW_H / 2;
     SetRect(&g_craftPanel, cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2);
+    SetRect(&g_craftSearchBox, g_craftPanel.left + 12, g_craftPanel.top + 36,
+            g_craftPanel.right - 12, g_craftPanel.top + 60);
 
     const int barW = 10;
     /* Rects for rows scrolled out of the visible window are set EMPTY, not
@@ -7642,13 +7789,13 @@ static void layoutCraft() {
         const int row = pos - g_craftScroll;
         if (row < 0 || row >= visRows) continue;
         SetRect(&g_craftRow[i], g_craftPanel.left + 12,
-                g_craftPanel.top + 40 + row * CRAFT_ROW_PITCH,
+                g_craftPanel.top + 72 + row * CRAFT_ROW_PITCH,
                 g_craftPanel.right - 12 - barW - 4,
-                g_craftPanel.top + 40 + row * CRAFT_ROW_PITCH + CRAFT_ROW_H);
+                g_craftPanel.top + 72 + row * CRAFT_ROW_PITCH + CRAFT_ROW_H);
     }
 
     const int trackX = g_craftPanel.right - 12 - barW;
-    const int trackY0 = g_craftPanel.top + 40;
+    const int trackY0 = g_craftPanel.top + 72;
     const int trackY1 = trackY0 + visRows * CRAFT_ROW_PITCH - 4;
     SetRect(&g_craftTrack, trackX, trackY0, trackX + barW, trackY1);
     if (maxScroll > 0) {
@@ -7664,6 +7811,8 @@ static void layoutCraft() {
 
 static bool handleCraftClick(int mx, int my) {
     if (!g_craftOpen) return false;
+    g_craftSearchFocus = inRect(g_craftSearchBox, mx, my);
+    if (g_craftSearchFocus) { g_craftHeldRow = -1; return true; }
     for (int i = 0; i < N_RECIPES && i < CRAFT_MAX_ROWS; ++i)
         if (inRect(g_craftRow[i], mx, my)) {
             /* Shift makes a stack in one go. Stopping the moment one fails --
@@ -7684,7 +7833,8 @@ static bool handleCraftClick(int mx, int my) {
        scrollbar supports, and it needs no drag handling to be useful since
        the wheel already covers fine scrolling. */
     if (inRect(g_craftTrack, mx, my)) {
-        const int maxScroll = imax(0, N_RECIPES - CRAFT_VIS_ROWS);
+        const int visRows = imax(1, imin(CRAFT_VIS_ROWS, (VIEW_H - 110) / CRAFT_ROW_PITCH));
+        const int maxScroll = imax(0, g_craftOrderCount - visRows);
         if (maxScroll > 0)
             g_craftScroll += (my < g_craftThumb.top) ? -CRAFT_VIS_ROWS : CRAFT_VIS_ROWS;
         return true;
@@ -7705,6 +7855,17 @@ static void drawCraft(HDC hdc) {
     RECT title = g_craftPanel; title.top += 12;
     SetTextColor(hdc, RGB(226, 190, 90));
     DrawTextA(hdc, "CRAFTING", -1, &title, DT_CENTER | DT_TOP | DT_SINGLELINE);
+    FillRect(hdc, &g_craftSearchBox, g_btnBg);
+    FrameRect(hdc, &g_craftSearchBox, g_craftSearchFocus ? g_accentBrush : g_borderBrush);
+    SetTextColor(hdc, RGB(200, 206, 218));
+    char searchLabel[96];
+    sprintf(searchLabel, "search: %s", g_craftSearch[0] ? g_craftSearch : "(click to type)");
+    RECT searchText = g_craftSearchBox; searchText.left += 5;
+    DrawTextA(hdc, searchLabel, -1, &searchText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    if (!g_craftOrderCount) {
+        RECT r = g_craftPanel; r.top += 76; r.bottom = r.top + 40;
+        DrawTextA(hdc, "No matching recipes", -1, &r, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    }
 
     for (int i = 0; i < N_RECIPES && i < CRAFT_MAX_ROWS; ++i) {
         RECT r = g_craftRow[i];
@@ -9125,6 +9286,66 @@ static int runLocalCommandSmoke() {
         /* The search box is the control that actually went missing. */
         if (g_creSearchBox.top < g_crePanel.top) return 276;
         if (g_creSearchBox.right > g_crePanel.right) return 277;
+    }
+
+    /* Catalog groups partition the available items; pickers ignore the tab. */
+    {
+        bool seen[ITEM_COUNT] = {};
+        g_creSearch[0] = 0;
+        for (int group = 1; group < CAT_COUNT; ++group) {
+            g_creGroup = group; layoutCreative();
+            if (g_crePanel.top < 0 || g_crePanel.bottom > VIEW_H) return 280;
+            if (g_creGroupRect[CAT_COUNT - 1].bottom >= g_creTrack.top) return 281;
+            for (int i = 0; i < g_creCount; ++i) {
+                const int id = g_creItem[i];
+                if (seen[id] || catalogGroup(id) != group) return 282;
+                seen[id] = true;
+            }
+        }
+        int total = 0;
+        for (int id = 0; id < ITEM_COUNT; ++id) {
+            if (seen[id] != (ITEMS[id].maxStack != 0)) return 283;
+            if (seen[id]) ++total;
+        }
+        g_digFilterPicking = true; layoutCreative();
+        if (g_creCount != total || !IsRectEmpty(&g_creGroupRect[0])) return 284;
+        g_digFilterPicking = false; g_creGroup = CAT_ALL; layoutCreative();
+        if (g_creCount != total) return 285;
+        if (catalogGroup(MAT_WATER) != CAT_FLUIDS || catalogGroup(MAT_COPPER) != CAT_MATERIALS
+            || catalogGroup(ITEM_MOD_SHOT) != CAT_MODULES) return 286;
+    }
+    /* Filter the sorted recipe list without changing recipe IDs or letting
+       typing leak into shortcuts. Exercise the shared native/browser messages. */
+    {
+        if (!searchMatches("Iron Spear", "SPEAR iron") || searchMatches("Iron Spear", "rain")) return 287;
+        g_craftOpen = true; g_craftSearchFocus = true;
+        const int selected = g_inv.selected;
+        wndProc(0, WM_KEYDOWN, 'C', 0);
+        if (!g_craftOpen) return 288;
+        wndProc(0, WM_KEYDOWN, '1', 0);
+        if (g_inv.selected != selected) return 289;
+        strcpy(g_craftSearch, "iron"); craftSearchChanged();
+        if (!g_craftOrderCount) return 290;
+        int lastPass = 0, lastId = -1;
+        for (int pos = 0; pos < g_craftOrderCount; ++pos) {
+            const int id = g_craftOrder[pos];
+            if (!searchMatches(ITEMS[RECIPES[id].out].name, "iron")) return 291;
+            const int pass = craftCan(g_inv, id) ? 0 : 1;
+            if (pass < lastPass || (pass == lastPass && id <= lastId)) return 292;
+            lastPass = pass; lastId = id;
+        }
+        const RECT searchBox = g_craftSearchBox;
+        strcpy(g_craftSearch, "zzzz-no-recipes"); craftSearchChanged();
+        if (g_craftOrderCount || g_craftScroll || g_craftHeldRow != -1) return 293;
+        if (g_craftSearchBox.top != searchBox.top || IsRectEmpty(&g_craftTrack)) return 294;
+        for (int i = 0; i < N_RECIPES; ++i) if (!IsRectEmpty(&g_craftRow[i])) return 295;
+        strcpy(g_craftSearch, "ir");
+        wndProc(0, WM_CHAR, 'o', 0); wndProc(0, WM_CHAR, 'n', 0);
+        wndProc(0, WM_CHAR, '\b', 0);
+        if (strcmp(g_craftSearch, "iro")) return 296;
+        g_craftSearch[0] = 0; craftSearchChanged();
+        if (g_craftOrderCount != N_RECIPES) return 297;
+        g_craftOpen = false; g_craftSearchFocus = false;
     }
 
     /* --- 260: the boss bar comes up and goes away --------------------------

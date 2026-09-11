@@ -98,6 +98,7 @@ struct TreeKind {
 enum TreeSpecies {
     TREE_OAK = 0, TREE_BIRCH,
     PLANT_WHEAT, PLANT_FLAX, PLANT_COTTON,
+    PLANT_FLOWER,
     TREE_SPECIES_COUNT
 };
 extern const TreeKind TREE_KINDS[TREE_SPECIES_COUNT];

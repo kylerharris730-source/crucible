@@ -48,6 +48,10 @@ const TreeKind TREE_KINDS[TREE_SPECIES_COUNT] = {
     MAT_FLAX_SEED,   MAT_STALK,     MAT_STALK,     MAT_FLAX,      MAT_FLAX },
   { "Cotton",  8,  60,   14,  20,   1,   3,   2,  4,  2, 2,    4,  4,   3,   3,   3,  2,  9,  5,  0, 0,
     MAT_COTTON_SEED, MAT_STALK_DRY, MAT_STALK_DRY, MAT_COTTON,    MAT_COTTON },
+  /* Short stems and a small pink crown; uses the same rooting/growth path
+     as crops, and mature blooms remain ordinary bee-accessible flowers. */
+  { "Flower", 8, 60, 8, 14, 1, 1, 1, 2, 0, 0, 0, 0, 2, 1, 2, 2, 2, 2, 0, 0,
+    MAT_FLOWER_SEED, MAT_STALK, MAT_STALK, MAT_FLOWER, MAT_FLOWER },
 };
 
 int treeMaxHeight() {

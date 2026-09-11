@@ -24,7 +24,8 @@ without adding per-cell render cost.
 - Glass is an open frame with a diagonal reflection; masonry has mortar joints.
 - Liquids are shaded droplets, gases overlapping puffs, and flames tapered tongues.
 - Seeds use paired kernels; plants use stems, grain heads, or cotton bolls.
-- Rope is a twisted coil, rubber a dark ring, chitin a segmented shell, and web
+- Rope uses dark brown fibers (including its world pixels), distinct from golden
+  platforms. Rope is a twisted coil, rubber a dark ring, chitin a segmented shell, and web
   a radial mesh. Sieves retain visible holes; springs show an upward water jet.
 - Stations and torches reuse their authored object sprites, not rock shapes.
 
@@ -101,6 +102,19 @@ reach changes, update both the attack segment and resting held length, then keep
 the guard and grip fixed-size so a longer blade does not turn them into stripes.
 A held sword uses the same hilt-to-tip length as its swing; only a spear shortens
 at rest, because extending the shaft is part of its stabbing motion.
+
+Held spears use `src/spear_art.cpp`, independently of inventory art. A slim dark
+shaft and short wrapped grip lead into a three-cell metal socket and a separately
+shaded head. Head length stays fixed through normal resting/thrust lengths;
+only the exposed shaft changes. Copper has a peach-edged leaf, bronze a winged
+ochre head, iron a silver diamond, gold an ornate winged leaf, steel a narrow
+lance, titanium a long pale faceted point, and tungsten a broad dark bodkin.
+No sword crossguard, no full-length metallic blade, and no reach/stat changes.
+Inverse sampling keeps the shape continuous at arbitrary aim angles. The same
+renderer serves local and remote held/attacking spears, including browser builds.
+`tests/spear_art.cpp` checks fixed head geometry, material differentiation,
+viewport clipping, and lighting; `scripts/preview_spears.py` labels its output
+at default 2x world scale for visual review.
 
 Drone Armour is a three-piece visual family: all pieces use the same blue-steel
 body colour and cyan control strip, while each keeps a different equipment

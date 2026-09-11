@@ -59,11 +59,11 @@ void renderMaterialIcon(int m, u32* p) {
     case MAT_CERAMIC: form=BRICK; base=0xBA7455; break;
     case MAT_REFRACTORY: case MAT_WALL: case MAT_ALUMINUM_NITRIDE: form=BRICK; break;
     case MAT_SIEVE: case MAT_GAS_SIEVE: form=MESH; break;
-    case MAT_ROPE: form=ROPE; base=0xBDA071; break;
+    case MAT_ROPE: form=ROPE; base=0x886342; break;
     case MAT_DOOR: case MAT_DOOR_OPEN: form=DOOR; break;
     case MAT_PLATFORM: case MAT_GRAPHENE: form=BOARD; break;
     case MAT_OAK_LEAF: case MAT_BIRCH_LEAF: case MAT_GRASS: form=LEAF; break;
-    case MAT_OAK_SEED: case MAT_BIRCH_SEED: case MAT_WHEAT_SEED:
+    case MAT_OAK_SEED: case MAT_BIRCH_SEED: case MAT_WHEAT_SEED: case MAT_FLOWER_SEED:
     case MAT_FLAX_SEED: case MAT_COTTON_SEED: case MAT_OAK_POD: case MAT_BIRCH_POD: form=SEED; break;
     case MAT_OAK_SAPLING: case MAT_BIRCH_SAPLING: case MAT_STALK:
     case MAT_STALK_DRY: case MAT_WHEAT: case MAT_FLAX: case MAT_COTTON: case MAT_FLOWER: form=STALK; break;

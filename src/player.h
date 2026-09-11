@@ -461,6 +461,18 @@ struct Player {
     float walkPhase;
     int   frame;       /* a PlayerFrame, or a PlayerCrouchFrame while crouching */
     int   airFrames;
+    /* --- still running, even with the feet off the ground -----------------
+       Terrain here is a grid, so a slope is a staircase and walking down one
+       genuinely leaves the ground every step: measured at 40-48% of frames
+       airborne on a shallow descent. Anything that asks "is this character
+       running" has to allow for that or it strobes -- the walk cycle did, the
+       crouch grace does, and the Cinderling Ash's trail did until it turned
+       into dots going downhill.
+
+       Three readers, one rule. The constants and the measurement behind them
+       live beside animate() in player.cpp; this is the question they answer,
+       named once so a fourth reader cannot invent a fourth threshold. */
+    bool  runningOnGround() const;
     /* Whether the box is currently the short one. An output of update(), not
        an input -- see the crouch block there for how `down` earns this job
        only when it is not already spoken for by a rope or a platform. */

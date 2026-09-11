@@ -82,6 +82,13 @@ static const int   IDLE_HOLD   = 40;
 static const int   AIR_GRACE     = 8;      /* frames, ~0.13 s */
 static const float GRACE_FALL_V  = 1.45f;  /* cells/frame */
 
+/* See the note on the declaration. Rising is never graced -- vy < 0 only
+   happens because you jumped or were thrown, and both should read instantly. */
+bool Player::runningOnGround() const {
+    if (onGround) return true;
+    return vy >= 0.0f && vy < GRACE_FALL_V && airFrames <= AIR_GRACE;
+}
+
 /* Half speed while crouched. Slow enough that crouching under something reads
    as a deliberate, careful move rather than the normal walk with a shorter
    box, which is what it would feel like at anything close to MAX_SPEED. */
@@ -428,8 +435,7 @@ void Player::animate() {
            needed it. */
         /* Rising is never graced -- vy < 0 only happens because you jumped or
            were thrown, and both should read instantly. */
-        const bool grace = vy >= 0.0f && vy < GRACE_FALL_V
-                        && airFrames <= AIR_GRACE && speed > 0.05f;
+        const bool grace = runningOnGround() && speed > 0.05f;
         if (!grace) {
             frame = (vy < 0.0f) ? PF_JUMP : PF_FALL;
             return;

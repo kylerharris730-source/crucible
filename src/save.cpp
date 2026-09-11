@@ -218,6 +218,7 @@ static ItemId remapSavedItem(ItemId old) {
     if (old == ITEM_NONE) return ITEM_NONE;
     if (old < g_savedMatCount) return (ItemId)g_remap[old];
     const int now = (int)old + MAT_COUNT - g_savedMatCount;
+    if (now == ITEM_FLOWER_SEED_LEGACY) return ITEM_FLOWER_SEED;
     return (now >= MAT_COUNT && now < ITEM_COUNT) ? (ItemId)now : ITEM_NONE;
 }
 

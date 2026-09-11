@@ -2047,8 +2047,7 @@ void initItems() {
        updateGrass -- so a player never HAS to farm them, but a hive worth
        running wants more than the surface happens to grow. */
     ITEMS[ITEM_FLOWER_SEED].name     = "Flower Seed";
-    ITEMS[ITEM_FLOWER_SEED].kind     = ITEMK_SEED;
-    ITEMS[ITEM_FLOWER_SEED].maxStack = 64;
+    ITEMS[ITEM_FLOWER_SEED].kind     = ITEMK_MATERIAL;
     ITEMS[ITEM_FLOWER_SEED].colour   = 0xD98FC0;
     ITEMS[ITEM_FLOWER_SEED].sprite   = SPR_FLOWER_ITEM;
 
@@ -2317,7 +2316,8 @@ void initItems() {
     ITEMS[ITEM_THRESHING_SPURS].description =
         "Your shots hit harder the longer you keep moving.";
     ITEMS[ITEM_CULVERIN_LOADER].description =
-        "Hold fire for two seconds and your next shot is a burst of three.";
+        "Pause between shots and the next one carries extra bolts: one for a "
+        "beat, two for a longer wait. Ticks over your crosshair show how many.";
     ITEMS[ITEM_WISP_PRISM].description =
         "Your shots punch through two more cells before they are spent.";
     ITEMS[ITEM_STOOPER_TALON].description =
@@ -2331,7 +2331,8 @@ void initItems() {
     ITEMS[ITEM_SLAGMAW_GULLET].description =
         "An unloaded tool's shots leave fire where they land.";
     ITEMS[ITEM_CINDERLING_ASH].description =
-        "You leave fire behind you while you run. It burns you too.";
+        "You leave burning embers behind you while you run. They set light to "
+        "whatever they touch -- anything you built, and you if you turn back.";
     ITEMS[ITEM_FORGE_SIGIL].description =
         "Brood Mother's mark. +8% damage and +1 armour.";
     ITEMS[ITEM_SILK_SIGIL].description =
@@ -2390,7 +2391,7 @@ void initItems() {
     ITEMS[ITEM_BEE].description = "Let it out near a hive. Bees tolerate heat, but not a lot of it -- and coal settling on one changes what it makes.";
     ITEMS[ITEM_COAL_BEE].description = "A bee that has been through coal. Its wax and honey boil back down into coal.";
     ITEMS[ITEM_HONEY_POTION].description = "Thick and sweet. Restores more than bread does.";
-    ITEMS[ITEM_FLOWER_SEED].description = "Sow on dirt. Bees need flowers within reach of their hive.";
+    ITEMS[ITEM_FLOWER_SEED].description = "Drop onto dirt or grass to grow flowers. Bees visit the blooms near their hive.";
     ITEMS[ITEM_BROOD_CALL].description = "Consume to summon the Brood Queen nearby.";
 
     /* Spawn eggs. Named from the creature table so the two can never disagree
@@ -3300,23 +3301,6 @@ int sowSeeds(World& w, Inventory& inv, int cx, int cy, int r, int maxCells) {
         if (maxCells > 0 && sown >= maxCells) break;
         const int x = cx + g_disc[i].dx, y = cy + g_disc[i].dy;
         if (x < PLAY_X0 || x > PLAY_X1 || y < PLAY_Y0 || y > PLAY_Y1) continue;
-        /* --- the flower is not a crop -------------------------------
-           Every other seed here turns dirt into grass and lets the grower
-           take over. A flower has no stalk and no growth stages, so sowing
-           one means placing it -- on top of ground rather than into it,
-           which is also what lets a player fill a meadow around a hive
-           rather than waiting on the turf to do it. */
-        if (h.item == ITEM_FLOWER_SEED) {
-            if (w.at(x, y).mat != MAT_EMPTY) continue;
-            const int below = y + 1;
-            if (below > PLAY_Y1) continue;
-            const u8 under = w.at(x, below).mat;
-            if (under != MAT_GRASS && under != MAT_DIRT) continue;
-            if (inv.take(ITEM_FLOWER_SEED, 1) != 1) return sown;
-            w.setCell(x, y, MAT_FLOWER);
-            ++sown;
-            continue;
-        }
         if (w.at(x, y).mat != MAT_DIRT) continue;
         /* Only dirt with a face to the air takes. Buried dirt would turn to
            grass and die back on the very next frame, so charging a seed for it
