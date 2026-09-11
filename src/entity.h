@@ -560,6 +560,16 @@ void entSpawnTick(World& w, const Player& p, int camX, int camY, bool lightField
    the one frame in eighty where the answer will be used. */
 bool entSpawnReady();
 
+/* Brightness at or below which a site counts as dark enough to spawn in.
+   Torchlight is far above this, so a lit corridor is genuinely clear.
+
+   In the header rather than beside the rest of the spawner's constants because
+   the thing most likely to break this rule is not the rule -- it is whoever
+   SOLVES the light field the rule reads, and that is in another file. The
+   command smoke checks the field the spawner is handed against this number, so
+   a second copy of 40 would be a second copy of the only fact that matters. */
+static const int SPAWN_DARK = 40;
+
 /* Creatures alive at once. Small on purpose: these are meant to be a hazard you
    meet in a tunnel, not a horde. Enough that a dark cavern feels occupied and
    few enough that the contact-damage rules never turn into an unavoidable

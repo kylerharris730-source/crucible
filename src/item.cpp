@@ -2328,11 +2328,11 @@ void initItems() {
     ITEMS[ITEM_ASHHOUND_COLLAR].description =
         "You get faster the longer you run without stopping.";
     ITEMS[ITEM_EMBERWING_FEATHER].description =
-        "One extra jump while you are in the air.";
+        "One extra jump while you are in the air. An uncommon drop from bats.";
     ITEMS[ITEM_SLAGMAW_GULLET].description =
         "An unloaded tool's shots leave fire where they land.";
     ITEMS[ITEM_CINDERLING_ASH].description =
-        "You leave burning embers behind you while you run. They set light to "
+        "Leaves short-lived, FuelFire-hot embers with extra flames while you run. They ignite "
         "whatever they touch -- anything you built, and you if you turn back.";
     ITEMS[ITEM_FORGE_SIGIL].description =
         "Brood Mother's mark. +8% damage and +1 armour.";
@@ -2393,6 +2393,9 @@ void initItems() {
     ITEMS[ITEM_COAL_BEE].description = "A bee that has been through coal. Its wax and honey boil back down into coal.";
     ITEMS[ITEM_HONEY_POTION].description = "Thick and sweet. Restores more than bread does.";
     ITEMS[ITEM_FLOWER_SEED].description = "Drop onto dirt or grass to grow flowers. Bees visit the blooms near their hive.";
+    ITEMS[MAT_FUEL].description = "Burns at 202 C. Pack a closed retort and heat above 125 C without air or flame contact: two Fuel make one Coke and one Coke Gas. Vent gas through a gas sieve.";
+    ITEMS[MAT_COKE].description = "Retort-made fuel. Burns at 215 C for titanium and tungsten. Cool before opening the retort; hot coke exposed to air ignites.";
+    ITEMS[MAT_COKE_GAS].description = "Flammable retort byproduct. Route through gas sieves and burn for heat; prevent flame from reaching your retort.";
     ITEMS[ITEM_BROOD_CALL].description = "Consume to summon the Brood Queen nearby.";
 
     /* Spawn eggs. Named from the creature table so the two can never disagree

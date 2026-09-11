@@ -305,7 +305,7 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
 
        Fragile to match: two hits from the starting shot. A bat you had to chase
        AND could not kill would be a tax rather than an encounter. */
-    { "Bat",       9,  7, 12,   7,  26, 1.35f, 0.055f, true, 1,  true,    0, 0, 0.0f, 0.0f, false, (ItemId)MAT_CHITIN, 1, 1, ITEM_SWIFT_CHARM,    50, SPR_BAT,   0x6A4C68, ITEM_EGG_BAT,       false, false, 0 },
+    { "Bat",       9,  7, 12,   7,  26, 1.35f, 0.055f, true, 1,  true,    0, 0, 0.0f, 0.0f, false, (ItemId)MAT_CHITIN, 1, 1, ITEM_EMBERWING_FEATHER, 10, SPR_BAT, 0x6A4C68, ITEM_EGG_BAT,       false, false, 0 },
 
     /* --- spitter ------------------------------------------------------------
        The one that makes standing still wrong. It holds its distance and shoots,
@@ -599,7 +599,7 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
     { "Emberwing", 11, 9, 30, 22, 26,
       1.50f, 0.085f, true, 4, false,
       110, 14, 4.2f, 0.0f, false,
-      ITEM_CINDER_HEART, 1, 1, ITEM_EMBERWING_FEATHER, 50, SPR_EMBERWING, 0xE8622A,
+      ITEM_CINDER_HEART, 1, 1, ITEM_SWIFT_CHARM, 50, SPR_EMBERWING, 0xE8622A,
       ITEM_EGG_EMBERWING, false, false, 210 },
 
     /* --- the Slagmaw, layer 3 ----------------------------------------------
@@ -4011,9 +4011,6 @@ static const int SPAWN_TRIES = 20;
    probe was rejected cost nothing and should not bank credit toward a burst the
    moment you step into somewhere dark. */
 static const int SPAWN_COOL = 80;
-/* Brightness at or below which a site counts as dark. Torchlight is far above
-   this, so a lit corridor is genuinely clear. */
-static const int SPAWN_DARK  = 40;
 /* Cells of clearance kept around the player, so nothing appears in your lap
    even if the camera happens to be looking elsewhere. Comfortably more than
    half the view's height. */
@@ -4172,7 +4169,14 @@ void entSpawnTick(World& w, const Player& p, int camX, int camY, bool lightField
                 for (int xx = x0; xx <= x1; ++xx) {
                     if (xx <= PLAY_X0 || xx >= PLAY_X1 ||
                         yy <= PLAY_Y0 || yy >= PLAY_Y1) continue;
-                    if (lightFieldValid && g_lightOn &&
+                    /* `lightFieldValid` alone, and not g_lightOn as well.
+                       That flag is whether lighting is DRAWN, and a display
+                       toggle deciding where creatures appear meant switching
+                       the lights off to inspect a machine also switched off
+                       the protection a base full of torches was buying. The
+                       caller now solves the field whether or not it will be
+                       shown; whether it did so is what this parameter says. */
+                    if (lightFieldValid &&
                         lightAtWorld(xx, yy) > SPAWN_DARK) { lit = true; break; }
                     if (w.bgPlaced(xx, yy)) { claimed = true; break; }
                 }

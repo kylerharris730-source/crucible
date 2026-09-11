@@ -71,6 +71,9 @@ void renderMaterialIcon(int m, u32* p) {
     case MAT_CHITIN: form=SHELL; base=0xBBA27A; break;
     case MAT_RUBBER: form=RING; base=0x454854; break;
     case MAT_COAL: form=ROCK; base=0x343642; break;
+    case MAT_COKE: form=ROCK; base=0x637989; break;
+    case MAT_COKE_EMBER: form=FLAME; break;
+    case MAT_CINDERLING_EMBER: form=FLAME; break;
     case MAT_FUEL: form=PILE; base=0x475846; break;
     case MAT_CLAY: form=ROCK; base=0xAB806C; break;
     case MAT_WEB: form=WEB; break;
@@ -94,6 +97,7 @@ void renderMaterialIcon(int m, u32* p) {
         case ROCK: case ORE:
             on=abs(dx)*2+abs(dy)*2<22 && y>=4 && y<=18;
             c=shade(base,x+y<19 ? 30 : x>11 ? -22 : 0);
+            if (m==MAT_COKE && ((x*7+y*11)%19<3)) c=0x202C38; // porous carbon
             if (form==ORE && (abs(x-(7+y/4))<=1 || (y>=11 && abs(x+y-26)<2))) c=vein;
             if (form==ORE && m==MAT_COPPER_ORE && x<7 && y>9 && y<14) c=0x569B85;
             break;

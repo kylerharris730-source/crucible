@@ -685,7 +685,7 @@ MatInfo MATS[MAT_COUNT] = {
   /* Burning fuel. Maximum conductivity and mass 4 -- sixteen times the heat
      capacity -- so it can hold a charge above iron's smelting point for long
      enough to get through it, which ember cannot. */
-  { "FuelFire",KIND_STATIC,255,  0,    0,   0,   0,   0,  0,  255,  5,   0, degC(215), degC(95), MAT_EMPTY, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, 0xFFD8A0, 0xFF8830, 0xFFD8A0, 0xFF8830, 0 },
+  { "FuelFire",KIND_STATIC,255,  0,    0,   0,   0,   0,  0,  255,  5,   0, degC(202), degC(95), MAT_EMPTY, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, 0xFFD8A0, 0xFF8830, 0xFFD8A0, 0xFF8830, 0 },
   /* --- the door ------------------------------------------------------------
      A built fixture, so both states are inert: no ignite row, no boil row,
      nothing it turns into. A door that burned down would be thematic and would
@@ -830,17 +830,18 @@ MatInfo MATS[MAT_COUNT] = {
 
   /* --- titanium -------------------------------------------------------------
      205 to melt -- above iron's 200, below the byte's own ceiling -- so a
-     wood or coal fire genuinely cannot reach it and a fuelfire barely can.
+     wood, coal, and ordinary fuel cannot smelt its 208 C ore. Coke can.
      That is "you physically cannot build a furnace hot enough" expressed
      honestly against a temperature scale that tops out at 215, rather than
      invented as a number the byte cannot hold. */
-  { "TiOre",   KIND_POWDER, 180,  90,   40,   0,   0,   0,  0,  110,  1,   0,   0,    0,  MAT_EMPTY, degC(200), MAT_TITANIUM_MELT, 0, MAT_EMPTY,    0,  0x6C7078, 0x9098A4, 0x6C7078, 0x9098A4, 0 },
+  { "TiOre",   KIND_POWDER, 180,  90,   40,   0,   0,   0,  0,  110,  1,   0,   0,    0,  MAT_EMPTY, degC(208), MAT_TITANIUM_MELT, 0, MAT_EMPTY,    0,  0x6C7078, 0x9098A4, 0x6C7078, 0x9098A4, 0 },
   { "Titanium",KIND_STATIC, 215,   0,    0,   0,   0,   0,  0,  150,  0,   2,   0,    0,  MAT_EMPTY, degC(205), MAT_TITANIUM_MELT, 0, MAT_EMPTY,    0,  0xC8CCD2, 0xC8CCD2, 0xC8CCD2, 0xC8CCD2, 0 },
   { "TiMelt",  KIND_LIQUID, 210,   0,    0,   3,   0,   0,  0,  150,  1,   0, degC(205), degC(175), MAT_TITANIUM, 0, MAT_EMPTY,  0, MAT_EMPTY,   0,  0xE8ECF0, 0xC8CCD2, 0xE8ECF0, 0xC8CCD2, 0 },
 
   /* --- tungsten ---------------------------------------------------------
      213 to melt: two below the absolute ceiling of the temperature byte,
-     which lava and a fuelfire both sit AT (215). Nothing else in the game
+     which lava and a coke ember both sit AT (215). Ordinary fuel stops at
+     202. Nothing else in the ordinary fuel ladder
      is hot enough to smelt this except direct, sustained contact with the
      hottest things there are -- so tungsten is not gated by a number that
      does not exist, it is gated by needing to build next to the lava
@@ -1085,6 +1086,12 @@ MatInfo MATS[MAT_COUNT] = {
      reached equilibrium with itself and burned forever. */
   { "Wood Ember", KIND_STATIC, 255, 0,  0,   0,   0,   0,  0,  120,  2,   0, degC(130),  0,  MAT_EMPTY,   0, MAT_EMPTY,   0, MAT_EMPTY,      0,  0xC85A18, 0x8A3208, 0xC85A18, 0x8A3208, 0 },
   { "Flower Seed",KIND_POWDER,120,60,30,0,0,0,0,12,0,0,0,0,MAT_EMPTY,0,MAT_EMPTY,degC(85),MAT_FIRE,0,0xAD7691,0x725367,0xAD7691,0x725367,0 },
+  /* Retort fuel: porous blue-grey coke, a stationary hot ember, and a
+     recoverable gas that burns at ordinary fire heat (below titanium). */
+  { "Coke", KIND_POWDER,190,100,50,0,0,0,0,70,2,0,0,0,MAT_EMPTY,0,MAT_EMPTY,degC(150),MAT_COKE_EMBER,0,0x63717D,0x303D49,0x63717D,0x303D49,0 },
+  { "Coke Ember",KIND_STATIC,255,0,0,0,0,0,0,255,5,0,degC(215),degC(95),MAT_EMPTY,0,MAT_EMPTY,0,MAT_EMPTY,0,0xFFF2D0,0xFFC16A,0xFFF2D0,0xFFC16A,0 },
+  { "Coke Gas",KIND_GAS,8,0,0,4,150,0,0,25,0,0,0,0,MAT_EMPTY,0,MAT_EMPTY,degC(145),MAT_FIRE,0,0xABA38C,0x706C60,0xABA38C,0x706C60,0 },
+  {}, /* Cinderling Ember: derives from FuelFire in initMaterials(). */
 };
 
 u32 g_colorLut[MAT_COUNT * 256];
@@ -1429,6 +1436,8 @@ static void initLight() {
     /* Burning things light the room they are burning in. Fuel brighter than coal,
        matching how much hotter it is. */
     g_matLight[MAT_FUELFIRE]   = 105;
+    g_matLight[MAT_CINDERLING_EMBER] = 105;
+    g_matLight[MAT_COKE_EMBER] = 115;
     g_matLight[MAT_EMBER]      = 75;
     /* A shade under coal's, because it is a cooler fire and because a burning
        tree already carries flame above it that lights on its own account. */
@@ -1979,12 +1988,14 @@ static void initBurnLife() {
        long enough to light the cell below it several times over and short
        enough that a burnt tree is gone rather than standing there glowing. */
     g_matDecay[MAT_WOOD_EMBER] = 3;
+    g_matDecay[MAT_CINDERLING_EMBER] = 6; // half the previous average trail lifetime
 
     /* Empty unless a material says otherwise, which preserves exactly what
        cold fire and the embers have always done. */
     for (int m = 0; m < MAT_COUNT; ++m) g_matDecaysTo[m] = MAT_EMPTY;
     g_matDecaysTo[MAT_BRIMFIRE] = MAT_ASH;
     g_matDecay[MAT_FUELFIRE] = 1;
+    g_matDecay[MAT_COKE_EMBER] = 1;
 
     /* And it leaves that residue every time unless it says otherwise. */
     for (int m = 0; m < MAT_COUNT; ++m) g_matDecayResidueChance[m] = 255;
@@ -2013,7 +2024,9 @@ static void initContactFire() {
     g_matIgnitesOnContact[MAT_EMBER]      = 1;
     g_matIgnitesOnContact[MAT_WAX_EMBER]  = 1;
     g_matIgnitesOnContact[MAT_WOOD_EMBER] = 1;
+    g_matIgnitesOnContact[MAT_CINDERLING_EMBER] = 1;
     g_matIgnitesOnContact[MAT_FUELFIRE]   = 1;
+    g_matIgnitesOnContact[MAT_COKE_EMBER] = 1;
     g_matIgnitesOnContact[MAT_BRIMFIRE]   = 1;
 
     /* Fire spat into empty space. The fumarole is the original; the wood ember
@@ -2036,6 +2049,7 @@ static void initContactFire() {
        that is mostly not on fire -- measured at 2, flame was visible on 257 of
        the 600 frames the plank was alight. */
     g_matVentsFire[MAT_WOOD_EMBER] = 20;
+    g_matVentsFire[MAT_CINDERLING_EMBER] = 40;
 }
 
 static void initDrive() {
@@ -2043,6 +2057,8 @@ static void initDrive() {
     g_matDrive[MAT_EMBER]    = 10;
     g_matDrive[MAT_WAX_EMBER] = 6;
     g_matDrive[MAT_FUELFIRE] = 40;
+    g_matDrive[MAT_CINDERLING_EMBER] = g_matDrive[MAT_FUELFIRE];
+    g_matDrive[MAT_COKE_EMBER] = 48;
     /* Burning brimstone had NO drive at all, which is why a seam could sit at
        195 C against stone that melts at 185 and never melt any of it: without
        a drive a source only conducts, and conduction into cold rock settles
@@ -2303,6 +2319,12 @@ static void initUnseen() {
 }
 
 void initMaterials() {
+    /* Same thermal behavior as FuelFire, but its own visual/flame/lifetime
+       tables. Follow fuel tuning without changing ordinary wood embers. */
+    MATS[MAT_CINDERLING_EMBER] = MATS[MAT_FUELFIRE];
+    MATS[MAT_CINDERLING_EMBER].name = "Cinderling Ember";
+    MATS[MAT_CINDERLING_EMBER].dryA = MATS[MAT_CINDERLING_EMBER].wetA = 0xFFE6AF;
+    MATS[MAT_CINDERLING_EMBER].dryB = MATS[MAT_CINDERLING_EMBER].wetB = 0xEF6530;
     /* Ordinary fluids expand subtly; wax is exaggerated on purpose so its
        density crosses water's around 41 C and has useful buoyancy by 50-55 C,
        well clear of boiling. Kept outside MatInfo to avoid another mostly-zero

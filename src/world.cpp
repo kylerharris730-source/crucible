@@ -3075,7 +3075,38 @@ void World::updateCell(Lane& L, int x, int y) {
         }
     }
 
-    if (m.igniteTemp) {
+    /* A packed retort is our local oxygen-starved approximation: no adjacent
+       empty air and no flame. No flood fills or cross-stripe state. Two hot
+       Fuel cells yield one Coke and one Coke Gas, so gas is not free matter.
+       Coke and its gas also stay unlit while enclosed; opening the retort or
+       allowing flame back through its outlet can ignite the charge. */
+    bool oxygenStarved = false;
+    if (c.mat == MAT_FUEL || c.mat == MAT_COKE || c.mat == MAT_COKE_GAS) {
+        bool air = false, flame = false;
+        for (int k = 0; k < 4; ++k) {
+            const u8 neighborMat = cells[(y + NB_DY[k]) * SIM_W + x + NB_DX[k]].mat;
+            air = air || neighborMat == MAT_EMPTY;
+            flame = flame || g_matIgnitesOnContact[neighborMat];
+        }
+        oxygenStarved = !air && !flame;
+        if (c.mat == MAT_FUEL && oxygenStarved && t >= degC(125)) {
+            dirtyPoint(L, x, y); // waiting batches must not go to sleep
+            if (lchance(L, 1)) {
+                const int first = (int)lbits(L, 2);
+                for (int k = 0; k < 4; ++k) {
+                    const int d = (first + k) & 3;
+                    const int nx = x + NB_DX[d], ny = y + NB_DY[d];
+                    const int ni = ny * SIM_W + nx;
+                    if (cells[ni].mat != MAT_FUEL || temp[ni] < degC(125)) continue;
+                    convert(L, nx, ny, MAT_COKE_GAS);
+                    convert(L, x, y, MAT_COKE);
+                    return;
+                }
+            }
+        }
+    }
+
+    if (m.igniteTemp && !oxygenStarved) {
         /* A flammable cell catches two ways: heated past its ignition point by
            anything (lava, the heat tool, a nearby blaze), or simply by
            touching fire. The contact path is what makes a burn front reliably

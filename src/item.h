@@ -228,7 +228,7 @@ enum {
     ITEM_MOTH_LANTERN,      /* moth    -- the wearer glows */
     ITEM_SLIME_MAGNET,      /* slime   -- drops come to you */
     ITEM_HUSK_HEART,        /* husk    -- slow regeneration */
-    ITEM_SWIFT_CHARM,       /* bat     -- move speed */
+    ITEM_SWIFT_CHARM,       /* emberwing -- move speed */
     ITEM_SPITTER_BRACER,    /* spitter -- muzzle velocity */
     ITEM_WHETSTONE,         /* pedestal only -- damage */
     ITEM_CHRONOMETER,       /* pedestal only -- fire rate */

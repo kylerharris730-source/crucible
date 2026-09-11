@@ -166,6 +166,29 @@ machine to unlock the next layer actually fun?** If yes, the rest is execution.
 If it is fiddly and you find yourself fighting pixel placement, that is decision
 #1 answering itself — in a month rather than a year.
 
+## Coke retort and the upper smelting tier
+
+Pack a closed, iron-walled retort with liquid Fuel and heat it externally
+to at least 125 C. With no adjacent empty air or flame, two hot Fuel cells
+slowly become one Coke and one Coke Gas. This is a local oxygen-starvation
+approximation, not an atmosphere simulation: fill the vessel, rather than
+leaving an air gap over a shallow puddle. Gas and liquid movement still run
+while the batch cooks. A gas-sieve roof releases gas while retaining the charge.
+
+Collect the gas or lead it through a cooled outlet to a separate burner. It
+ignites at 145 C in air or on flame contact, producing ordinary fire. Coke
+ignites at 150 C in air or on flame contact; let the batch cool before opening.
+Flame touching the charge defeats the sealed protection. Directly burning an
+open fuel pool still works as before.
+
+The heat ladder is coal ember 185 C, FuelFire 202 C, Coke Ember 215 C.
+Iron ore still needs 190 C; titanium ore now needs 208 C and tungsten 211 C.
+Coke replaces ordinary fuel for those top ores, while geothermal heat and
+creative heaters remain valid heat sources. Recycling gas helps heat a retort
+but does not reach titanium's threshold. The process consumes no new mined
+ingredient and has no hand-crafting shortcut. Gas routing, cooling, containment,
+and charge handling are the work to automate.
+
 ## Inherited from powder
 
 The simulation, essentially complete: 27 materials, a real temperature field with

@@ -217,7 +217,9 @@ int main() {
              four cells apart -- dots, not a line
 
            So it lays by the cell of ground crossed, two cells tall on the
-           even ones, in wood ember, which vents flame. What is measured here
+           even ones, in the Cinderling's own ember, which vents flame -- it
+           was wood ember first, and became its own material when the trail
+           wanted a hotter one with a shorter life. What is measured here
            is the SHAPE of the trail rather than the rule that makes it: the
            longest gap in it, and whether anything is actually on fire.
 
@@ -255,7 +257,7 @@ int main() {
                 for (int y = FY - PLAYER_H; y < FY; ++y)
                     for (int x = FX - 700; x <= FX + 700; ++x) {
                         const u8 m = w.at(x, y).mat;
-                        if (m == MAT_WOOD_EMBER) ++alight;
+                        if (m == MAT_CINDERLING_EMBER) ++alight;
                         if (m == MAT_FIRE) ++lit;
                     }
                 if (alight > peak[variant]) peak[variant] = alight;
@@ -275,7 +277,7 @@ int main() {
                 bool burning = false;
                 for (int y = FY - PLAYER_H; y < FY; ++y) {
                     const u8 m = w.at(x, y).mat;
-                    if (m == MAT_WOOD_EMBER || m == MAT_FIRE) burning = true;
+                    if (m == MAT_CINDERLING_EMBER || m == MAT_FIRE) burning = true;
                 }
                 if (burning) run = 0;
                 else if (++run > gap[variant]) gap[variant] = run;
@@ -283,7 +285,7 @@ int main() {
             if (variant == 0)
                 for (int y = FY - PLAYER_H; y < FY; ++y)
                     for (int x = body.right() + 1; x <= FX + 700; ++x)
-                        if (w.at(x, y).mat == MAT_WOOD_EMBER) ++ahead;
+                        if (w.at(x, y).mat == MAT_CINDERLING_EMBER) ++ahead;
         }
         printf("Cinderling Ash at 1.2 c/f: peak %d embers, %d flames, "
                "longest gap %d\n", peak[0], flames[0], gap[0]);
@@ -359,7 +361,7 @@ int main() {
             for (int x = FX - 20; x <= FX + 500; ++x) {
                 int column = 0;
                 for (int y = FY - 300; y < FY + 320; ++y)
-                    if (w.at(x, y).mat == MAT_WOOD_EMBER) { ++laid; ++column; }
+                    if (w.at(x, y).mat == MAT_CINDERLING_EMBER) { ++laid; ++column; }
                 if (column > tallest) tallest = column;
             }
             perCell[t] = travelled > 0 ? (double)laid / travelled : 0.0;

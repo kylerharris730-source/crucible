@@ -278,7 +278,7 @@ static int ashFloorY(const World& world, int x, int footY) {
                two. */
             const u8 under = world.at(x, y + 1).mat;
             if (under == MAT_EMPTY || MATS[under].kind == KIND_GAS) continue;
-            if (under == MAT_WOOD_EMBER || under == MAT_EMBER ||
+            if (under == MAT_CINDERLING_EMBER || under == MAT_WOOD_EMBER || under == MAT_EMBER ||
                 under == MAT_FIRE) continue;
             return y;
         }
@@ -296,14 +296,9 @@ static int ashFloorY(const World& world, int x, int footY) {
    pattern is a property of the ground and does not crawl as you watch it. */
 static void ashColumn(World& world, int x, int y) {
     /* --- what it drops -----------------------------------------------------
-       MAT_WOOD_EMBER, not MAT_EMBER, and the difference is the whole
-       complaint: "no flames". Burning coal is a hot brick -- it glows, it
-       sets light to what it touches, and it produces no flame of its own, so
-       a trail of it is a line of dim orange dots. Wood ember VENTS FIRE (see
-       g_matVentsFire), which means each cell throws visible flame above
-       itself for as long as it burns. It is also cooler and shorter-lived,
-       which is right for something a player is scattering behind themselves
-       several times a second rather than banking in a furnace.
+       Its own Cinderling Ember now: FuelFire's thermal output with twice the
+       wood ember's flame-emission chance. Half wood's average lifetime so a
+       running player leaves a temporary hazard, not a permanent furnace.
 
        Two cells tall, bottom up, and the second one is allowed to fail: at a
        wall or under a low ceiling the trail simply gets shorter rather than
@@ -313,7 +308,7 @@ static void ashColumn(World& world, int x, int y) {
         const int cy = y - k;
         if (cy <= PLAY_Y0) break;
         if (world.at(x, cy).mat != MAT_EMPTY) break;
-        world.setCell(x, cy, MAT_WOOD_EMBER);
+        world.setCell(x, cy, MAT_CINDERLING_EMBER);
         world.dirtyPoint(x, cy);
     }
 }

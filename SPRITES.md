@@ -20,6 +20,10 @@ without adding per-cell render cost.
 - Refined metals are beveled ingots: bright top, midtone face, dark end.
 - Ores are angular dark host rock with thick mineral veins, never ingots.
 - Stone and coal are faceted chunks; sand, dirt, and fuel are granular piles.
+- Coke is a blue-grey faceted chunk with dark pores, distinct from black coal
+  and green liquid fuel. Coke gas is a muted tan puff; its ember is cream-hot.
+- Cinderling Ash lays a dedicated cream-orange ember with abundant flames;
+  ordinary wood embers retain their darker, cooler appearance.
 - Wood has end grain and long bark lines; birch has pale bark and dark dashes.
 - Glass is an open frame with a diagonal reflection; masonry has mortar joints.
 - Liquids are shaded droplets, gases overlapping puffs, and flames tapered tongues.

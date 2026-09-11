@@ -503,6 +503,10 @@ enum MatId {
     MAT_WOOD_EMBER,
 
     MAT_FLOWER_SEED, /* falling seed; shares the tree/crop rooting system */
+    MAT_COKE,
+    MAT_COKE_EMBER,
+    MAT_COKE_GAS,
+    MAT_CINDERLING_EMBER, /* Cinderling Ash accessory's hotter flame trail */
 
     MAT_COUNT
 };

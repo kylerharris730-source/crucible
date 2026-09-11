@@ -250,6 +250,8 @@ static const BrushDef BRUSHES[] = {
     { MAT_REFRACTORY, "Refractory" },
     { MAT_COAL,    "Coal"   },
     { MAT_FUEL,    "Fuel"   },
+    { MAT_COKE,    "Coke"   },
+    { MAT_COKE_GAS,"Coke Gas" },
     { MAT_GRAPHENE,"Graphene"},
     { MAT_LAVA,  "Lava"  },
     { MAT_FIRE,  "Fire"  },
@@ -8631,6 +8633,44 @@ static void publishServerRegions() {
     }
 }
 
+/* --- every light that is not a cell ----------------------------------------
+   Drones, worn glow, torches and pedestals, and burning shots. Four calls, in
+   one place, because there are two callers and they were not making the same
+   four calls.
+
+   Reported from play as creatures spawning in a lit base. The renderer
+   registered all four and then solved the light; the SPAWNER cleared the list
+   and solved without registering anything, so the field it judged darkness by
+   had every torch and lamp in it -- those are cells -- and not one drone,
+   pedestal, worn lantern or burning bolt. An area could look lit and count as
+   pitch dark, and the places that happened hardest were exactly the places a
+   player stands: beside their own light drone, in a room lit by a pedestal.
+
+   The fix is not "add the calls to the other site". It is that there is no
+   other site: one function, and the two answers cannot drift again. */
+static void registerDynamicLights() {
+    lightClearDynamic();
+    droneRegisterLights();
+    accessoryRegisterLights();
+    devRegisterLights();
+    projRegisterLights();
+}
+
+/* The light field the SPAWNER judges darkness by, solved where the creature
+   would appear rather than where the camera is. Returns true, so the caller
+   can hand the answer straight to entSpawnTick as "the field is valid".
+
+   Deliberately not gated on g_lightOn. That flag is whether lighting is
+   DRAWN -- see its note in light.h -- and it lives on a sandbox button and the
+   K key. Letting it decide the spawn rule meant turning the lights off to look
+   at a contraption also turned off the protection your torches were buying,
+   and creatures started appearing in a base that was still full of light. */
+static bool solveSpawnLight(int camX, int camY) {
+    registerDynamicLights();
+    lightCompute(g_world, camX, camY);
+    return true;
+}
+
 static void serverTick(const LARGE_INTEGER& perfFrequency) {
     if (netRole() == NET_CLIENT) {
         if (!netReady()) { g_simMs = 0.0; return; }
@@ -8764,11 +8804,8 @@ static void serverTick(const LARGE_INTEGER& perfFrequency) {
                        Clobbering the field here is safe because rendering
                        recomputes it for the local camera further down this same
                        frame, and nothing between the two reads it. */
-                    const bool solveLight = g_lightOn && entSpawnReady();
-                    if (solveLight) {
-                        lightClearDynamic();
-                        lightCompute(g_world, spawnCamX, spawnCamY);
-                    }
+                    const bool solveLight = entSpawnReady() &&
+                                           solveSpawnLight(spawnCamX, spawnCamY);
                     entSpawnTick(g_world, session.body, spawnCamX, spawnCamY, solveLight);
                     break;
                 }
@@ -8824,11 +8861,7 @@ static void clientRender(HWND hwnd) {
     /* Light is computed for this camera position and consumed immediately
        by renderView. The two must agree about where the camera is, which
        is why this sits here and not up beside the sim step. */
-    lightClearDynamic();
-    droneRegisterLights();
-    accessoryRegisterLights();
-    devRegisterLights();
-    projRegisterLights();
+    registerDynamicLights();
     if (g_lightOn) lightUpdate(g_world, g_camX, g_camY);
     g_cellCount = renderView(g_world, g_pixels, g_view, g_camX, g_camY, g_lightOn);
     drawCelestials(g_pixels);
@@ -9451,6 +9484,55 @@ static int runLocalCommandSmoke() {
            row ceiling could cause. */
         if (g_crePanel.right - g_crePanel.left > VIEW_W) return 272;
         if (g_crePanel.bottom - g_crePanel.top > VIEW_H) return 273;
+    }
+
+    /* --- the spawner sees the same lights the renderer does ----------------
+       Reported from play, twice: "enemies still spawn in lit areas".
+
+       The renderer registered the four dynamic light sources -- drones, worn
+       glow, torches and pedestals, burning shots -- and then solved the field.
+       The spawner CLEARED that list and solved without registering any of
+       them, so it judged darkness by a field containing every lamp that is a
+       cell and not one that is an object. A pedestal-lit room, or the ground
+       beside your own light drone, looked lit and counted as pitch dark.
+
+       Checked here because the bug was never in the spawner or in the light
+       solver: both were right, and the wiring between them in this file was
+       not. Only this smoke links it.
+
+       Two properties, and the second is the other half of the report: a
+       display toggle must not decide the spawn rule. */
+    {
+        g_world.reset(); devClear(); entReset(); g_inv.clear();
+        const int SX = 1800, SY = 3600;
+        for (int y = SY - 200; y <= SY + 200; ++y)
+            for (int x = SX - 400; x <= SX + 400; ++x)
+                g_world.setCell(x, y, MAT_STONE);
+        for (int y = SY - 60; y <= SY + 8; ++y)
+            for (int x = SX - 300; x <= SX + 300; ++x)
+                g_world.setCell(x, y, MAT_EMPTY);
+        const int camX = SX - viewCellsW() / 2, camY = SY - viewCellsH() / 2;
+        g_world.setLiveWindow(camX - 200, camY - 200,
+                              camX + viewCellsW() + 200, camY + viewCellsH() + 200);
+        /* A pedestal holding something: a light that is an OBJECT rather than
+           a cell, which is exactly the kind the spawner could not see. */
+        if (!devPlace(g_world, DEV_PEDESTAL, SX, SY - 20)) return 274;
+        Device* plinth = devAt(SX, SY - 20);
+        if (!plinth) return 275;
+        pedestalSet(*plinth, (u16)ITEM_FORGE_CORE, 1);
+
+        solveSpawnLight(camX, camY);
+        if (lightAtWorld(SX, SY - 20) <= SPAWN_DARK) return 276;
+        /* And with the lights switched OFF for display, which used to skip the
+           solve entirely and hand the spawner a stale field. */
+        const bool wasLit = g_lightOn;
+        g_lightOn = false;
+        solveSpawnLight(camX, camY);
+        const bool litWithDisplayOff = lightAtWorld(SX, SY - 20) > SPAWN_DARK;
+        g_lightOn = wasLit;
+        if (!litWithDisplayOff) return 277;
+        devClear();
+        g_world.reset();
     }
 
     puts("local command loopback smoke passed");
