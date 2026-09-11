@@ -5,7 +5,7 @@ chat, which meant it was re-derived from memory every session and quietly lost
 things. `HANDOFF.md` is **not** this file: it is gitignored scratch, is usually
 stale, and should not be trusted for release state.
 
-Released: **v0.5.0** (2026-09-06). `main` is level with it.
+Released: **v0.6.0** (2026-09-10). `main` is level with it.
 
 ---
 
@@ -25,6 +25,20 @@ Released: **v0.5.0** (2026-09-06). `main` is level with it.
       unset, so nothing renders.
 
 ## Ship it
+
+- [x] **Cut v0.6.0.** Tagged 2026-09-10 from `fcc7586`, forty-three commits
+      past v0.5.0. The release the game can be FINISHED in: layer 3 is a place
+      with its own creatures, the Censer and the Effigy are in it, and the
+      rocket at the end of them can be built, fuelled, crewed and launched.
+      Not a 1.0 -- the shop, the wiki and the onboarding pass are still open,
+      and 1.0 should mean polished rather than merely complete.
+
+      Also in it: ten creature charms and four boss sigils, three post-Censer
+      armour lines and two resistance lines, six trinket slots, a sixty-slot
+      pack, wax with a survival source and three wild hives to get it from,
+      boss health bars, the lance/orbit/shield drones made to work, dropped
+      items drawn as themselves, and flowers that were silently broken since
+      they were written.
 
 - [x] **Cut v0.5.0.** Tagged 2026-09-06 from `ccfef57`, thirty-eight commits
       past v0.4.5. Not a 0.4.6: a layer-2 boss, a new tool tier and a change to
