@@ -47,6 +47,20 @@ mkdir -p "$OBJDIR"
 FLAGS="-std=c++11 -O1 -Wall -Wextra -I src"
 LIBS=""
 
+# The commit the wiki was generated from, and the game version it describes.
+# Both end up in every page's footer. The output is COMMITTED rather than
+# rebuilt on push, so without a stamp in the file there is no way to tell a
+# current wiki from one generated three releases ago except by regenerating it
+# and diffing -- which is exactly the check the stamp replaces.
+#
+# Only the generator's own translation unit gets these, not the 29 shared
+# objects: a define that changed every run would invalidate the whole object
+# cache on every single invocation and turn a one-second rebuild into a
+# thirty-second one.
+BUILD_ID=$(git rev-parse --short=12 HEAD 2>/dev/null || echo unknown)
+WIKI_VERSION=$(bash scripts/version.sh 2>/dev/null || echo unknown)
+GEN_FLAGS="-DWIKI_BUILD_ID=\"$BUILD_ID\" -DWIKI_VERSION=\"$WIKI_VERSION\""
+
 COMMON_SRC=$(ls src/*.cpp | grep -v '/main\.cpp$' | grep -v '/network\.cpp$')
 
 # Same blunt rule run_tests.sh uses, and for the same reason: judging staleness
@@ -79,7 +93,7 @@ done
 [ "$compiled" -gt 0 ] && echo "  compiled $compiled file(s)"
 
 echo "  linking $BIN"
-if ! $CXX $FLAGS tools/wiki.cpp $OBJS -o "$BIN" $LIBS; then
+if ! $CXX $FLAGS $GEN_FLAGS tools/wiki.cpp $OBJS -o "$BIN" $LIBS; then
     echo "run_wiki: failed to link the generator" >&2
     exit 1
 fi

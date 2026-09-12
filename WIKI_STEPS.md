@@ -61,12 +61,20 @@ other four stages assume.
       the tables are genuinely reachable: 116 / 293 / 290 / 180 / 141 / 6 / 27 /
       25 / 208, matching the plan exactly.
 
-- [ ] **1.2 The page template.**
+- [x] **1.2 The page template.**
       One function taking title + body and emitting doctype, `<head>`, nav,
       footer. Footer carries the **build stamp**: the short commit the generator
       was built from, passed in as `-DWIKI_BUILD_ID` exactly as `build_web.sh`
       does for the game.
       *Verify:* the stamp in the HTML equals `git rev-parse --short=12 HEAD`.
+      *Done 2026-09-11.* Stamp matches, and carries the game version beside it.
+      Two things fell out of building it: nav entries carry a `built` flag so a
+      section appears only once its pages exist — which is what keeps "the site
+      never regresses" true at every commit rather than only at the end — and
+      every link is depth-relative, so a generated page can be opened straight
+      off disk to proofread. A page that only works when served is a page nobody
+      proofreads. The stamp defines go to the generator's translation unit only;
+      on all 29 shared objects they would invalidate the whole cache every run.
 
 - [ ] **1.3 The stylesheet.**
       `web/wiki/wiki.css`, variables copied verbatim from `index.html`. Dark,
