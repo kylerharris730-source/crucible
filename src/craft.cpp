@@ -660,6 +660,10 @@ const Recipe RECIPES[] = {
       ITEM_ARITHMETIC_COMBINATOR, 1, "Arithmetic Combinator", STATION_ASSEMBLY },
     { { { (ItemId)MAT_COPPER, 2 }, { (ItemId)MAT_GOLD, 2 }, { ITEM_NONE, 0 } },
       ITEM_DECIDER_COMBINATOR, 1, "Decider Combinator", STATION_ASSEMBLY },
+    /* Cheap portable lighting, available without a crafting station. This is
+       a recipe, not a world reaction: coal + steam still makes Fuel. */
+    { { { (ItemId)MAT_COAL, 1 }, { (ItemId)MAT_WATER, 4 }, { ITEM_NONE, 0 } },
+      (ItemId)MAT_GLOWFLUID, 4, "4 GlowFluid", STATION_HAND },
 };
 
 const int N_RECIPES = (int)(sizeof(RECIPES) / sizeof(RECIPES[0]));
