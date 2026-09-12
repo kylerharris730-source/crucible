@@ -466,10 +466,22 @@ Three things the writing turned up, all corrections to what I had written:
       The cumulative rule lives in the markup (`class="cumulative"`,
       `data-kind` as a rank) rather than as a special case in the script, so one
       filter serves both this page and the creature depths.
-- [ ] **5.5 Creature art.** A second sprite sheet for the 26 creatures. Their
+- [x] **5.5 Creature art.** A second sprite sheet for the 26 creatures. Their
       canvases are six different sizes (22×36 up to 96×112), so unlike the item
       sheet the cells are not uniform and the packing is real work. Raised by
       2.4, which shipped creature pages as text.
+      *Done 2026-09-12 — and the premise above was wrong.* Measured, only
+      **five** creatures are rig-drawn at their own sizes (Shambler, Thresher,
+      Widow, Censer, Effigy). The other **21 are ordinary 14×14 sprites**,
+      exactly the size the item sheet already uses. So there is no second sheet
+      and no non-uniform packing: 21 more cells on the sheet that exists, sheet
+      224×280, **311 cells**, 15 KB.
+      The five keep no icon and say why on their own pages — squeezing a
+      96×112 boss into a 14×14 cell would make it look small, which is the one
+      thing a boss must not look like.
+      A worked example of the rule this project keeps relearning: the step was
+      filed as "real work" on an assumption, and measuring it first turned a
+      project into a loop.
 - [x] **5.4 A staleness check.** `run_wiki.sh` warns when the committed output's
       build stamp is behind `HEAD`, so a stale wiki announces itself.
       *Done 2026-09-12.* Reads the stamp out of the page already on disk and

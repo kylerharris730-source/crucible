@@ -3,7 +3,7 @@
    wiki.css is the hand-written half; this half is derived. */
 .icon {
     background-image: url("icons.png");
-    background-size: 448px 532px;
+    background-size: 448px 560px;
 }
 .i1 { background-position: -0px -0px; }
 .i2 { background-position: -28px -0px; }
@@ -295,3 +295,24 @@
 .i290 { background-position: -420px -476px; }
 .i291 { background-position: -0px -504px; }
 .i292 { background-position: -28px -504px; }
+.c1 { background-position: -56px -504px; }
+.c2 { background-position: -84px -504px; }
+.c3 { background-position: -112px -504px; }
+.c4 { background-position: -140px -504px; }
+.c5 { background-position: -168px -504px; }
+.c6 { background-position: -196px -504px; }
+.c7 { background-position: -224px -504px; }
+.c8 { background-position: -252px -504px; }
+.c11 { background-position: -280px -504px; }
+.c12 { background-position: -308px -504px; }
+.c13 { background-position: -336px -504px; }
+.c14 { background-position: -364px -504px; }
+.c15 { background-position: -392px -504px; }
+.c16 { background-position: -420px -504px; }
+.c18 { background-position: -0px -532px; }
+.c19 { background-position: -28px -532px; }
+.c20 { background-position: -56px -532px; }
+.c21 { background-position: -84px -532px; }
+.c23 { background-position: -112px -532px; }
+.c25 { background-position: -140px -532px; }
+.c26 { background-position: -168px -532px; }

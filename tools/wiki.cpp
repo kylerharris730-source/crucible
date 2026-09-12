@@ -286,12 +286,36 @@ static const int ICON_COLS = 16;
    look is that the cells are visible; 1.7x would be mush. */
 static const int ICON_ZOOM = 2;
 
-static void writeIcons(int* cellOfItem, int& sheetW, int& sheetH, int& count) {
+static void writeIcons(int* cellOfItem, int* cellOfCreature,
+                       int& sheetW, int& sheetH, int& count) {
     int n = 0;
     for (int i = ITEM_NONE + 1; i < ITEM_COUNT; ++i)
         cellOfItem[i] = ITEMS[i].maxStack ? n++ : -1;
-    count = n;
     if (n == 0) fail("no stackable items", "the item table looks empty");
+
+    /* --- creatures, on the same sheet ---------------------------------
+       WIKI_STEPS.md filed creature art as real work on the assumption that
+       their canvases are six different sizes, from 22x36 up to the Effigy's
+       96x112. Measured, that is only true of FIVE of them: the Shambler,
+       Thresher, Widow, Censer and Effigy are drawn from rigs, and the other
+       21 are ordinary 14x14 sprites -- exactly the size the item sheet
+       already uses.
+
+       So there is no second sheet and no non-uniform packing. They are 21
+       more cells on the sheet that exists, and the five rigged ones get no
+       icon and a page that says why rather than a wrong small picture of a
+       boss, which is the one thing a boss must not look like. */
+    for (int t = 0; t < ENT_COUNT; ++t) cellOfCreature[t] = -1;
+    for (int t = 1; t < ENT_COUNT; ++t) {
+        if (ENT_DEFS[t].sprite == SPR_NONE) continue;
+        if (ENT_DEFS[t].sprite >= SPR_COUNT) continue;
+        cellOfCreature[t] = n++;
+    }
+
+    /* Counted after both, because the number this prints is the number of cells
+       on the sheet, and reporting a count that is quietly only half of what it
+       describes is the exact habit this project exists to break. */
+    count = n;
 
     const int cols = ICON_COLS;
     const int rows = (n + cols - 1) / cols;
@@ -333,6 +357,39 @@ static void writeIcons(int* cellOfItem, int& sheetW, int& sheetH, int& count) {
             ++blank;
         }
     }
+    /* The creature cells, from the same 14x14 canvases. No blank check on
+       these: unlike dropArt, nothing in the game guarantees a creature sprite
+       is non-empty, and a creature whose art is genuinely blank should show as
+       blank rather than stop the build -- it is a sprite bug, not a wiki one.
+       Counted instead, and printed, so it is visible either way. */
+    int blankCreatures = 0;
+    for (int t = 1; t < ENT_COUNT; ++t) {
+        const int cell = cellOfCreature[t];
+        if (cell < 0) continue;
+        const u32* art = g_sprite[ENT_DEFS[t].sprite];
+        if (!art) { cellOfCreature[t] = -1; continue; }
+        const int ox = (cell % cols) * SPR_W;
+        const int oy = (cell / cols) * SPR_H;
+        int drawn = 0;
+        for (int y = 0; y < SPR_H; ++y) {
+            for (int x = 0; x < SPR_W; ++x) {
+                const u32 px = art[y * SPR_W + x];
+                if (!px) continue;
+                ++drawn;
+                unsigned char* p =
+                    rgba + (((size_t)(oy + y) * sheetW) + (ox + x)) * 4;
+                p[0] = (unsigned char)((px >> 16) & 0xFF);
+                p[1] = (unsigned char)((px >> 8) & 0xFF);
+                p[2] = (unsigned char)(px & 0xFF);
+                p[3] = 255;
+            }
+        }
+        if (!drawn) { ++blankCreatures; cellOfCreature[t] = -1; }
+    }
+    if (blankCreatures)
+        printf("wiki: %d creature sprite(s) are blank and get no icon\n",
+               blankCreatures);
+
     /* An invisible icon is the one failure a reader cannot work around, because
        they cannot see there is anything to work around. tests/dropped_items.cpp
        guards the same property in game; this refuses to publish. */
@@ -371,6 +428,16 @@ static void writeIcons(int* cellOfItem, int& sheetW, int& sheetH, int& count) {
         const int cell = cellOfItem[i];
         if (cell < 0) continue;
         fprintf(f, ".i%d { background-position: -%dpx -%dpx; }\n", i,
+                (cell % cols) * SPR_W * ICON_ZOOM,
+                (cell / cols) * SPR_H * ICON_ZOOM);
+    }
+    /* Creatures get .c classes rather than .i, because their ids are a
+       different space and a collision would silently draw a bat where a
+       material should be. */
+    for (int t = 1; t < ENT_COUNT; ++t) {
+        const int cell = cellOfCreature[t];
+        if (cell < 0) continue;
+        fprintf(f, ".c%d { background-position: -%dpx -%dpx; }\n", t,
                 (cell % cols) * SPR_W * ICON_ZOOM,
                 (cell / cols) * SPR_H * ICON_ZOOM);
     }
@@ -1559,7 +1626,8 @@ static void writeLayers(FILE* f, u8 mask, bool isBoss) {
     if (first) fputs(isBoss ? "summoned" : "nowhere it spawns on its own", f);
 }
 
-static void writeCreaturePage(int type, const int* cellOfItem) {
+static void writeCreaturePage(int type, const int* cellOfItem,
+                              const int* cellOfCreature) {
     const EntityDef& e = ENT_DEFS[type];
     char slug[128], file[192];
     slugify(slug, sizeof(slug), e.name);
@@ -1567,6 +1635,8 @@ static void writeCreaturePage(int type, const int* cellOfItem) {
 
     FILE* f = pageOpen(file, 1, e.name, "creatures");
     fputs("<h1>", f);
+    if (cellOfCreature[type] >= 0)
+        fprintf(f, "<span class=\"icon c%d\"></span> ", type);
     escapeTo(f, e.name);
     fputs("</h1>\n", f);
 
@@ -1624,11 +1694,21 @@ static void writeCreaturePage(int type, const int* cellOfItem) {
         fputs("</dl>\n", f);
     }
 
+    /* No picture, and the reason rather than a blank space. These five are
+       drawn from rigs at their own sizes -- up to the Effigy's 96x112 -- and
+       squeezing one into a 14x14 cell would make a boss look small, which is
+       the single thing a boss must not look like. */
+    if (cellOfCreature[type] < 0)
+        fprintf(f, "<p class=\"n\">No picture here: this one is drawn from a rig "
+                   "at %d&times;%d rather than from a small sprite, and shrinking "
+                   "it to icon size would misrepresent how big it is.</p>\n",
+                e.w, e.h);
+
     fputs("<p class=\"n\"><a href=\"index.html\">&larr; all creatures</a></p>\n", f);
     pageClose(f, 1);
 }
 
-static void writeCreatures(const int* cellOfItem) {
+static void writeCreatures(const int* cellOfItem, const int* cellOfCreature) {
     ensureDir("web/wiki/creatures");
 
     static char slugs[64][128];
@@ -1637,7 +1717,7 @@ static void writeCreatures(const int* cellOfItem) {
         for (int j = 1; j < t; ++j)
             if (strcmp(slugs[t], slugs[j]) == 0)
                 fail("two creatures share a page filename", ENT_DEFS[t].name);
-        writeCreaturePage(t, cellOfItem);
+        writeCreaturePage(t, cellOfItem, cellOfCreature);
     }
 
     FILE* f = pageOpen("creatures/index.html", 1, "Creatures", "creatures");
@@ -1696,7 +1776,10 @@ static void writeCreatures(const int* cellOfItem) {
 
             fprintf(f, "<tr data-kind=\"%d\" data-search=\"", shallowest);
             escapeTo(f, e.name);
-            fputs("\">\n<td><a href=\"", f);
+            fputs("\">\n<td>", f);
+            if (cellOfCreature[t] >= 0)
+                fprintf(f, "<span class=\"icon c%d\"></span>", t);
+            fputs("<a href=\"", f);
             fputs(slugs[t], f);
             fputs(".html\">", f);
             escapeTo(f, e.name);
@@ -2537,8 +2620,9 @@ int main() {
     ensureDir(OUT_DIR);
 
     static int cellOfItem[ITEM_COUNT];
+    static int cellOfCreature[ENT_COUNT];
     int sheetW = 0, sheetH = 0, iconCount = 0;
-    writeIcons(cellOfItem, sheetW, sheetH, iconCount);
+    writeIcons(cellOfItem, cellOfCreature, sheetW, sheetH, iconCount);
 
     /* Before any page is written: both directions of the recipe table, so a
        page can say what a thing is for as readily as what it is made of. */
@@ -2547,7 +2631,7 @@ int main() {
     writeMaterialIndex(cellOfItem);
     writeItems(cellOfItem);
     writeRecipes(cellOfItem);
-    writeCreatures(cellOfItem);
+    writeCreatures(cellOfItem, cellOfCreature);
     writeDevices();
     writeProse();
 
