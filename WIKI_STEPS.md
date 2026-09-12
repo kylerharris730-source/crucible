@@ -298,23 +298,51 @@ flatly unmaintainable by hand.
       Creature drops are on the same block — "dropped by" is the other half of
       "where do I get one", and no recipe table holds it.
 
-- [ ] **3.2 Heat chains.** `igniteTemp → burnsTo`, `boilTemp → boilsTo`,
+- [x] **3.2 Heat chains.** `igniteTemp → burnsTo`, `boilTemp → boilsTo`,
       `coolTemp → coolsTo`, rendered as a linked chain, plus `g_matDecaysTo`.
       *Verify:* walk the fuel chain — Fuel → Coke → Coke Ember — entirely by
       clicking, and check every temperature against the table.
+      *Done 2026-09-11.* The walk **failed first time**, and the failure is the
+      point: Fuel linked only to Fuel Fire. **Fuel → Coke is not in any table** —
+      it is the retort rule in `world.cpp`, and a retort is not an item, not a
+      recipe and not a row, so no amount of reading the tables finds it.
+      Fixed with an explicitly authored `CODE_RULES[]` list in the generator —
+      a LIST rather than a loosened rule, the same shape
+      `tests/item_descriptions.cpp` already uses. Four entries, all in the coke
+      chain. Kept short on purpose: a long list there means the generator is
+      missing a column. The drift guard checks it by name, since an authored
+      list is the one part that can rot.
+      Also added, all genuinely derivable: alloying, wetting and dissolving,
+      which are reactions with a partner rather than with a temperature.
+      Temperatures re-checked against `MATS[]`: Fuel ignites 135 °C, Coke
+      150 °C, thermal mass 2× and 4×. All correct.
 
-- [ ] **3.3 Mining and drops.** `g_matStrength` → which tool tier clears it,
+- [x] **3.3 Mining and drops.** `g_matStrength` → which tool tier clears it,
       `g_matDropsAs`, `g_matSmeltYield`.
       *Verify:* a material whose drop differs from itself shows the difference;
       the tool tier named actually has the radius to do it.
+      *Done 2026-09-11.* Four materials drop something other than themselves
+      (the two seed pods, Flower → Flower Seed, Open Door → Door) and each
+      shows it. The second half of this check is **moot** and 2.1 says why: the
+      mining ladder is uniform by design, so there is no tier to name.
 
-- [ ] **3.4 Creature drops and their uses.** Drop → item page → what it is for.
+- [x] **3.4 Creature drops and their uses.** Drop → item page → what it is for.
       *Verify:* a charm reachable from its creature in two clicks.
+      *Done 2026-09-11.* **One click, both ways.** Rock Mite → Carapace Charm,
+      and the charm page says "Dropped by Rock Mite — rarely, about 1 kill in
+      50". Landed with 2.4 and 3.1 rather than needing work of its own.
 
-- [ ] **3.5 Orphan sweep.** Extend `tests/wiki.cpp`: every page reachable from
+- [x] **3.5 Orphan sweep.** Extend `tests/wiki.cpp`: every page reachable from
       the hub in ≤3 clicks, and nothing links to a page that links nowhere.
       *Verify:* the test reports the click depth, so a regression is visible as a
       number rather than a pass/fail.
+      *Done 2026-09-11.* **355 pages reachable, furthest 2 clicks**, 7,765
+      internal links (5,898 before the cross-links).
+      Both branches proven non-vacuous. Stripping Tungsten&rsquo;s link from the
+      index did **not** orphan it — cross-links still reached it — but the depth
+      moved 2 → 3, which is exactly the regression signal a number gives and a
+      pass/fail would have hidden. Stripping Clone&rsquo;s link, which nothing
+      else references, failed the check outright.
 
 ---
 

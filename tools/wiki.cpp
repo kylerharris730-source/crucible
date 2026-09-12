@@ -663,6 +663,85 @@ static void writeTransition(FILE* f, const char* when, u8 stored, u8 becomes,
     fputs("</a></div>\n", f);
 }
 
+/* A reaction with a partner rather than a temperature: "touching Steam →
+   becomes Coal Wax", "mixed with Tin Melt → makes Bronze Melt". Both halves
+   have to be real or there is no reaction to describe. */
+static void writeReaction(FILE* f, const char* verb, u8 partner,
+                          const char* becomesWord, u8 result) {
+    if (!partner || partner >= MAT_COUNT) return;
+    if (!result || result >= MAT_COUNT) return;
+    char ps[128], rs[128];
+    slugify(ps, sizeof(ps), MATS[partner].name);
+    slugify(rs, sizeof(rs), MATS[result].name);
+    fprintf(f, "<div class=\"chain\"><span>%s <a href=\"%s.html\">", verb, ps);
+    escapeTo(f, MATS[partner].name);
+    fprintf(f, "</a></span><span class=\"arrow\">&rarr;</span>"
+               "<span>%s <a href=\"%s.html\">", becomesWord, rs);
+    escapeTo(f, MATS[result].name);
+    fputs("</a></span></div>\n", f);
+}
+
+/* --- the rules that are not in any table ---------------------------------
+
+   Almost everything on this site is derived, and where it is not, WIKI.md
+   requires the exception to be a LIST rather than a loosened rule -- the same
+   shape tests/item_descriptions.cpp already uses for the handful of materials
+   allowed a description.
+
+   This is that list. Each entry is a relationship between two materials that
+   the game really implements but that lives in world.cpp as a special case
+   rather than in a column, so no amount of reading the tables will find it.
+
+   The fuel-to-coke chain is the whole reason this exists, and it is not a
+   marginal case: it is the most consequential process in the game -- coke
+   ember at 215 C is the only thing that smelts titanium and tungsten -- and
+   before this the Fuel page linked only to Fuel Fire. A reader could walk
+   Coke to Coke Ember by clicking and could never get from Fuel to Coke at
+   all, because that step is the retort rule and a retort is not an item, not
+   a recipe, and not a row.
+
+   Keep this SHORT. A long list here means the generator is missing a column.
+   The test asserts every id in it is real, so a renumbering cannot rot it
+   quietly. */
+struct CodeRule {
+    u8 from;
+    u8 to;
+    const char* how;
+};
+
+static const CodeRule CODE_RULES[] = {
+    { MAT_FUEL, MAT_COKE,
+      "sealed away from air and flame and heated past 125&nbsp;&deg;C, two "
+      "cells of fuel become one of coke and one of coke gas" },
+    { MAT_FUEL, MAT_COKE_GAS,
+      "the other half of coking, and it needs somewhere to go &mdash; vent it "
+      "through gas sieve" },
+    { MAT_COKE, MAT_FUEL,
+      "coke is made by coking fuel in a sealed vessel, not by a recipe" },
+    { MAT_COKE_GAS, MAT_FUEL,
+      "given off when fuel is coked" },
+};
+static const int N_CODE_RULES =
+    (int)(sizeof(CODE_RULES) / sizeof(CODE_RULES[0]));
+
+static void writeCodeRules(FILE* f, int id) {
+    bool any = false;
+    for (int i = 0; i < N_CODE_RULES; ++i) {
+        if (CODE_RULES[i].from != id) continue;
+        if (!any) {
+            fputs("<h2>Also becomes</h2>\n<ul>\n", f);
+            any = true;
+        }
+        char slug[128];
+        slugify(slug, sizeof(slug), MATS[CODE_RULES[i].to].name);
+        fprintf(f, "<li><a href=\"%s.html\">", slug);
+        escapeTo(f, MATS[CODE_RULES[i].to].name);
+        fprintf(f, "</a> <span class=\"dim\">&mdash; %s</span></li>\n",
+                CODE_RULES[i].how);
+    }
+    if (any) fputs("</ul>\n", f);
+}
+
 static void writeMaterialPage(int id, const int* cellOfItem) {
     const MatInfo& m = MATS[id];
     char slug[128], file[192];
@@ -778,6 +857,24 @@ static void writeMaterialPage(int id, const int* cellOfItem) {
         writeTransition(f, "ignites at", m.igniteTemp, m.burnsTo, "");
         writeTransition(f, "at", m.boilTemp, m.boilsTo, "or above");
         writeTransition(f, "below", m.coolTemp, m.coolsTo, "");
+
+        /* Reactions that are not about temperature but belong in the same
+           chain, because a reader following "what does this turn into" does not
+           care which table the answer came out of. All three are derivable:
+           alloying, wetting and dissolving each have their own pair of tables. */
+        writeReaction(f, "touching", g_matWetBy[id], "becomes", g_matWetInto[id]);
+        writeReaction(f, "mixed with", g_matAlloyWith[id], "makes",
+                      g_matAlloysTo[id]);
+        if (g_matDissolvedBy[id] && g_matDissolvedBy[id] < MAT_COUNT) {
+            char ds[128];
+            slugify(ds, sizeof(ds), MATS[g_matDissolvedBy[id]].name);
+            fputs("<div class=\"chain\"><span>dissolved by</span>"
+                  "<span class=\"arrow\">&rarr;</span><a href=\"", f);
+            fputs(ds, f);
+            fputs(".html\">", f);
+            escapeTo(f, MATS[g_matDissolvedBy[id]].name);
+            fputs("</a></div>\n", f);
+        }
         if (g_matDecay[id] && g_matDecaysTo[id] && g_matDecaysTo[id] < MAT_COUNT) {
             char ds[128];
             slugify(ds, sizeof(ds), MATS[g_matDecaysTo[id]].name);
@@ -828,6 +925,7 @@ static void writeMaterialPage(int id, const int* cellOfItem) {
         fputs("</dl>\n", f);
     }
 
+    writeCodeRules(f, id);
     writeCrossLinks(f, (ItemId)id, cellOfItem);
 
     fputs("<p class=\"n\"><a href=\"index.html\">&larr; all materials</a></p>\n", f);

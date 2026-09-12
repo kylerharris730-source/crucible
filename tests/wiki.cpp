@@ -308,6 +308,81 @@ int main() {
         check(dead == 0, "and every one of them lands on a file that exists");
     }
 
+    /* --- can a reader actually get there? -------------------------------
+
+       A page that exists and that nothing links to is not on the site in any
+       sense a reader cares about. Every earlier check asks whether pages exist
+       and whether links work; this one walks the site the way a person does,
+       from the hub outward, and asks how far away the furthest page is.
+
+       Reported as a NUMBER rather than a pass/fail, so a regression shows up as
+       the depth creeping from 2 to 4 rather than as a check that silently
+       still passes. The cap is three clicks: hub, index, page. Anything past
+       that means a section has grown a layer nobody planned. */
+    {
+        std::set<std::string> seen;
+        std::vector<std::string> frontier;
+        std::vector<std::string> next;
+        frontier.push_back("index.html");
+        seen.insert("index.html");
+
+        int depth = 0, deepest = 0;
+        while (!frontier.empty() && depth < 12) {
+            next.clear();
+            for (size_t i = 0; i < frontier.size(); ++i) {
+                const std::string here = frontier[i];
+                const std::string page = readFile(wikiPath(here));
+                std::string dir = here;
+                const size_t slash = dir.rfind('/');
+                dir = (slash == std::string::npos) ? std::string()
+                                                   : dir.substr(0, slash + 1);
+                size_t at = 0;
+                while ((at = page.find("href=\"", at)) != std::string::npos) {
+                    at += 6;
+                    const size_t end = page.find('"', at);
+                    if (end == std::string::npos) break;
+                    std::string href = page.substr(at, end - at);
+                    at = end;
+                    if (href.empty() || href[0] == '#' || href[0] == '/') continue;
+                    if (href.compare(0, 4, "http") == 0) continue;
+                    if (href.size() < 5 ||
+                        href.compare(href.size() - 5, 5, ".html") != 0) continue;
+
+                    std::string full = dir + href;
+                    size_t up;
+                    while ((up = full.find("../")) != std::string::npos) {
+                        if (up == 0) { full = full.substr(3); continue; }
+                        size_t prev = full.rfind('/', up - 2);
+                        full = (prev == std::string::npos)
+                             ? full.substr(up + 3)
+                             : full.substr(0, prev + 1) + full.substr(up + 3);
+                    }
+                    /* Links that climb out of web/wiki (the game page) are not
+                       part of the wiki's own graph. */
+                    if (!fileExists(wikiPath(full))) continue;
+                    if (seen.count(full)) continue;
+                    seen.insert(full);
+                    next.push_back(full);
+                }
+            }
+            if (!next.empty()) { ++depth; deepest = depth; }
+            frontier = next;
+        }
+
+        int unreachable = 0;
+        for (size_t i = 0; i < expected.size(); ++i) {
+            if (seen.count(expected[i].path)) continue;
+            if (unreachable < 8)
+                printf("  nothing links to %s (%s)\n",
+                       expected[i].what.c_str(), expected[i].path.c_str());
+            ++unreachable;
+        }
+        printf("  %d pages reachable from the hub, furthest is %d click(s) away\n",
+               (int)seen.size(), deepest);
+        check(unreachable == 0, "every page can be reached from the hub");
+        check(deepest <= 3, "and none of them is more than three clicks away");
+    }
+
     /* --- the prose pages were rendered ---------------------------------- */
     {
         /* Named here rather than read from the generator, so removing a page
@@ -336,6 +411,20 @@ int main() {
             }
         }
         check(wrong == 0, "every material page names its own material");
+    }
+
+    /* --- the authored exception list is still real ----------------------
+       tools/wiki.cpp carries a short list of relationships that live in
+       world.cpp rather than in a table -- the fuel-to-coke chain above all.
+       Being authored, it is the one part of the generator that CAN rot: ids
+       renumber, materials get renamed. Checked by name so that it does. */
+    {
+        const std::string fuel = readFile(wikiPath("materials/fuel.html"));
+        const std::string coke = readFile(wikiPath("materials/coke.html"));
+        check(fuel.find("coke.html") != std::string::npos,
+              "fuel links to coke, which no table says it becomes");
+        check(coke.find("coke-ember.html") != std::string::npos,
+              "and coke links on to coke ember");
     }
 
     if (failures) {
