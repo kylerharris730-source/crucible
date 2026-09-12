@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Search &middot; Cinderlift wiki</title>
+<link rel="stylesheet" href="wiki.css">
+<link rel="stylesheet" href="icons.css">
+<link rel="icon" href="../favicon.ico">
+<script src="wiki.js" defer></script>
+</head>
+<body>
+<header class="top">
+<a class="brand" href="index.html">Cinderlift <span>wiki</span></a>
+<nav>
+<a href="index.html">Home</a>
+<a href="guide/index.html">Guide</a>
+<a href="materials/index.html">Materials</a>
+<a href="items/index.html">Items</a>
+<a href="recipes/index.html">Recipes</a>
+<a href="creatures/index.html">Creatures</a>
+<a href="devices/index.html">Devices</a>
+<a class="here" href="search.html">Search</a>
+</nav>
+</header>
+<main>
+<h1>Search</h1>
+<p class="lede">Every page on the wiki, by name.</p>
+<div class="filterbar">
+<input id="q" type="search" autofocus placeholder="Type a name…" aria-label="Search the wiki">
+<span class="count" id="n"></span>
+</div>
+<ul id="results"></ul>
+<noscript><p>Search needs JavaScript. The indexes work without it:</p></noscript>
+<h2>Or browse</h2>
+<ul>
+<li><a href="guide/index.html">Guide</a></li>
+<li><a href="materials/index.html">Materials</a></li>
+<li><a href="items/index.html">Items</a></li>
+<li><a href="recipes/index.html">Recipes</a></li>
+<li><a href="creatures/index.html">Creatures</a></li>
+<li><a href="devices/index.html">Devices</a></li>
+</ul>
+<script src="searchdata.js"></script>
+<script src="search.js"></script>
+</main>
+<footer>
+<p>Generated from the game&rsquo;s own tables &mdash; every number on
+this page was read out of the source, not copied into it.</p>
+<p class="stamp">Built from <code>bbf37c6479c0</code> &middot; Cinderlift 0.6.1.18 &middot; <a href="../index.html">the game</a></p>
+</footer>
+</body>
+</html>

@@ -430,8 +430,21 @@ Three things the writing turned up, all corrections to what I had written:
 
 ## Stage 5 — polish
 
-- [ ] **5.1 Search.** Client-side over a generated index; works with JS off by
+- [x] **5.1 Search.** Client-side over a generated index; works with JS off by
       degrading to the indexes.
+      *Done 2026-09-12.* **363 pages indexed.** "iron" returns 7, with Iron
+      before Iron Sword before Molten Iron — prefix matches ordered ahead of
+      substring ones, which is the only cleverness in it. Deliberately a plain
+      substring match: a fuzzy matcher that silently reorders is worse than no
+      search on a reference site, because a reader cannot tell whether what they
+      wanted is absent or merely ranked fourteenth.
+      The index is the one second copy of anything on the site, so worth being
+      precise: WIKI.md forbids a copy that can DISAGREE, and this one is emitted
+      in the same pass from the same page list, so it cannot name a page that
+      does not exist or miss one that does. A projection, not a duplicate.
+      Written as JS rather than JSON so there is no fetch — a `file://` copy of
+      the wiki searches as readily as the served one. `?q=` pre-fills, so a
+      search is a shareable link.
 - [ ] **5.2 Navigation by shape.** Depth bands for creatures, stations for
       recipes, tiers for items.
 - [ ] **5.3 "What can I make now?"** Pick the tools and stations you have; the

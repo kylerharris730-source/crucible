@@ -1483,4 +1483,8 @@
     <loc>https://cinderlift.com/wiki/</loc>
     <changefreq>weekly</changefreq>
   </url>
+  <url>
+    <loc>https://cinderlift.com/wiki/search.html</loc>
+    <changefreq>weekly</changefreq>
+  </url>
 </urlset>
