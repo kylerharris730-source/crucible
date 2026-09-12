@@ -99,7 +99,7 @@ static Section SECTIONS[] = {
     { "",           "Home",      true  },
     { "guide",      "Guide",     true  },
     { "materials",  "Materials", true  },
-    { "items",      "Items",     false },
+    { "items",      "Items",     true  },
     { "recipes",    "Recipes",   false },
     { "creatures",  "Creatures", false },
     { "devices",    "Devices",   false },
@@ -497,15 +497,26 @@ static void writeTemp(FILE* f, u8 stored) {
 
    "Used in", "Found" and the rest of the cross-links are stage 3. */
 
+/* One step of a transition chain: "ignites at 135 °C → Fuel Fire".
+
+   MAT_EMPTY is the case worth naming. It is a perfectly ordinary target -- fire
+   burns out to nothing, and several materials simply vanish -- but it has no
+   page, because air is not a substance anyone looks up. Linking it produced
+   eight dead links to empty.html, which the link sweep caught and reading the
+   code did not. It is written as words instead, which is also what it means. */
 static void writeTransition(FILE* f, const char* when, u8 stored, u8 becomes,
                             const char* comparison) {
     if (!stored || becomes >= MAT_COUNT) return;
-    char slug[128];
-    slugify(slug, sizeof(slug), MATS[becomes].name);
     const int c = (int)stored - TEMP_OFFSET;
     fprintf(f, "<div class=\"chain\"><span>%s %s %d&nbsp;&deg;C</span>"
-               "<span class=\"arrow\">&rarr;</span>"
-               "<a href=\"%s.html\">", when, comparison, c, slug);
+               "<span class=\"arrow\">&rarr;</span>", when, comparison, c);
+    if (becomes == MAT_EMPTY) {
+        fputs("<span>nothing &mdash; it is gone</span></div>\n", f);
+        return;
+    }
+    char slug[128];
+    slugify(slug, sizeof(slug), MATS[becomes].name);
+    fprintf(f, "<a href=\"%s.html\">", slug);
     escapeTo(f, MATS[becomes].name);
     fputs("</a></div>\n", f);
 }
@@ -790,6 +801,284 @@ static void writeMaterialIndex(const int* cellOfItem) {
           "which is why an iron wall cooks what is behind it and a refractory\n"
           "one does not.</p>\n", f);
 
+    pageClose(f, 1);
+}
+
+/* --- items ---------------------------------------------------------------
+
+   The Items section covers what is NOT a material. Ids below MAT_COUNT are
+   materials -- a stack of stone IS ITEM(MAT_STONE) -- and they already have
+   their own section with heat, mining and behaviour on every page. Listing
+   them a second time here would give a reader two pages about stone that agree
+   today and could disagree tomorrow, which is the failure this whole generator
+   exists to rule out. The index says so rather than quietly being short. */
+
+static const char* ITEM_KIND_LABELS[] = {
+    "Material", "Tool", "Throwable", "Module", "Drone module", "Accessory",
+    "Worn", "Mining", "Seed", "Device", "Egg", "Igniter", "Food", "Melee",
+    "Component", "Spark"
+};
+/* If a kind is added and this list is not, every item of the new kind would be
+   labelled by whatever happened to be at that index -- silently, and plausibly.
+   The compiler checks instead. */
+static_assert((int)(sizeof(ITEM_KIND_LABELS) / sizeof(ITEM_KIND_LABELS[0]))
+              == (int)ITEMK_SPARK + 1,
+              "ITEM_KIND_LABELS is out of step with enum ItemKind");
+
+static const char* EQUIP_LABELS[] = {
+    "Feet", "Back", "Trinket", "Trinket", "Head", "Body",
+    "Trinket", "Trinket", "Trinket", "Trinket"
+};
+
+static const char* itemKindLabel(u8 kind) {
+    const int n = (int)(sizeof(ITEM_KIND_LABELS) / sizeof(ITEM_KIND_LABELS[0]));
+    return (kind < n) ? ITEM_KIND_LABELS[kind] : "?";
+}
+
+/* A worn item's slot, in the words the equipment screen uses. The six trinket
+   slots are interchangeable, so they are all just "Trinket" -- naming one
+   would suggest a distinction the game does not make. */
+static const char* equipLabel(u8 slot) {
+    const int n = (int)(sizeof(EQUIP_LABELS) / sizeof(EQUIP_LABELS[0]));
+    return (slot < n && slot < EQ_COUNT) ? EQUIP_LABELS[slot] : NULL;
+}
+
+static void writeItemPage(int id, const int* cellOfItem) {
+    const ItemDef& it = ITEMS[id];
+    char slug[128], file[192];
+    slugify(slug, sizeof(slug), it.name);
+    snprintf(file, sizeof(file), "items/%s.html", slug);
+
+    FILE* f = pageOpen(file, 1, it.name, "items");
+
+    fputs("<h1>", f);
+    if (cellOfItem[id] >= 0) fprintf(f, "<span class=\"icon i%d\"></span> ", id);
+    escapeTo(f, it.name);
+    fputs("</h1>\n", f);
+
+    /* The authored description, VERBATIM. It is the text the player reads in
+       game; a paraphrase here is a second wording of one object, which is how a
+       wiki starts feeling untrustworthy. */
+    fputs("<p class=\"lede\">", f);
+    escapeTo(f, itemKindLabel(it.kind));
+    if (it.description && it.description[0]) {
+        fputs(" &mdash; ", f);
+        escapeTo(f, it.description);
+    }
+    fputs("</p>\n", f);
+
+    fputs("<h2>What it does</h2>\n<dl class=\"stats\">\n", f);
+
+    if (it.maxStack > 1)
+        fprintf(f, "<dt>Stacks to</dt><dd>%u</dd>\n", (unsigned)it.maxStack);
+
+    if (it.kind == ITEMK_MINING) {
+        fprintf(f, "<dt>Radius</dt><dd>%d cells</dd>\n", (int)it.mineRadius);
+        fprintf(f, "<dt>Bite</dt><dd>%u cells per swing</dd>\n",
+                (unsigned)it.mineBite);
+        if (it.mineCooldown)
+            fprintf(f, "<dt>Cooldown</dt><dd>%d frames (%.2f s)</dd>\n",
+                    (int)it.mineCooldown, (double)it.mineCooldown / 60.0);
+        if (it.minePlantsOnly)
+            fputs("<dt>Cuts</dt><dd>only what grew &mdash; it will not touch "
+                  "rock</dd>\n", f);
+    }
+
+    if (it.kind == ITEMK_TOOL) {
+        fprintf(f, "<dt>Module slots</dt><dd>%d</dd>\n", (int)it.toolSlots);
+        fprintf(f, "<dt>Base delay</dt><dd>%d frames between shots</dd>\n",
+                (int)it.baseDelay);
+        if (it.energyCapacity)
+            fprintf(f, "<dt>Charge</dt><dd>holds %u, recovers %d per frame</dd>\n",
+                    (unsigned)it.energyCapacity, (int)it.energyRecharge);
+        fputs("<dt>Damage</dt><dd>none of its own &mdash; what a tool does "
+              "lives on the modules you put in it</dd>\n", f);
+    }
+
+    if (it.damage)
+        fprintf(f, "<dt>Damage</dt><dd>%d</dd>\n", it.damage);
+    if (it.pierce)
+        fprintf(f, "<dt>Pierce</dt><dd>%d cells before it is spent</dd>\n",
+                (int)it.pierce);
+    if (it.blast)
+        fprintf(f, "<dt>Blast</dt><dd>%d cells</dd>\n", (int)it.blast);
+    if (it.power)
+        fprintf(f, "<dt>Breaks</dt><dd>up to %s terrain</dd>\n",
+                strengthWord(it.power));
+    if (it.shotHoming > 0.0f)
+        fputs("<dt>Homing</dt><dd>steers toward what it is aimed at</dd>\n", f);
+    if (it.energyCost)
+        fprintf(f, "<dt>Charge per shot</dt><dd>%u</dd>\n",
+                (unsigned)it.energyCost);
+    if (it.addDelay)
+        fprintf(f, "<dt>Delay</dt><dd>%+d frames</dd>\n", (int)it.addDelay);
+
+    if (it.heal)
+        fprintf(f, "<dt>Restores</dt><dd>%d health</dd>\n", (int)it.heal);
+
+    /* Worn gear. The largest-never-summed rule is counter-intuitive and costs
+       players real material when they stack two cheap trinkets expecting them
+       to add up, so it is said on every page that has a bonus rather than
+       tucked into a tutorial nobody has read yet. */
+    const char* slotName = (it.kind == ITEMK_WORN || it.kind == ITEMK_ACCESSORY)
+                         ? equipLabel(it.equipSlot) : NULL;
+    if (slotName) {
+        fputs("<dt>Worn on</dt><dd>", f);
+        escapeTo(f, slotName);
+        fputs("</dd>\n", f);
+    }
+    bool anyBonus = false;
+    if (it.reachBonus) {
+        fprintf(f, "<dt>Reach</dt><dd>+%d cells</dd>\n", (int)it.reachBonus);
+        anyBonus = true;
+    }
+    if (it.speedPct) {
+        fprintf(f, "<dt>Ground speed</dt><dd>+%d%%</dd>\n", (int)it.speedPct);
+        anyBonus = true;
+    }
+    if (it.heatResist)
+        fprintf(f, "<dt>Heat protection</dt><dd>%d&nbsp;&deg;C</dd>\n",
+                (int)it.heatResist);
+    if (it.coldResist)
+        fprintf(f, "<dt>Cold protection</dt><dd>%d&nbsp;&deg;C</dd>\n",
+                (int)it.coldResist);
+    if (it.armour)
+        fprintf(f, "<dt>Armour</dt><dd>%d off every hit &mdash; helmet and suit "
+                   "DO add together</dd>\n", (int)it.armour);
+    if (it.fly.thrust > 0.0f)
+        fputs("<dt>Flight</dt><dd>yes</dd>\n", f);
+
+    if (it.kind == ITEMK_EGG && it.summons < ENT_COUNT) {
+        fputs("<dt>Releases</dt><dd>", f);
+        escapeTo(f, ENT_DEFS[it.summons].name);
+        fputs("</dd>\n", f);
+    }
+    if (it.kind == ITEMK_DEVICE && it.deviceType < DEV_COUNT)
+        fputs("<dt>Places</dt><dd>a machine &mdash; see Devices</dd>\n", f);
+
+    fputs("</dl>\n", f);
+
+    /* Said on every page carrying a bonus rather than left to a tutorial
+       nobody has read yet: the rule is counter-intuitive and costs real
+       material when a player stacks two cheap pieces expecting them to add.
+       Worded without naming a slot -- boots are not trinkets, and the first
+       version of this sentence told a boots page it was about trinkets. */
+    if (anyBonus)
+        fputs("<p class=\"n\">Reach and speed bonuses are <strong>not</strong> "
+              "added up: the one that counts is the largest single bonus you "
+              "are wearing. Two cheap pieces never beat one good one.</p>\n", f);
+
+    fputs("<p class=\"n\"><a href=\"index.html\">&larr; all items</a></p>\n", f);
+    pageClose(f, 1);
+}
+
+static void writeItems(const int* cellOfItem) {
+    ensureDir("web/wiki/items");
+
+    static char slugs[ITEM_COUNT][128];
+    int listed = 0;
+    for (int i = MAT_COUNT; i < ITEM_COUNT; ++i) {
+        if (!ITEMS[i].maxStack) continue;       /* not a thing you can hold */
+        slugify(slugs[i], sizeof(slugs[i]), ITEMS[i].name);
+        for (int j = MAT_COUNT; j < i; ++j) {
+            if (!ITEMS[j].maxStack) continue;
+            if (strcmp(slugs[i], slugs[j]) == 0) {
+                char detail[256];
+                snprintf(detail, sizeof(detail), "%s and %s both want %s.html",
+                         ITEMS[j].name, ITEMS[i].name, slugs[i]);
+                fail("two items share a page filename", detail);
+            }
+        }
+        writeItemPage(i, cellOfItem);
+        ++listed;
+    }
+
+    FILE* f = pageOpen("items/index.html", 1, "Items", "items");
+    fputs("<h1>Items</h1>\n", f);
+    fprintf(f, "<p class=\"lede\">The %d things you can carry that are not raw\n"
+               "world substances. Dug-up materials have their own section &mdash;\n"
+               "see <a href=\"../materials/index.html\">Materials</a>.</p>\n",
+            listed);
+
+    fputs("<div class=\"filterbar\">\n", f);
+    fputs("<input type=\"search\" placeholder=\"Filter by name or kind…\" "
+          "aria-label=\"Filter items\">\n", f);
+    /* One chip per kind that anything actually has, so the bar never offers a
+       filter that returns nothing. */
+    for (int k = 0; k <= (int)ITEMK_SPARK; ++k) {
+        if (k == ITEMK_MATERIAL) continue;
+        int n = 0;
+        for (int i = MAT_COUNT; i < ITEM_COUNT; ++i)
+            if (ITEMS[i].maxStack && ITEMS[i].kind == k) ++n;
+        if (!n) continue;
+        fprintf(f, "<button class=\"chip\" data-kind=\"%s\">%s</button>\n",
+                ITEM_KIND_LABELS[k], ITEM_KIND_LABELS[k]);
+    }
+    fprintf(f, "<span class=\"count\">%d of %d</span>\n", listed, listed);
+    fputs("</div>\n", f);
+
+    fputs("<div class=\"tablewrap\">\n<table class=\"index\">\n", f);
+    fputs("<thead><tr>\n"
+          "<th class=\"sortable\">Item</th>\n"
+          "<th class=\"sortable\">Kind</th>\n"
+          "<th class=\"sortable num\">Stack</th>\n"
+          "<th class=\"sortable num\">Damage</th>\n"
+          "<th class=\"sortable\">Worn on</th>\n"
+          "<th>What it is</th>\n"
+          "</tr></thead>\n<tbody>\n", f);
+
+    for (int i = MAT_COUNT; i < ITEM_COUNT; ++i) {
+        const ItemDef& it = ITEMS[i];
+        if (!it.maxStack) continue;
+        const char* kind = itemKindLabel(it.kind);
+
+        fputs("<tr data-kind=\"", f);
+        escapeTo(f, kind);
+        fputs("\" data-search=\"", f);
+        escapeTo(f, it.name);
+        fputc(' ', f);
+        escapeTo(f, kind);
+        fputs("\">\n", f);
+
+        fputs("<td>", f);
+        if (cellOfItem[i] >= 0)
+            fprintf(f, "<span class=\"icon i%d\"></span>", i);
+        fprintf(f, "<a href=\"%s.html\">", slugs[i]);
+        escapeTo(f, it.name);
+        fputs("</a></td>\n", f);
+
+        fputs("<td class=\"dim\">", f);
+        escapeTo(f, kind);
+        fputs("</td>\n", f);
+
+        if (it.maxStack > 1) fprintf(f, "<td class=\"num\">%u</td>\n",
+                                     (unsigned)it.maxStack);
+        else                 fputs("<td class=\"num\" data-sort=\"\"></td>\n", f);
+
+        if (it.damage) fprintf(f, "<td class=\"num\">%d</td>\n", it.damage);
+        else           fputs("<td class=\"num\" data-sort=\"\"></td>\n", f);
+
+        const char* slotName =
+            (it.kind == ITEMK_WORN || it.kind == ITEMK_ACCESSORY)
+            ? equipLabel(it.equipSlot) : NULL;
+        fputs("<td class=\"dim\">", f);
+        if (slotName) escapeTo(f, slotName);
+        fputs("</td>\n", f);
+
+        /* The authored sentence, trimmed to keep the row one line. The full
+           text is on the item's own page, verbatim. */
+        fputs("<td class=\"dim\">", f);
+        if (it.description && it.description[0]) {
+            char brief[96];
+            snprintf(brief, sizeof(brief), "%s", it.description);
+            char* stop = strchr(brief, '.');
+            if (stop) *stop = '\0';
+            escapeTo(f, brief);
+        }
+        fputs("</td>\n</tr>\n", f);
+    }
+
+    fputs("</tbody>\n</table>\n</div>\n", f);
     pageClose(f, 1);
 }
 
@@ -1219,7 +1508,9 @@ int main() {
     /* Counted rather than quoted. These figures appear in WIKI.md and
        WIKI_STEPS.md, and printing the live values is how those documents get
        caught going out of date. */
-    int stackable = 0, described = 0;
+    int stackable = 0, described = 0, nonMaterialItems = 0;
+    for (int i = MAT_COUNT; i < ITEM_COUNT; ++i)
+        if (ITEMS[i].maxStack) ++nonMaterialItems;
     for (int i = 1; i < ITEM_COUNT; ++i) {
         if (ITEMS[i].maxStack) ++stackable;
         if (ITEMS[i].description && ITEMS[i].description[0]) ++described;
@@ -1233,6 +1524,7 @@ int main() {
     writeIcons(cellOfItem, sheetW, sheetH, iconCount);
 
     writeMaterialIndex(cellOfItem);
+    writeItems(cellOfItem);
     writeProse();
 
     /* --- the hub ---------------------------------------------------------
@@ -1279,6 +1571,8 @@ int main() {
         fputs("</a>", f);
         if (strcmp(SECTIONS[i].slug, "materials") == 0)
             fprintf(f, " <span class=\"n\">%d</span>", (int)MAT_COUNT - 1);
+        if (strcmp(SECTIONS[i].slug, "items") == 0)
+            fprintf(f, " <span class=\"n\">%d</span>", nonMaterialItems);
         fputs("</li>\n", f);
     }
     fputs("</ul>\n", f);

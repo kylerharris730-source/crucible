@@ -192,9 +192,25 @@ tables.
       pierce crossing it", not "bring a better pick", so that fact moved to
       Behaviour where it is true.
 
-- [ ] **2.2 Item index and item pages.** 290 pages, stat block specialised by
+- [x] **2.2 Item index and item pages.** 290 pages, stat block specialised by
       kind, the authored `description` quoted **verbatim**.
       *Verify:* all 180 descriptions appear byte-identical to `ITEMS[].description`.
+      *Done 2026-09-11.* **176 item pages; all 180 descriptions byte-identical**
+      — checked by dumping `ITEMS[].description` from the game and diffing
+      against the rendered pages, materials included.
+      Scope call: the Items section covers only ids at or above `MAT_COUNT`.
+      Materials share the item id space and already have richer pages of their
+      own, so listing them twice would give a reader two pages about stone that
+      agree today and could disagree tomorrow. The index says so rather than
+      quietly being short.
+      A `static_assert` ties the kind labels to `enum ItemKind`: a new kind
+      would otherwise be labelled by whatever sat at that index — silently, and
+      plausibly.
+      A whole-site link sweep (3,632 links) found **8 dead links to
+      `empty.html`** — materials whose transition target is `MAT_EMPTY`, which
+      is an ordinary outcome (fire burns out) but has no page. Now written as
+      "nothing — it is gone", which is also what it means. Reading the code did
+      not find this; sweeping the output did.
 
 - [ ] **2.3 Recipe pages.** One per station, in the game's own panel order.
       *Verify:* the 141 recipes appear exactly once each, summed across the six
