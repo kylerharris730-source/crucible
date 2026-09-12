@@ -100,7 +100,7 @@ static Section SECTIONS[] = {
     { "guide",      "Guide",     true  },
     { "materials",  "Materials", true  },
     { "items",      "Items",     true  },
-    { "recipes",    "Recipes",   false },
+    { "recipes",    "Recipes",   true  },
     { "creatures",  "Creatures", false },
     { "devices",    "Devices",   false },
 };
@@ -1082,6 +1082,120 @@ static void writeItems(const int* cellOfItem) {
     pageClose(f, 1);
 }
 
+/* --- recipes -------------------------------------------------------------
+
+   One page per station, and the rows in the game's own RECIPES[] order so the
+   page and the in-game panel agree. A wiki that sorts them "better" than the
+   game does is a wiki you cannot read alongside the game.
+
+   Quantities are printed exactly as the table holds them and never rounded or
+   tidied. A recipe asking for seven of something looks like a typo and is not
+   one. */
+
+/* Items and materials live in different directories, so a link has to know
+   which. The id says: below MAT_COUNT is a material. */
+static void writeItemLink(FILE* f, ItemId id, const int* cellOfItem,
+                          bool withIcon) {
+    if (id == ITEM_NONE || id >= ITEM_COUNT) { fputs("&mdash;", f); return; }
+    const char* name = ITEMS[id].name;
+    char slug[128];
+    slugify(slug, sizeof(slug), name);
+    if (withIcon && cellOfItem[id] >= 0)
+        fprintf(f, "<span class=\"icon i%d\"></span>", id);
+    fprintf(f, "<a href=\"../%s/%s.html\">",
+            id < MAT_COUNT ? "materials" : "items", slug);
+    escapeTo(f, name);
+    fputs("</a>", f);
+}
+
+static void writeRecipes(const int* cellOfItem) {
+    ensureDir("web/wiki/recipes");
+
+    /* Every recipe must appear on exactly one station page. Counted rather
+       than assumed: a station id outside the table would silently drop its
+       recipes off the site altogether, and a reader cannot notice the absence
+       of something they never knew existed. */
+    int placed = 0;
+
+    for (int st = 0; st < STATION_COUNT; ++st) {
+        int n = 0;
+        for (int r = 0; r < N_RECIPES; ++r) if (RECIPES[r].station == st) ++n;
+
+        char file[192], slug[128];
+        slugify(slug, sizeof(slug), STATION_NAMES[st]);
+        snprintf(file, sizeof(file), "recipes/%s.html", slug);
+
+        FILE* f = pageOpen(file, 1, STATION_NAMES[st], "recipes");
+        fputs("<h1>", f);
+        escapeTo(f, STATION_NAMES[st]);
+        fputs("</h1>\n", f);
+
+        if (st == STATION_HAND)
+            fprintf(f, "<p class=\"lede\">The %d things you can make with\n"
+                       "nothing but your hands. This is the whole of what is open\n"
+                       "to you before you build anything.</p>\n", n);
+        else
+            fprintf(f, "<p class=\"lede\">%d recipes. Stand near a %s to make\n"
+                       "any of them.</p>\n", n, STATION_NAMES[st]);
+
+        fputs("<div class=\"tablewrap\">\n<table>\n", f);
+        fputs("<thead><tr><th>Makes</th><th>From</th></tr></thead>\n<tbody>\n", f);
+
+        for (int r = 0; r < N_RECIPES; ++r) {
+            const Recipe& rec = RECIPES[r];
+            if (rec.station != st) continue;
+            ++placed;
+
+            fputs("<tr><td>", f);
+            if (rec.outCount > 1) fprintf(f, "%d&times; ", rec.outCount);
+            writeItemLink(f, rec.out, cellOfItem, true);
+            fputs("</td><td>", f);
+            bool first = true;
+            for (int k = 0; k < CRAFT_MAX_IN; ++k) {
+                if (!rec.in[k].item || !rec.in[k].count) continue;
+                if (!first) fputs(" + ", f);
+                first = false;
+                fprintf(f, "%d&times; ", rec.in[k].count);
+                writeItemLink(f, rec.in[k].item, cellOfItem, true);
+            }
+            /* A recipe with no inputs would be free material out of nowhere. */
+            if (first) fputs("<span class=\"dim\">nothing</span>", f);
+            fputs("</td></tr>\n", f);
+        }
+
+        fputs("</tbody>\n</table>\n</div>\n", f);
+        fputs("<p class=\"n\"><a href=\"index.html\">&larr; all stations</a></p>\n", f);
+        pageClose(f, 1);
+    }
+
+    if (placed != N_RECIPES) {
+        char detail[160];
+        snprintf(detail, sizeof(detail), "%d of %d recipes reached a page",
+                 placed, N_RECIPES);
+        fail("some recipes belong to no station page", detail);
+    }
+
+    FILE* f = pageOpen("recipes/index.html", 1, "Recipes", "recipes");
+    fputs("<h1>Recipes</h1>\n", f);
+    fprintf(f, "<p class=\"lede\">%d recipes across %d stations. Each station is\n"
+               "a thing you build and put down, and it unlocks everything on its\n"
+               "page.</p>\n", N_RECIPES, (int)STATION_COUNT);
+    fputs("<div class=\"tablewrap\">\n<table>\n", f);
+    fputs("<thead><tr><th>Station</th><th class=\"num\">Recipes</th>"
+          "</tr></thead>\n<tbody>\n", f);
+    for (int st = 0; st < STATION_COUNT; ++st) {
+        int n = 0;
+        for (int r = 0; r < N_RECIPES; ++r) if (RECIPES[r].station == st) ++n;
+        char slug[128];
+        slugify(slug, sizeof(slug), STATION_NAMES[st]);
+        fprintf(f, "<tr><td><a href=\"%s.html\">", slug);
+        escapeTo(f, STATION_NAMES[st]);
+        fprintf(f, "</a></td><td class=\"num\">%d</td></tr>\n", n);
+    }
+    fputs("</tbody>\n</table>\n</div>\n", f);
+    pageClose(f, 1);
+}
+
 /* --- the prose half ------------------------------------------------------
 
    A Markdown subset, in C++, so the authored pages come out of the same
@@ -1525,6 +1639,7 @@ int main() {
 
     writeMaterialIndex(cellOfItem);
     writeItems(cellOfItem);
+    writeRecipes(cellOfItem);
     writeProse();
 
     /* --- the hub ---------------------------------------------------------
@@ -1573,6 +1688,8 @@ int main() {
             fprintf(f, " <span class=\"n\">%d</span>", (int)MAT_COUNT - 1);
         if (strcmp(SECTIONS[i].slug, "items") == 0)
             fprintf(f, " <span class=\"n\">%d</span>", nonMaterialItems);
+        if (strcmp(SECTIONS[i].slug, "recipes") == 0)
+            fprintf(f, " <span class=\"n\">%d</span>", N_RECIPES);
         fputs("</li>\n", f);
     }
     fputs("</ul>\n", f);

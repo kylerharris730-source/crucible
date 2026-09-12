@@ -1,0 +1,11 @@
+# Generated wiki output. Written with LF by tools/wiki.cpp, so declare it --
+# otherwise every regeneration prints several hundred CRLF warnings and the
+# real output of a build gets lost in them.
+web/wiki/** text eol=lf
+
+# ...but NOT the icon sheet. The rule above matched it too, and git announced
+# it was about to rewrite CRLF inside a PNG -- which is not a line ending, it
+# is pixel data, and the file would have been quietly corrupted. Binaries are
+# marked binary explicitly.
+web/wiki/*.png -text
+web/wiki/*.ico -text

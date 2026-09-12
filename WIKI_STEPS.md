@@ -212,9 +212,16 @@ tables.
       "nothing — it is gone", which is also what it means. Reading the code did
       not find this; sweeping the output did.
 
-- [ ] **2.3 Recipe pages.** One per station, in the game's own panel order.
+- [x] **2.3 Recipe pages.** One per station, in the game's own panel order.
       *Verify:* the 141 recipes appear exactly once each, summed across the six
       pages; input counts match the table with no rounding.
+      *Done 2026-09-11.* **141 rows, 16/22/40/5/43/15**, matching the per-station
+      counts exactly. The generator hard-fails if any recipe reaches no page — a
+      station id outside the table would otherwise drop its recipes off the site
+      silently, and a reader cannot notice the absence of something they never
+      knew existed. Rows are in `RECIPES[]` order so the page and the in-game
+      panel agree; a wiki that sorts them "better" than the game is one you
+      cannot read alongside it.
 
 - [ ] **2.4 Creature index and pages.** 27 pages grouped by depth band, bosses
       marked as spoilers behind a heading.
