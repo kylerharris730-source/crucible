@@ -418,15 +418,6 @@ static const char* strengthWord(u8 s) {
 
    Derived rather than assumed, so if a fifth tier ever does break the tie the
    answer changes on every page at once. */
-static int strongestMinePower() {
-    int best = 0;
-    for (int i = MAT_COUNT; i < ITEM_COUNT; ++i) {
-        if (!ITEMS[i].mineRadius || !ITEMS[i].minePower) continue;
-        if (ITEMS[i].minePower > best) best = ITEMS[i].minePower;
-    }
-    return best;
-}
-
 static bool minePowerIsUniform() {
     int seen = 0;
     for (int i = MAT_COUNT; i < ITEM_COUNT; ++i) {
@@ -485,6 +476,157 @@ static void writeTemp(FILE* f, u8 stored) {
     }
     const int c = (int)stored - TEMP_OFFSET;
     fprintf(f, "<td class=\"num\" data-sort=\"%d\">%d&nbsp;&deg;C</td>\n", c, c);
+}
+
+/* Defined with the recipe pages further down; declared here because the
+   cross-links on a material page need it and materials come first. */
+static void writeItemLink(FILE* f, ItemId id, const int* cellOfItem,
+                          bool withIcon);
+
+/* --- the reverse index ---------------------------------------------------
+
+   "What is this for?" is the most-asked question on any game wiki and the one a
+   forward recipe list cannot answer. RECIPES[] reads one way -- output, then
+   inputs -- so a player holding a lump of tin has no way to discover that it
+   makes bronze short of reading all 141 rows.
+
+   Inverting the table is a few lines and it is what turns a pile of pages into
+   a wiki. It is also flatly unmaintainable by hand: 141 recipes produce several
+   hundred cross-references, every one of which moves when a recipe is retuned.
+
+   Both directions come out of the same pass over the same table, so they cannot
+   disagree with each other -- if tin is "used in" bronze, bronze is "made from"
+   tin, by construction rather than by diligence. */
+/* Measured, not guessed. The busiest ingredient today is Copper at 34 recipes,
+   the most-made item is Coal at 2. 64 is headroom of nearly double on the one
+   that matters, and the generator fails loudly rather than truncating if it is
+   ever reached -- a page silently missing half its uses is worse than a build
+   that stops, because nobody would notice. (The first attempt at 24 was too
+   small and Iron said so immediately, which is the check working.) */
+static const int MAX_REFS = 64;
+
+struct RecipeRefs {
+    int usedIn[MAX_REFS];   /* recipes consuming this id */
+    int nUsedIn;
+    int madeBy[MAX_REFS];   /* recipes producing it */
+    int nMadeBy;
+};
+
+static RecipeRefs* g_refs = NULL;
+
+static void buildRecipeRefs() {
+    g_refs = (RecipeRefs*)calloc(ITEM_COUNT, sizeof(RecipeRefs));
+    if (!g_refs) fail("out of memory", "recipe cross-reference table");
+
+    for (int r = 0; r < N_RECIPES; ++r) {
+        const Recipe& rec = RECIPES[r];
+
+        if (rec.out != ITEM_NONE && rec.out < ITEM_COUNT) {
+            RecipeRefs& to = g_refs[rec.out];
+            if (to.nMadeBy >= MAX_REFS)
+                fail("too many recipes make one item", ITEMS[rec.out].name);
+            to.madeBy[to.nMadeBy++] = r;
+        }
+
+        for (int k = 0; k < CRAFT_MAX_IN; ++k) {
+            const ItemId in = rec.in[k].item;
+            if (!in || in >= ITEM_COUNT || !rec.in[k].count) continue;
+            RecipeRefs& from = g_refs[in];
+            /* A recipe listing the same ingredient twice would otherwise appear
+               twice on its page, which reads as two different recipes. */
+            bool already = false;
+            for (int j = 0; j < from.nUsedIn; ++j)
+                if (from.usedIn[j] == r) already = true;
+            if (already) continue;
+            if (from.nUsedIn >= MAX_REFS)
+                fail("one item is used by too many recipes", ITEMS[in].name);
+            from.usedIn[from.nUsedIn++] = r;
+        }
+    }
+}
+
+/* One recipe, written as a sentence: "4x Torch -- 4x Wood + 1x Coal, by hand".
+   Used on both sides, so the two directions read alike. */
+static void writeRecipeLine(FILE* f, int r, const int* cellOfItem,
+                            bool showOutput) {
+    const Recipe& rec = RECIPES[r];
+    fputs("<li>", f);
+    if (showOutput) {
+        if (rec.outCount > 1) fprintf(f, "%d&times; ", rec.outCount);
+        writeItemLink(f, rec.out, cellOfItem, true);
+        fputs(" &mdash; ", f);
+    }
+    bool first = true;
+    for (int k = 0; k < CRAFT_MAX_IN; ++k) {
+        if (!rec.in[k].item || !rec.in[k].count) continue;
+        if (!first) fputs(" + ", f);
+        first = false;
+        fprintf(f, "%d&times; ", rec.in[k].count);
+        writeItemLink(f, rec.in[k].item, cellOfItem, true);
+    }
+    /* Where you have to be standing. The errand a greyed-out recipe sends you
+       on is half the information, and it is the half a list of ingredients
+       leaves out. */
+    char stationSlug[128];
+    slugify(stationSlug, sizeof(stationSlug), STATION_NAMES[rec.station]);
+    if (rec.station == STATION_HAND) {
+        fputs(" <span class=\"dim\">&mdash; <a href=\"../recipes/", f);
+        fputs(stationSlug, f);
+        fputs(".html\">by hand</a></span>", f);
+    } else {
+        fputs(" <span class=\"dim\">&mdash; at the <a href=\"../recipes/", f);
+        fputs(stationSlug, f);
+        fputs(".html\">", f);
+        escapeTo(f, STATION_NAMES[rec.station]);
+        fputs("</a></span>", f);
+    }
+    fputs("</li>\n", f);
+}
+
+/* The two sections that go at the bottom of every material and item page.
+   Omitted when empty, like every other section -- see the note on writeMaterialPage. */
+static void writeCrossLinks(FILE* f, ItemId id, const int* cellOfItem) {
+    const RecipeRefs& refs = g_refs[id];
+
+    if (refs.nMadeBy) {
+        fputs("<h2>How to get it</h2>\n<ul>\n", f);
+        for (int i = 0; i < refs.nMadeBy; ++i)
+            writeRecipeLine(f, refs.madeBy[i], cellOfItem, false);
+        fputs("</ul>\n", f);
+    }
+
+    if (refs.nUsedIn) {
+        fputs("<h2>What it is for</h2>\n<ul>\n", f);
+        for (int i = 0; i < refs.nUsedIn; ++i)
+            writeRecipeLine(f, refs.usedIn[i], cellOfItem, true);
+        fputs("</ul>\n", f);
+    }
+
+    /* What kills things and drops this. The other half of "where do I get one",
+       and the half no recipe table holds. */
+    {
+        bool anyDrop = false;
+        for (int t = 1; t < ENT_COUNT; ++t) {
+            const EntityDef& e = ENT_DEFS[t];
+            const bool ordinary = (e.dropItem == id && e.dropMax > 0);
+            const bool rare     = (e.rareDrop == id && e.rareOneIn > 0);
+            if (!ordinary && !rare) continue;
+            if (!anyDrop) {
+                fputs("<h2>Dropped by</h2>\n<ul>\n", f);
+                anyDrop = true;
+            }
+            char cslug[128];
+            slugify(cslug, sizeof(cslug), e.name);
+            fprintf(f, "<li><a href=\"../creatures/%s.html\">", cslug);
+            escapeTo(f, e.name);
+            fputs("</a>", f);
+            if (rare && !ordinary)
+                fprintf(f, " <span class=\"dim\">&mdash; rarely, about 1 kill "
+                           "in %d</span>", e.rareOneIn);
+            fputs("</li>\n", f);
+        }
+        if (anyDrop) fputs("</ul>\n", f);
+    }
 }
 
 /* --- a material's own page -----------------------------------------------
@@ -685,6 +827,8 @@ static void writeMaterialPage(int id, const int* cellOfItem) {
                     (int)g_matSmeltYield[id]);
         fputs("</dl>\n", f);
     }
+
+    writeCrossLinks(f, (ItemId)id, cellOfItem);
 
     fputs("<p class=\"n\"><a href=\"index.html\">&larr; all materials</a></p>\n", f);
     pageClose(f, 1);
@@ -967,6 +1111,8 @@ static void writeItemPage(int id, const int* cellOfItem) {
         fputs("<p class=\"n\">Reach and speed bonuses are <strong>not</strong> "
               "added up: the one that counts is the largest single bonus you "
               "are wearing. Two cheap pieces never beat one good one.</p>\n", f);
+
+    writeCrossLinks(f, (ItemId)id, cellOfItem);
 
     fputs("<p class=\"n\"><a href=\"index.html\">&larr; all items</a></p>\n", f);
     pageClose(f, 1);
@@ -1916,6 +2062,10 @@ int main() {
     static int cellOfItem[ITEM_COUNT];
     int sheetW = 0, sheetH = 0, iconCount = 0;
     writeIcons(cellOfItem, sheetW, sheetH, iconCount);
+
+    /* Before any page is written: both directions of the recipe table, so a
+       page can say what a thing is for as readily as what it is made of. */
+    buildRecipeRefs();
 
     writeMaterialIndex(cellOfItem);
     writeItems(cellOfItem);

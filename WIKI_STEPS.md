@@ -280,11 +280,23 @@ tables.
 What turns 450 pages into a wiki rather than a dump — and the part that would be
 flatly unmaintainable by hand.
 
-- [ ] **3.1 "Used in" and "made from".** Both directions of `RECIPES[]` on every
+- [x] **3.1 "Used in" and "made from".** Both directions of `RECIPES[]` on every
       material and item page.
       *Verify:* pick a material used by several recipes; every one appears.
       Confirm the two directions are consistent — if A is "used in" B, B's page
       says "made from" A.
+      *Done 2026-09-11.* **Copper lists all 34 of its uses**, matching the
+      measured count, and **308 forward references all have a matching
+      reverse** — checked by walking every page rather than asserted. Both
+      directions come out of one pass over one table, so they cannot disagree by
+      construction. Each line also names the station, because the errand a
+      greyed-out recipe sends you on is half the information.
+      `MAX_REFS` was set to 24 by guess and Iron failed the build immediately;
+      measured, the busiest ingredient is Copper at 34, so the cap is 64 and
+      overflow is a hard failure. A page silently missing half its uses is worse
+      than a build that stops, because nobody would notice.
+      Creature drops are on the same block — "dropped by" is the other half of
+      "where do I get one", and no recipe table holds it.
 
 - [ ] **3.2 Heat chains.** `igniteTemp → burnsTo`, `boilTemp → boilsTo`,
       `coolTemp → coolsTo`, rendered as a linked chain, plus `g_matDecaysTo`.
