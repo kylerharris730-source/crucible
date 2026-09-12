@@ -87,42 +87,32 @@ Released: **v0.6.1** (2026-09-11). `main` is level with it.
 
 ## The wiki
 
-- [ ] **An extensive wiki on the website.** Laid out in full in
-      [WIKI.md](WIKI.md) — the style rules, every page type with its intent,
-      and fifteen explicit tutorials. The build order is
-      [WIKI_STEPS.md](WIKI_STEPS.md), which is **where progress is tracked**:
-      33 steps over five stages, each one commit, each naming the command that
-      says it is done. Not started as code. The shape agreed:
+- [x] **An extensive wiki on the website.** Live at
+      <https://cinderlift.com/wiki/>. Built 2026-09-12 over the 33 steps in
+      [WIKI_STEPS.md](WIKI_STEPS.md); the design is [WIKI.md](WIKI.md).
 
-      **Generated, not hand-written.** The reference half comes from the game's
-      own tables via `tools/wiki.cpp`, so it cannot quote a number the game has
-      since changed. Measured counts available today: 116 materials, 293 items
-      (180 of them with authored descriptions already), 141 recipes across six
-      stations, 27 creatures, 25 devices, and 208 sprites — which means every
-      icon on the site is drawn by the game's own renderer rather than exported
-      by hand.
+      **372 pages**, 9,000+ internal links, none broken. 115 materials, 176
+      items, 141 recipes over six stations, 26 creatures, 25 devices, 15
+      tutorials and a concept page — plus search, and a "what can I make right
+      now" view that narrows all 141 recipes to the stations you have built.
 
-      **Run on request.** `scripts/run_wiki.sh` when you want it updated;
-      nothing in CI. Output is therefore committed, which the Pages workflow
-      publishes for free since it already uploads all of `web/`. Each page
-      carries the commit it was built from, so "is this stale" is a `git log`.
+      **The reference half is generated from the game's own tables** by
+      `tools/wiki.cpp`, so it cannot quote a number the game has since changed.
+      Every icon is drawn by the game's own renderer. Run
+      `bash scripts/run_wiki.sh` when you want it updated and commit the
+      output; nothing in CI does it, and the script tells you how many commits
+      behind the committed wiki is.
 
-      Same domain under `/wiki/`, so the deploy stays one artifact.
+      **`tests/wiki.cpp` is the drift guard**, and it covers the hand-written
+      half too: it re-reads iron ore's melting point, coke ember's burn
+      temperature and the heat lamp's cap out of the tables and checks the
+      tutorials still quote them. Proven by retuning iron ore 190 → 196 °C in
+      `materials.cpp` with the wiki untouched, and watching the suite fail.
 
-      Two things measurement corrected:
-
-      1. The generator's link set — all of `src/` except `main.cpp` and
-         `network.cpp`, which is the test-harness set exactly — links with
-         **no Windows libraries at all**. Nothing here is Windows-locked, so
-         this could move into the ubuntu Pages job later if you ever want it
-         automatic.
-      2. Of the four `.md` files previously called "most of a wiki already",
-         only two are. `CIRCUITS.md` and `LOGISTICS.md` are player-facing prose
-         and move in nearly as-is. `THERMAL_PRESSURE.md` is an engineering doc
-         that ends in "Required diagnostics", and `PROGRESSION.md` is a
-         contributor plan that opens with five ways to corrupt save files and
-         describes unbuilt content as shipped — publishing either would be a
-         mistake rather than a shortcut.
+      The page that justified the project is
+      [Coke, and the sealed retort](https://cinderlift.com/wiki/guide/coke-retort.html)
+      — there is no retort item, no recipe and no device, so the whole route to
+      titanium and tungsten was discoverable only by reading one tooltip.
 
 ## Engineering debt
 
@@ -150,6 +140,14 @@ Released: **v0.6.1** (2026-09-11). `main` is level with it.
       must aim at the strip of empty air directly above soil, and it drops a
       finished flower with no growth. Aiming at the ground does nothing, which
       is what it feels like when it 'does not place right'.
+
+      **Possibly already fixed — worth checking in play.** As of 2026-09-12 the
+      tables say `ITEM_FLOWER_SEED` is `ITEMK_MATERIAL` and `MAT_FLOWER_SEED` is
+      in `g_matIsSeed` with density 120, matching oak. That is exactly the shape
+      this entry asks for, so the work may have landed since this was written.
+      Only `ITEM_GRASS_SEED` still uses the convert-a-cell verb. Found while
+      writing the farming tutorial, which had to be rewritten because it
+      described the old behaviour.
 
       Attempted and reverted on 2026-09-01. Two findings worth keeping:
 
