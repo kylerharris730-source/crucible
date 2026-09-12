@@ -325,7 +325,8 @@ tools/wiki.cpp          the generator. Links all of src/ except main.cpp and
                         network.cpp -- the test-harness set exactly.
 scripts/run_wiki.sh     build it, run it, convert the icon sheet. Run by hand.
 web/wiki/               output. COMMITTED, with a build stamp in each page.
-web/wiki/_src/*.md      hand-written prose and tutorials. The authored half.
+web/wiki/_src/*.md      prose written FOR the wiki (the tutorials).
+CIRCUITS.md, LOGISTICS.md   prose that already exists, read where it lives.
 ```
 
 Same domain under `/wiki/`, so the Pages deploy stays one artifact and
@@ -348,7 +349,13 @@ converts it — exactly the pipeline `tools/cover.cpp` already uses, so no image
 library enters the build. One sheet rather than 290 files: one request, and CSS
 `background-position` picks the cell.
 
-**Markdown.** The generator renders `_src/*.md` with the same template as the
+**Markdown.** Prose sources are named in a table in the generator mapping
+source file → output page, so a document is read where it already lives:
+`CIRCUITS.md` and `LOGISTICS.md` stay at the repository root rather than being
+copied under `web/wiki/`, because a copy is a second thing to keep in step —
+the exact failure this document argues against. New prose written for the wiki
+goes in `web/wiki/_src/`, and neither is a special case. The generator renders
+both with the same template as the
 generated pages, so authored and derived pages share one header, nav and
 stylesheet. That means a small Markdown subset in C++ — headings, paragraphs,
 lists, tables, code, links, bold/italic — a few hundred lines, and it avoids a

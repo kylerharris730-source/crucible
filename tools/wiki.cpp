@@ -97,7 +97,7 @@ struct Section {
 
 static Section SECTIONS[] = {
     { "",           "Home",      true  },
-    { "guide",      "Guide",     false },
+    { "guide",      "Guide",     true  },
     { "materials",  "Materials", true  },
     { "items",      "Items",     false },
     { "recipes",    "Recipes",   false },
@@ -460,6 +460,372 @@ static void writeMaterialIndex(const int* cellOfItem) {
     pageClose(f, 1);
 }
 
+/* --- the prose half ------------------------------------------------------
+
+   A Markdown subset, in C++, so the authored pages come out of the same
+   template as the generated ones -- one header, one nav, one stylesheet. The
+   alternative was a Python dependency for half the site, which is a second
+   toolchain to keep working for a few hundred lines of string handling.
+
+   Subset, not Markdown. Headings, paragraphs, lists, tables, fenced code,
+   links, bold, italic and rules: what the existing documents actually use.
+   Anything past that is a feature request, not a bug.
+
+   WIKI.md had prose living in web/wiki/_src/. This table replaces that, and it
+   is the better shape: CIRCUITS.md and LOGISTICS.md already exist at the
+   repository root, are already read there by contributors, and copying them
+   under web/wiki/ would create a second copy to keep in step -- the exact
+   failure the whole generated-not-written argument is against. So sources are
+   named wherever they already live, and new prose written FOR the wiki goes in
+   web/wiki/_src/ without either of them being a special case. */
+struct ProsePage {
+    const char* source;   /* path from the repository root */
+    const char* out;      /* path under web/wiki/ */
+    const char* title;
+};
+
+static const ProsePage PROSE[] = {
+    { "CIRCUITS.md", "guide/circuits.html", "Circuits" },
+};
+static const int N_PROSE = (int)(sizeof(PROSE) / sizeof(PROSE[0]));
+
+/* Inline markup. Order matters: code spans are taken first, because the whole
+   point of `**` inside a code span is that it is not emphasis. */
+static void renderInline(FILE* f, const char* s, const char* end) {
+    while (s < end) {
+        if (*s == '`') {
+            const char* close = s + 1;
+            while (close < end && *close != '`') ++close;
+            if (close < end) {
+                fputs("<code>", f);
+                for (const char* p = s + 1; p < close; ++p) {
+                    switch (*p) {
+                        case '&': fputs("&amp;", f); break;
+                        case '<': fputs("&lt;", f);  break;
+                        case '>': fputs("&gt;", f);  break;
+                        default:  fputc(*p, f);      break;
+                    }
+                }
+                fputs("</code>", f);
+                s = close + 1;
+                continue;
+            }
+        }
+        if (*s == '[') {
+            const char* close = s + 1;
+            while (close < end && *close != ']') ++close;
+            if (close + 1 < end && close[1] == '(') {
+                const char* urlEnd = close + 2;
+                while (urlEnd < end && *urlEnd != ')') ++urlEnd;
+                if (urlEnd < end) {
+                    fputs("<a href=\"", f);
+                    for (const char* p = close + 2; p < urlEnd; ++p) fputc(*p, f);
+                    fputs("\">", f);
+                    renderInline(f, s + 1, close);
+                    fputs("</a>", f);
+                    s = urlEnd + 1;
+                    continue;
+                }
+            }
+        }
+        if (s + 1 < end && s[0] == '*' && s[1] == '*') {
+            const char* close = s + 2;
+            while (close + 1 < end && !(close[0] == '*' && close[1] == '*')) ++close;
+            if (close + 1 < end) {
+                fputs("<strong>", f);
+                renderInline(f, s + 2, close);
+                fputs("</strong>", f);
+                s = close + 2;
+                continue;
+            }
+        }
+        if (*s == '*') {
+            const char* close = s + 1;
+            while (close < end && *close != '*') ++close;
+            if (close < end) {
+                fputs("<em>", f);
+                renderInline(f, s + 1, close);
+                fputs("</em>", f);
+                s = close + 1;
+                continue;
+            }
+        }
+        switch (*s) {
+            case '&': fputs("&amp;", f); break;
+            case '<': fputs("&lt;", f);  break;
+            case '>': fputs("&gt;", f);  break;
+            default:  fputc(*s, f);      break;
+        }
+        ++s;
+    }
+}
+
+static void renderInlineLine(FILE* f, const char* line) {
+    renderInline(f, line, line + strlen(line));
+}
+
+/* One table row, split on unescaped pipes. `header` decides th against td. */
+static void renderTableRow(FILE* f, char* line, bool header) {
+    fputs("<tr>", f);
+    char* p = line;
+    if (*p == '|') ++p;
+    while (*p) {
+        char* cell = p;
+        while (*p && *p != '|') ++p;
+        char* cellEnd = p;
+        if (*p) ++p;
+        while (cell < cellEnd && (*cell == ' ' || *cell == '\t')) ++cell;
+        while (cellEnd > cell && (cellEnd[-1] == ' ' || cellEnd[-1] == '\t')) --cellEnd;
+        /* A trailing pipe leaves one empty cell, which is formatting rather
+           than a column. */
+        if (cell == cellEnd && !*p) break;
+        fputs(header ? "<th>" : "<td>", f);
+        renderInline(f, cell, cellEnd);
+        fputs(header ? "</th>" : "</td>", f);
+    }
+    fputs("</tr>\n", f);
+}
+
+static bool isTableRule(const char* line) {
+    /* |---|:--:|---| and friends: the row that says "the one above was a
+       header". Nothing but pipes, dashes, colons and spaces, and at least one
+       dash so a bare "| |" is not mistaken for one. */
+    bool dash = false;
+    for (const char* p = line; *p; ++p) {
+        if (*p == '-') dash = true;
+        else if (*p != '|' && *p != ':' && *p != ' ' && *p != '\t') return false;
+    }
+    return dash;
+}
+
+static char* readWholeFile(const char* path, long* lengthOut) {
+    FILE* f = fopen(path, "rb");
+    if (!f) return NULL;
+    fseek(f, 0, SEEK_END);
+    const long len = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    char* buf = (char*)malloc((size_t)len + 1);
+    if (!buf) { fclose(f); return NULL; }
+    const size_t got = fread(buf, 1, (size_t)len, f);
+    buf[got] = '\0';
+    fclose(f);
+    if (lengthOut) *lengthOut = (long)got;
+    return buf;
+}
+
+/* --- hard-wrapped continuation lines --------------------------------------
+
+   These documents are hard-wrapped at 79 columns, so a single sentence is
+   several source lines. Those are not line breaks in the output: honouring them
+   would ragged every paragraph on the site to the width of somebody's editor.
+
+   PARAGRAPHS AND LIST ITEMS BOTH. That is the whole reason this is a function
+   rather than a loop inside the paragraph case, and it was found by looking at
+   the rendered page rather than by reading the code: a wrapped bullet emitted
+   its first line as the bullet and dropped the rest into a paragraph AFTER the
+   list, so "Circuit wires have no cell footprint and cost no material. They are
+   a visible" was a bullet and "wiring overlay, not an alternative kind of
+   copper." was loose text below it. Read as plainly broken, and the
+   construct is everywhere in these files.
+
+   Advances `p` past every line it absorbs. */
+static void consumeWrapped(FILE* f, char*& p) {
+    for (;;) {
+        if (!*p) return;
+        char* peekNl = strchr(p, '\n');
+        char save = '\0';
+        if (peekNl) { save = *peekNl; *peekNl = '\0'; }
+
+        char* body = p;
+        while (*body == ' ') ++body;
+        const size_t len = strlen(body);
+        if (len && body[len - 1] == '\r') body[len - 1] = '\0';
+
+        /* Anything that starts a block of its own ends the run. */
+        bool ol = false;
+        {
+            char* d = body;
+            while (*d >= '0' && *d <= '9') ++d;
+            ol = (d != body) && d[0] == '.' && d[1] == ' ';
+        }
+        const bool stop =
+            *body == '\0' || *body == '#' || *body == '|' ||
+            strncmp(body, "```", 3) == 0 ||
+            strncmp(body, "---", 3) == 0 ||
+            ((body[0] == '-' || body[0] == '*') && body[1] == ' ') || ol;
+
+        if (stop) { if (peekNl) *peekNl = save; return; }
+
+        fputc(' ', f);
+        renderInlineLine(f, body);
+        if (peekNl) { *peekNl = save; p = peekNl + 1; }
+        else        { p = body + strlen(body); }
+    }
+}
+
+/* Renders `text` into an already-open page. Destroys `text` in the process --
+   it is split in place. */
+static void renderMarkdown(FILE* f, char* text) {
+    enum { NONE, UL, OL, CODE, TABLE } block = NONE;
+    char* p = text;
+    bool tableHeaderDone = false;
+
+    while (*p) {
+        char* line = p;
+        char* nl = strchr(p, '\n');
+        if (nl) { *nl = '\0'; p = nl + 1; } else { p = line + strlen(line); }
+        /* CRLF sources are ordinary on this checkout. */
+        const size_t len = strlen(line);
+        if (len && line[len - 1] == '\r') line[len - 1] = '\0';
+
+        /* Inside a fence everything is literal until the closing fence. */
+        if (block == CODE) {
+            if (strncmp(line, "```", 3) == 0) {
+                fputs("</code></pre>\n", f);
+                block = NONE;
+            } else {
+                for (char* q = line; *q; ++q) {
+                    switch (*q) {
+                        case '&': fputs("&amp;", f); break;
+                        case '<': fputs("&lt;", f);  break;
+                        case '>': fputs("&gt;", f);  break;
+                        default:  fputc(*q, f);      break;
+                    }
+                }
+                fputc('\n', f);
+            }
+            continue;
+        }
+
+        char* body = line;
+        while (*body == ' ') ++body;
+
+        const bool blank = (*body == '\0');
+        const bool isUl = (body[0] == '-' || body[0] == '*') && body[1] == ' ';
+        bool isOl = false;
+        {
+            char* d = body;
+            while (*d >= '0' && *d <= '9') ++d;
+            isOl = (d != body) && (d[0] == '.') && (d[1] == ' ');
+        }
+        const bool isTable = (body[0] == '|');
+
+        /* Close whatever block the new line is not a continuation of. */
+        if (block == UL && !isUl)       { fputs("</ul>\n", f); block = NONE; }
+        if (block == OL && !isOl)       { fputs("</ol>\n", f); block = NONE; }
+        if (block == TABLE && !isTable) { fputs("</tbody></table></div>\n", f);
+                                          block = NONE; }
+
+        if (blank) continue;
+
+        if (strncmp(body, "```", 3) == 0) {
+            fputs("<pre><code>", f);
+            block = CODE;
+            continue;
+        }
+
+        if (isTable) {
+            if (isTableRule(body)) {
+                /* The rule closes the header and opens the body. */
+                if (block == TABLE && !tableHeaderDone) {
+                    fputs("</thead><tbody>\n", f);
+                    tableHeaderDone = true;
+                }
+                continue;
+            }
+            if (block != TABLE) {
+                fputs("<div class=\"tablewrap\"><table><thead>\n", f);
+                block = TABLE;
+                tableHeaderDone = false;
+            }
+            renderTableRow(f, body, !tableHeaderDone);
+            continue;
+        }
+
+        if (body[0] == '#') {
+            int level = 0;
+            while (body[level] == '#') ++level;
+            if (level <= 6 && body[level] == ' ') {
+                /* The document's own H1 is dropped: the page already has one
+                   from its title, and two is a page that looks broken. */
+                if (level == 1) continue;
+                fprintf(f, "<h%d>", level);
+                renderInlineLine(f, body + level + 1);
+                fprintf(f, "</h%d>\n", level);
+                continue;
+            }
+        }
+
+        if (strncmp(body, "---", 3) == 0 && body[strspn(body, "- ")] == '\0') {
+            fputs("<hr>\n", f);
+            continue;
+        }
+
+        if (isUl) {
+            if (block != UL) { fputs("<ul>\n", f); block = UL; }
+            fputs("<li>", f);
+            renderInlineLine(f, body + 2);
+            consumeWrapped(f, p);
+            fputs("</li>\n", f);
+            continue;
+        }
+        if (isOl) {
+            if (block != OL) { fputs("<ol>\n", f); block = OL; }
+            char* d = body;
+            while (*d != ' ') ++d;
+            fputs("<li>", f);
+            renderInlineLine(f, d + 1);
+            consumeWrapped(f, p);
+            fputs("</li>\n", f);
+            continue;
+        }
+
+        fputs("<p>", f);
+        renderInlineLine(f, body);
+        consumeWrapped(f, p);
+        fputs("</p>\n", f);
+    }
+
+    if (block == UL)    fputs("</ul>\n", f);
+    if (block == OL)    fputs("</ol>\n", f);
+    if (block == CODE)  fputs("</code></pre>\n", f);
+    if (block == TABLE) fputs("</tbody></table></div>\n", f);
+}
+
+static void writeProse() {
+    ensureDir("web/wiki/guide");
+
+    for (int i = 0; i < N_PROSE; ++i) {
+        long len = 0;
+        char* text = readWholeFile(PROSE[i].source, &len);
+        /* A missing source is a broken build, not a page quietly left out. */
+        if (!text) fail("cannot read prose source", PROSE[i].source);
+        if (len < 200) fail("prose source is suspiciously short", PROSE[i].source);
+
+        FILE* f = pageOpen(PROSE[i].out, 1, PROSE[i].title, "guide");
+        fprintf(f, "<h1>%s</h1>\n", PROSE[i].title);
+        renderMarkdown(f, text);
+        pageClose(f, 1);
+        free(text);
+    }
+
+    FILE* f = pageOpen("guide/index.html", 1, "Guide", "guide");
+    fputs("<h1>Guide</h1>\n", f);
+    fputs("<p class=\"lede\">The written half. Everything else on this site is\n"
+          "generated from the game&rsquo;s tables; these pages explain how the\n"
+          "systems behave, which no table holds.</p>\n", f);
+    fputs("<ul>\n", f);
+    for (int i = 0; i < N_PROSE; ++i) {
+        const char* slug = strrchr(PROSE[i].out, '/');
+        fprintf(f, "<li><a href=\"%s\">", slug ? slug + 1 : PROSE[i].out);
+        escapeTo(f, PROSE[i].title);
+        fputs("</a></li>\n", f);
+    }
+    fputs("</ul>\n", f);
+    fputs("<p>The tutorials land in stage 4 &mdash; see <code>WIKI_STEPS.md</code>.</p>\n", f);
+    pageClose(f, 1);
+}
+
 /* The generator must run from the repository root: OUT_DIR is relative to it
    and so is every path in the link set. Run from tools/ it would cheerfully
    create tools/web/wiki and publish nothing, so check for a file only the root
@@ -499,6 +865,7 @@ int main() {
     writeIcons(cellOfItem, sheetW, sheetH, iconCount);
 
     writeMaterialIndex(cellOfItem);
+    writeProse();
 
     FILE* f = pageOpen("index.html", 0, "Home", "");
     fputs("<h1>The Cinderlift wiki</h1>\n", f);

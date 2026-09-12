@@ -122,11 +122,24 @@ other four stages assume.
       the commonest case would be a plainly wrong word on two thirds of the
       rows. They are "Melts or boils" and "Freezes or sets".
 
-- [ ] **1.6 The Markdown subset.**
+- [x] **1.6 The Markdown subset.**
       Headings, paragraphs, lists, tables, fenced code, links, bold/italic.
       Enough for `CIRCUITS.md` and no more.
       *Verify:* render `CIRCUITS.md`; its 5 headings and its table survive;
       nothing is emitted as literal `##`.
+      *Done 2026-09-11.* 5 headings (1 h1 + 4 h2), no literal `##`; code spans,
+      links, bold and lists all render. **`CIRCUITS.md` has no table**, so the
+      table path was exercised against a fixture rather than shipped untested —
+      header row, alignment row consumed, inline markup inside cells, and a
+      fence leaving `|` and `**` literal.
+      One bug found by looking at the page, not the code: hard-wrapped **list
+      items** dropped their continuation into a paragraph after the list, so a
+      bullet ended mid-sentence and loose text followed it. Paragraphs and list
+      items now share one continuation routine; paragraphs on the circuits page
+      fell 16 → 10.
+      Plan change recorded in WIKI.md: prose sources are named in a table and
+      read where they already live, instead of being copied into
+      `web/wiki/_src/`. A copy is a second thing to keep in step.
 
 - [ ] **1.7 The hub.**
       `/wiki/` — two columns, **Learn** and **Look up**, the latter with live
