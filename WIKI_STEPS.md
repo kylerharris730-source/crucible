@@ -47,13 +47,19 @@ visible. The icon sheet is a loop over it.
 Ships a live `/wiki/` with one genuinely good page. Proves every mechanism the
 other four stages assume.
 
-- [ ] **1.1 The generator exists and runs.**
+- [x] **1.1 The generator exists and runs.**
       `tools/wiki.cpp` writing a single hard-coded `web/wiki/index.html`.
       `scripts/run_wiki.sh` compiling it against the link set and running it.
       *Verify:* `bash scripts/run_wiki.sh` exits 0; `web/wiki/index.html` is
       non-empty.
       *Why first:* it tests the riskiest assumption — that the link set builds
       and the output path is right — before any content depends on it.
+      *Done 2026-09-11.* Links clean with **no libraries at all**, as predicted.
+      Objects cache in `build/wikiobj` (29 files once, then nothing), and the
+      generator refuses to run outside the repository root rather than writing
+      `tools/web/wiki` and publishing nothing. The counts it prints are live, so
+      the tables are genuinely reachable: 116 / 293 / 290 / 180 / 141 / 6 / 27 /
+      25 / 208, matching the plan exactly.
 
 - [ ] **1.2 The page template.**
       One function taking title + body and emitting doctype, `<head>`, nav,
