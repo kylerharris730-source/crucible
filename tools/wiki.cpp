@@ -98,7 +98,7 @@ struct Section {
 static Section SECTIONS[] = {
     { "",           "Home",      true  },
     { "guide",      "Guide",     false },
-    { "materials",  "Materials", false },
+    { "materials",  "Materials", true  },
     { "items",      "Items",     false },
     { "recipes",    "Recipes",   false },
     { "creatures",  "Creatures", false },
@@ -163,6 +163,13 @@ static FILE* pageOpen(const char* relative, int depth,
     fputs("<link rel=\"icon\" href=\"", f);
     writeRoot(f, depth + 1);
     fputs("favicon.ico\">\n", f);
+
+    /* Sorting and filtering. Deferred so it never blocks rendering: every table
+       ships complete in the HTML, so the script is an enhancement and the page
+       is a full reference without it. */
+    fputs("<script src=\"", f);
+    writeRoot(f, depth);
+    fputs("wiki.js\" defer></script>\n", f);
 
     fputs("</head>\n<body>\n", f);
 
@@ -332,6 +339,127 @@ static void writeIcons(int* cellOfItem, int& sheetW, int& sheetH, int& count) {
     if (fclose(f) != 0) fail("failed to close", path);
 }
 
+/* --- the material index --------------------------------------------------
+
+   WIKI.md settles the shape: ONE table with every row in it, sortable by any
+   column, because sorting the whole set is the single thing a table is good for
+   and pagination destroys it. 116 rows is nothing for a browser.
+
+   Only columns a reader might sort or compare BY belong here. Detail goes on
+   the detail page in 2.1; an index that shows everything is a detail page with
+   bad typography. */
+
+static const char* KIND_LABELS[] = {
+    "Empty", "Solid", "Powder", "Liquid", "Gas"
+};
+
+/* Temperatures in MATS[] are STORED units, offset by TEMP_OFFSET -- see the
+   encoding note at the top of materials.h. Printing the raw byte would put
+   "175" on the page for something that ignites at 135 C, which is the house
+   rule in WIKI.md ("numbers carry units, always") being broken by exactly one
+   subtraction. 0 is the disabled sentinel in every temperature column, and it
+   means "never", not "at -40 C".
+
+   A cell for a threshold a material does not have is left EMPTY rather than
+   filled with a dash or a zero: the sort treats absent as absent, so sorting by
+   ignition point answers "what burns, coldest first" instead of burying the
+   answer under ninety materials that do not burn at all. */
+static void writeTemp(FILE* f, u8 stored) {
+    if (!stored) {                 /* the "no such threshold" sentinel */
+        fputs("<td class=\"num\" data-sort=\"\"></td>\n", f);
+        return;
+    }
+    const int c = (int)stored - TEMP_OFFSET;
+    fprintf(f, "<td class=\"num\" data-sort=\"%d\">%d&nbsp;&deg;C</td>\n", c, c);
+}
+
+static void writeMaterialIndex(const int* cellOfItem) {
+    ensureDir("web/wiki/materials");
+
+    FILE* f = pageOpen("materials/index.html", 1, "Materials", "materials");
+    fputs("<h1>Materials</h1>\n", f);
+    fprintf(f, "<p class=\"lede\">Every one of the %d substances in the world,\n"
+               "with the numbers that decide how each behaves. Click a column to\n"
+               "sort by it.</p>\n", (int)MAT_COUNT - 1);
+
+    fputs("<div class=\"filterbar\">\n", f);
+    fputs("<input type=\"search\" placeholder=\"Filter by name or kind…\" "
+          "aria-label=\"Filter materials\">\n", f);
+    /* Chips for the four real kinds. KIND_EMPTY is not one of them: air is not
+       a material a reader looks up. */
+    for (int k = KIND_STATIC; k <= KIND_GAS; ++k)
+        fprintf(f, "<button class=\"chip\" data-kind=\"%s\">%s</button>\n",
+                KIND_LABELS[k], KIND_LABELS[k]);
+    fprintf(f, "<span class=\"count\">%d of %d</span>\n",
+            (int)MAT_COUNT - 1, (int)MAT_COUNT - 1);
+    fputs("</div>\n", f);
+
+    fputs("<div class=\"tablewrap\">\n<table class=\"index\">\n", f);
+    fputs("<thead><tr>\n"
+          "<th class=\"sortable\">Material</th>\n"
+          "<th class=\"sortable\">Kind</th>\n"
+          "<th class=\"sortable num\" title=\"Heavier sinks through lighter\">"
+          "Density</th>\n"
+          "<th class=\"sortable num\" title=\"How readily heat crosses into it, "
+          "0 to 255\">Conducts</th>\n"
+          "<th class=\"sortable num\" title=\"At or above this it catches fire\">"
+          "Ignites</th>\n"
+          /* Not "Boils" and "Freezes". One column serves every material, and
+             the same field that boils water melts stone into lava and cooks
+             sand into glass; the cold one freezes water and condenses steam.
+             Naming either after the case that happens to be commonest puts a
+             plainly wrong word on two thirds of the rows. */
+          "<th class=\"sortable num\" title=\"At or above this it becomes "
+          "something else -- boiling, melting or cooking\">Melts or boils</th>\n"
+          "<th class=\"sortable num\" title=\"Below this it becomes something "
+          "else -- freezing, setting or condensing\">Freezes or sets</th>\n"
+          "</tr></thead>\n<tbody>\n", f);
+
+    for (int i = 1; i < MAT_COUNT; ++i) {
+        const MatInfo& m = MATS[i];
+        const char* kind = (m.kind <= KIND_GAS) ? KIND_LABELS[m.kind] : "?";
+
+        fputs("<tr data-kind=\"", f);
+        escapeTo(f, kind);
+        fputs("\" data-search=\"", f);
+        escapeTo(f, m.name);
+        fputc(' ', f);
+        escapeTo(f, kind);
+        fputs("\">\n", f);
+
+        /* Materials share the item id space -- a stack of stone IS ITEM(MAT_STONE)
+           -- so a material's icon is simply its own id's cell. Anything the game
+           will not let you carry has no cell, and gets no icon rather than a
+           broken one. */
+        fputs("<td>", f);
+        if (cellOfItem[i] >= 0)
+            fprintf(f, "<span class=\"icon i%d\"></span>", i);
+        escapeTo(f, m.name);
+        fputs("</td>\n", f);
+
+        fputs("<td class=\"dim\">", f);
+        escapeTo(f, kind);
+        fputs("</td>\n", f);
+
+        fprintf(f, "<td class=\"num\">%d</td>\n", (int)m.density);
+        fprintf(f, "<td class=\"num\">%d</td>\n", (int)m.heatCond);
+        writeTemp(f, m.igniteTemp);
+        writeTemp(f, m.boilTemp);
+        writeTemp(f, m.coolTemp);
+        fputs("</tr>\n", f);
+    }
+
+    fputs("</tbody>\n</table>\n</div>\n", f);
+
+    fputs("<p class=\"lede\">Density is relative: a heavier material sinks\n"
+          "through a lighter one, and a gas rises through anything denser than\n"
+          "itself. Conductivity is how readily heat crosses INTO a material,\n"
+          "which is why an iron wall cooks what is behind it and a refractory\n"
+          "one does not.</p>\n", f);
+
+    pageClose(f, 1);
+}
+
 /* The generator must run from the repository root: OUT_DIR is relative to it
    and so is every path in the link set. Run from tools/ it would cheerfully
    create tools/web/wiki and publish nothing, so check for a file only the root
@@ -369,6 +497,8 @@ int main() {
     static int cellOfItem[ITEM_COUNT];
     int sheetW = 0, sheetH = 0, iconCount = 0;
     writeIcons(cellOfItem, sheetW, sheetH, iconCount);
+
+    writeMaterialIndex(cellOfItem);
 
     FILE* f = pageOpen("index.html", 0, "Home", "");
     fputs("<h1>The Cinderlift wiki</h1>\n", f);

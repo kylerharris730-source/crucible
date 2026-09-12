@@ -103,12 +103,24 @@ other four stages assume.
       regression-tested and unchanged. The `.pam` is an intermediate like a
       `.o`, converted and deleted, and gitignored.
 
-- [ ] **1.5 The material index.**
+- [x] **1.5 The material index.**
       `/wiki/materials/` — all 116 rows, icon + name + kind + density +
       conductivity + ignition point, sortable by any column, with a filter box.
       Table complete in the HTML; JS only sorts and filters.
       *Verify:* 116 `<tr>`; spot-check three rows against `MATS[]` by hand;
       disable JS and confirm the table still reads.
+      *Done 2026-09-11.* **115 rows, not 116** — `MAT_COUNT` counts `MAT_EMPTY`,
+      and air is not a substance anyone looks up. Spot-checks match (Stone
+      255/85, melts to lava at 185 °C; Water 100/180, boils 100, freezes 0).
+      Sort and filter both work; no row carries `hidden` in the source, so the
+      table is complete with JS off.
+      Two things the build caught. **`MATS[]` temperatures are stored offset by
+      40**, so printing the raw byte would have put "175" on the page for
+      something that ignites at 135 °C — the house rule about units broken by
+      one subtraction. And the hot/cold columns cannot be called "Boils" and
+      "Freezes": the same field melts stone to lava and cooks sand to glass, so
+      the commonest case would be a plainly wrong word on two thirds of the
+      rows. They are "Melts or boils" and "Freezes or sets".
 
 - [ ] **1.6 The Markdown subset.**
       Headings, paragraphs, lists, tables, fenced code, links, bold/italic.
