@@ -153,6 +153,12 @@ static FILE* pageOpen(const char* relative, int depth,
     writeRoot(f, depth);
     fputs("wiki.css\">\n", f);
 
+    /* The generated half of the styling: the icon sheet's size, which depends
+       on how many items there are, and one class per item. */
+    fputs("<link rel=\"stylesheet\" href=\"", f);
+    writeRoot(f, depth);
+    fputs("icons.css\">\n", f);
+
     /* The site's own icon, one directory above the wiki. */
     fputs("<link rel=\"icon\" href=\"", f);
     writeRoot(f, depth + 1);
@@ -203,6 +209,129 @@ static void pageClose(FILE* f, int depth) {
     if (fclose(f) != 0) fail("failed to close a page", NULL);
 }
 
+/* --- the icon sheet ------------------------------------------------------
+
+   Every stackable item's art, laid out in one grid, written as a PAM and turned
+   into a PNG by scripts/ppm_to_png.py -- the same no-image-library-in-the-build
+   pipeline tools/cover.cpp already uses.
+
+   dropArt() is what makes this a loop rather than a project. It hands back a
+   14x14 canvas for EVERY stackable item, materials and non-materials alike: for
+   anything with a sprite of its own it IS the inventory icon's canvas, and for
+   a raw material it is a box-resampled copy of renderMaterialIcon's 21x21. One
+   call, no special cases -- and tests/dropped_items.cpp already proves all 290
+   canvases are non-blank and shaped rather than solid squares. So the art on
+   the wiki is the art in the game's own hands, by construction.
+
+   ALPHA, not a matte. Art stores 0 for "nothing here", and flattening that onto
+   a background colour makes every icon a rectangle of that colour -- the exact
+   complaint that started the dropped-item work: "i dont want them to all be big
+   squares i want the sprite". A matte would look right on a panel and wrong on
+   every row highlight and hover state it is ever drawn over.
+
+   One sheet rather than 290 files: one request instead of 290, and CSS
+   background-position picks the cell.
+
+   These offsets are DERIVED, which is why icons.css is generated while wiki.css
+   is hand-written. The split is the rule from WIKI.md, not an inconsistency. */
+static const int ICON_COLS = 16;
+
+/* Doubled everywhere, because .icon renders 14x14 art at 28x28. Scaling by an
+   exact integer keeps every cell a crisp square block, in a game whose whole
+   look is that the cells are visible; 1.7x would be mush. */
+static const int ICON_ZOOM = 2;
+
+static void writeIcons(int* cellOfItem, int& sheetW, int& sheetH, int& count) {
+    int n = 0;
+    for (int i = ITEM_NONE + 1; i < ITEM_COUNT; ++i)
+        cellOfItem[i] = ITEMS[i].maxStack ? n++ : -1;
+    count = n;
+    if (n == 0) fail("no stackable items", "the item table looks empty");
+
+    const int cols = ICON_COLS;
+    const int rows = (n + cols - 1) / cols;
+    sheetW = cols * SPR_W;
+    sheetH = rows * SPR_H;
+
+    unsigned char* rgba = (unsigned char*)calloc((size_t)sheetW * sheetH, 4);
+    if (!rgba) fail("out of memory", "icon sheet");
+
+    int blank = 0;
+    const char* firstBlank = NULL;
+    for (int i = ITEM_NONE + 1; i < ITEM_COUNT; ++i) {
+        const int cell = cellOfItem[i];
+        if (cell < 0) continue;
+        const u32* art = dropArt((u16)i);
+        if (!art) {
+            if (!firstBlank) firstBlank = ITEMS[i].name;
+            ++blank;
+            continue;
+        }
+        const int ox = (cell % cols) * SPR_W;
+        const int oy = (cell / cols) * SPR_H;
+        int drawn = 0;
+        for (int y = 0; y < SPR_H; ++y) {
+            for (int x = 0; x < SPR_W; ++x) {
+                const u32 px = art[y * SPR_W + x];
+                if (!px) continue;      /* 0 is transparent, and stays that way */
+                ++drawn;
+                unsigned char* p =
+                    rgba + (((size_t)(oy + y) * sheetW) + (ox + x)) * 4;
+                p[0] = (unsigned char)((px >> 16) & 0xFF);
+                p[1] = (unsigned char)((px >> 8) & 0xFF);
+                p[2] = (unsigned char)(px & 0xFF);
+                p[3] = 255;
+            }
+        }
+        if (!drawn) {
+            if (!firstBlank) firstBlank = ITEMS[i].name;
+            ++blank;
+        }
+    }
+    /* An invisible icon is the one failure a reader cannot work around, because
+       they cannot see there is anything to work around. tests/dropped_items.cpp
+       guards the same property in game; this refuses to publish. */
+    if (blank) {
+        char detail[256];
+        snprintf(detail, sizeof(detail),
+                 "%d item(s) have no visible art, starting with %s",
+                 blank, firstBlank ? firstBlank : "?");
+        fail("refusing to write a sheet with blank cells", detail);
+    }
+
+    char path[512];
+    snprintf(path, sizeof(path), "%s/icons.pam", OUT_DIR);
+    FILE* f = fopen(path, "wb");
+    if (!f) fail("cannot write", path);
+    fprintf(f, "P7\nWIDTH %d\nHEIGHT %d\nDEPTH 4\nMAXVAL 255\n"
+               "TUPLTYPE RGB_ALPHA\nENDHDR\n", sheetW, sheetH);
+    if (fwrite(rgba, 4, (size_t)sheetW * sheetH, f) != (size_t)sheetW * sheetH)
+        fail("short write", path);
+    if (fclose(f) != 0) fail("failed to close", path);
+    free(rgba);
+
+    /* icons.css: the base rule -- which needs the sheet's pixel size and so
+       cannot live in the hand-written stylesheet -- and one class per item. */
+    snprintf(path, sizeof(path), "%s/icons.css", OUT_DIR);
+    f = fopen(path, "wb");
+    if (!f) fail("cannot write", path);
+    fputs("/* GENERATED by tools/wiki.cpp -- do not edit.\n"
+          "   One class per item, addressing a cell of icons.png.\n"
+          "   wiki.css is the hand-written half; this half is derived. */\n", f);
+    fprintf(f, ".icon {\n"
+               "    background-image: url(\"icons.png\");\n"
+               "    background-size: %dpx %dpx;\n"
+               "}\n", sheetW * ICON_ZOOM, sheetH * ICON_ZOOM);
+    for (int i = ITEM_NONE + 1; i < ITEM_COUNT; ++i) {
+        const int cell = cellOfItem[i];
+        if (cell < 0) continue;
+        fprintf(f, ".i%d { background-position: -%dpx -%dpx; }\n", i,
+                (cell % cols) * SPR_W * ICON_ZOOM,
+                (cell / cols) * SPR_H * ICON_ZOOM);
+    }
+    if (fclose(f) != 0) fail("failed to close", path);
+}
+
 /* The generator must run from the repository root: OUT_DIR is relative to it
    and so is every path in the link set. Run from tools/ it would cheerfully
    create tools/web/wiki and publish nothing, so check for a file only the root
@@ -237,13 +366,17 @@ int main() {
     ensureDir("web");
     ensureDir(OUT_DIR);
 
+    static int cellOfItem[ITEM_COUNT];
+    int sheetW = 0, sheetH = 0, iconCount = 0;
+    writeIcons(cellOfItem, sheetW, sheetH, iconCount);
+
     FILE* f = pageOpen("index.html", 0, "Home", "");
     fputs("<h1>The Cinderlift wiki</h1>\n", f);
     fputs("<p class=\"lede\">A reference for a game about digging, heat and\n"
           "leaving. Generated from the game&rsquo;s own tables, so nothing here\n"
           "can disagree with what the game actually does.</p>\n", f);
-    fputs("<p>Step 1.2 &mdash; the spine carries a template now, and no pages\n"
-          "yet. What the generator can already see:</p>\n", f);
+    fputs("<p>Step 1.4 &mdash; the spine, a template, and every item&rsquo;s own\n"
+          "art. What the generator can already see:</p>\n", f);
     fprintf(f,
         "<ul>\n"
         "<li>%d materials</li>\n"
@@ -259,9 +392,26 @@ int main() {
         (int)ENT_COUNT,
         (int)DEV_COUNT,
         (int)SPR_COUNT);
+
+    /* A strip of real icons, so the sheet is verifiable by looking at the page
+       rather than by opening the PNG and counting. It goes away when the
+       material index lands in 1.5 and has thousands of them. */
+    fputs("<h2>Every icon is the game&rsquo;s own art</h2>\n", f);
+    fputs("<p>Drawn by the same code that draws them in your hands:</p>\n", f);
+    fputs("<p>\n", f);
+    for (int i = ITEM_NONE + 1, shown = 0; i < ITEM_COUNT && shown < 48; ++i) {
+        if (cellOfItem[i] < 0) continue;
+        fprintf(f, "<span class=\"icon i%d\" title=\"", i);
+        escapeTo(f, ITEMS[i].name);
+        fputs("\"></span>\n", f);
+        ++shown;
+    }
+    fputs("</p>\n", f);
     pageClose(f, 0);
 
     printf("wiki: wrote %s/index.html\n", OUT_DIR);
+    printf("      icons.pam %dx%d, %d cells in %d columns\n",
+           sheetW, sheetH, iconCount, ICON_COLS);
     printf("      built from %s, version %s\n", WIKI_BUILD_ID, WIKI_VERSION);
     printf("      %d materials, %d items (%d stackable, %d described),\n",
            (int)MAT_COUNT, (int)ITEM_COUNT, stackable, described);

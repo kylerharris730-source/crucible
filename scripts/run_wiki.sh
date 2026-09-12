@@ -106,6 +106,31 @@ if ! "./$BIN"; then
     exit 1
 fi
 
+# --- the icon sheet ---------------------------------------------------------
+# The generator writes a PAM (raw RGBA behind a five-line header) because that
+# needs no image library on the C++ side, exactly as tools/cover.cpp writes PPM.
+# Python turns it into the PNG the pages actually reference.
+#
+# RGBA rather than RGB: item art is a SHAPE on transparency, and flattening it
+# onto any one background colour makes every icon a rectangle of that colour --
+# which is the complaint that started the dropped-item work in the first place.
+PY_CMD=""
+for c in python python3 py; do
+    if command -v "$c" >/dev/null 2>&1; then PY_CMD="$c"; break; fi
+done
+if [ -z "$PY_CMD" ]; then
+    echo "run_wiki: no python found -- icons.png cannot be built from icons.pam" >&2
+    exit 1
+fi
+if ! "$PY_CMD" scripts/ppm_to_png.py web/wiki/icons.pam web/wiki/icons.png; then
+    echo "run_wiki: failed to convert the icon sheet" >&2
+    exit 1
+fi
+# The PAM is an intermediate, like a .o. Only the PNG is referenced by a page,
+# and it is a few hundred KB of raw pixels that would otherwise be committed
+# alongside the PNG encoding the same image.
+rm -f web/wiki/icons.pam
+
 echo
 echo "Wiki written to web/wiki/. It is committed output, so:"
 echo "    git add web/wiki && git commit"

@@ -38,3 +38,6 @@ HANDOFF.md
 # and none of which any build needs. Ignored rather than remembered.
 .wrangler/
 signal/.wrangler/
+
+# The icon sheet intermediate -- run_wiki.sh converts it to PNG and deletes it.
+web/wiki/icons.pam

@@ -87,13 +87,21 @@ other four stages assume.
       for every later visual check. One thing the eye caught: the brand and nav
       inherited the prose-link underline; chrome is furniture, not prose.
 
-- [ ] **1.4 The icon sheet.**
+- [x] **1.4 The icon sheet.**
       Loop `dropArt()` over every stackable item into one PPM grid at 14×14 per
       cell; `ppm_to_png.py` → `web/wiki/icons.png`. Emit the CSS offset class per
       item into `wiki.css`.
       *Verify:* the sheet has exactly one cell per stackable item; **no cell is
       blank** (the generator refuses to finish if one is); the PNG opens and the
       icons are crisp, not smoothed.
+      *Done 2026-09-11.* 224×266, **290 cells, 290 CSS classes**, 14 KB.
+      One thing the plan had wrong: PPM cannot carry this. Art stores 0 for
+      transparent and flattening it onto any background colour makes every icon
+      a rectangle of that colour — exactly the "big squares" complaint that
+      started the dropped-item work. `ppm_to_png.py` now also reads **PAM
+      (P7 / RGB_ALPHA)** and emits colour type 6; the P6 path `cover.cpp` uses is
+      regression-tested and unchanged. The `.pam` is an intermediate like a
+      `.o`, converted and deleted, and gitignored.
 
 - [ ] **1.5 The material index.**
       `/wiki/materials/` — all 116 rows, icon + name + kind + density +

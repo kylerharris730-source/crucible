@@ -1,4 +1,4 @@
-"""PPM -> PNG, with nothing but the standard library.
+"""PPM/PAM -> PNG, with nothing but the standard library.
 
 tools/cover.cpp writes PPM because a PPM is a short header followed by raw
 bytes, which needs no image library on the C++ side. PNG needs zlib and a
@@ -6,19 +6,34 @@ handful of chunks, which Python already has -- so the conversion lives here
 rather than pulling an encoder into the game's build.
 
     python scripts/ppm_to_png.py artifacts/visual/cover-night-warm.ppm web/og-cover.png
+    python scripts/ppm_to_png.py web/wiki/icons.pam web/wiki/icons.png
+
+Two input formats, because two callers need different things:
+
+  P6 (PPM)  RGB, no alpha. What tools/cover.cpp writes, unchanged.
+  P7 (PAM)  RGB_ALPHA. What tools/wiki.cpp writes for the icon sheet.
+
+The icon sheet cannot use PPM. Item art is a SHAPE on transparency -- dropArt
+stores 0 for "nothing here" -- and flattening that onto any single background
+colour turns every icon into a rectangle of that colour. That is precisely the
+thing the dropped-item work was reported for: "i dont want them to all be big
+squares i want the sprite". A sheet composited onto the panel colour would look
+right on a panel and wrong on every row highlight, table stripe and hover state
+it is ever drawn over.
+
+PAM rather than a second script: it is the same trivially-parsed-header shape as
+PPM, it is the format Netpbm already defines for exactly this, and one converter
+that handles both is one place to fix an encoder bug.
 """
 import struct
 import sys
 import zlib
 
 
-def read_ppm(path):
-    with open(path, "rb") as f:
-        data = f.read()
-
-    # P6, then width height maxval, any of which may be separated by comments.
-    fields, pos = [], 2
-    while len(fields) < 3:
+def _read_ppm_fields(data, pos, count):
+    """Whitespace-separated integers, skipping # comments. PPM header rules."""
+    fields = []
+    while len(fields) < count:
         while pos < len(data) and data[pos:pos + 1].isspace():
             pos += 1
         if data[pos:pos + 1] == b"#":
@@ -29,6 +44,11 @@ def read_ppm(path):
         while pos < len(data) and not data[pos:pos + 1].isspace():
             pos += 1
         fields.append(int(data[start:pos]))
+    return fields, pos
+
+
+def read_ppm(data):
+    fields, pos = _read_ppm_fields(data, 2, 3)
     pos += 1  # the single whitespace byte before the pixel data
 
     width, height, maxval = fields
@@ -39,14 +59,61 @@ def read_ppm(path):
     if len(pixels) != expected:
         raise ValueError("truncated: wanted %d bytes of pixels, found %d"
                          % (expected, len(pixels)))
-    return width, height, pixels
+    return width, height, 3, pixels
 
 
-def write_png(path, width, height, pixels):
-    # Filter type 0 (None) at the start of every scanline: the image is flat
+def read_pam(data):
+    # A PAM header is lines of KEY VALUE, terminated by ENDHDR, then a single
+    # newline and the raw tuples.
+    end = data.find(b"ENDHDR\n")
+    if end < 0:
+        raise ValueError("PAM header has no ENDHDR")
+    header = data[:end].decode("ascii", "replace")
+    fields = {}
+    for line in header.splitlines()[1:]:       # skip the P7 line itself
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split(None, 1)
+        if len(parts) == 2:
+            fields[parts[0]] = parts[1].strip()
+
+    depth = int(fields.get("DEPTH", 0))
+    if depth != 4 or fields.get("TUPLTYPE") != "RGB_ALPHA":
+        raise ValueError("only DEPTH 4 / TUPLTYPE RGB_ALPHA PAM is supported, "
+                         "got depth=%s tupltype=%s"
+                         % (fields.get("DEPTH"), fields.get("TUPLTYPE")))
+    if int(fields.get("MAXVAL", 0)) != 255:
+        raise ValueError("only 8-bit PAM is supported, got maxval=%s"
+                         % fields.get("MAXVAL"))
+
+    width = int(fields["WIDTH"])
+    height = int(fields["HEIGHT"])
+    pos = end + len(b"ENDHDR\n")
+    expected = width * height * 4
+    pixels = data[pos:pos + expected]
+    if len(pixels) != expected:
+        raise ValueError("truncated: wanted %d bytes of pixels, found %d"
+                         % (expected, len(pixels)))
+    return width, height, 4, pixels
+
+
+def read_image(path):
+    with open(path, "rb") as f:
+        data = f.read()
+    magic = data[:2]
+    if magic == b"P6":
+        return read_ppm(data)
+    if magic == b"P7":
+        return read_pam(data)
+    raise ValueError("not a P6 (PPM) or P7 (PAM) file: %r" % magic)
+
+
+def write_png(path, width, height, channels, pixels):
+    # Filter type 0 (None) at the start of every scanline: these images are flat
     # colour blocks, so the fancier filters buy little and cost clarity here.
     raw = bytearray()
-    stride = width * 3
+    stride = width * channels
     for y in range(height):
         raw.append(0)
         raw += pixels[y * stride:(y + 1) * stride]
@@ -56,8 +123,12 @@ def write_png(path, width, height, pixels):
         return (struct.pack(">I", len(payload)) + body
                 + struct.pack(">I", zlib.crc32(body) & 0xFFFFFFFF))
 
+    # Colour type 2 is truecolour, 6 is truecolour with alpha.
+    colour_type = 2 if channels == 3 else 6
+
     png = b"\x89PNG\r\n\x1a\n"
-    png += chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+    png += chunk(b"IHDR",
+                 struct.pack(">IIBBBBB", width, height, 8, colour_type, 0, 0, 0))
     png += chunk(b"IDAT", zlib.compress(bytes(raw), 9))
     png += chunk(b"IEND", b"")
 
@@ -71,9 +142,11 @@ def main():
         print(__doc__)
         return 1
     src, dst = sys.argv[1], sys.argv[2]
-    width, height, pixels = read_ppm(src)
-    size = write_png(dst, width, height, pixels)
-    print("%s -> %s  (%dx%d, %d KB)" % (src, dst, width, height, size // 1024))
+    width, height, channels, pixels = read_image(src)
+    size = write_png(dst, width, height, channels, pixels)
+    print("%s -> %s  (%dx%d, %s, %d KB)"
+          % (src, dst, width, height,
+             "RGBA" if channels == 4 else "RGB", size // 1024))
     return 0
 
 
