@@ -141,10 +141,15 @@ other four stages assume.
       read where they already live, instead of being copied into
       `web/wiki/_src/`. A copy is a second thing to keep in step.
 
-- [ ] **1.7 The hub.**
+- [x] **1.7 The hub.**
       `/wiki/` — two columns, **Learn** and **Look up**, the latter with live
       counts ("116 materials"). No content of its own.
       *Verify:* every link resolves to a file that exists.
+      *Done 2026-09-11.* **39 links across the site, 0 broken**, checked by
+      walking every generated page. The "Look up" column is driven by the same
+      `SECTIONS` table the nav is, so the hub cannot offer a door the nav has
+      not got — or one whose pages do not exist yet. Two columns at desktop
+      width, one on a narrow screen; checked at both rather than assumed.
 
 - [ ] **1.8 Publish.**
       Confirm no `.gitignore` rule swallows `web/wiki/`, commit the output, push,

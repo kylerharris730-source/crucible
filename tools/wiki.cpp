@@ -867,43 +867,60 @@ int main() {
     writeMaterialIndex(cellOfItem);
     writeProse();
 
+    /* --- the hub ---------------------------------------------------------
+
+       Two columns rather than one list, because two different readers arrive
+       here for opposite reasons: one wants to be taught something and one wants
+       to look one thing up. A single list serves neither.
+
+       The reference column carries live COUNTS -- "115 materials", not
+       "Materials" -- because the count is what tells a reader the table is
+       complete rather than a selection somebody curated.
+
+       No content of its own. The moment the hub starts explaining something it
+       has become a page that can contradict another page. */
     FILE* f = pageOpen("index.html", 0, "Home", "");
     fputs("<h1>The Cinderlift wiki</h1>\n", f);
     fputs("<p class=\"lede\">A reference for a game about digging, heat and\n"
           "leaving. Generated from the game&rsquo;s own tables, so nothing here\n"
           "can disagree with what the game actually does.</p>\n", f);
-    fputs("<p>Step 1.4 &mdash; the spine, a template, and every item&rsquo;s own\n"
-          "art. What the generator can already see:</p>\n", f);
-    fprintf(f,
-        "<ul>\n"
-        "<li>%d materials</li>\n"
-        "<li>%d items, %d of them stackable, %d with written descriptions</li>\n"
-        "<li>%d recipes across %d stations</li>\n"
-        "<li>%d creatures</li>\n"
-        "<li>%d devices</li>\n"
-        "<li>%d sprites</li>\n"
-        "</ul>\n",
-        (int)MAT_COUNT,
-        (int)ITEM_COUNT, stackable, described,
-        N_RECIPES, (int)STATION_COUNT,
-        (int)ENT_COUNT,
-        (int)DEV_COUNT,
-        (int)SPR_COUNT);
 
-    /* A strip of real icons, so the sheet is verifiable by looking at the page
-       rather than by opening the PNG and counting. It goes away when the
-       material index lands in 1.5 and has thousands of them. */
-    fputs("<h2>Every icon is the game&rsquo;s own art</h2>\n", f);
-    fputs("<p>Drawn by the same code that draws them in your hands:</p>\n", f);
-    fputs("<p>\n", f);
-    for (int i = ITEM_NONE + 1, shown = 0; i < ITEM_COUNT && shown < 48; ++i) {
-        if (cellOfItem[i] < 0) continue;
-        fprintf(f, "<span class=\"icon i%d\" title=\"", i);
-        escapeTo(f, ITEMS[i].name);
-        fputs("\"></span>\n", f);
-        ++shown;
+    fputs("<div class=\"doors\">\n", f);
+
+    fputs("<section class=\"door\">\n<h2>Learn</h2>\n", f);
+    fputs("<p>How the systems behave, which no table holds.</p>\n<ul>\n", f);
+    for (int i = 0; i < N_PROSE; ++i) {
+        fprintf(f, "<li><a href=\"%s\">", PROSE[i].out);
+        escapeTo(f, PROSE[i].title);
+        fputs("</a></li>\n", f);
     }
-    fputs("</p>\n", f);
+    fputs("</ul>\n", f);
+    fputs("<p class=\"n\">The tutorials are being written &mdash; stage 4 of\n"
+          "<code>WIKI_STEPS.md</code>.</p>\n", f);
+    fputs("</section>\n", f);
+
+    fputs("<section class=\"door\">\n<h2>Look up</h2>\n", f);
+    fputs("<p>Every fact the game holds about itself.</p>\n<ul>\n", f);
+    /* Driven by the same table the nav is, so the hub cannot offer a door the
+       nav has not got -- or, worse, one that is not there yet. */
+    for (int i = 0; i < N_SECTIONS; ++i) {
+        if (!SECTIONS[i].built || !SECTIONS[i].slug[0]) continue;
+        if (strcmp(SECTIONS[i].slug, "guide") == 0) continue;   /* the other door */
+        fprintf(f, "<li><a href=\"%s/index.html\">", SECTIONS[i].slug);
+        escapeTo(f, SECTIONS[i].label);
+        fputs("</a>", f);
+        if (strcmp(SECTIONS[i].slug, "materials") == 0)
+            fprintf(f, " <span class=\"n\">%d</span>", (int)MAT_COUNT - 1);
+        fputs("</li>\n", f);
+    }
+    fputs("</ul>\n", f);
+    fprintf(f, "<p class=\"n\">Still to come: %d items, %d recipes over %d\n"
+               "stations, %d creatures and %d devices.</p>\n",
+            stackable, N_RECIPES, (int)STATION_COUNT,
+            (int)ENT_COUNT, (int)DEV_COUNT);
+    fputs("</section>\n", f);
+
+    fputs("</div>\n", f);
     pageClose(f, 0);
 
     printf("wiki: wrote %s/index.html\n", OUT_DIR);
