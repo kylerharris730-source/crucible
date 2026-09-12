@@ -445,16 +445,38 @@ Three things the writing turned up, all corrections to what I had written:
       Written as JS rather than JSON so there is no fetch — a `file://` copy of
       the wiki searches as readily as the served one. `?q=` pre-fills, so a
       search is a shareable link.
-- [ ] **5.2 Navigation by shape.** Depth bands for creatures, stations for
+- [x] **5.2 Navigation by shape.** Depth bands for creatures, stations for
       recipes, tiers for items.
-- [ ] **5.3 "What can I make now?"** Pick the tools and stations you have; the
+      *Done 2026-09-12.* Depth chips on the creature index, **cumulative** —
+      "Down to layer 1" gives 6 of 22, because the question is "what might I
+      meet on the way down", not "what is filed under layer 2". A creature is
+      ranked by the shallowest layer it spawns in.
+      **Tiers for items were dropped, and the reason is worth keeping:** items
+      have no tier column. There is nothing to derive, and inventing one by
+      hand would be exactly the hand-maintained fact this project exists to
+      avoid. The kind chips already there are the real, derivable axis.
+      Also fixed: bosses have no layer bits, which read as "nowhere it spawns on
+      its own" in a table cell. For a boss that is the design rather than an
+      oddity, so it now says "summoned".
+- [x] **5.3 "What can I make now?"** Pick the tools and stations you have; the
       page filters the 141 recipes to what is reachable.
+      *Done 2026-09-12.* All 141 in one table, station chips **cumulative** —
+      picking Bench gives **38 of 141**, which is 16 hand + 22 bench exactly,
+      because a bench does not stop you making things by hand.
+      The cumulative rule lives in the markup (`class="cumulative"`,
+      `data-kind` as a rank) rather than as a special case in the script, so one
+      filter serves both this page and the creature depths.
 - [ ] **5.5 Creature art.** A second sprite sheet for the 26 creatures. Their
       canvases are six different sizes (22×36 up to 96×112), so unlike the item
       sheet the cells are not uniform and the packing is real work. Raised by
       2.4, which shipped creature pages as text.
-- [ ] **5.4 A staleness check.** `run_wiki.sh` warns when the committed output's
+- [x] **5.4 A staleness check.** `run_wiki.sh` warns when the committed output's
       build stamp is behind `HEAD`, so a stale wiki announces itself.
+      *Done 2026-09-12.* Reads the stamp out of the page already on disk and
+      counts the commits since. Proven by rewriting the stamp three commits back:
+      "the committed wiki was built from ce18e734c1ef, 3 commit(s) back".
+      A notice, not an error — being behind is the normal state at the moment
+      you run this script, which is precisely when it fires.
 
 ---
 

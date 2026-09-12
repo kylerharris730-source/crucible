@@ -91,6 +91,13 @@
         var chips = bar.querySelectorAll(".chip");
         var activeChip = "";
 
+        /* A "cumulative" table filters with <= rather than ==, because its
+           data-kind is a RANK rather than a label. The crafting stations are
+           the case: having an anvil does not stop you making things by hand, so
+           picking Anvil has to show hand, bench and anvil together. Expressed in
+           the markup so the script has no special case for one page. */
+        var cumulative = table.classList.contains("cumulative");
+
         function apply() {
             var needle = input.value.toLowerCase().trim();
             var rows = table.tBodies[0].rows;
@@ -99,8 +106,11 @@
                 var row = rows[i];
                 var hay = (row.getAttribute("data-search") || "").toLowerCase();
                 var kind = row.getAttribute("data-kind") || "";
-                var ok = (!needle || hay.indexOf(needle) >= 0) &&
-                         (!activeChip || kind === activeChip);
+                var kindOk;
+                if (!activeChip) kindOk = true;
+                else if (cumulative) kindOk = parseInt(kind, 10) <= parseInt(activeChip, 10);
+                else kindOk = (kind === activeChip);
+                var ok = (!needle || hay.indexOf(needle) >= 0) && kindOk;
                 row.hidden = !ok;
                 if (ok) ++shown;
             }

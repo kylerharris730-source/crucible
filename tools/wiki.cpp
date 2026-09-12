@@ -1435,11 +1435,81 @@ static void writeRecipes(const int* cellOfItem) {
         fail("some recipes belong to no station page", detail);
     }
 
+    /* --- what can I make now? --------------------------------------------
+
+       Every recipe in one table, filtered by which stations you have built.
+       The per-station pages answer "I am standing at an anvil, what does it
+       do"; this answers the other question, which is the one you ask while
+       deciding what to build next: "I have a bench and an anvil -- what is
+       open to me, and what would the next station buy?"
+
+       Station filtering is CUMULATIVE, because that is how the game works: a
+       bench does not stop you making things by hand. Picking Anvil shows hand,
+       bench and anvil recipes together, which is the actual answer to "what can
+       I make", rather than the 40 rows that happen to be filed under anvil. */
+    {
+        FILE* f = pageOpen("recipes/what-can-i-make.html", 1,
+                           "What can I make?", "recipes");
+        fputs("<h1>What can I make?</h1>\n", f);
+        fputs("<p class=\"lede\">Every recipe in the game, narrowed to the\n"
+              "stations you have. Picking one includes everything below it,\n"
+              "because a bench does not stop you making things by hand.</p>\n", f);
+
+        fputs("<div class=\"filterbar\">\n", f);
+        fputs("<input type=\"search\" placeholder=\"Filter by name…\" "
+              "aria-label=\"Filter recipes\">\n", f);
+        for (int st = 0; st < STATION_COUNT; ++st)
+            fprintf(f, "<button class=\"chip\" data-kind=\"%d\">%s</button>\n",
+                    st, STATION_NAMES[st]);
+        fprintf(f, "<span class=\"count\">%d of %d</span>\n",
+                N_RECIPES, N_RECIPES);
+        fputs("</div>\n", f);
+
+        fputs("<div class=\"tablewrap\">\n<table class=\"index cumulative\">\n", f);
+        fputs("<thead><tr>\n"
+              "<th class=\"sortable\">Makes</th>\n"
+              "<th class=\"sortable\">Where</th>\n"
+              "<th>From</th>\n"
+              "</tr></thead>\n<tbody>\n", f);
+
+        for (int r = 0; r < N_RECIPES; ++r) {
+            const Recipe& rec = RECIPES[r];
+            /* data-kind carries the station NUMBER, and the table is marked
+               "cumulative" so the script compares with <= instead of ==. The
+               rule lives in the markup rather than in a special case in the
+               script. */
+            fprintf(f, "<tr data-kind=\"%d\" data-search=\"", (int)rec.station);
+            escapeTo(f, ITEMS[rec.out].name);
+            fputc(' ', f);
+            escapeTo(f, STATION_NAMES[rec.station]);
+            fputs("\">\n<td>", f);
+            if (rec.outCount > 1) fprintf(f, "%d&times; ", rec.outCount);
+            writeItemLink(f, rec.out, cellOfItem, true);
+            fputs("</td>\n<td class=\"dim\">", f);
+            escapeTo(f, STATION_NAMES[rec.station]);
+            fputs("</td>\n<td class=\"dim\">", f);
+            bool first = true;
+            for (int k = 0; k < CRAFT_MAX_IN; ++k) {
+                if (!rec.in[k].item || !rec.in[k].count) continue;
+                if (!first) fputs(" + ", f);
+                first = false;
+                fprintf(f, "%d&times; ", rec.in[k].count);
+                writeItemLink(f, rec.in[k].item, cellOfItem, false);
+            }
+            fputs("</td>\n</tr>\n", f);
+        }
+        fputs("</tbody>\n</table>\n</div>\n", f);
+        pageClose(f, 1);
+    }
+
     FILE* f = pageOpen("recipes/index.html", 1, "Recipes", "recipes");
     fputs("<h1>Recipes</h1>\n", f);
     fprintf(f, "<p class=\"lede\">%d recipes across %d stations. Each station is\n"
                "a thing you build and put down, and it unlocks everything on its\n"
                "page.</p>\n", N_RECIPES, (int)STATION_COUNT);
+    fputs("<p><a href=\"what-can-i-make.html\">What can I make right now?</a>\n"
+          "&mdash; all of them at once, narrowed to the stations you have\n"
+          "built.</p>\n", f);
     fputs("<div class=\"tablewrap\">\n<table>\n", f);
     fputs("<thead><tr><th>Station</th><th class=\"num\">Recipes</th>"
           "</tr></thead>\n<tbody>\n", f);
@@ -1473,7 +1543,12 @@ static void writeRecipes(const int* cellOfItem) {
    a gap in WIKI_STEPS.md instead of quietly shipped as though a creature page
    was always meant to be text. */
 
-static void writeLayers(FILE* f, u8 mask) {
+/* A creature with no layer bits never spawns by itself. For a boss that is the
+   whole design -- you summon it, so you choose the ground and the moment -- and
+   "summoned" says that in one word. For anything else an empty mask means it
+   genuinely has nowhere to appear, which is worth reading as odd rather than
+   being dressed up. */
+static void writeLayers(FILE* f, u8 mask, bool isBoss) {
     bool first = true;
     for (int bit = 0; bit < 3; ++bit) {
         if (!(mask & (1u << bit))) continue;
@@ -1481,7 +1556,7 @@ static void writeLayers(FILE* f, u8 mask) {
         first = false;
         fprintf(f, "layer %d", bit + 1);
     }
-    if (first) fputs("nowhere it spawns on its own", f);
+    if (first) fputs(isBoss ? "summoned" : "nowhere it spawns on its own", f);
 }
 
 static void writeCreaturePage(int type, const int* cellOfItem) {
@@ -1498,7 +1573,7 @@ static void writeCreaturePage(int type, const int* cellOfItem) {
     fputs("<p class=\"lede\">", f);
     if (e.isBoss) fputs("A boss. ", f);
     fputs("Found in ", f);
-    writeLayers(f, e.layerMask);
+    writeLayers(f, e.layerMask, e.isBoss);
     if (e.surfaceAtNight) fputs(", and on the surface after dark", f);
     fputs(".</p>\n", f);
 
@@ -1580,7 +1655,26 @@ static void writeCreatures(const int* cellOfItem) {
             fputs("<p>Each is summoned deliberately, so none of these can "
                   "blunder into you in a tunnel.</p>\n", f);
 
-        fputs("<div class=\"tablewrap\">\n<table class=\"index\">\n", f);
+        /* Depth chips, and they are CUMULATIVE for the same reason the crafting
+           stations are: the question is "what might I meet on the way down to
+           layer 2", not "what is filed under layer 2". A creature is ranked by
+           the SHALLOWEST layer it spawns in, since that is the first place you
+           can meet it. */
+        if (pass == 0) {
+            fputs("<div class=\"filterbar\">\n", f);
+            fputs("<input type=\"search\" placeholder=\"Filter by name…\" "
+                  "aria-label=\"Filter creatures\">\n", f);
+            for (int layer = 1; layer <= 3; ++layer)
+                fprintf(f, "<button class=\"chip\" data-kind=\"%d\">"
+                           "Down to layer %d</button>\n", layer, layer);
+            int n = 0;
+            for (int t = 1; t < ENT_COUNT; ++t) if (!ENT_DEFS[t].isBoss) ++n;
+            fprintf(f, "<span class=\"count\">%d of %d</span>\n", n, n);
+            fputs("</div>\n", f);
+        }
+
+        fprintf(f, "<div class=\"tablewrap\">\n<table class=\"index%s\">\n",
+                pass == 0 ? " cumulative" : "");
         fputs("<thead><tr>\n"
               "<th class=\"sortable\">Creature</th>\n"
               "<th class=\"sortable\">Found</th>\n"
@@ -1594,14 +1688,20 @@ static void writeCreatures(const int* cellOfItem) {
             const EntityDef& e = ENT_DEFS[t];
             if ((bool)e.isBoss != (pass == 1)) continue;
 
-            fputs("<tr data-search=\"", f);
+            /* The shallowest layer it spawns in: the first depth at which you
+               can meet it, which is what a depth filter is asked about. */
+            int shallowest = 4;
+            for (int bit = 0; bit < 3; ++bit)
+                if (e.layerMask & (1u << bit)) { shallowest = bit + 1; break; }
+
+            fprintf(f, "<tr data-kind=\"%d\" data-search=\"", shallowest);
             escapeTo(f, e.name);
             fputs("\">\n<td><a href=\"", f);
             fputs(slugs[t], f);
             fputs(".html\">", f);
             escapeTo(f, e.name);
             fputs("</a></td>\n<td class=\"dim\">", f);
-            writeLayers(f, e.layerMask);
+            writeLayers(f, e.layerMask, e.isBoss);
             fputs("</td>\n", f);
             fprintf(f, "<td class=\"num\">%d</td>\n", e.hp);
             if (e.touchDamage) fprintf(f, "<td class=\"num\">%d</td>\n", e.touchDamage);

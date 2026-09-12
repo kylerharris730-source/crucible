@@ -297,6 +297,7 @@ window.WIKI_PAGES = [
 ["Chemistry Bench","recipes/chemistry-bench.html","recipes"],
 ["Assembly Table","recipes/assembly-table.html","recipes"],
 ["Blast Furnace","recipes/blast-furnace.html","recipes"],
+["What can I make?","recipes/what-can-i-make.html","recipes"],
 ["Rock Mite","creatures/rock-mite.html","creatures"],
 ["Cinder Moth","creatures/cinder-moth.html","creatures"],
 ["Drip Slime","creatures/drip-slime.html","creatures"],
