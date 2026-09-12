@@ -176,10 +176,21 @@ other four stages assume.
 The bulk of the content and little of the work: the same template over four more
 tables.
 
-- [ ] **2.1 Material detail pages.** 116 pages, the §3.3 section order, empty
+- [x] **2.1 Material detail pages.** 116 pages, the §3.3 section order, empty
       sections **omitted not blank**.
       *Verify:* every index row links to a page that exists; three pages
       hand-checked against the tables; no page contains the word "none".
+      *Done 2026-09-11.* **115 pages, 115 row links, 0 missing**, and no page
+      says "none". Slug collisions are a hard failure rather than a silent
+      overwrite.
+      The hand-check earned its place twice. A "cheapest tool that clears it"
+      column was written first and is **wrong**: every mining tier carries the
+      same `minePower` on purpose — the ladder is speed and reach, not
+      hardness — so it printed "Hand Drill or better" on every page and read as
+      a tier gate that does not exist. It now says so outright. And liquids were
+      getting a Mining section: a fluid&rsquo;s strength means "a shot spends
+      pierce crossing it", not "bring a better pick", so that fact moved to
+      Behaviour where it is true.
 
 - [ ] **2.2 Item index and item pages.** 290 pages, stat block specialised by
       kind, the authored `description` quoted **verbatim**.

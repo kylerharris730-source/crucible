@@ -361,6 +361,98 @@ static void writeIcons(int* cellOfItem, int& sheetW, int& sheetH, int& count) {
     if (fclose(f) != 0) fail("failed to close", path);
 }
 
+/* --- slugs ---------------------------------------------------------------
+
+   "Coke Gas" becomes "coke-gas.html". Lowercase, spaces and punctuation to
+   hyphens, and nothing else -- a URL that survives being pasted into chat and
+   read out loud.
+
+   Collisions are checked rather than hoped for: two materials whose names
+   differ only by punctuation would silently overwrite one another's page, and
+   the reader would find the wrong one with nothing anywhere complaining. */
+static void slugify(char* out, size_t cap, const char* name) {
+    size_t n = 0;
+    bool lastHyphen = true;          /* true so a leading hyphen is skipped */
+    for (const char* p = name; *p && n + 1 < cap; ++p) {
+        char c = *p;
+        if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+        const bool alnum = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');
+        if (alnum) { out[n++] = c; lastHyphen = false; }
+        else if (!lastHyphen) { out[n++] = '-'; lastHyphen = true; }
+    }
+    while (n && out[n - 1] == '-') --n;
+    out[n] = '\0';
+    if (!n) fail("a name slugified to nothing", name);
+}
+
+/* --- the durability ladder ------------------------------------------------
+   g_matStrength is a 0..255 scale with named rungs (see MatStrength). The
+   number alone means nothing to a reader; the rung and the tool that clears it
+   are the facts they came for. */
+static const char* strengthWord(u8 s) {
+    if (s >= STR_ABSOLUTE) return "indestructible";
+    if (s >= STR_SEALED)   return "a sealed layer barrier";
+    if (s >= STR_HARD)     return "very hard";
+    if (s >= STR_ALLOY)    return "hard";
+    if (s >= STR_METAL)    return "metal";
+    if (s >= STR_ROCK)     return "rock";
+    if (s >= STR_SOFT)     return "soft";
+    if (s >= STR_LOOSE)    return "loose";
+    if (s > STR_NOTHING)   return "barely there";
+    return "nothing at all";
+}
+
+/* Can anything in the game break this, and does the answer distinguish between
+   tools?
+
+   The obvious page column here would be "the cheapest tool that clears it", and
+   it was written that way first. It is WRONG, and measuring said so: every
+   mining tier carries the SAME minePower (STR_HARD), deliberately and with a
+   comment in item.cpp saying why -- the four tiers are a ladder of SPEED and
+   REACH, and making the top one the only one that bites hard rock would
+   silently re-tier every material in the game.
+
+   So a "breaks with" column would have printed "Hand Drill or better" on every
+   single page, which reads as a tier gate that does not exist and would send a
+   reader hunting for the pick that finally cracks titanium. There isn't one.
+
+   Derived rather than assumed, so if a fifth tier ever does break the tie the
+   answer changes on every page at once. */
+static int strongestMinePower() {
+    int best = 0;
+    for (int i = MAT_COUNT; i < ITEM_COUNT; ++i) {
+        if (!ITEMS[i].mineRadius || !ITEMS[i].minePower) continue;
+        if (ITEMS[i].minePower > best) best = ITEMS[i].minePower;
+    }
+    return best;
+}
+
+static bool minePowerIsUniform() {
+    int seen = 0;
+    for (int i = MAT_COUNT; i < ITEM_COUNT; ++i) {
+        if (!ITEMS[i].mineRadius || !ITEMS[i].minePower) continue;
+        if (!seen) seen = ITEMS[i].minePower;
+        else if (ITEMS[i].minePower != seen) return false;
+    }
+    return true;
+}
+
+/* The weakest tool that reaches this material, for the day the ladder stops
+   being uniform. ITEM_NONE when nothing can. */
+static ItemId weakestToolFor(u8 strength) {
+    ItemId best = ITEM_NONE;
+    int bestPower = 0;
+    for (int i = MAT_COUNT; i < ITEM_COUNT; ++i) {
+        if (!ITEMS[i].mineRadius || !ITEMS[i].minePower) continue;
+        if (ITEMS[i].minePower < (int)strength) continue;
+        if (best == ITEM_NONE || ITEMS[i].minePower < bestPower) {
+            best = (ItemId)i;
+            bestPower = ITEMS[i].minePower;
+        }
+    }
+    return best;
+}
+
 /* --- the material index --------------------------------------------------
 
    WIKI.md settles the shape: ONE table with every row in it, sortable by any
@@ -395,8 +487,221 @@ static void writeTemp(FILE* f, u8 stored) {
     fprintf(f, "<td class=\"num\" data-sort=\"%d\">%d&nbsp;&deg;C</td>\n", c, c);
 }
 
+/* --- a material's own page -----------------------------------------------
+
+   WIKI.md fixes the section order so the page is skimmable by POSITION: a
+   reader who has looked at one material page knows where the heat block is on
+   every other one. Sections with nothing in them are OMITTED, never shown
+   empty -- "Heat: none" on ninety pages teaches a reader to stop looking at the
+   heat section, which costs them the ten pages where it mattered.
+
+   "Used in", "Found" and the rest of the cross-links are stage 3. */
+
+static void writeTransition(FILE* f, const char* when, u8 stored, u8 becomes,
+                            const char* comparison) {
+    if (!stored || becomes >= MAT_COUNT) return;
+    char slug[128];
+    slugify(slug, sizeof(slug), MATS[becomes].name);
+    const int c = (int)stored - TEMP_OFFSET;
+    fprintf(f, "<div class=\"chain\"><span>%s %s %d&nbsp;&deg;C</span>"
+               "<span class=\"arrow\">&rarr;</span>"
+               "<a href=\"%s.html\">", when, comparison, c, slug);
+    escapeTo(f, MATS[becomes].name);
+    fputs("</a></div>\n", f);
+}
+
+static void writeMaterialPage(int id, const int* cellOfItem) {
+    const MatInfo& m = MATS[id];
+    char slug[128], file[192];
+    slugify(slug, sizeof(slug), m.name);
+    snprintf(file, sizeof(file), "materials/%s.html", slug);
+
+    FILE* f = pageOpen(file, 1, m.name, "materials");
+
+    fputs("<h1>", f);
+    if (cellOfItem[id] >= 0) fprintf(f, "<span class=\"icon i%d\"></span> ", id);
+    escapeTo(f, m.name);
+    fputs("</h1>\n", f);
+
+    const char* kind = (m.kind <= KIND_GAS) ? KIND_LABELS[m.kind] : "?";
+    fputs("<p class=\"lede\">", f);
+    escapeTo(f, kind);
+    /* Materials share the item id space, so a material can carry the authored
+       description ITEMS[] holds for it. Quoted verbatim -- it is the text the
+       player reads in game, and two wordings of one thing is how a wiki starts
+       feeling untrustworthy. */
+    if (ITEMS[id].description && ITEMS[id].description[0]) {
+        fputs(" &mdash; ", f);
+        escapeTo(f, ITEMS[id].description);
+    }
+    fputs("</p>\n", f);
+
+    /* --- behaviour ---------------------------------------------------- */
+    fputs("<h2>Behaviour</h2>\n<dl class=\"stats\">\n", f);
+    fprintf(f, "<dt>Density</dt><dd>%d", (int)m.density);
+    if (m.kind == KIND_GAS) fputs(" &mdash; rises through anything denser", f);
+    fputs("</dd>\n", f);
+
+    if (m.kind == KIND_POWDER)
+        fprintf(f, "<dt>Piling</dt><dd>slides %d/255 when dry, %d/255 when "
+                   "wet &mdash; higher flows more freely</dd>\n",
+                (int)m.slideDry, (int)m.slideWet);
+    if (m.kind == KIND_LIQUID) {
+        fprintf(f, "<dt>Spread</dt><dd>up to %d cells sideways per frame</dd>\n",
+                (int)m.dispersion);
+        if (m.jitter)
+            fprintf(f, "<dt>Viscosity</dt><dd>refuses to flow sideways %d "
+                       "frames in 255</dd>\n", (int)m.jitter);
+    }
+    if (m.kind == KIND_GAS) {
+        fprintf(f, "<dt>Spread</dt><dd>up to %d cells sideways per frame</dd>\n",
+                (int)m.dispersion);
+        if (m.jitter)
+            fprintf(f, "<dt>Drift</dt><dd>wanders sideways %d times in 255 "
+                       "instead of rising</dd>\n", (int)m.jitter);
+    }
+    if (m.capacity)
+        fprintf(f, "<dt>Absorbs water</dt><dd>up to %d, wicking %d</dd>\n",
+                (int)m.capacity, (int)m.wick);
+    if (g_matLight[id])
+        fprintf(f, "<dt>Gives light</dt><dd>%d</dd>\n", (int)g_matLight[id]);
+    if (g_matPassable[id])
+        fputs("<dt>Walk through</dt><dd>yes</dd>\n", f);
+    if (g_matClimb[id])
+        fputs("<dt>Climbable</dt><dd>yes</dd>\n", f);
+    if (g_matPlatform[id])
+        fputs("<dt>Platform</dt><dd>stand on it, jump up through it</dd>\n", f);
+    if (g_matConducts[id])
+        fputs("<dt>Conducts sparks</dt><dd>yes</dd>\n", f);
+    if (g_matIsPlant[id])
+        fputs("<dt>Grown</dt><dd>yes &mdash; a sickle cuts it</dd>\n", f);
+    if (g_matIsSeed[id])
+        fputs("<dt>Seed</dt><dd>germinates where it settles</dd>\n", f);
+    if (g_matDecay[id])
+        fprintf(f, "<dt>Decays</dt><dd>about 1 chance in %d per frame</dd>\n",
+                (int)g_matDecay[id]);
+    /* A fluid's strength is not hardness -- it is what a shot spends crossing
+       it, which is why depth stops a bolt in a lake. Stated here because it is
+       behaviour, and deliberately NOT under a Mining heading. */
+    if ((m.kind == KIND_LIQUID || m.kind == KIND_GAS) &&
+        g_matStrength[id] > STR_NOTHING)
+        fputs("<dt>Stops shots</dt><dd>a shot spends pierce crossing it, so "
+              "depth stops one</dd>\n", f);
+    fputs("</dl>\n", f);
+
+    /* --- heat ----------------------------------------------------------
+       The most valuable block on the page, and the one nobody could maintain
+       by hand: it is four tables and a subtraction per material. */
+    const bool anyHeat = m.igniteTemp || m.boilTemp || m.coolTemp ||
+                         g_matIgnitesOnContact[id] || g_matVentsFire[id] ||
+                         m.quenchedBy || m.spawnTemp;
+    if (anyHeat || m.heatCond) {
+        fputs("<h2>Heat</h2>\n<dl class=\"stats\">\n", f);
+        fprintf(f, "<dt>Conducts heat</dt><dd>%d of 255", (int)m.heatCond);
+        if (m.heatCond >= 200)      fputs(" &mdash; readily", f);
+        else if (m.heatCond <= 20)  fputs(" &mdash; barely; it insulates", f);
+        fputs("</dd>\n", f);
+        if (m.heatMassShift)
+            fprintf(f, "<dt>Thermal mass</dt><dd>holds %d&times; the heat, so "
+                       "it stays hot long after it stops being heated</dd>\n",
+                    1 << m.heatMassShift);
+        if (m.spawnTemp)
+            fprintf(f, "<dt>Placed at</dt><dd>%d&nbsp;&deg;C</dd>\n",
+                    (int)m.spawnTemp - TEMP_OFFSET);
+        if (m.quenchedBy < MAT_COUNT && m.quenchedBy) {
+            char qs[128];
+            slugify(qs, sizeof(qs), MATS[m.quenchedBy].name);
+            fputs("<dt>Destroyed by</dt><dd>touching <a href=\"", f);
+            fputs(qs, f); fputs(".html\">", f);
+            escapeTo(f, MATS[m.quenchedBy].name);
+            fputs("</a></dd>\n", f);
+        }
+        if (g_matIgnitesOnContact[id])
+            fputs("<dt>Sets fire to</dt><dd>whatever it touches</dd>\n", f);
+        if (g_matVentsFire[id])
+            fputs("<dt>Vents fire</dt><dd>flame passes through it</dd>\n", f);
+        fputs("</dl>\n", f);
+
+        writeTransition(f, "ignites at", m.igniteTemp, m.burnsTo, "");
+        writeTransition(f, "at", m.boilTemp, m.boilsTo, "or above");
+        writeTransition(f, "below", m.coolTemp, m.coolsTo, "");
+        if (g_matDecay[id] && g_matDecaysTo[id] && g_matDecaysTo[id] < MAT_COUNT) {
+            char ds[128];
+            slugify(ds, sizeof(ds), MATS[g_matDecaysTo[id]].name);
+            fprintf(f, "<div class=\"chain\"><span>decays</span>"
+                       "<span class=\"arrow\">&rarr;</span>"
+                       "<a href=\"%s.html\">", ds);
+            escapeTo(f, MATS[g_matDecaysTo[id]].name);
+            fputs("</a></div>\n", f);
+        }
+    }
+
+    /* --- mining ---------------------------------------------------------
+       Only for things you actually dig. A liquid or a gas carries a strength
+       too, but it means "a shot spends pierce crossing this", not "bring a
+       better pick" -- and a Mining heading over water would be a section
+       answering a question nobody asked. */
+    const u8 strength = g_matStrength[id];
+    if (strength > STR_NOTHING &&
+        (m.kind == KIND_STATIC || m.kind == KIND_POWDER)) {
+        fputs("<h2>Mining</h2>\n<dl class=\"stats\">\n", f);
+        fprintf(f, "<dt>Hardness</dt><dd>%s (%d)</dd>\n",
+                strengthWord(strength), (int)strength);
+        const ItemId tool = weakestToolFor(strength);
+        if (tool == ITEM_NONE) {
+            fputs("<dt>Breaks with</dt><dd>nothing in the game &mdash; this is "
+                  "not something you dig through</dd>\n", f);
+        } else if (minePowerIsUniform()) {
+            /* Every tier bites equally hard, so naming one would invent a gate.
+               Say what is actually true and why it is worth knowing. */
+            fputs("<dt>Breaks with</dt><dd>any mining tool &mdash; the tiers "
+                  "differ in speed and reach, not in what they can bite</dd>\n", f);
+        } else {
+            fputs("<dt>Breaks with</dt><dd>", f);
+            escapeTo(f, ITEMS[tool].name);
+            fputs(" or better</dd>\n", f);
+        }
+        if (g_matDropsAs[id] && g_matDropsAs[id] != id &&
+            g_matDropsAs[id] < MAT_COUNT) {
+            char ds[128];
+            slugify(ds, sizeof(ds), MATS[g_matDropsAs[id]].name);
+            fprintf(f, "<dt>Drops</dt><dd><a href=\"%s.html\">", ds);
+            escapeTo(f, MATS[g_matDropsAs[id]].name);
+            fputs("</a></dd>\n", f);
+        }
+        if (g_matSmeltYield[id])
+            fprintf(f, "<dt>Smelts into</dt><dd>%d per cell</dd>\n",
+                    (int)g_matSmeltYield[id]);
+        fputs("</dl>\n", f);
+    }
+
+    fputs("<p class=\"n\"><a href=\"index.html\">&larr; all materials</a></p>\n", f);
+    pageClose(f, 1);
+}
+
 static void writeMaterialIndex(const int* cellOfItem) {
     ensureDir("web/wiki/materials");
+
+    /* Every material's own page, and a check that no two of them want the same
+       filename. Two names differing only in punctuation would silently
+       overwrite each other and leave a reader on the wrong page with nothing
+       complaining -- the class of failure this whole generator exists to make
+       impossible. */
+    {
+        static char slugs[MAT_COUNT][128];
+        for (int i = 1; i < MAT_COUNT; ++i) {
+            slugify(slugs[i], sizeof(slugs[i]), MATS[i].name);
+            for (int j = 1; j < i; ++j) {
+                if (strcmp(slugs[i], slugs[j]) == 0) {
+                    char detail[256];
+                    snprintf(detail, sizeof(detail), "%s and %s both want %s.html",
+                             MATS[j].name, MATS[i].name, slugs[i]);
+                    fail("two materials share a page filename", detail);
+                }
+            }
+            writeMaterialPage(i, cellOfItem);
+        }
+    }
 
     FILE* f = pageOpen("materials/index.html", 1, "Materials", "materials");
     fputs("<h1>Materials</h1>\n", f);
@@ -456,7 +761,13 @@ static void writeMaterialIndex(const int* cellOfItem) {
         fputs("<td>", f);
         if (cellOfItem[i] >= 0)
             fprintf(f, "<span class=\"icon i%d\"></span>", i);
-        escapeTo(f, m.name);
+        {
+            char slug[128];
+            slugify(slug, sizeof(slug), m.name);
+            fprintf(f, "<a href=\"%s.html\">", slug);
+            escapeTo(f, m.name);
+            fputs("</a>", f);
+        }
         fputs("</td>\n", f);
 
         fputs("<td class=\"dim\">", f);
