@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Coke, and the sealed retort &middot; Cinderlift wiki</title>
+<link rel="stylesheet" href="../wiki.css">
+<link rel="stylesheet" href="../icons.css">
+<link rel="icon" href="../../favicon.ico">
+<script src="../wiki.js" defer></script>
+</head>
+<body>
+<header class="top">
+<a class="brand" href="../index.html">Cinderlift <span>wiki</span></a>
+<nav>
+<a href="../index.html">Home</a>
+<a class="here" href="../guide/index.html">Guide</a>
+<a href="../materials/index.html">Materials</a>
+<a href="../items/index.html">Items</a>
+<a href="../recipes/index.html">Recipes</a>
+<a href="../creatures/index.html">Creatures</a>
+<a href="../devices/index.html">Devices</a>
+</nav>
+</header>
+<main>
+<h1>Coke, and the sealed retort</h1>
+<p class="lede">The one process the game never tells you about.</p>
+<p><strong>There is no retort item.</strong> There is no retort recipe, no retort device, and nothing in the crafting menu that mentions one. A retort is something you build out of ordinary blocks, and the only place the game hints at it is the tooltip on a lump of <a href="../materials/fuel.html">Fuel</a>.</p>
+<p>This is the most consequential process in the game and the least discoverable. <a href="../materials/coke-ember.html">Coke Ember</a> burns at 215 °C, and it is the only thing that will smelt titanium and tungsten — everything past iron is on the far side of this page.</p>
+<h2>You will need</h2>
+<ul>
+<li>A quantity of <a href="../materials/fuel.html">Fuel</a>, found underground</li>
+<li>Walls: <a href="../materials/iron.html">Iron</a> or <a href="../materials/stone.html">Stone</a>. <strong>Not <a href="../materials/refract.html">refractory</a></strong> — see below</li>
+<li><a href="../materials/gassieve.html">Gas Sieve</a> — 2 Copper + 1 Glass makes four, at the bench</li>
+<li>A heat source above 125 °C: burning <a href="../materials/ember.html">coal</a> at 185 °C is the usual bootstrap</li>
+</ul>
+<h2>Steps</h2>
+<ol>
+<li><strong>Build a closed box</strong> out of iron or stone.</li>
+<li><strong>Pack it solid with fuel.</strong> Solid is not a figure of speech — see the failure list.</li>
+<li><strong>Put a few <a href="../materials/gassieve.html">Gas Sieve</a> cells in the wall.</strong> The process gives off <a href="../materials/coke-gas.html">Coke Gas</a> and it needs somewhere to go.</li>
+<li><strong>Seal it.</strong> No gap open to air, and no flame touching the fuel.</li>
+<li><strong>Heat it from the outside, past 125 °C.</strong> Pack burning coal against the outer wall. Ember sits at 185 °C, comfortably over.</li>
+<li><strong>Wait.</strong> Each pair of hot fuel cells becomes one <a href="../materials/coke.html">Coke</a> and one <a href="../materials/coke-gas.html">Coke Gas</a>.</li>
+<li><strong>Let it cool before you open it.</strong></li>
+</ol>
+<h2>When it works</h2>
+<p>You open a cooled retort and it is full of coke. Burn that, and you have a 215 °C bed — enough for <a href="../materials/tiore.html">titanium</a> at 208 °C and <a href="../materials/wore.html">tungsten</a> at 211 °C, which nothing else in the game reaches.</p>
+<p>The rule underneath, exactly: a fuel cell converts when <em></em>no neighbouring cell is empty air and none is flame<strong>, and it is at </strong>125 °C or hotter<em></em>.</p>
+<h2>When it does not</h2>
+<p>This section is the page. Every one of these is a way it silently fails.</p>
+<p><strong>Your fuel caught fire instead of coking.</strong> Something left an air gap. Sealed fuel cannot ignite at all — that is the point of sealing it — but fuel exposed to air ignites at 135 °C, which is only ten degrees above the coking temperature. You will hit that before you hit this. <strong>Pack the box solid.</strong></p>
+<p><strong>You built it from refractory and nothing ever happened.</strong> <a href="../materials/refract.html">Refract</a> conducts heat at 4 of 255. It is furnace lining: its entire job is to stop heat reaching what is behind it. Your retort sat cold while the fire roared. Use iron (conducts 255) or stone (85). Ceramic at 18 is poor and will be slow.</p>
+<p><strong>You pointed a <a href="../devices/heat-lamp.html">Heat Lamp</a> at it.</strong> The lamp caps at <strong>100 °C</strong>. Coking needs 125. It is not a tuning problem and there is no setting that gets there — the machine stops at 100 and its page says so.</p>
+<p><strong>Nothing happened and the walls were right.</strong> Check the temperature actually reached the fuel. Heat has to cross the wall, and a thick wall of something poorly conducting takes a long time.</p>
+<p><strong>The batch turned into coke embers when you opened it.</strong> You opened it hot. Coke ignites at 150 °C, and a retort that just finished is well above that. Let it cool first.</p>
+<p><strong>The gas has nowhere to go.</strong> Without sieve cells the coke gas stays in the charge and gets in the way. Coke gas also burns — it ignites at 145 °C — so a retort that vents into your fire is venting something flammable.</p>
+<p><strong>You wanted a recipe for it.</strong> There is not one, and that is the whole reason this page exists.</p>
+<h2>Next</h2>
+<p><a href="going-down.html">Going down</a> — where the titanium you just unlocked actually lives.</p>
+<p class="n"><a href="index.html">&larr; all guides</a></p>
+</main>
+<footer>
+<p>Generated from the game&rsquo;s own tables &mdash; every number on
+this page was read out of the source, not copied into it.</p>
+<p class="stamp">Built from <code>7e8e9821faf2</code> &middot; Cinderlift 0.6.1.17 &middot; <a href="../../index.html">the game</a></p>
+</footer>
+</body>
+</html>

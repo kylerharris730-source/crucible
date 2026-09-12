@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How heat behaves &middot; Cinderlift wiki</title>
+<link rel="stylesheet" href="../wiki.css">
+<link rel="stylesheet" href="../icons.css">
+<link rel="icon" href="../../favicon.ico">
+<script src="../wiki.js" defer></script>
+</head>
+<body>
+<header class="top">
+<a class="brand" href="../index.html">Cinderlift <span>wiki</span></a>
+<nav>
+<a href="../index.html">Home</a>
+<a class="here" href="../guide/index.html">Guide</a>
+<a href="../materials/index.html">Materials</a>
+<a href="../items/index.html">Items</a>
+<a href="../recipes/index.html">Recipes</a>
+<a href="../creatures/index.html">Creatures</a>
+<a href="../devices/index.html">Devices</a>
+</nav>
+</header>
+<main>
+<h1>How heat behaves</h1>
+<p class="lede">Conduction, thermal mass, and why the wall matters.</p>
+<p>Not a task — the behaviour every task on this site rests on. If you understand this page, the smelting and coking pages stop being recipes to follow and start being obvious.</p>
+<p>Every cell in the world carries a temperature, including air. Heat moves between neighbours, and what each material does at what temperature is on its own page.</p>
+<h2>Conduction is a property of the destination</h2>
+<p>Each material has a number for <strong>how readily heat crosses into it</strong>. It runs from 0 to 255 and it is the single most important number for anything you build around a fire.</p>
+<div class="tablewrap"><table><thead>
+<tr><th>Material</th><th>Conducts</th></tr>
+</thead><tbody>
+<tr><td><a href="../materials/iron.html">Iron</a></td><td>255</td></tr>
+<tr><td><a href="../materials/water.html">Water</a></td><td>180</td></tr>
+<tr><td><a href="../materials/stone.html">Stone</a></td><td>85</td></tr>
+<tr><td><a href="../materials/ceramic.html">Ceramic</a></td><td>18</td></tr>
+<tr><td><a href="../materials/refract.html">Refract</a></td><td>4</td></tr>
+</tbody></table></div>
+<p>Air is deliberately low, or a fire would flash-heat a whole room.</p>
+<p>That table explains the single commonest failure in this game: <em></em>what you build a wall out of decides whether the thing behind it ever gets hot.<em></em> An iron wall cooks what is behind it. A refractory wall is designed not to — it is furnace lining, and its whole job is keeping heat away from what is on the other side. Line a retort with it and the retort sits cold while the fire roars.</p>
+<p>Refractory is not a better wall. It is an <em>opposite</em> wall, and it is right when you want to contain heat and wrong when you want to transmit it.</p>
+<h2>Thermal mass is a separate axis</h2>
+<p>A second number says how much heat a material <em>holds</em>, as a doubling: 2×, 4×, 8×. It is not the same thing as conduction, and separating them is what lets lava heat everything it touches at full rate while staying molten for a long time.</p>
+<p>Practically: something with high thermal mass stays hot long after you stop heating it. <a href="../materials/coke.html">Coke</a> holds 4×, which is part of why a coke bed is worth building.</p>
+<h2>Temperature decides what a material <em>is</em></h2>
+<p>Materials change into other materials at thresholds. There are four kinds, and every material page lists whichever it has:</p>
+<ul>
+<li><strong>Ignites at</strong> — it catches fire and becomes something burning</li>
+<li><strong>Melts or boils at</strong> — it becomes a liquid or a gas</li>
+<li><strong>Freezes or sets below</strong> — the reverse</li>
+<li><strong>Decays</strong> — it falls apart over time, regardless of heat</li>
+</ul>
+<p>The melting and setting points are deliberately <strong>not the same number</strong>. Molten iron appears at 190 °C and does not set until it drops below 160 °C, so it keeps flowing for a while after you stop heating it. Every chain like this is walkable by clicking, from any material page.</p>
+<h2>A fire is a material, not an effect</h2>
+<p>This is the thing that makes the simulation make sense. Fire, embers and lava are <em>materials</em> with temperatures, sitting in cells. That is why:</p>
+<ul>
+<li>burning different things gives different temperatures (130 °C to 215 °C)</li>
+<li>a fire spreads by heating its neighbours past their ignition points</li>
+<li>water quenches fire by touching it</li>
+<li>you can build a heat source the same way you build a wall</li>
+</ul>
+<p>There is no "furnace" object doing the work. There is a hot material next to a cold one.</p>
+<h2>Where to go from here</h2>
+<ul>
+<li><a href="making-fire.html">Making fire</a> — starting one at all</li>
+<li><a href="smelting.html">Ore into bars</a> — the two tables that matter</li>
+<li><a href="coke-retort.html">Coke, and the sealed retort</a> — the process that needs all of this at once</li>
+</ul>
+<p class="n"><a href="index.html">&larr; all guides</a></p>
+</main>
+<footer>
+<p>Generated from the game&rsquo;s own tables &mdash; every number on
+this page was read out of the source, not copied into it.</p>
+<p class="stamp">Built from <code>7e8e9821faf2</code> &middot; Cinderlift 0.6.1.17 &middot; <a href="../../index.html">the game</a></p>
+</footer>
+</body>
+</html>

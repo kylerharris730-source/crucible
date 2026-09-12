@@ -394,6 +394,94 @@ int main() {
               "and no markdown was left unrendered");
     }
 
+    /* --- the guide is all there, and shaped ------------------------------
+
+       Named explicitly rather than discovered, because the failure this catches
+       is a page silently dropped from PROSE[]: discovering the list from the
+       output would make a missing page look like a correct empty set.
+
+       The five-section shape is the generator's own check too, and it fails the
+       build -- this is the second half of it, catching a page that was never
+       added rather than one that was written wrong. */
+    {
+        static const char* GUIDE[] = {
+            "first-ten-minutes", "the-dark", "making-fire", "digging",
+            "crafting-ladder", "smelting", "coke-retort", "going-down",
+            "fighting", "gearing-up", "farming", "bees",
+            "circuits", "logistics", "leaving", "heat"
+        };
+        const int n = (int)(sizeof(GUIDE) / sizeof(GUIDE[0]));
+        int missing = 0, shapeless = 0;
+        for (int i = 0; i < n; ++i) {
+            std::string path = std::string("guide/") + GUIDE[i] + ".html";
+            const std::string page = readFile(wikiPath(path));
+            if (page.size() < 800) {
+                printf("  guide page %s is missing or thin\n", GUIDE[i]);
+                ++missing;
+                continue;
+            }
+            /* Circuits and logistics are concept pages and exempt by name in
+               the generator, for the reason stated there. */
+            if (strcmp(GUIDE[i], "circuits") == 0) continue;
+            if (strcmp(GUIDE[i], "logistics") == 0) continue;
+            if (strcmp(GUIDE[i], "heat") == 0) continue;
+            if (page.find("When it does not") == std::string::npos) {
+                printf("  tutorial %s has no failure list\n", GUIDE[i]);
+                ++shapeless;
+            }
+        }
+        printf("  %d guide pages\n", n);
+        check(missing == 0, "every guide page exists and has content");
+        check(shapeless == 0, "and every tutorial has its failure list");
+    }
+
+    /* --- the guide says true things about the game -----------------------
+
+       A tutorial is authored, so it is the part of this site that CAN be wrong
+       about the game. Full prose cannot be checked mechanically, but the
+       load-bearing NUMBERS can be -- and those are exactly what goes stale when
+       something is retuned.
+
+       Each of these is a number a tutorial states outright, checked against the
+       table it came from. When one fails, the game changed and the page did
+       not. */
+    {
+        const std::string smelt = readFile(wikiPath("guide/smelting.html"));
+        char needle[64];
+        int wrong = 0;
+
+        /* The degree sign as raw UTF-8 (U+00B0), not "&deg;". The prose pages
+           come through the markdown renderer, which passes the author's own
+           bytes through, while the generated pages emit the entity. Both render
+           identically and the first version of this check looked for the wrong
+           one -- which is a fair warning that a test can fail for a reason that
+           has nothing to do with the thing it is testing. */
+        static const char* DEG = "\xC2\xB0";
+
+        /* Iron ore's melting point, quoted in the smelting table. */
+        snprintf(needle, sizeof(needle), "%d %sC",
+                 (int)MATS[MAT_IRON_ORE].boilTemp - TEMP_OFFSET, DEG);
+        if (smelt.find(needle) == std::string::npos) {
+            printf("  the smelting guide does not quote iron ore's %s\n", needle);
+            ++wrong;
+        }
+        /* And coke ember's, which is the whole point of the coke page. */
+        const std::string coke = readFile(wikiPath("guide/coke-retort.html"));
+        snprintf(needle, sizeof(needle), "%d %sC",
+                 (int)MATS[MAT_COKE_EMBER].spawnTemp - TEMP_OFFSET, DEG);
+        if (coke.find(needle) == std::string::npos) {
+            printf("  the coke guide does not quote coke ember's %s\n", needle);
+            ++wrong;
+        }
+        /* The heat lamp cap, which is the fact that cost a play session. */
+        snprintf(needle, sizeof(needle), "100 %sC", DEG);
+        if (coke.find(needle) == std::string::npos) {
+            printf("  the coke guide no longer names the heat lamp's cap\n");
+            ++wrong;
+        }
+        check(wrong == 0, "the tutorials quote the numbers the tables hold");
+    }
+
     /* --- the pages agree with the tables about what things are called ---- */
     {
         /* The cheapest possible drift test, and the one most likely to fire:

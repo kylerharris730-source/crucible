@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ore into bars &middot; Cinderlift wiki</title>
+<link rel="stylesheet" href="../wiki.css">
+<link rel="stylesheet" href="../icons.css">
+<link rel="icon" href="../../favicon.ico">
+<script src="../wiki.js" defer></script>
+</head>
+<body>
+<header class="top">
+<a class="brand" href="../index.html">Cinderlift <span>wiki</span></a>
+<nav>
+<a href="../index.html">Home</a>
+<a class="here" href="../guide/index.html">Guide</a>
+<a href="../materials/index.html">Materials</a>
+<a href="../items/index.html">Items</a>
+<a href="../recipes/index.html">Recipes</a>
+<a href="../creatures/index.html">Creatures</a>
+<a href="../devices/index.html">Devices</a>
+</nav>
+</header>
+<main>
+<h1>Ore into bars</h1>
+<p class="lede">What each metal needs, against what each fuel reaches.</p>
+<p>Smelting here is not a recipe. It is the heat simulation doing its ordinary job: you get the ore hot enough and it melts, and when the melt cools it sets as metal. There is no furnace UI and no progress bar — there is a temperature, and either you reach it or you do not.</p>
+<p>That makes one table the whole of this page.</p>
+<h2>You will need</h2>
+<ul>
+<li>Ore, mined</li>
+<li>A heat source hot enough for <em>that</em> ore — see the table</li>
+<li>Somewhere the melt can pool without running off</li>
+</ul>
+<h2>Steps</h2>
+<ol>
+<li><strong>Build a pit or a basin</strong> out of something that does not melt. <a href="../materials/stone.html">Stone</a> is fine and conducts heat well (85 of 255); <a href="../materials/iron.html">Iron</a> is better still at 255.</li>
+<li><strong>Put the ore in it.</strong></li>
+<li><strong>Heat it from outside</strong> with a fuel hot enough for that ore.</li>
+<li><strong>Wait for it to run.</strong> The ore becomes a molten metal, which is a liquid and flows.</li>
+<li><strong>Let it cool.</strong> Below its setting point the melt turns solid, and you mine it as metal.</li>
+</ol>
+<h2>When it works</h2>
+<p><strong>What each ore needs, and what it becomes:</strong></p>
+<div class="tablewrap"><table><thead>
+<tr><th>Ore</th><th>Melts at</th><th>Becomes</th><th>Sets below</th></tr>
+</thead><tbody>
+<tr><td><a href="../materials/tinore.html">Tin</a></td><td>120 °C</td><td><a href="../materials/tinmelt.html">Tin Melt</a></td><td>105 °C</td></tr>
+<tr><td><a href="../materials/goldore.html">Gold</a></td><td>160 °C</td><td><a href="../materials/goldmelt.html">Gold Melt</a></td><td>120 °C</td></tr>
+<tr><td><a href="../materials/cuore.html">Copper</a></td><td>165 °C</td><td><a href="../materials/moltcopp.html">Molten Copper</a></td><td>140 °C</td></tr>
+<tr><td><a href="../materials/feore.html">Iron</a></td><td>190 °C</td><td><a href="../materials/moltiron.html">Molten Iron</a></td><td>160 °C</td></tr>
+<tr><td><a href="../materials/tiore.html">Titanium</a></td><td>208 °C</td><td><a href="../materials/timelt.html">Ti Melt</a></td><td>175 °C</td></tr>
+<tr><td><a href="../materials/wore.html">Tungsten</a></td><td>211 °C</td><td><a href="../materials/wmelt.html">W Melt</a></td><td>195 °C</td></tr>
+</tbody></table></div>
+<p><strong>What each fuel reaches:</strong></p>
+<div class="tablewrap"><table><thead>
+<tr><th>Burn</th><th>Sits at</th><th>Which is enough for</th></tr>
+</thead><tbody>
+<tr><td><a href="../materials/wood-ember.html">Wood Ember</a></td><td>130 °C</td><td>tin</td></tr>
+<tr><td><a href="../materials/fumarole.html">Fumarole</a></td><td>150 °C</td><td>tin</td></tr>
+<tr><td><a href="../materials/ember.html">Ember</a> (coal)</td><td>185 °C</td><td>tin, gold, copper</td></tr>
+<tr><td><a href="../materials/fire.html">Fire</a> (leaves, cotton, rope)</td><td>205 °C</td><td>+ iron</td></tr>
+<tr><td><a href="../materials/fuelfire.html">Fuel Fire</a></td><td>202 °C</td><td>+ iron</td></tr>
+<tr><td><a href="../materials/coke-ember.html">Coke Ember</a></td><td>215 °C</td><td><strong>everything</strong></td></tr>
+<tr><td><a href="../materials/lava.html">Lava</a>, <a href="../materials/brimfire.html">Brimfire</a></td><td>215 °C</td><td>everything</td></tr>
+</tbody></table></div>
+<p>Read the two tables against each other and the progression falls out of them. <strong>Coal takes you to copper and stops.</strong> Its embers sit at 185 °C and iron needs 190 — five degrees short, and no amount of patience closes it. <em></em>Fuel fire at 202 °C gets you iron and steel and stops<strong>, because titanium needs 208. </strong>Only coke ember at 215 °C reaches titanium and tungsten<em></em>, and coke is not something you find. You make it, in a sealed vessel, and nothing in the game tells you how — see <a href="coke-retort.html">Coke, and the sealed retort</a>.</p>
+<p>The cheap surprise: burning <em>leaves, cotton or rope</em> gives open fire at 205 °C, hotter than coal. It is the cheapest route to iron and it burns out fast.</p>
+<h2>When it does not</h2>
+<p><strong>The ore sits there and nothing happens.</strong> Your fire is not hot enough. Check both tables. This is almost always the problem, and waiting longer never fixes it — a cell settles at the temperature its neighbours can deliver.</p>
+<p><strong>The melt ran away down a tunnel.</strong> Molten metal is a liquid with real flow. Build the basin before you light the fire.</p>
+<p><strong>The metal set somewhere you cannot reach.</strong> Same cause. Note the setting points are <em>lower</em> than the melting points — molten iron stays liquid down to 160 °C — so it keeps running for a while after you stop heating.</p>
+<p><strong>Your basin melted too.</strong> Check what you built it from. Stone melts to lava at 185 °C, which is below several of the temperatures on this page.</p>
+<p><strong>You used refractory to line it and it never got hot.</strong> <a href="../materials/refract.html">Refract</a> conducts heat at 4 of 255. It is furnace <em>lining</em> — designed to keep heat away from what is behind it. That is right for a furnace shell and exactly wrong for a wall you are trying to heat something through.</p>
+<h2>Next</h2>
+<p><a href="coke-retort.html">Coke, and the sealed retort</a> — the process that takes you past iron, and the one the game never mentions.</p>
+<p class="n"><a href="index.html">&larr; all guides</a></p>
+</main>
+<footer>
+<p>Generated from the game&rsquo;s own tables &mdash; every number on
+this page was read out of the source, not copied into it.</p>
+<p class="stamp">Built from <code>7e8e9821faf2</code> &middot; Cinderlift 0.6.1.17 &middot; <a href="../../index.html">the game</a></p>
+</footer>
+</body>
+</html>

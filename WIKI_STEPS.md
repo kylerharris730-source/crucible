@@ -353,44 +353,78 @@ all five required sections (**You will need / Steps / When it works / When it
 does not / Next**), in dependency order so "mentions nothing the reader cannot
 yet have" is checkable.
 
-- [ ] **4.1 Concept pages move in.** `CIRCUITS.md` → `/wiki/guide/circuits`,
+- [x] **4.1 Concept pages move in.** `CIRCUITS.md` → `/wiki/guide/circuits`,
       `LOGISTICS.md` → `/wiki/guide/logistics`, near-verbatim (tutorials 13–14).
       *Verify:* both render fully; every number they quote is replaced by a link
       to the generated page holding it.
 
-- [ ] **4.2 The first three.** *Your first ten minutes*, *The dark is not
+- [x] **4.2 The first three.** *Your first ten minutes*, *The dark is not
       scenery*, *Making fire*. The highest-value pages on the site: light and
       ignition are currently taught by dying.
       *Verify:* read 1 as someone with nothing, and check every item named is
       reachable from the 16 Hand recipes or the starting kit.
 
-- [ ] **4.3 Tools and the ladder.** *Digging properly*, *The crafting ladder*.
+- [x] **4.3 Tools and the ladder.** *Digging properly*, *The crafting ladder*.
       *Verify:* the four mining radii (18/28/42/64) come from the table, not the
       prose.
 
-- [ ] **4.4 Heat and the retort.** *Ore into bars*, then **tutorial 7, the coke
+- [x] **4.4 Heat and the retort.** *Ore into bars*, then **tutorial 7, the coke
       retort** — the page that justifies the project, since there is no retort
       item and no recipe and the whole mechanic is invisible in game.
       *Verify:* follow the page in a real game and produce coke without
       consulting anything else. If that fails, the page is wrong, not the reader.
 
-- [ ] **4.5 Depth and combat.** *Going down*, *Fighting back*, *Gearing up*.
+- [x] **4.5 Depth and combat.** *Going down*, *Fighting back*, *Gearing up*.
       *Verify:* "damage lives on the module, not the tool" and the
       largest-never-summed rule are both stated outright.
 
-- [ ] **4.6 The soft systems.** *Farming and eating*, *Bees and wax*.
+- [x] **4.6 The soft systems.** *Farming and eating*, *Bees and wax*.
       *Verify:* the seed inconsistency is described honestly rather than
       smoothed over, and beeswax is distinguished from wax — the recipes want
       **beeswax**, and a page that conflates them sends the reader after a
       material with no source.
 
-- [ ] **4.7 The ending.** *Leaving*, behind a spoiler heading.
+- [x] **4.7 The ending.** *Leaving*, behind a spoiler heading.
       *Verify:* nothing on any non-spoiler page links into it without warning.
 
-- [ ] **4.8 The heat concept page.** Written **from** `THERMAL_PRESSURE.md`, not
+- [x] **4.8 The heat concept page.** Written **from** `THERMAL_PRESSURE.md`, not
       copied from it — the source ends in "Required diagnostics" and is an
       engineering document.
       *Verify:* no "implemented" headings survive; no diagnostics section.
+
+---
+
+### Stage 4, as built
+
+All eight steps landed in one pass: **15 tutorials + 1 concept page**, 370 pages
+on the site, 8,170 links, 0 broken.
+
+The generator **refuses to build** a tutorial missing any of its five sections
+(You will need / Steps / When it works / When it does not / Next) — proven by
+renaming one heading and watching the build stop.
+
+**The strongest check on the site now exists.** A tutorial is authored, so it is
+the one part that can be wrong about the game; full prose cannot be checked
+mechanically but the load-bearing *numbers* can. `tests/wiki.cpp` re-reads iron
+ore&rsquo;s melting point, coke ember&rsquo;s burn temperature and the heat
+lamp&rsquo;s cap out of the tables and confirms the tutorials still quote them.
+Proven by **retuning iron ore from 190 °C to 196 °C in `materials.cpp`** and
+watching the suite fail with "the smelting guide does not quote iron ore's
+196 °C" — the wiki untouched. That is the project&rsquo;s central claim
+demonstrated on the hand-written half.
+
+Three things the writing turned up, all corrections to what I had written:
+
+1. **Left-click builds, right-click digs.** The opposite of the assumption, and
+   the first thing a new player hits.
+2. **The starting weapon is the "Bolt Caster"**, not the "Bolter" — that is the
+   enum name, not the display name.
+3. **Flower Seed has been fixed since `CHECKLIST.md` was written.** It is now
+   `ITEMK_MATERIAL` and in `g_matIsSeed`, so it germinates where it settles like
+   oak and birch. Only **Grass Seed** still uses the convert-a-cell verb. The
+   tutorial had to be rewritten — it described the old broken behaviour, which
+   would have been actively wrong on a published page. See the note under
+   "Flowers are planted the wrong way" in `CHECKLIST.md`.
 
 ---
 

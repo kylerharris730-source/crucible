@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The dark is not scenery &middot; Cinderlift wiki</title>
+<link rel="stylesheet" href="../wiki.css">
+<link rel="stylesheet" href="../icons.css">
+<link rel="icon" href="../../favicon.ico">
+<script src="../wiki.js" defer></script>
+</head>
+<body>
+<header class="top">
+<a class="brand" href="../index.html">Cinderlift <span>wiki</span></a>
+<nav>
+<a href="../index.html">Home</a>
+<a class="here" href="../guide/index.html">Guide</a>
+<a href="../materials/index.html">Materials</a>
+<a href="../items/index.html">Items</a>
+<a href="../recipes/index.html">Recipes</a>
+<a href="../creatures/index.html">Creatures</a>
+<a href="../devices/index.html">Devices</a>
+</nav>
+</header>
+<main>
+<h1>The dark is not scenery</h1>
+<p class="lede">Light is what stops things spawning on you.</p>
+<p>Darkness is not a visual effect in this game. It is the spawn condition. Creatures appear in unlit cells, and a lit room stays empty — permanently, for as long as it stays lit.</p>
+<p>This is the highest-value thing on this site and it is currently taught by being killed.</p>
+<h2>You will need</h2>
+<ul>
+<li><a href="../materials/torch.html">Torches</a> — 4 Wood + 1 Coal makes four, by hand</li>
+</ul>
+<h2>Steps</h2>
+<ol>
+<li><strong>Light the room you are working in, not just the corridor you walked down.</strong> A pocket of dark behind you is a spawner.</li>
+<li><strong>Place torches as you dig</strong>, not after. The cost of a torch is four wood; the cost of not placing one is whatever was standing behind you.</li>
+<li><strong>Watch the corners.</strong> Light falls off with distance, and a torch that reaches the middle of a room may leave the far corner dark enough to spawn in.</li>
+<li><strong>Before you leave a base, walk it once looking for unlit cells.</strong> Anything that spawns while you are away is there when you come back.</li>
+</ol>
+<h2>When it works</h2>
+<p>You come back to a room you lit and it is still empty. That is the whole mechanic: light is not a deterrent, it is a prevention.</p>
+<h2>When it does not</h2>
+<p><em></em>You turned the lighting off to look at a contraption and things started spawning.<em></em> They did not, and this is worth being precise about: <code>K</code> cycles whether lighting is <em>drawn</em>. It used to also turn off what your torches were buying, which was a real bug and was fixed in v0.6.1. Turning the display off is now safe.</p>
+<p><strong>Things spawn in a room that looks lit to you.</strong> Look at the *floor and ceiling corners*, not the middle. Light is a field with falloff, not a radius switch, and the dim edge of a torch's reach can still be dark enough.</p>
+<p><strong>A drone, a pedestal or a worn lantern seems not to count.</strong> It counts. Object lights are registered the same way cell lights are — that was the other half of the v0.6.1 fix. Before that the spawner judged darkness by a field containing every lamp that is a <em>cell</em> and none that is an <em>object</em>.</p>
+<p><strong>The surface fills up at night.</strong> It is meant to. Some creatures spawn on the surface after dark specifically; the <a href="../creatures/index.html">creature index</a> says which in the "Found" column.</p>
+<p><strong>You lit everything and still got hit underground.</strong> Light stops things <em>spawning</em>. It does not stop something that spawned elsewhere from walking to you.</p>
+<h2>Next</h2>
+<p><a href="making-fire.html">Making fire</a> — which is a different problem from light, and harder than it looks.</p>
+<p class="n"><a href="index.html">&larr; all guides</a></p>
+</main>
+<footer>
+<p>Generated from the game&rsquo;s own tables &mdash; every number on
+this page was read out of the source, not copied into it.</p>
+<p class="stamp">Built from <code>7e8e9821faf2</code> &middot; Cinderlift 0.6.1.17 &middot; <a href="../../index.html">the game</a></p>
+</footer>
+</body>
+</html>

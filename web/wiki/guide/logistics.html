@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Item logistics &middot; Cinderlift wiki</title>
+<link rel="stylesheet" href="../wiki.css">
+<link rel="stylesheet" href="../icons.css">
+<link rel="icon" href="../../favicon.ico">
+<script src="../wiki.js" defer></script>
+</head>
+<body>
+<header class="top">
+<a class="brand" href="../index.html">Cinderlift <span>wiki</span></a>
+<nav>
+<a href="../index.html">Home</a>
+<a class="here" href="../guide/index.html">Guide</a>
+<a href="../materials/index.html">Materials</a>
+<a href="../items/index.html">Items</a>
+<a href="../recipes/index.html">Recipes</a>
+<a href="../creatures/index.html">Creatures</a>
+<a href="../devices/index.html">Devices</a>
+</nav>
+</header>
+<main>
+<h1>Item logistics</h1>
+<p class="lede">Pipes, chests, spouts and drains.</p>
+<p>Item logistics moves material stacks between discrete devices. It is separate from both pixel materials in the world and circuit signals: a pipe carries real items; a circuit wire carries integer information about items.</p>
+<h2>Devices</h2>
+<ul>
+<li><strong>Chest</strong> stores one material type and exposes its inventory through the familiar player/container inventory screen.</li>
+<li><strong>Item Pipe</strong> moves one item at a time between adjacent logistics devices. Its sprite joins neighboring pipes, including elbows and T junctions.</li>
+<li><strong>Pipe Crossover</strong> carries two independent lanes so horizontal and vertical pipe runs can cross without joining.</li>
+<li><strong>Spout</strong> places material cells into the world from its item buffer. It needs an item supply and can be enabled or disabled by a physical electrical pulse.</li>
+<li><strong>Drain</strong> collects neighboring material cells into its buffer. It can use a manual material filter, a circuit-provided material filter, and physical electrical enable/disable.</li>
+<li><strong>Block Watcher</strong> watches in its facing direction. When the configured material touches it, it produces a physical electrical signal and publishes the observed material as a circuit signal.</li>
+</ul>
+<h2>Connecting a system</h2>
+<p>Place pipes adjacent to compatible logistics devices. A chest can feed a pipe, then a Spout; a Drain can feed a pipe, then a chest. Pipes move a single item at a time, so long systems are intentionally simple and readable before they become fast.</p>
+<p>Use a Pipe Crossover where two routes must cross without exchanging items. Rotate aimed devices in their right-click panel so the Spout, Drain, or Watcher faces the desired cell.</p>
+<h2>Filters and signals</h2>
+<p>A Drain's manual filter opens a searchable material picker. Its circuit network can temporarily override that choice: a positive material signal selects the strongest material signal on the network. See <a href="circuits.html">Circuits</a> for the circuit side of that behavior.</p>
+<p class="n"><a href="index.html">&larr; all guides</a></p>
+</main>
+<footer>
+<p>Generated from the game&rsquo;s own tables &mdash; every number on
+this page was read out of the source, not copied into it.</p>
+<p class="stamp">Built from <code>7e8e9821faf2</code> &middot; Cinderlift 0.6.1.17 &middot; <a href="../../index.html">the game</a></p>
+</footer>
+</body>
+</html>

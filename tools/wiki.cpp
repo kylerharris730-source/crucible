@@ -1742,12 +1742,91 @@ struct ProsePage {
     const char* source;   /* path from the repository root */
     const char* out;      /* path under web/wiki/ */
     const char* title;
+    /* Tutorials are numbered and ordered; concept pages are not. The order is
+       a DEPENDENCY order, which is what makes WIKI.md's rule -- "a tutorial may
+       not mention anything the reader cannot yet have" -- checkable rather than
+       aspirational. */
+    bool tutorial;
+    const char* blurb;    /* one line, for the guide index and the hub */
 };
 
 static const ProsePage PROSE[] = {
-    { "CIRCUITS.md", "guide/circuits.html", "Circuits" },
+    { "web/wiki/_src/first-ten-minutes.md", "guide/first-ten-minutes.html",
+      "Your first ten minutes", true,
+      "Move, dig, and make the four things that matter." },
+    { "web/wiki/_src/the-dark.md", "guide/the-dark.html",
+      "The dark is not scenery", true,
+      "Light is what stops things spawning on you." },
+    { "web/wiki/_src/making-fire.md", "guide/making-fire.html",
+      "Making fire", true,
+      "Nothing else in the early game is hot enough." },
+    { "web/wiki/_src/digging.md", "guide/digging.html",
+      "Digging properly", true,
+      "The mining ladder, and what it does and does not buy you." },
+    { "web/wiki/_src/crafting-ladder.md", "guide/crafting-ladder.html",
+      "The crafting ladder", true,
+      "Hand to bench to anvil to furnace, and what each opens." },
+    { "web/wiki/_src/smelting.md", "guide/smelting.html",
+      "Ore into bars", true,
+      "What each metal needs, against what each fuel reaches." },
+    { "web/wiki/_src/coke-retort.md", "guide/coke-retort.html",
+      "Coke, and the sealed retort", true,
+      "The one process the game never tells you about." },
+    { "web/wiki/_src/going-down.md", "guide/going-down.html",
+      "Going down", true,
+      "Three layers, the seals between them, and when to try." },
+    { "web/wiki/_src/fighting.md", "guide/fighting.html",
+      "Fighting back", true,
+      "Damage lives on the module, not on the tool." },
+    { "web/wiki/_src/gearing-up.md", "guide/gearing-up.html",
+      "Gearing up", true,
+      "Slots, trinkets, and why two cheap ones never beat one good one." },
+    { "web/wiki/_src/farming.md", "guide/farming.html",
+      "Farming and eating", true,
+      "Seeds, soil, water, and what wheat is finally for." },
+    { "web/wiki/_src/bees.md", "guide/bees.html",
+      "Bees and wax", true,
+      "Three wild hives, and beeswax is not wax." },
+    { "CIRCUITS.md", "guide/circuits.html",
+      "Circuits", true,
+      "Wires that carry information rather than sparks." },
+    { "LOGISTICS.md", "guide/logistics.html",
+      "Item logistics", true,
+      "Pipes, chests, spouts and drains." },
+    { "web/wiki/_src/leaving.md", "guide/leaving.html",
+      "Leaving", true,
+      "The end of the game. Spoilers." },
+    { "web/wiki/_src/heat.md", "guide/heat.html",
+      "How heat behaves", false,
+      "Conduction, thermal mass, and why the wall matters." },
 };
 static const int N_PROSE = (int)(sizeof(PROSE) / sizeof(PROSE[0]));
+
+/* A markdown link to another repository document -- LOGISTICS.md points at
+   CIRCUITS.md -- is a dead link once published, because the .md is not on the
+   site. Rewrite it to the page that document became, and if it became no page,
+   drop the link and keep the words rather than publishing a 404.
+
+   Returns NULL when the target is not a local .md file, meaning "leave it
+   alone": an ordinary http link or an already-correct relative one. */
+static const char* prosePageFor(const char* url, size_t len) {
+    if (len < 4) return NULL;
+    if (strncmp(url + len - 3, ".md", 3) != 0) return NULL;
+    for (int i = 0; i < N_PROSE; ++i) {
+        const char* src = PROSE[i].source;
+        /* Match on the basename, so "CIRCUITS.md" finds the entry whose source
+           is "CIRCUITS.md" and "_src/bees.md" finds web/wiki/_src/bees.md. */
+        const char* base = strrchr(src, '/');
+        base = base ? base + 1 : src;
+        const size_t blen = strlen(base);
+        if (blen != len) continue;
+        if (strncmp(base, url, len) == 0) {
+            const char* slug = strrchr(PROSE[i].out, '/');
+            return slug ? slug + 1 : PROSE[i].out;
+        }
+    }
+    return "";   /* a .md we do not publish: keep the text, drop the link */
+}
 
 /* Inline markup. Order matters: code spans are taken first, because the whole
    point of `**` inside a code span is that it is not emphasis. */
@@ -1778,11 +1857,40 @@ static void renderInline(FILE* f, const char* s, const char* end) {
                 const char* urlEnd = close + 2;
                 while (urlEnd < end && *urlEnd != ')') ++urlEnd;
                 if (urlEnd < end) {
-                    fputs("<a href=\"", f);
-                    for (const char* p = close + 2; p < urlEnd; ++p) fputc(*p, f);
-                    fputs("\">", f);
-                    renderInline(f, s + 1, close);
-                    fputs("</a>", f);
+                    const char* url = close + 2;
+                    const size_t ulen = (size_t)(urlEnd - url);
+                    const char* rewritten = prosePageFor(url, ulen);
+                    if (rewritten && !rewritten[0]) {
+                        /* Points at a document the wiki does not publish. Keep
+                           the words, drop the link: a reader losing a link is a
+                           much smaller harm than a reader hitting a 404. */
+                        renderInline(f, s + 1, close);
+                    } else {
+                        fputs("<a href=\"", f);
+                        if (rewritten) fputs(rewritten, f);
+                        else for (const char* p = url; p < urlEnd; ++p) fputc(*p, f);
+                        fputs("\">", f);
+                        /* "See [CIRCUITS.md](CIRCUITS.md)" reads fine in a repo
+                           and reads as a stray filename on a published page. If
+                           the author wrote the filename as the link text, show
+                           the page's title instead -- unambiguous, because it
+                           only fires when the two are the same string. */
+                        const char* title = NULL;
+                        if (rewritten && (size_t)(close - (s + 1)) == ulen &&
+                            strncmp(s + 1, url, ulen) == 0) {
+                            for (int pi = 0; pi < N_PROSE; ++pi) {
+                                const char* slug = strrchr(PROSE[pi].out, '/');
+                                slug = slug ? slug + 1 : PROSE[pi].out;
+                                if (strcmp(slug, rewritten) == 0) {
+                                    title = PROSE[pi].title;
+                                    break;
+                                }
+                            }
+                        }
+                        if (title) escapeTo(f, title);
+                        else       renderInline(f, s + 1, close);
+                        fputs("</a>", f);
+                    }
                     s = urlEnd + 1;
                     continue;
                 }
@@ -2052,19 +2160,67 @@ static void renderMarkdown(FILE* f, char* text) {
     if (block == TABLE) fputs("</tbody></table></div>\n", f);
 }
 
+/* Every tutorial carries the same five sections, in the same order. WIKI.md
+   fixes the shape so a reader who has followed one knows where the failure list
+   is on every other -- and that list is the point of the page, because it is the
+   half a player cannot work out alone.
+
+   Checked here rather than trusted, so a tutorial written without its failure
+   list fails the build instead of shipping as half a page. */
+static const char* TUTORIAL_SECTIONS[] = {
+    "## You will need",
+    "## Steps",
+    "## When it works",
+    "## When it does not",
+    "## Next"
+};
+static const int N_TUTORIAL_SECTIONS =
+    (int)(sizeof(TUTORIAL_SECTIONS) / sizeof(TUTORIAL_SECTIONS[0]));
+
+static void checkTutorialShape(const char* source, const char* text) {
+    /* The two documents that predate the wiki are concept pages in tutorial
+       clothing: they teach a system rather than get one job done, and forcing
+       "You will need" onto Circuits would be shape for its own sake. Named
+       explicitly rather than exempted by a rule, so the exception stays a
+       decision instead of becoming a habit. */
+    if (strcmp(source, "CIRCUITS.md") == 0) return;
+    if (strcmp(source, "LOGISTICS.md") == 0) return;
+
+    for (int i = 0; i < N_TUTORIAL_SECTIONS; ++i) {
+        if (strstr(text, TUTORIAL_SECTIONS[i])) continue;
+        char detail[256];
+        snprintf(detail, sizeof(detail), "%s has no \"%s\" section",
+                 source, TUTORIAL_SECTIONS[i] + 3);
+        fail("a tutorial is missing one of its five sections", detail);
+    }
+}
+
 static void writeProse() {
     ensureDir("web/wiki/guide");
 
+    int tutorialNo = 0;
     for (int i = 0; i < N_PROSE; ++i) {
         long len = 0;
         char* text = readWholeFile(PROSE[i].source, &len);
         /* A missing source is a broken build, not a page quietly left out. */
         if (!text) fail("cannot read prose source", PROSE[i].source);
         if (len < 200) fail("prose source is suspiciously short", PROSE[i].source);
+        if (PROSE[i].tutorial) {
+            ++tutorialNo;
+            checkTutorialShape(PROSE[i].source, text);
+        }
 
         FILE* f = pageOpen(PROSE[i].out, 1, PROSE[i].title, "guide");
-        fprintf(f, "<h1>%s</h1>\n", PROSE[i].title);
+        fputs("<h1>", f);
+        escapeTo(f, PROSE[i].title);
+        fputs("</h1>\n", f);
+        if (PROSE[i].blurb) {
+            fputs("<p class=\"lede\">", f);
+            escapeTo(f, PROSE[i].blurb);
+            fputs("</p>\n", f);
+        }
         renderMarkdown(f, text);
+        fputs("<p class=\"n\"><a href=\"index.html\">&larr; all guides</a></p>\n", f);
         pageClose(f, 1);
         free(text);
     }
@@ -2072,17 +2228,48 @@ static void writeProse() {
     FILE* f = pageOpen("guide/index.html", 1, "Guide", "guide");
     fputs("<h1>Guide</h1>\n", f);
     fputs("<p class=\"lede\">The written half. Everything else on this site is\n"
-          "generated from the game&rsquo;s tables; these pages explain how the\n"
-          "systems behave, which no table holds.</p>\n", f);
-    fputs("<ul>\n", f);
+          "generated from the game&rsquo;s own tables; these pages explain how the\n"
+          "systems behave and how to get things done, which no table holds.</p>\n", f);
+
+    fputs("<h2>In order</h2>\n", f);
+    fputs("<p>Each one assumes only the ones above it, so read them in this\n"
+          "order the first time.</p>\n<ol>\n", f);
     for (int i = 0; i < N_PROSE; ++i) {
+        if (!PROSE[i].tutorial) continue;
         const char* slug = strrchr(PROSE[i].out, '/');
         fprintf(f, "<li><a href=\"%s\">", slug ? slug + 1 : PROSE[i].out);
         escapeTo(f, PROSE[i].title);
-        fputs("</a></li>\n", f);
+        fputs("</a>", f);
+        if (PROSE[i].blurb) {
+            fputs(" <span class=\"dim\">&mdash; ", f);
+            escapeTo(f, PROSE[i].blurb);
+            fputs("</span>", f);
+        }
+        fputs("</li>\n", f);
     }
-    fputs("</ul>\n", f);
-    fputs("<p>The tutorials land in stage 4 &mdash; see <code>WIKI_STEPS.md</code>.</p>\n", f);
+    fputs("</ol>\n", f);
+
+    bool anyConcept = false;
+    for (int i = 0; i < N_PROSE; ++i) {
+        if (PROSE[i].tutorial) continue;
+        if (!anyConcept) {
+            fputs("<h2>How it works underneath</h2>\n", f);
+            fputs("<p>Not tasks, but the behaviour the tasks rest on.</p>\n<ul>\n", f);
+            anyConcept = true;
+        }
+        const char* slug = strrchr(PROSE[i].out, '/');
+        fprintf(f, "<li><a href=\"%s\">", slug ? slug + 1 : PROSE[i].out);
+        escapeTo(f, PROSE[i].title);
+        fputs("</a>", f);
+        if (PROSE[i].blurb) {
+            fputs(" <span class=\"dim\">&mdash; ", f);
+            escapeTo(f, PROSE[i].blurb);
+            fputs("</span>", f);
+        }
+        fputs("</li>\n", f);
+    }
+    if (anyConcept) fputs("</ul>\n", f);
+
     pageClose(f, 1);
 }
 
@@ -2200,8 +2387,8 @@ int main() {
         fputs("</a></li>\n", f);
     }
     fputs("</ul>\n", f);
-    fputs("<p class=\"n\">The tutorials are being written &mdash; stage 4 of\n"
-          "<code>WIKI_STEPS.md</code>.</p>\n", f);
+    fputs("<p class=\"n\">Read them in order the first time &mdash; each one\n"
+          "assumes only the ones above it.</p>\n", f);
     fputs("</section>\n", f);
 
     fputs("<section class=\"door\">\n<h2>Look up</h2>\n", f);
@@ -2227,10 +2414,8 @@ int main() {
         fputs("</li>\n", f);
     }
     fputs("</ul>\n", f);
-    fprintf(f, "<p class=\"n\">Still to come: %d items, %d recipes over %d\n"
-               "stations, %d creatures and %d devices.</p>\n",
-            stackable, N_RECIPES, (int)STATION_COUNT,
-            (int)ENT_COUNT, (int)DEV_COUNT);
+    fputs("<p class=\"n\">Every table the game holds is a page here, and every\n"
+          "page says what its subject is made from and what it is for.</p>\n", f);
     fputs("</section>\n", f);
 
     fputs("</div>\n", f);
