@@ -10,7 +10,7 @@ The followable version of [WIKI.md](WIKI.md). That document says what the wiki
 2. **It names its own verification.** "Done" is a command whose output is
    checked, not a feeling. A step with no way to be wrong is a step that is
    silently wrong.
-3. **The site keeps working.** `/wiki/` is live from step 1.8 onward and never
+3. **The site keeps working.** `/wiki/` has been live since step 1.8 and never
    regresses. Nothing ships half-rendered.
 
 **Progress is tracked by ticking the boxes in this file**, in the same commit as
@@ -151,12 +151,23 @@ other four stages assume.
       not got — or one whose pages do not exist yet. Two columns at desktop
       width, one on a narrow screen; checked at both rather than assumed.
 
-- [ ] **1.8 Publish.**
+- [x] **1.8 Publish.**
       Confirm no `.gitignore` rule swallows `web/wiki/`, commit the output, push,
       and check the live site. Add the `/wiki/` link to `web/index.html`.
       *Verify:* `git status` lists the generated files as tracked; the deployed
       page loads over HTTPS. **Remember Pages serves `max-age=600`** — a stale
       view for up to ten minutes is the cache, not a bug.
+      *Done 2026-09-11.* Nothing under `web/wiki/` is ignored but the `.pam`
+      intermediate; 54 relative links across the whole of `web/` resolve, and
+      the game page links to the wiki from both its header and its call to
+      action. Pages already triggers on `web/**`, so no workflow change.
+      One thing publishing turned up that the plan had missed: **`sitemap.xml`
+      listed one URL and asked in its own comment to be updated by hand**, which
+      is fine for one page and a broken promise by page four hundred. The
+      generator now writes `wiki/sitemap.xml` from the pages it actually wrote
+      and `robots.txt` names it as a second sitemap. A reference site that
+      cannot be found by search is a reference site nobody reads, so that is
+      part of publishing rather than a nicety.
 
 ---
 
