@@ -87,25 +87,40 @@ Released: **v0.6.1** (2026-09-11). `main` is level with it.
 
 ## The wiki
 
-- [ ] **An extensive wiki on the website.** The site is currently a single
-      static `index.html` published to Pages, so this means real multi-page
-      output. One strong recommendation before we start:
-      **generate the reference half from the source, do not hand-write it.**
-      The game already holds every fact in tables — `ITEMS[]`, `MATS[]`, the
-      recipe list, ignition and melting points, the melee ladder. A generator
-      in `tools/` (which is exactly what that directory is for; see
-      `tools/cover.cpp`) emitting pages from those tables gives a wiki that
-      **cannot drift from the game**, and it re-runs in CI on every push
-      alongside the wasm build. Hand-written pages start wrong the first time
-      a number is tuned — and this month alone we changed spear reach, sky
-      colours and plant cover.
-      Hand-write only the parts that are genuinely prose: how heat and
-      pressure actually behave, how circuits work, a getting-started page.
-      Several of those already exist as `.md` files in the repo
-      (`THERMAL_PRESSURE.md`, `CIRCUITS.md`, `LOGISTICS.md`, `PROGRESSION.md`)
-      and are most of a wiki already.
-      - Open question: same domain under `/wiki/`, or a separate section? Same
-        domain is simpler and keeps the Pages deploy as one artifact.
+- [ ] **An extensive wiki on the website.** Laid out in full in
+      [WIKI.md](WIKI.md) — the style rules, every page type with its intent,
+      fifteen explicit tutorials, and a five-stage build order. Not started as
+      code. The shape agreed:
+
+      **Generated, not hand-written.** The reference half comes from the game's
+      own tables via `tools/wiki.cpp`, so it cannot quote a number the game has
+      since changed. Measured counts available today: 116 materials, 293 items
+      (180 of them with authored descriptions already), 141 recipes across six
+      stations, 27 creatures, 25 devices, and 208 sprites — which means every
+      icon on the site is drawn by the game's own renderer rather than exported
+      by hand.
+
+      **Run on request.** `scripts/run_wiki.sh` when you want it updated;
+      nothing in CI. Output is therefore committed, which the Pages workflow
+      publishes for free since it already uploads all of `web/`. Each page
+      carries the commit it was built from, so "is this stale" is a `git log`.
+
+      Same domain under `/wiki/`, so the deploy stays one artifact.
+
+      Two things measurement corrected:
+
+      1. The generator's link set — all of `src/` except `main.cpp` and
+         `network.cpp`, which is the test-harness set exactly — links with
+         **no Windows libraries at all**. Nothing here is Windows-locked, so
+         this could move into the ubuntu Pages job later if you ever want it
+         automatic.
+      2. Of the four `.md` files previously called "most of a wiki already",
+         only two are. `CIRCUITS.md` and `LOGISTICS.md` are player-facing prose
+         and move in nearly as-is. `THERMAL_PRESSURE.md` is an engineering doc
+         that ends in "Required diagnostics", and `PROGRESSION.md` is a
+         contributor plan that opens with five ways to corrupt save files and
+         describes unbuilt content as shipped — publishing either would be a
+         mistake rather than a shortcut.
 
 ## Engineering debt
 
