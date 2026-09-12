@@ -250,7 +250,7 @@ tables.
       not be separated into two honest commits afterwards. Noted rather than
       faked.
 
-- [ ] **2.6 `tests/wiki.cpp`.** The §6 drift guard: items ↔ pages both ways,
+- [x] **2.6 `tests/wiki.cpp`.** The §6 drift guard: items ↔ pages both ways,
       recipes resolve, nav links exist, nothing orphaned, no icon blank, no page
       empty or truncated, every `_src/*.md` reachable.
       *Verify:* it passes — then **break one thing on purpose** (delete a page,
@@ -258,6 +258,20 @@ tables.
       known to work.
       *Note:* the harness runs from `build/tbin`, so paths resolve from there,
       not the repo root.
+      *Done 2026-09-11.* **75 tests pass** (was 74). It checks 354 pages and
+      5,898 internal links against the live tables.
+      Proven non-vacuous by breaking four things on purpose, each caught by the
+      right check: a deleted page, a page truncated to 300 bytes, a removed icon
+      class (289 for 290 items), and one dead link.
+      The design decision that matters: it reads the **committed output on
+      disk** and compares it to the tables, so it is also the staleness alarm
+      this manual-regeneration design needs. Between a change to the game and
+      the next `run_wiki.sh`, the published site is wrong and nothing else would
+      notice. A failure therefore reads "run `scripts/run_wiki.sh`" rather than
+      "the generator is broken".
+      `slugify` is deliberately duplicated from the generator rather than
+      shared: a shared header would let both drift together, where two copies
+      mean a changed naming rule makes every page "go missing" loudly.
 
 ---
 
