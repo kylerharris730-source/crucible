@@ -89,8 +89,10 @@ Released: **v0.6.1** (2026-09-11). `main` is level with it.
 
 - [ ] **An extensive wiki on the website.** Laid out in full in
       [WIKI.md](WIKI.md) — the style rules, every page type with its intent,
-      fifteen explicit tutorials, and a five-stage build order. Not started as
-      code. The shape agreed:
+      and fifteen explicit tutorials. The build order is
+      [WIKI_STEPS.md](WIKI_STEPS.md), which is **where progress is tracked**:
+      33 steps over five stages, each one commit, each naming the command that
+      says it is done. Not started as code. The shape agreed:
 
       **Generated, not hand-written.** The reference half comes from the game's
       own tables via `tools/wiki.cpp`, so it cannot quote a number the game has
