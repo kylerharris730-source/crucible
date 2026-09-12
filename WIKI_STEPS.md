@@ -223,16 +223,32 @@ tables.
       panel agree; a wiki that sorts them "better" than the game is one you
       cannot read alongside it.
 
-- [ ] **2.4 Creature index and pages.** 27 pages grouped by depth band, bosses
+- [x] **2.4 Creature index and pages.** 27 pages grouped by depth band, bosses
       marked as spoilers behind a heading.
       *Verify:* every `ENT_DEFS` entry has a page; `isBoss` entries are all
       inside the spoiler section.
+      *Done 2026-09-11.* **26 pages, 22 ordinary + 4 bosses**, and all four
+      bosses (Brood Mother, Widow, the Censer, the Effigy) are inside the
+      spoiler block. Grouped by depth, because "am I too deep" is the most
+      useful thing the section can answer.
+      **Known gap: creature pages have no art.** Creature sprites are their own
+      canvases at six sizes, from 22×36 up to the Effigy&rsquo;s 96×112, so a
+      second variable-cell sheet is a piece of work rather than a line of this
+      step. Recorded here instead of quietly shipping text pages as though that
+      were always the intent — see 5.5.
 
-- [ ] **2.5 Device pages.** 25 pages, footprint, behaviour, and **limits with
+- [x] **2.5 Device pages.** 25 pages, footprint, behaviour, and **limits with
       numbers**.
       *Verify:* the heat lamp page states 100 °C. That is the canary — if the
       number a play session was lost to is not on the page, the page type has
       failed at its one job.
+      *Done 2026-09-11.* **The canary passes.** The page reads: "It cannot go
+      past 100 °C. That is the limit of the machine, not of your settings."
+      Every device prints its range and its ceiling in words, not only as a
+      number a reader might skim past.
+      *Committed together with 2.4* — the two were built in one pass and could
+      not be separated into two honest commits afterwards. Noted rather than
+      faked.
 
 - [ ] **2.6 `tests/wiki.cpp`.** The §6 drift guard: items ↔ pages both ways,
       recipes resolve, nav links exist, nothing orphaned, no icon blank, no page
@@ -332,6 +348,10 @@ yet have" is checkable.
       recipes, tiers for items.
 - [ ] **5.3 "What can I make now?"** Pick the tools and stations you have; the
       page filters the 141 recipes to what is reachable.
+- [ ] **5.5 Creature art.** A second sprite sheet for the 26 creatures. Their
+      canvases are six different sizes (22×36 up to 96×112), so unlike the item
+      sheet the cells are not uniform and the packing is real work. Raised by
+      2.4, which shipped creature pages as text.
 - [ ] **5.4 A staleness check.** `run_wiki.sh` warns when the committed output's
       build stamp is behind `HEAD`, so a stale wiki announces itself.
 

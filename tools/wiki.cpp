@@ -101,8 +101,8 @@ static Section SECTIONS[] = {
     { "materials",  "Materials", true  },
     { "items",      "Items",     true  },
     { "recipes",    "Recipes",   true  },
-    { "creatures",  "Creatures", false },
-    { "devices",    "Devices",   false },
+    { "creatures",  "Creatures", true  },
+    { "devices",    "Devices",   true  },
 };
 static const int N_SECTIONS = (int)(sizeof(SECTIONS) / sizeof(SECTIONS[0]));
 
@@ -1196,6 +1196,286 @@ static void writeRecipes(const int* cellOfItem) {
     pageClose(f, 1);
 }
 
+/* --- creatures -----------------------------------------------------------
+
+   Grouped by depth, because "what is this and what do I do" is nearly always
+   asked by someone who has just met it at a particular depth, and the answer to
+   "am I too deep" is the most useful thing the section can tell them.
+
+   Bosses sit behind a clearly marked heading rather than being hidden or being
+   sprung on someone reading about rock mites. WIKI.md asks for spoilers MARKED,
+   not avoided.
+
+   One thing this section does NOT have is art. Creature sprites are not in the
+   item sheet -- they are their own canvases at six different sizes, from 22x36
+   up to the Effigy's 96x112 -- and packing a second variable-cell sheet is a
+   piece of work in its own right rather than a line of this step. Recorded as
+   a gap in WIKI_STEPS.md instead of quietly shipped as though a creature page
+   was always meant to be text. */
+
+static void writeLayers(FILE* f, u8 mask) {
+    bool first = true;
+    for (int bit = 0; bit < 3; ++bit) {
+        if (!(mask & (1u << bit))) continue;
+        if (!first) fputs(", ", f);
+        first = false;
+        fprintf(f, "layer %d", bit + 1);
+    }
+    if (first) fputs("nowhere it spawns on its own", f);
+}
+
+static void writeCreaturePage(int type, const int* cellOfItem) {
+    const EntityDef& e = ENT_DEFS[type];
+    char slug[128], file[192];
+    slugify(slug, sizeof(slug), e.name);
+    snprintf(file, sizeof(file), "creatures/%s.html", slug);
+
+    FILE* f = pageOpen(file, 1, e.name, "creatures");
+    fputs("<h1>", f);
+    escapeTo(f, e.name);
+    fputs("</h1>\n", f);
+
+    fputs("<p class=\"lede\">", f);
+    if (e.isBoss) fputs("A boss. ", f);
+    fputs("Found in ", f);
+    writeLayers(f, e.layerMask);
+    if (e.surfaceAtNight) fputs(", and on the surface after dark", f);
+    fputs(".</p>\n", f);
+
+    fputs("<h2>In a fight</h2>\n<dl class=\"stats\">\n", f);
+    fprintf(f, "<dt>Health</dt><dd>%d</dd>\n", e.hp);
+    if (e.touchDamage) {
+        fprintf(f, "<dt>Contact damage</dt><dd>%d", e.touchDamage);
+        if (e.touchCooldown)
+            fprintf(f, ", at most once every %d frames (%.1f s)",
+                    e.touchCooldown, (double)e.touchCooldown / 60.0);
+        fputs("</dd>\n", f);
+    }
+    if (e.shotEvery) {
+        fprintf(f, "<dt>Shoots</dt><dd>%d damage every %d frames (%.1f s)</dd>\n",
+                e.shotDamage, e.shotEvery, (double)e.shotEvery / 60.0);
+        if (e.standOff > 0.0f)
+            fprintf(f, "<dt>Keeps its distance</dt><dd>about %d cells</dd>\n",
+                    (int)e.standOff);
+    }
+    fprintf(f, "<dt>Speed</dt><dd>%.2f cells per frame%s</dd>\n",
+            (double)e.speed, e.flies ? ", and it flies" : "");
+    fprintf(f, "<dt>Size</dt><dd>%d&times;%d cells</dd>\n", e.w, e.h);
+    if (e.heatTolerance)
+        fprintf(f, "<dt>Survives heat to</dt><dd>%d&nbsp;&deg;C</dd>\n",
+                (int)e.heatTolerance);
+    if (e.indestructible)
+        fputs("<dt>Invulnerable</dt><dd>yes</dd>\n", f);
+    if (e.tame)
+        fputs("<dt>Hostile</dt><dd>no &mdash; it will not attack you</dd>\n", f);
+    fputs("</dl>\n", f);
+
+    const bool anyDrop = (e.dropItem != ITEM_NONE && e.dropMax > 0) ||
+                         (e.rareDrop != ITEM_NONE && e.rareOneIn > 0);
+    if (anyDrop) {
+        fputs("<h2>Drops</h2>\n<dl class=\"stats\">\n", f);
+        if (e.dropItem != ITEM_NONE && e.dropMax > 0) {
+            fputs("<dt>Always</dt><dd>", f);
+            if (e.dropMin == e.dropMax) fprintf(f, "%d&times; ", e.dropMax);
+            else fprintf(f, "%d&ndash;%d&times; ", e.dropMin, e.dropMax);
+            writeItemLink(f, e.dropItem, cellOfItem, true);
+            fputs("</dd>\n", f);
+        }
+        if (e.rareDrop != ITEM_NONE && e.rareOneIn > 0) {
+            fputs("<dt>Rarely</dt><dd>", f);
+            writeItemLink(f, e.rareDrop, cellOfItem, true);
+            fprintf(f, " &mdash; about 1 kill in %d</dd>\n", e.rareOneIn);
+        }
+        fputs("</dl>\n", f);
+    }
+
+    fputs("<p class=\"n\"><a href=\"index.html\">&larr; all creatures</a></p>\n", f);
+    pageClose(f, 1);
+}
+
+static void writeCreatures(const int* cellOfItem) {
+    ensureDir("web/wiki/creatures");
+
+    static char slugs[64][128];
+    for (int t = 1; t < ENT_COUNT; ++t) {
+        slugify(slugs[t], sizeof(slugs[t]), ENT_DEFS[t].name);
+        for (int j = 1; j < t; ++j)
+            if (strcmp(slugs[t], slugs[j]) == 0)
+                fail("two creatures share a page filename", ENT_DEFS[t].name);
+        writeCreaturePage(t, cellOfItem);
+    }
+
+    FILE* f = pageOpen("creatures/index.html", 1, "Creatures", "creatures");
+    fputs("<h1>Creatures</h1>\n", f);
+    fprintf(f, "<p class=\"lede\">%d of them, by how deep you have to go to meet\n"
+               "one. Bosses are listed separately at the bottom.</p>\n",
+            (int)ENT_COUNT - 1);
+
+    /* Ordinary creatures first, by layer; bosses last and clearly fenced. */
+    for (int pass = 0; pass < 2; ++pass) {
+        if (pass == 1) fputs("<div class=\"spoiler\">\n", f);
+        fputs(pass ? "<h2>Bosses &mdash; spoilers</h2>\n"
+                   : "<h2>What lives down there</h2>\n", f);
+        if (pass == 1)
+            fputs("<p>Each is summoned deliberately, so none of these can "
+                  "blunder into you in a tunnel.</p>\n", f);
+
+        fputs("<div class=\"tablewrap\">\n<table class=\"index\">\n", f);
+        fputs("<thead><tr>\n"
+              "<th class=\"sortable\">Creature</th>\n"
+              "<th class=\"sortable\">Found</th>\n"
+              "<th class=\"sortable num\">Health</th>\n"
+              "<th class=\"sortable num\">Contact</th>\n"
+              "<th class=\"sortable num\">Shot</th>\n"
+              "<th>Drops</th>\n"
+              "</tr></thead>\n<tbody>\n", f);
+
+        for (int t = 1; t < ENT_COUNT; ++t) {
+            const EntityDef& e = ENT_DEFS[t];
+            if ((bool)e.isBoss != (pass == 1)) continue;
+
+            fputs("<tr data-search=\"", f);
+            escapeTo(f, e.name);
+            fputs("\">\n<td><a href=\"", f);
+            fputs(slugs[t], f);
+            fputs(".html\">", f);
+            escapeTo(f, e.name);
+            fputs("</a></td>\n<td class=\"dim\">", f);
+            writeLayers(f, e.layerMask);
+            fputs("</td>\n", f);
+            fprintf(f, "<td class=\"num\">%d</td>\n", e.hp);
+            if (e.touchDamage) fprintf(f, "<td class=\"num\">%d</td>\n", e.touchDamage);
+            else fputs("<td class=\"num\" data-sort=\"\"></td>\n", f);
+            if (e.shotEvery) fprintf(f, "<td class=\"num\">%d</td>\n", e.shotDamage);
+            else fputs("<td class=\"num\" data-sort=\"\"></td>\n", f);
+            fputs("<td class=\"dim\">", f);
+            if (e.dropItem != ITEM_NONE && e.dropMax > 0)
+                writeItemLink(f, e.dropItem, cellOfItem, false);
+            fputs("</td>\n</tr>\n", f);
+        }
+        fputs("</tbody>\n</table>\n</div>\n", f);
+        if (pass == 1) fputs("</div>\n", f);
+    }
+    pageClose(f, 1);
+}
+
+/* --- devices -------------------------------------------------------------
+
+   Devices get their own section for one reason above all others, and WIKI.md
+   names it: LIMITS, stated as numbers. The Heat Lamp caps at 100 C. That single
+   fact cost a play session -- a retort needs 125 C, the lamp is the obvious
+   thing to point at it, and it can never get there -- and it has been sitting in
+   DEVS[] the whole time, one column away from being printed.
+
+   So every device prints its adjustable range. A machine whose number stops
+   somewhere is a machine that will disappoint somebody at exactly that point. */
+static void writeDevices() {
+    ensureDir("web/wiki/devices");
+
+    static char slugs[64][128];
+    for (int d = 1; d < DEV_COUNT; ++d) {
+        const DeviceInfo& dev = DEVS[d];
+        slugify(slugs[d], sizeof(slugs[d]), dev.name);
+        for (int j = 1; j < d; ++j)
+            if (strcmp(slugs[d], slugs[j]) == 0)
+                fail("two devices share a page filename", dev.name);
+
+        char file[192];
+        snprintf(file, sizeof(file), "devices/%s.html", slugs[d]);
+        FILE* f = pageOpen(file, 1, dev.name, "devices");
+        fputs("<h1>", f);
+        escapeTo(f, dev.name);
+        fputs("</h1>\n", f);
+
+        fprintf(f, "<p class=\"lede\">A machine, %d&times;%d cells.</p>\n",
+                devTypeW((DeviceType)d), devTypeH((DeviceType)d));
+
+        fputs("<h2>Its setting</h2>\n<dl class=\"stats\">\n", f);
+        if (dev.vMin == dev.vMax) {
+            /* The panel hides its -/+ for these, so the page says why rather
+               than leaving a reader looking for a control that is not there. */
+            fputs("<dt>Adjustable</dt><dd>no &mdash; this one has nothing to "
+                  "tune</dd>\n", f);
+        } else {
+            fputs("<dt>", f);
+            escapeTo(f, dev.valueLabel ? dev.valueLabel : "Setting");
+            fputs("</dt><dd>", f);
+            fprintf(f, "%d to %d", (int)dev.vMin, (int)dev.vMax);
+            if (dev.valueUnit && dev.valueUnit[0]) {
+                fputc(' ', f);
+                escapeTo(f, dev.valueUnit);
+            }
+            fprintf(f, ", in steps of %d", (int)dev.vStep);
+            fputs("</dd>\n", f);
+            fprintf(f, "<dt>Starts at</dt><dd>%d", (int)dev.vDefault);
+            if (dev.valueUnit && dev.valueUnit[0]) {
+                fputc(' ', f);
+                escapeTo(f, dev.valueUnit);
+            }
+            fputs("</dd>\n", f);
+        }
+        if (dev.aimable)
+            fputs("<dt>Aimable</dt><dd>yes &mdash; it acts on the cells just "
+                  "outside one edge, and you choose which</dd>\n", f);
+        fputs("</dl>\n", f);
+
+        /* The point of the whole page type. Said in words, not left for the
+           reader to infer from a range they may not have read carefully. */
+        if (dev.vMin != dev.vMax) {
+            fputs("<p class=\"n\">It cannot go past ", f);
+            fprintf(f, "<strong>%d", (int)dev.vMax);
+            if (dev.valueUnit && dev.valueUnit[0]) {
+                fputc(' ', f);
+                escapeTo(f, dev.valueUnit);
+            }
+            fputs("</strong>. That is the limit of the machine, not of your "
+                  "settings.</p>\n", f);
+        }
+
+        fputs("<p class=\"n\"><a href=\"index.html\">&larr; all devices</a></p>\n", f);
+        pageClose(f, 1);
+    }
+
+    FILE* f = pageOpen("devices/index.html", 1, "Devices", "devices");
+    fputs("<h1>Devices</h1>\n", f);
+    fprintf(f, "<p class=\"lede\">%d machines you can place, with what each one\n"
+               "can be set to &mdash; and, more usefully, where each one stops.</p>\n",
+            (int)DEV_COUNT - 1);
+    fputs("<div class=\"tablewrap\">\n<table class=\"index\">\n", f);
+    fputs("<thead><tr>\n"
+          "<th class=\"sortable\">Device</th>\n"
+          "<th class=\"sortable\">Size</th>\n"
+          "<th class=\"sortable\">Setting</th>\n"
+          "<th class=\"sortable num\">Lowest</th>\n"
+          "<th class=\"sortable num\">Highest</th>\n"
+          "</tr></thead>\n<tbody>\n", f);
+    for (int d = 1; d < DEV_COUNT; ++d) {
+        const DeviceInfo& dev = DEVS[d];
+        fputs("<tr data-search=\"", f);
+        escapeTo(f, dev.name);
+        fputs("\">\n<td><a href=\"", f);
+        fputs(slugs[d], f);
+        fputs(".html\">", f);
+        escapeTo(f, dev.name);
+        fputs("</a></td>\n", f);
+        fprintf(f, "<td class=\"dim\">%d&times;%d</td>\n",
+                devTypeW((DeviceType)d), devTypeH((DeviceType)d));
+        fputs("<td class=\"dim\">", f);
+        if (dev.vMin != dev.vMax && dev.valueLabel) escapeTo(f, dev.valueLabel);
+        fputs("</td>\n", f);
+        if (dev.vMin != dev.vMax) {
+            fprintf(f, "<td class=\"num\">%d</td>\n<td class=\"num\">%d</td>\n",
+                    (int)dev.vMin, (int)dev.vMax);
+        } else {
+            fputs("<td class=\"num\" data-sort=\"\"></td>\n"
+                  "<td class=\"num\" data-sort=\"\"></td>\n", f);
+        }
+        fputs("</tr>\n", f);
+    }
+    fputs("</tbody>\n</table>\n</div>\n", f);
+    pageClose(f, 1);
+}
+
 /* --- the prose half ------------------------------------------------------
 
    A Markdown subset, in C++, so the authored pages come out of the same
@@ -1640,6 +1920,8 @@ int main() {
     writeMaterialIndex(cellOfItem);
     writeItems(cellOfItem);
     writeRecipes(cellOfItem);
+    writeCreatures(cellOfItem);
+    writeDevices();
     writeProse();
 
     /* --- the hub ---------------------------------------------------------
@@ -1690,6 +1972,10 @@ int main() {
             fprintf(f, " <span class=\"n\">%d</span>", nonMaterialItems);
         if (strcmp(SECTIONS[i].slug, "recipes") == 0)
             fprintf(f, " <span class=\"n\">%d</span>", N_RECIPES);
+        if (strcmp(SECTIONS[i].slug, "creatures") == 0)
+            fprintf(f, " <span class=\"n\">%d</span>", (int)ENT_COUNT - 1);
+        if (strcmp(SECTIONS[i].slug, "devices") == 0)
+            fprintf(f, " <span class=\"n\">%d</span>", (int)DEV_COUNT - 1);
         fputs("</li>\n", f);
     }
     fputs("</ul>\n", f);
