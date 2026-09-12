@@ -76,11 +76,16 @@ other four stages assume.
       proofreads. The stamp defines go to the generator's translation unit only;
       on all 29 shared objects they would invalidate the whole cache every run.
 
-- [ ] **1.3 The stylesheet.**
+- [x] **1.3 The stylesheet.**
       `web/wiki/wiki.css`, variables copied verbatim from `index.html`. Dark,
       flat, no rounded cards, `image-rendering: pixelated` on every icon.
       *Verify:* open it in the browser beside the main page; they look like one
       project. This step is judged by eye, and says so.
+      *Done 2026-09-11.* Checked served over `python -m http.server 8099 -d web`,
+      **not** over `file://` — a local file opens as a snapshot with no
+      stylesheet resolved, which looks exactly like a broken page. Worth knowing
+      for every later visual check. One thing the eye caught: the brand and nav
+      inherited the prose-link underline; chrome is furniture, not prose.
 
 - [ ] **1.4 The icon sheet.**
       Loop `dropArt()` over every stackable item into one PPM grid at 14×14 per
