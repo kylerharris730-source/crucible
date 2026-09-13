@@ -123,6 +123,34 @@
     padding: 7px 10px; border: 1px solid var(--edge); border-radius: 3px;
   }
   a.ghost:hover { color: var(--ink); border-color: var(--dim); }
+  /* Between the two: louder than a ghost link, quieter than the download.
+     The download is still the one filled button in the bar. */
+  a.guide {
+    color: var(--ember); text-decoration: none; font-size: 13px; font-weight: 600;
+    padding: 7px 12px; border: 1px solid var(--ember); border-radius: 3px;
+    white-space: nowrap;
+  }
+  a.guide:hover { color: var(--bg); background: var(--ember); }
+
+  /* --- the guide section -------------------------------------------------
+     Cards rather than a list, because this is the one section whose job is to
+     be clicked. Each card is a single link, so the whole card is the target. */
+  .guides {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 10px; margin: 16px 0 14px;
+  }
+  main a.card {
+    display: block; text-decoration: none;
+    background: var(--panel); border: 1px solid var(--edge); border-radius: 3px;
+    padding: 12px 14px;
+  }
+  main a.card:hover { border-color: var(--ember); }
+  a.card .n { color: #6c7683; font-size: 11.5px; letter-spacing: 1px; }
+  a.card .t { display: block; color: var(--ink); font-weight: 600; font-size: 13.5px; margin: 2px 0 4px; }
+  a.card .d { display: block; color: var(--dim); font-size: 12.5px; line-height: 1.55; }
+  /* The one page the game never points you to. Marked, not shouted. */
+  main a.card.key { border-color: rgba(226, 190, 90, .45); }
+  a.card.key .n { color: var(--ember); }
   .ver { font-size: 11px; opacity: .75; font-weight: 400; }
   .build { font-size: 11px; opacity: .5; margin-left: 10px; font-family: ui-monospace, Consolas, monospace; }
 
@@ -326,6 +354,9 @@
        this same Pages deploy rather than anywhere else -- see WIKI.md. A
        relative link, so it works on the custom domain and on
        github.io/crucible/ alike. -->
+  <!-- The first tutorial, not the wiki front page: a new player does not
+       want a reference, they want to know what to do in the next minute. -->
+  <a class="guide" href="wiki/guide/first-ten-minutes.html">New? Start here</a>
   <a class="ghost" href="wiki/">Wiki</a>
   <a class="ghost" href="https://github.com/kylerharris730-source/crucible">Source</a>
   <!-- /releases/latest/download/ always resolves to the newest published
@@ -346,9 +377,13 @@
 
 <div id="controls">
   <b>Click the game to give it the keyboard.</b>
-  <kbd>WASD</kbd> move &middot; <kbd>Space</kbd> jump &middot; mouse to dig and place &middot;
-  <kbd>Tab</kbd> inventory &middot; <kbd>Q</kbd> throw an item &middot; <kbd>Esc</kbd> menu
-  &middot; <a href="#about" class="more">read more &darr;</a>
+  <!-- Matches KEY_HINTS in src/main.cpp. This strip used to say "mouse to dig
+       and place" and "Tab inventory": left and right are not interchangeable
+       (left builds, right digs), and Tab is the creative item grid, not the
+       pack. Crafting is C. -->
+  <kbd>WASD</kbd> move &middot; <kbd>Space</kbd> jump &middot; <b>left</b> build &middot; <b>right</b> dig &middot;
+  <kbd>C</kbd> craft &middot; <kbd>Esc</kbd> menu
+  &middot; <a href="wiki/guide/first-ten-minutes.html" class="more">your first ten minutes &rarr;</a>
 </div>
 
 </div><!-- #screen: the article below scrolls after the first screen -->
@@ -374,6 +409,72 @@
          alt="Cinderlift in play: the material and machine panel on the left, a grassy surface over dark rock, the character standing at the edge of a slope.">
     <figcaption>The browser build, running. Materials and machines down the left, the world on the right.</figcaption>
   </figure>
+</section>
+
+<!-- Second on the page on purpose, straight after "what it is". A simulation
+     game teaches badly by default -- light, heat and the retort are all learned
+     by dying or by never finding them -- so the guide is placed where a new
+     player reads before they scroll past it.
+
+     No counts in this section. The wiki's pages are generated from the game's
+     tables and move when the game does; a "115 materials" typed in here would
+     be the one number on the site that goes quietly wrong. -->
+<section id="guide">
+  <h2>NEW HERE? START WITH THE GUIDE</h2>
+  <p>
+    The game does not explain itself much, and a few of the things that matter
+    most are never mentioned at all. The <b>guide</b> is fifteen short tutorials,
+    in order, each one assuming only the ones before it &mdash; and every one ends
+    with a list of the ways it goes wrong, because that is the half you cannot
+    work out alone.
+  </p>
+  <div class="guides">
+    <a class="card" href="wiki/guide/first-ten-minutes.html">
+      <span class="n">1</span>
+      <span class="t">Your first ten minutes</span>
+      <span class="d">Left-click builds, right-click digs. Torches, a striker, a bench and a bed.</span>
+    </a>
+    <a class="card" href="wiki/guide/the-dark.html">
+      <span class="n">2</span>
+      <span class="t">The dark is not scenery</span>
+      <span class="d">Creatures spawn in unlit cells. A lit room stays empty.</span>
+    </a>
+    <a class="card" href="wiki/guide/making-fire.html">
+      <span class="n">3</span>
+      <span class="t">Making fire</span>
+      <span class="d">What burns, how hot, and why leaves burn hotter than coal.</span>
+    </a>
+    <a class="card" href="wiki/guide/smelting.html">
+      <span class="n">6</span>
+      <span class="t">Ore into bars</span>
+      <span class="d">No furnace menu &mdash; a temperature, and either you reach it or you do not.</span>
+    </a>
+    <a class="card key" href="wiki/guide/coke-retort.html">
+      <span class="n">7 &middot; THE ONE THE GAME NEVER MENTIONS</span>
+      <span class="t">Coke, and the sealed retort</span>
+      <span class="d">There is no retort item. It is the only way to titanium and tungsten.</span>
+    </a>
+    <a class="card" href="wiki/guide/index.html">
+      <span class="n">ALL FIFTEEN</span>
+      <span class="t">The full guide</span>
+      <span class="d">Digging, going down, fighting, gear, farming, bees, circuits, and leaving.</span>
+    </a>
+  </div>
+
+  <h3>And a reference for everything else</h3>
+  <p>
+    The rest of the <a href="wiki/">wiki</a> is generated from the game&rsquo;s own
+    code, so it cannot disagree with it: every
+    <a href="wiki/materials/">material</a> with its melting and ignition points,
+    every <a href="wiki/items/">item</a>, every
+    <a href="wiki/recipes/">recipe</a> in both directions &mdash; what a thing is
+    made of and what it is for &mdash; every <a href="wiki/creatures/">creature</a>
+    and every <a href="wiki/devices/">machine</a>, including where each one stops.
+  </p>
+  <div class="cta">
+    <a class="guide" href="wiki/recipes/what-can-i-make.html">What can I make right now?</a>
+    <a class="ghost" href="wiki/search.html">Search the wiki</a>
+  </div>
 </section>
 
 <section id="heat">
@@ -453,7 +554,8 @@
   </p>
   <div class="cta">
     <a class="dl" href="https://github.com/kylerharris730-source/crucible/releases/latest/download/cinderlift.exe">Download for Windows<span class="ver" id="ver2"></span></a>
-    <a class="ghost" href="wiki/">Read the wiki</a>
+    <a class="guide" href="wiki/guide/first-ten-minutes.html">Read the guide first</a>
+    <a class="ghost" href="wiki/">Wiki</a>
     <a class="ghost" href="https://github.com/kylerharris730-source/crucible">Source on GitHub</a>
   </div>
 </section>
@@ -466,6 +568,15 @@
     One word: <b>Cinderlift</b>. Plenty of people type it as two, so if you
     searched for <b>cinder lift</b> and ended up here, you are in the right
     place &mdash; it is the same game either way.
+  </p>
+
+  <h3>How do I learn to play?</h3>
+  <p>
+    Start with <a href="wiki/guide/first-ten-minutes.html">your first ten minutes</a>
+    and follow the guide in order. When you want to look one thing up &mdash; what
+    melts copper, what a creature drops, what you can build with what you have
+    &mdash; the <a href="wiki/">wiki</a> has a page for it, and
+    <a href="wiki/search.html">search</a> finds it by name.
   </p>
 
   <h3>Does the browser version save my world?</h3>
