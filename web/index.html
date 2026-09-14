@@ -828,10 +828,13 @@
                          window.devicePixelRatio || 1, NATIVE_W, NATIVE_H);
     // Only compensate when the canvas is actually being reduced. Bigger text
     // costs panel room, so it is not worth spending at 1:1 or above.
-    if (f.crisp) return 100;
-    if (f.scale < 0.75) return 120;
-    if (f.scale < 0.90) return 110;
-    return 100;
+    // Judged in CSS pixels, not device pixels. Readability is about how big
+    // the text looks, and on a 2x display a device scale of 1.5 is text at
+    // three quarters of its size -- which the device-pixel test called crisp
+    // and left at 100%.
+    if (f.cssScale >= 0.90) return 100;
+    if (f.cssScale < 0.75) return 120;
+    return 110;
   }
 
   // --- saved worlds ---------------------------------------------------------
@@ -967,10 +970,32 @@
   // px is still exactly 1:1 in real pixels and should stay crisp.
   // Kept pure and separate so it can be checked against known viewports
   // without a browser window to measure -- see the note about 0x0 below.
+  //
+  // The snap is never allowed to go below the size the game already fits at
+  // in CSS pixels, and that rule is what makes this work on a Retina Mac. A
+  // whole number of DEVICE pixels is the right target on a 1x screen, where
+  // the next integer down is one pixel smaller. On a 2x screen the next
+  // integer down from 1.9 is 1 -- one device pixel per canvas pixel, which is
+  // HALF the size in CSS. So the moment the stage fell below 768 CSS px tall
+  // (a bookmarks bar, leaving fullscreen, the control strip wrapping to a
+  // second line) the game halved from 1288 to 644 wide and stayed there all
+  // the way down to 384 tall, with no window size a laptop could reach that
+  // brought it back. Windows at 1x shrank by a pixel at the same boundary,
+  // which is why this only ever looked broken on a Mac. dpr 1.25 and 1.5
+  // laptops had a milder cliff of the same kind.
+  //
+  // min(fit, dpr) is "as big as fits, capped at CSS 1:1": snap only when the
+  // integer reaches that, otherwise take the exact fit. On 1x and 2x screens
+  // that leaves every size at or above 1:1 exactly as it was. On 1.25x and
+  // 1.5x screens there is no whole number at CSS 1:1, so the canvas now fills
+  // the room between 1:1 and the next whole number instead of dropping
+  // below it -- measured, a 1.5x laptop with 900 px of height went from 859
+  // to 1509 wide.
   function computeFit(availW, availH, dpr, cw, ch) {
     const fit = Math.min(availW * dpr / cw, availH * dpr / ch);
-    const scale = fit >= 1 ? Math.floor(fit) : fit;
-    return { scale: scale, crisp: fit >= 1,
+    const snap = Math.floor(fit);
+    const scale = (fit >= 1 && snap >= Math.min(fit, dpr)) ? snap : fit;
+    return { scale: scale, crisp: fit >= 1, cssScale: scale / dpr,
              cssW: cw * scale / dpr, cssH: ch * scale / dpr };
   }
   window.__computeFit = computeFit;
