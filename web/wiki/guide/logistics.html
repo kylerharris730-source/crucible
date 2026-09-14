@@ -34,6 +34,8 @@
 <li><strong>Pipe Crossover</strong> carries two independent lanes so horizontal and vertical pipe runs can cross without joining.</li>
 <li><strong>Spout</strong> places material cells into the world from its item buffer. It needs an item supply and can be enabled or disabled by a physical electrical pulse.</li>
 <li><strong>Drain</strong> collects neighboring material cells into its buffer. It can use a manual material filter, a circuit-provided material filter, and physical electrical enable/disable.</li>
+<li><strong>Miner</strong> clears a square in front of it into its buffer, and sends what it holds down any pipe it touches — so a miner that feeds a pipe never fills up and stops.</li>
+<li><strong>Placer</strong> fills a square in front of it from its buffer, and accepts material from any pipe it touches, as a Spout does.</li>
 <li><strong>Block Watcher</strong> watches in its facing direction. When the configured material touches it, it produces a physical electrical signal and publishes the observed material as a circuit signal.</li>
 </ul>
 <h2>Connecting a system</h2>
@@ -46,7 +48,7 @@
 <footer>
 <p>Generated from the game&rsquo;s own tables &mdash; every number on
 this page was read out of the source, not copied into it.</p>
-<p class="stamp">Built from <code>62998579bec9</code> &middot; Cinderlift 0.6.1.26 &middot; <a href="../../index.html">the game</a></p>
+<p class="stamp">Built from <code>f0cf46586a7e</code> &middot; Cinderlift 0.6.1.28 &middot; <a href="../../index.html">the game</a></p>
 </footer>
 </body>
 </html>
