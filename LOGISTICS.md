@@ -17,6 +17,11 @@ items; a circuit wire carries integer information about items.
 - **Drain** collects neighboring material cells into its buffer. It can use a
   manual material filter, a circuit-provided material filter, and physical
   electrical enable/disable.
+- **Miner** clears a square in front of it into its buffer, and sends what it
+  holds down any pipe it touches — so a miner that feeds a pipe never fills up
+  and stops.
+- **Placer** fills a square in front of it from its buffer, and accepts material
+  from any pipe it touches, as a Spout does.
 - **Block Watcher** watches in its facing direction. When the configured
   material touches it, it produces a physical electrical signal and publishes
   the observed material as a circuit signal.

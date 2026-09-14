@@ -1590,18 +1590,36 @@ static bool devTakeInto(Device& d, u8 mat) {
     return true;
 }
 
+/* The miner and placer are members too. Reported in play: "miner cant connect
+   to item pipe" -- and it could not, because they were never on this list, so a
+   pipe laid against one simply did not join it. They are the two machines with a
+   buffer that most obviously wants plumbing: a miner fills up and stops, and a
+   placer runs dry and stops, and without a pipe the only answer to either was
+   emptying or filling it by hand.
+
+   Membership also means they SNAP to the logistics lattice when placed, like
+   every other machine here. That is not optional: pipes join only on an exact
+   shared edge (see pipeJoined), so a miner placed freely would almost never
+   line up with a pipe even though it was now allowed to. A miner already placed
+   off the lattice in an existing world keeps its position and needs picking up
+   and putting back down to connect. */
 static bool isLogistics(u8 type) {
     return type == DEV_PIPE || type == DEV_CROSSOVER || type == DEV_CHEST ||
-           type == DEV_SPOUT || type == DEV_DRAIN;
+           type == DEV_SPOUT || type == DEV_DRAIN ||
+           type == DEV_MINER || type == DEV_PLACER;
 }
 
 static bool pipeSends(u8 type) {
-    return type == DEV_CHEST || type == DEV_DRAIN || type == DEV_PIPE || type == DEV_CROSSOVER;
+    /* A miner sends what it has dug, exactly as a drain sends what it has
+       drained. */
+    return type == DEV_CHEST || type == DEV_DRAIN || type == DEV_PIPE ||
+           type == DEV_CROSSOVER || type == DEV_MINER;
 }
 static bool pipeReceives(u8 type) {
-    /* Conduits are topology only. A logistics item may finish at a spout, but
-       it can never be deposited in a pipe on the way there. */
-    return type == DEV_SPOUT;
+    /* Conduits are topology only. A logistics item may finish at a spout or a
+       placer -- both lay what they hold into the world -- but it can never be
+       deposited in a pipe on the way there. */
+    return type == DEV_SPOUT || type == DEV_PLACER;
 }
 
 /* Two footprints are joined only when they share a complete cell edge.  Corner
@@ -2924,11 +2942,12 @@ static void devDrawPass(const World& w, u32* px, int camX, int camY, bool lit,
                 u32 c = art[yy * SPR_W + xx];
                 if (c == 0) continue;
                 int rx = xx, ry = yy;
-                /* The source art faces down. Rotate only the two directional
-                   logistics machines; other device sprites remain upright. */
-                /* The spout alone. A drain is symmetric under a quarter turn
-                   and has no facing to rotate to -- see ART_DRAIN. */
-                if (d.type == DEV_SPOUT) {
+                /* The source art faces down. Rotate the machines that act off
+                   one edge -- the spout, the miner and the placer -- so the
+                   arrow on the housing points where it actually works. Other
+                   sprites stay upright; a drain is symmetric under a quarter
+                   turn and has no facing to rotate to -- see ART_DRAIN. */
+                if (d.type == DEV_SPOUT || d.type == DEV_MINER || d.type == DEV_PLACER) {
                     switch (d.face) {
                     case 1: rx = DEV_W - 1 - xx; ry = DEV_H - 1 - yy; break;
                     case 2: rx = DEV_W - 1 - yy; ry = xx; break;
