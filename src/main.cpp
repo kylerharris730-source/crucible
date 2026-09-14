@@ -1149,7 +1149,7 @@ static RECT g_craftSearchBox;
 extern bool g_craftOpen;
 extern int  g_craftScroll;
 static void drawDevPanel(HDC hdc);
-/* The two machines that work on a BOX rather than a row -- see devBoxCell.
+/* The two machines that work on a SQUARE rather than a row -- see devWorkCell.
    Up here because both the network action handler and the panel need it, and
    they sit a long way apart. */
 static bool devHasBox(u8 type) { return type == DEV_MINER || type == DEV_PLACER; }
@@ -4762,8 +4762,10 @@ static void applyDeviceAction(PlayerSession& session, const NetAction& action) {
         if (rocketStage(d) == ROCKET_COUNTING) rocketCancel(d);
         else rocketBeginLaunch(g_world, d, (int)(&session - g_playerSessions));
         break;
-    case NDEV_DEPTH_DEC: devSetBoxDepth(d, devBoxDepth(d) - 1); break;
-    case NDEV_DEPTH_INC: devSetBoxDepth(d, devBoxDepth(d) + 1); break;
+    /* NDEV_DEPTH_DEC/INC are no longer sent: the miner and placer lost their
+       separate depth when their box became a square sized by `value`. The
+       enum values stay in network.h so the numbering of everything after them
+       does not move; arriving from an older client they fall to default. */
     case NDEV_MODE:      devSetRunMode(d, devRunMode(d) + 1);   break;
     case NDEV_SET_SIGNAL: cc.signal = action.b; break;
     case NDEV_SET_A: cc.signalA = action.b; break;
@@ -5665,7 +5667,7 @@ static void drawCircuitSignalButton(HDC hdc, const RECT& r, const char* prefix,
 /* Circuit controls name their selected signal and show an icon, so they need
    enough width for a material name rather than the old tiny cycle buttons. */
 static const int DEVP_W = 420, DEVP_H = 96, DEVP_CIRCUIT_H = 218;
-/* One row taller, for the box controls. */
+/* One row taller, for the miner and placer's filter and trigger. */
 static const int DEVP_BOX_H = 128;
 /* The rocket's checklist. Five requirements and a line saying what the one
    button will do, which is more than "read it, nudge it" -- and it is the one
@@ -5674,11 +5676,12 @@ static const int DEVP_BOX_H = 128;
    missing requirements directly, not only after pressing Launch." */
 static const int DEVP_ROCKET_H = 190;
 static RECT g_devpBox, g_devpDec, g_devpInc, g_devpTake, g_devpTurn, g_devpClose;
-/* A second control row, for the miner and the placer only. They are the one
-   pair with more to say than "read it, nudge it" -- a direction, a depth, a
-   filter and a trigger mode -- and cramming that onto the single row every
-   other machine uses would make the row unreadable for all of them. */
-static RECT g_devpDepthDec, g_devpDepthBox, g_devpDepthInc, g_devpFilter, g_devpMode;
+/* A second control row, for the miner and the placer only. Their two settings
+   that SHAPE what they do -- size and facing -- are on the ordinary row every
+   machine has, the -/+ and the aim button. This row is what decides WHEN they
+   act, and the optional filter. It used to also carry a separate depth, which
+   with the old per-action budget made three numbers for one shape. */
+static RECT g_devpFilter, g_devpMode;
 /* The rocket's own two, beside the load button on its bottom row. Named rather
    than borrowed from the steppers: "the minus button means Ready on this one
    machine" is exactly the sort of reuse that reads fine when it is written and
@@ -5724,21 +5727,18 @@ static void layoutDevPanel(const Device& d) {
     }
 
     if (devHasBox(d.type)) {
-        /* [-] [deep N] [+], with the middle a READOUT rather than a button.
-           It was a two-button row with the value painted on the second one,
-           which reads as "press this to make it deeper" -- so the number and
-           the control it belonged to were the same object, and pressing what
-           looked like a label changed it. */
+        /* The trigger first and wider, because it is the one you have to get
+           right for the machine to do anything at all; the filter is optional
+           and says so. */
         const int by2 = by - 26;
-        SetRect(&g_devpDepthDec, px + 10,  by2, px + 44,  by2 + 22);
-        SetRect(&g_devpDepthBox, px + 48,  by2, px + 122, by2 + 22);
-        SetRect(&g_devpDepthInc, px + 126, by2, px + 160, by2 + 22);
-        SetRect(&g_devpFilter,   px + 164, by2, px + 274, by2 + 22);
-        SetRect(&g_devpMode,     px + 278, by2, px + 410, by2 + 22);
+        SetRect(&g_devpMode,   px + 10,  by2, px + 200, by2 + 22);
+        /* Only a miner filters. The placer lays whatever its buffer holds, so
+           a filter button on it would be a control that does nothing -- the
+           exact kind of thing that made these machines confusing. */
+        if (d.type == DEV_MINER) SetRect(&g_devpFilter, px + 204, by2, px + 410, by2 + 22);
+        else                     SetRectEmpty(&g_devpFilter);
     } else {
-        SetRectEmpty(&g_devpDepthDec); SetRectEmpty(&g_devpDepthBox);
-        SetRectEmpty(&g_devpDepthInc);
-        SetRectEmpty(&g_devpFilter);   SetRectEmpty(&g_devpMode);
+        SetRectEmpty(&g_devpFilter); SetRectEmpty(&g_devpMode);
     }
 }
 
@@ -5786,12 +5786,6 @@ static bool handleDevPanelClick(int mx, int my) {
         return true;
     }
     if (devHasBox(d.type)) {
-        if (PtInRect(&g_devpDepthDec, pt)) {
-            sendClientAction(NACT_DEVICE, 0, NDEV_DEPTH_DEC); return true;
-        }
-        if (PtInRect(&g_devpDepthInc, pt)) {
-            sendClientAction(NACT_DEVICE, 0, NDEV_DEPTH_INC); return true;
-        }
         if (PtInRect(&g_devpMode, pt)) {
             sendClientAction(NACT_DEVICE, 0, NDEV_MODE); return true;
         }
@@ -6062,10 +6056,21 @@ static void drawDevPanel(HDC hdc) {
     char buf[128];
     drawText(hdc, tx, g_devpBox.top + 6, RGB(245, 224, 150), di.name);
 
-    sprintf(buf, "reading  %d %s", d.reading, di.valueUnit);
-    drawText(hdc, tx, g_devpBox.top + 26, RGB(200, 206, 218), buf);
+    if (devHasBox(d.type)) {
+        /* Said as a sentence about the world, not as a number: the whole
+           complaint was that nothing on this panel described the shape the
+           machine works on. The aura shows the same square. */
+        static const char* WHERE[4] = { "below it", "above it", "to its left", "to its right" };
+        const int n = devWorkSize(d);
+        sprintf(buf, "%s a %dx%d square %s", d.type == DEV_MINER ? "mines" : "fills",
+                n, n, WHERE[d.face & 3]);
+        drawText(hdc, tx, g_devpBox.top + 26, RGB(200, 206, 218), buf);
+    } else {
+        sprintf(buf, "reading  %d %s", d.reading, di.valueUnit);
+        drawText(hdc, tx, g_devpBox.top + 26, RGB(200, 206, 218), buf);
+    }
 
-    if (di.vMin != di.vMax) {
+    if (di.vMin != di.vMax && !devHasBox(d.type)) {
         if (d.type == DEV_DRAIN)
             sprintf(buf, "filter  %s", d.value ? MATS[d.value].name : "all materials");
         else
@@ -6091,13 +6096,17 @@ static void drawDevPanel(HDC hdc) {
        mark is not idle, it is waiting -- and that distinction is the whole
        difference between a device you can sequence with and a thermostat. */
     const char* st = d.firing ? "FIRING" : (d.latched ? "tripped" : "armed");
+    if (!devHasBox(d.type))   /* their first line is a sentence and runs long */
     drawText(hdc, tx + 120, g_devpBox.top + 26,
              d.firing ? RGB(255, 240, 170) : RGB(160, 168, 182), st);
 
     /* A device with nothing to adjust shows no -/+ rather than two dead buttons. */
     if (di.vMin != di.vMax) {
-        drawButton(hdc, g_devpDec, "-", 0, false, PtInRect(&g_devpDec, pt) != 0);
-        drawButton(hdc, g_devpInc, "+", 0, false, PtInRect(&g_devpInc, pt) != 0);
+        /* On a miner or placer the stepper is the SIZE, and says so: two bare
+           signs next to a sentence about a square are a guess, not a control. */
+        const bool box = devHasBox(d.type);
+        drawButton(hdc, g_devpDec, box ? "size -" : "-", 0, false, PtInRect(&g_devpDec, pt) != 0);
+        drawButton(hdc, g_devpInc, box ? "size +" : "+", 0, false, PtInRect(&g_devpInc, pt) != 0);
     }
     if (di.aimable) {
         static const char* FACE[4] = { "aim down", "aim up", "aim left", "aim right" };
@@ -6111,32 +6120,19 @@ static void drawDevPanel(HDC hdc) {
     if (d.type == DEV_PLACER || d.type == DEV_MINER || d.type == DEV_CHEST || d.type == DEV_SPOUT || d.type == DEV_DRAIN)
         drawButton(hdc, g_devpTake, (d.type == DEV_CHEST || d.type == DEV_SPOUT) ? "store/take" : "take", 0, false, PtInRect(&g_devpTake, pt) != 0);
     if (devHasBox(d.type)) {
-        drawButton(hdc, g_devpDepthDec, "-", 0, false, PtInRect(&g_devpDepthDec, pt) != 0);
-        drawButton(hdc, g_devpDepthInc, "+", 0, false, PtInRect(&g_devpDepthInc, pt) != 0);
-        {
-            /* The readout, framed but never lit by hover -- it is not a
-               control and should not offer to be pressed. */
-            char depthLabel[32];
-            sprintf(depthLabel, "deep %d", devBoxDepth(d));
-            RECT rr = g_devpDepthBox;
-            FillRect(hdc, &rr, g_btnBg);
-            FrameRect(hdc, &rr, g_borderBrush);
-            SetTextColor(hdc, RGB(214, 216, 224));
-            DrawTextA(hdc, depthLabel, -1, &rr, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-        }
-
         /* The filter names the material or says it takes anything, because an
            unset filter and a filter set to something are the two states you
            most need to tell apart at a glance. */
         const int filterMat = devFilterMat(d);
         char filterLabel[48];
-        if (filterMat == MAT_EMPTY) strcpy(filterLabel, "any material");
+        if (filterMat == MAT_EMPTY) strcpy(filterLabel, d.type == DEV_MINER ? "takes anything" : "places what it holds");
         else sprintf(filterLabel, "only %s", MATS[filterMat].name);
-        drawButton(hdc, g_devpFilter, filterLabel, 0, filterMat != MAT_EMPTY,
-                   PtInRect(&g_devpFilter, pt) != 0);
+        if (d.type == DEV_MINER)
+            drawButton(hdc, g_devpFilter, filterLabel, 0, filterMat != MAT_EMPTY,
+                       PtInRect(&g_devpFilter, pt) != 0);
 
         char modeLabel[48];
-        sprintf(modeLabel, "runs %s", devRunModeName(devRunMode(d)));
+        sprintf(modeLabel, "trigger: %s", devRunModeName(devRunMode(d)));
         drawButton(hdc, g_devpMode, modeLabel, 0, false, PtInRect(&g_devpMode, pt) != 0);
     }
     drawButton(hdc, g_devpClose, "x", 0, false, PtInRect(&g_devpClose, pt) != 0);

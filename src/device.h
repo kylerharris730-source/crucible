@@ -770,45 +770,70 @@ void devRemove(World& w, Device* d);
    direction the device faces. DEV_W == DEV_H so one index covers every side. */
 void devFaceCell(const Device& d, int i, int* ox, int* oy);
 
-/* --- the working box, for miners and placers -------------------------------
-   `i` runs along the face as above; `layer` runs AWAY from it, zero being the
-   row devFaceCell returns. So a miner facing down with depth 4 covers the
-   14x4 block directly beneath itself.
+/* --- the working square, for miners and placers ----------------------------
+   Asked for in play: "theyve always confused me, they should have a facing
+   direction and a cube that they eat/place size. only 2 main parameters".
 
-   Depth rather than a free rectangle because the device is 14 wide and always
-   works off one edge: a box that could also be narrower than the face would
-   need an offset as well as a size, which is two more numbers on a panel whose
-   whole design is "read it, nudge it" (see DeviceInfo::valueLabel). Fourteen
-   by depth is the shape that clears a furnace, which is what these are for. */
-void devBoxCell(const Device& d, int i, int layer, int* ox, int* oy);
+   So they have exactly two settings that shape what they do:
 
-/* --- where a miner/placer keeps the rest of its settings -------------------
-   All three live in fields those two types do not otherwise use, because
-   `Device` is written to the save as one raw sized block: widening the struct
-   makes every existing world's machines fail their length check and vanish.
-   The same trick the pedestal uses for its item.
+     FACING   which side they work off -- the `face` every aimable device has.
+     SIZE     the side of the square they work on, 1..DEV_WORK_MAX. It lives in
+              `value`, which is what the panel's -/+ already adjust, so the
+              one stepper a player sees is the one number that matters.
 
-     mat2      box depth, 1..DEV_W. ZERO means one row, which is what every
-               device placed before this existed has -- so an old save keeps
-               exactly the single-row behaviour it had.
-     pipeFrom  the material filter, or -1 for "take anything". devPlace already
-               initialises it to -1, so the default is right for free.
-     count2    the trigger mode; see DevRunMode.
+   The square sits against the face and is centred along it: size 4 facing down
+   is the 4x4 block directly under the middle of the machine, size 20 overhangs
+   both sides. `along` runs 0..size-1 across the face, `layer` 0..size-1 away
+   from it, zero being the row that touches the machine.
 
-   Accessors rather than raw field access at the call sites, so the one place
-   that knows about the aliasing is here. */
+   What this replaced, and why it confused: a 14-wide strip whose DEPTH was one
+   setting and whose "cells per action" budget was another, with the budget
+   stored in the field the stepper adjusted. Three numbers, none of them the
+   shape you could see, and the one on the big buttons was the least useful.
+
+   ONE definition of the geometry, read by the tick AND by the renderer that
+   paints the aura. A square you can see that is not the square that mines is
+   worse than no square -- it teaches something false about your own machine.
+   The heat lamp's cone made the same promise the same way; see heatLampCells. */
+static const int DEV_WORK_MAX = 32;
+int  devWorkSize(const Device& d);
+void devWorkCell(const Device& d, int along, int layer, int* ox, int* oy);
+
+/* --- when a miner or placer acts --------------------------------------------
+   Two modes, and only two:
+
+     PER PULSE  one whole square each time it is triggered: a spark arriving on
+                its wire, or its circuit signal going from zero to non-zero. A
+                clock ticking 1/0/1/0 gives one square per tick.
+     ALWAYS ON  works its square every frame with no signal at all. Its buffer
+                is what bounds it -- a miner stops when it is full, a placer
+                when it is empty -- so a pipe draining the one or feeding the
+                other sets the real rate.
+
+   STORAGE, and the reason it is not simply 0 and 1. The mode lives in `count2`,
+   and before this redesign that field held 0 for "while the signal is on" and 1
+   for "per pulse". Neither of those ran without being told to. If always-on
+   were stored as 0 or 1, loading an old world would wake every miner in it and
+   let them eat their surroundings the moment the save opened -- so both legacy
+   values read as PER PULSE, and always-on is the new value 2. A machine only
+   ever runs by itself because somebody switched it to.
+
+   Accessors rather than raw field access, so the one place that knows about the
+   aliasing is here.
+
+     count2    the trigger mode, stored as above.
+     pipeFrom  the miner's material filter, or -1 for "take anything". devPlace
+               initialises it to -1, so the default is right for free. Optional,
+               and off unless set.
+     mat2      unused now. It held the old strip's depth, and is ignored rather
+               than reinterpreted so an old save cannot turn a depth into a
+               surprising size. */
 enum DevRunMode {
-    /* Acts on every tick the signal is non-zero. The Factorio default: hold a
-       constant 1 on the wire and it runs continuously. */
-    DEVRUN_WHILE_ON = 0,
-    /* Acts once per RISING EDGE. A clock ticking 1/0/1/0 then gives exactly one
-       action per tick rather than one per frame the wire happens to be high. */
-    DEVRUN_ON_EDGE,
+    DEVRUN_PER_PULSE = 0,
+    DEVRUN_ALWAYS_ON,
     DEVRUN_COUNT
 };
 
-int  devBoxDepth(const Device& d);
-void devSetBoxDepth(Device& d, int depth);
 int  devFilterMat(const Device& d);          /* MAT_EMPTY for "anything" */
 void devSetFilterMat(Device& d, int mat);
 int  devRunMode(const Device& d);

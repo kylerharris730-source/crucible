@@ -2212,8 +2212,8 @@ void initItems() {
 
     ITEMS[ITEM_THERMOCOUPLE].description = "Outputs a circuit signal based on local temperature.";
     ITEMS[ITEM_CLOCK].description = "Outputs a repeating circuit timing signal.";
-    ITEMS[ITEM_PLACER].description = "Places stored material when activated by a circuit signal.";
-    ITEMS[ITEM_MINER].description = "Excavates material in front of it when activated.";
+    ITEMS[ITEM_PLACER].description = "Fills a square in front of it with the material it holds. Set its size and facing; run it per pulse or always on. The pale square shows where it will place.";
+    ITEMS[ITEM_MINER].description = "Clears a square in front of it into its buffer. Set its size and facing; run it per pulse or always on. The pale square shows what it will break.";
     ITEMS[ITEM_TORCH_DEV].description = "A placeable light source that also provides heat.";
     ITEMS[ITEM_ITEM_PIPE].description = "Transfers stored items between adjacent machines.";
     ITEMS[ITEM_PIPE_CROSSOVER].description = "Lets two item-pipe routes cross without mixing.";

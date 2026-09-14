@@ -428,8 +428,12 @@ const DeviceInfo DEVS[DEV_COUNT] = {
        that empties itself in a few ticks, and it is the number you tune when a
        contraption is running at the wrong rate. 14 is the width of the footprint,
        so a pulse of 14 lays or lifts exactly one full row underneath. */
-    { "Placer", "places", "cells", 1, 14, 1, 4, SPR_PLACER, MAT_DEVICE, true },
-    { "Miner",  "mines",  "cells", 1, 14, 1, 4, SPR_MINER,  MAT_DEVICE, true },
+    /* `value` is the side of the square they work on -- see devWorkSize. The
+       range is written as numbers rather than DEV_WORK_MAX because this table
+       is a positional aggregate read by eye; the static_assert below keeps the
+       two from drifting. */
+    { "Placer", "size", "cells", 1, 32, 1, 6, SPR_PLACER, MAT_DEVICE, true },
+    { "Miner",  "size", "cells", 1, 32, 1, 6, SPR_MINER,  MAT_DEVICE, true },
     /* The torch. vMin == vMax, so it has nothing to adjust and the panel says so
        rather than offering two dead buttons. Its cells are MAT_TORCH, which is what
        makes it the one device you can walk through. */
@@ -485,6 +489,7 @@ const DeviceInfo DEVS[DEV_COUNT] = {
        DEVS[type].sprite. */
     { "Launch Assembly", "", "", 0, 0, 0, 0, SPR_ROCKET, MAT_DEVICE, false },
 };
+static_assert(DEV_WORK_MAX == 32, "the Placer and Miner rows in DEVS[] spell the size cap as 32");
 
 /* --- the rocket ------------------------------------------------------------
    See the note in device.h for why these live in fields the type does not
@@ -1521,16 +1526,12 @@ static bool devIntact(const World& w, const Device& d) {
 }
 
 
-int devBoxDepth(const Device& d) {
-    /* Zero is not a legal depth, it is "never set" -- see the note in device.h.
-       Clamped on the way OUT so a save carrying anything odd still behaves. */
-    const int depth = d.mat2 ? (int)d.mat2 : 1;
-    return depth < 1 ? 1 : (depth > DEV_W ? DEV_W : depth);
-}
-void devSetBoxDepth(Device& d, int depth) {
-    if (depth < 1) depth = 1;
-    if (depth > DEV_W) depth = DEV_W;
-    d.mat2 = (u8)depth;
+int devWorkSize(const Device& d) {
+    /* Clamped on the way OUT, so a save carrying anything odd -- including an
+       old world whose `value` meant "cells per action" -- still yields a
+       square that fits the stepper's range. */
+    const int n = (int)d.value;
+    return n < 1 ? 1 : (n > DEV_WORK_MAX ? DEV_WORK_MAX : n);
 }
 int devFilterMat(const Device& d) {
     return (d.pipeFrom > 0 && d.pipeFrom < MAT_COUNT) ? (int)d.pipeFrom : MAT_EMPTY;
@@ -1538,17 +1539,25 @@ int devFilterMat(const Device& d) {
 void devSetFilterMat(Device& d, int mat) {
     d.pipeFrom = (mat > 0 && mat < MAT_COUNT) ? (i16)mat : (i16)-1;
 }
+/* Stored value 2 is always-on; 0 and 1 are the two legacy modes and both read
+   as per pulse. See the note on DevRunMode for why always-on cannot be 0 or 1. */
+static const i32 DEVRUN_STORED_ALWAYS_ON = 2;
 int devRunMode(const Device& d) {
-    return (d.count2 >= 0 && d.count2 < DEVRUN_COUNT) ? (int)d.count2 : DEVRUN_WHILE_ON;
+    return d.count2 == DEVRUN_STORED_ALWAYS_ON ? DEVRUN_ALWAYS_ON : DEVRUN_PER_PULSE;
 }
 void devSetRunMode(Device& d, int mode) {
-    d.count2 = (i32)((mode % DEVRUN_COUNT + DEVRUN_COUNT) % DEVRUN_COUNT);
+    const int m = (mode % DEVRUN_COUNT + DEVRUN_COUNT) % DEVRUN_COUNT;
+    d.count2 = m == DEVRUN_ALWAYS_ON ? DEVRUN_STORED_ALWAYS_ON : 0;
 }
 const char* devRunModeName(int mode) {
-    return mode == DEVRUN_ON_EDGE ? "per pulse" : "while on";
+    return mode == DEVRUN_ALWAYS_ON ? "always on" : "per pulse";
 }
 
-void devBoxCell(const Device& d, int i, int layer, int* ox, int* oy) {
+void devWorkCell(const Device& d, int along, int layer, int* ox, int* oy) {
+    /* Centred along the face. For a size wider than the machine the offset goes
+       negative and the square overhangs both sides equally, which is the only
+       placement that does not make one side of the machine special. */
+    const int i = (DEV_W - devWorkSize(d)) / 2 + along;
     switch (d.face) {
     case 1:  *ox = d.x + i;                  *oy = d.y - 1 - layer;         break; /* up */
     case 2:  *ox = d.x - 1 - layer;          *oy = d.y + i;                 break; /* left */
@@ -2274,6 +2283,14 @@ static void devIntake(World& w, Device& d) {
             const bool edge = (x == d.x - 1 || x == d.x + DEV_W ||
                                y == d.y - 1 || y == d.y + DEV_H);
             if (!edge) continue;
+            /* Never from the side it places onto. It used to take from all
+               four, so sand or water laid against the face was drawn straight
+               back in the next frame -- a placer that visibly undid its own
+               work, which is a good part of why it was never trusted. */
+            const bool workingSide =
+                (d.face == 0 && y == d.y + DEV_H) || (d.face == 1 && y == d.y - 1) ||
+                (d.face == 2 && x == d.x - 1)     || (d.face == 3 && x == d.x + DEV_W);
+            if (d.type == DEV_PLACER && workingSide) continue;
             if (x < PLAY_X0 || x > PLAY_X1 || y < PLAY_Y0 || y > PLAY_Y1) continue;
             const u8 m = w.at(x, y).mat;
             if (m == MAT_EMPTY) continue;
@@ -2286,98 +2303,71 @@ static void devIntake(World& w, Device& d) {
     }
 }
 
-/* Lay up to `value` cells of the buffer into the row under the footprint, left to
-   right, skipping anything already occupied. Skipping rather than stopping matters:
-   a placer over a partly-filled furnace should top it up, not jam because its
-   leftmost outlet happens to be blocked. */
-/* The placer, filling the same box. Nearest layer first for the mirror of the
-   miner's reason: material laid against the face first builds OUTWARD from the
-   machine, so a placer walling something off produces a wall that starts where
-   it is bolted rather than a floating sheet with a gap behind it. */
+/* --- the placer ---------------------------------------------------------------
+   Fills every empty cell of its square, nearest layer first, until the square
+   is full or the buffer is empty. Nearest-first so a placer walling something
+   off builds outward from where it is bolted, rather than laying a floating
+   sheet with a gap behind it.
+
+   Occupied cells are skipped rather than stopping it: a placer over a partly
+   filled furnace should top it up, not jam because one outlet is blocked. */
 static void devPlaceBox(World& w, Device& d) {
-    const int depth = devBoxDepth(d);
-    int done = 0;
-    for (int layer = 0; layer < depth && done < d.value && d.count > 0; ++layer) {
-        for (int i = 0; i < DEV_W && done < d.value && d.count > 0; ++i) {
+    const int size = devWorkSize(d);
+    for (int layer = 0; layer < size && d.count > 0; ++layer) {
+        for (int i = 0; i < size && d.count > 0; ++i) {
             int x, y;
-            devBoxCell(d, i, layer, &x, &y);
+            devWorkCell(d, i, layer, &x, &y);
             if (x < PLAY_X0 || x > PLAY_X1 || y < PLAY_Y0 || y > PLAY_Y1) continue;
             if (w.at(x, y).mat != MAT_EMPTY) continue;
             w.setCell(x, y, d.mat);
             --d.count;
-            ++done;
         }
     }
 }
 
-/* Take up to `value` cells out of the row under the footprint. Refuses anything
-   it cannot hold, and -- importantly -- refuses to eat another MACHINE: a miner
-   bolted under a device should not quietly dismantle it. Wall is exempt too, since
-   it is the indestructible border. */
-/* --- the miner ---------------------------------------------------------------
-   Clears its working box, nearest layer first, up to `value` cells per action.
+/* --- the miner ----------------------------------------------------------------
+   Clears its square, nearest layer first, into its buffer. Refuses anything it
+   cannot hold, and never eats another MACHINE -- a miner bolted under a device
+   should not quietly dismantle it -- nor the indestructible border wall.
 
-   Nearest-first is the whole reason a depth is useful. A miner bolted to the
-   side of a furnace is there to take the SOLIDS out of it, and eating the row
-   against its own face before the row behind that means the hole opens toward
-   the machine and whatever is left keeps falling into reach. Sweeping the far
-   layer first would undercut the pile and leave the near row standing.
+   Nearest-first is what makes a square useful against a furnace: the hole opens
+   toward the machine and whatever is left keeps falling into reach.
 
-   The filter is a single material, and skipping a cell costs no budget -- the
-   same rule digInto uses for its whitelist, and for the same reason: a filter
-   that spent its bite on the first thing it refused would be a filter that
-   does nothing in a mixed pile. */
-/* --- what makes a miner or a placer act --------------------------------------
-   Two ways in, and they are deliberately different things.
+   The filter is optional. Skipping a cell it refuses costs nothing, so in a
+   mixed pile it takes the one material and leaves the rest standing. */
 
-   A SPARK still works. Electricity was the original trigger and a contraption
-   built around a thermocouple and a clock should keep running untouched.
+/* --- what makes a miner or placer act ----------------------------------------
+   See DevRunMode in device.h for the two modes.
 
-   A CIRCUIT SIGNAL is the new one, and it is what makes these usable the way
-   Factorio's inserters are: wire a constant 1 to a miner and it runs, wire a
-   clock to it and it runs on the clock, wire a decider to it and it runs only
-   when the condition holds. The signal read is the device's own configured one
-   (CIR_SIG_1 by default -- "the 1 signal"), so the choice of which wire drives
-   it is already a control the panel has.
+   PER PULSE acts once for each spark that reaches the machine, and once each
+   time its circuit signal rises from zero -- an EDGE, not a level, so a clock
+   ticking 1/0/1/0 gives one square per tick rather than one per frame the wire
+   happens to be high. `latched` carries the edge state; it is free on these two
+   types.
 
-   The two modes are the difference between a level and an edge, which is
-   exactly the distinction the thermocouple's latch already draws elsewhere in
-   this file:
-
-     WHILE_ON  acts every tick the signal is non-zero. Hold a 1 on the wire and
-               it works continuously, which is what you want for clearing out a
-               furnace that keeps filling up.
-     ON_EDGE   acts once each time the signal goes from zero to non-zero. A
-               clock ticking 1/0/1/0 then gives exactly one action per tick
-               rather than one per frame the wire happens to be high, which is
-               how you meter a placer into laying one row at a time.
-
-   `latched` carries the edge state. It is free on these two types -- only the
-   thermocouple and the block watcher were using it -- so this needs no new
-   field and no save change. */
+   ALWAYS ON acts every frame regardless of either. A signal on its wire does
+   nothing to it; there is no third "while the signal is on" mode any more,
+   because two settings were the whole of the request. */
 static bool devTriggered(int index, Device& d) {
     const int signal = circuitInput(index, g_circuitConfig[index].signal);
     const bool high = signal != 0;
-    const int mode = devRunMode(d);
-
-    bool act = d.poked;                     /* a spark always fires it */
-    if (mode == DEVRUN_ON_EDGE) {
-        if (high && !d.latched) act = true;
-    } else if (high) {
+    bool act;
+    if (devRunMode(d) == DEVRUN_ALWAYS_ON) {
         act = true;
+    } else {
+        act = d.poked || (high && !d.latched);
     }
     d.latched = high;
     return act;
 }
 
 static void devMineBox(World& w, Device& d) {
-    const int depth = devBoxDepth(d);
-    const int want  = devFilterMat(d);
-    int done = 0;
-    for (int layer = 0; layer < depth && done < d.value; ++layer) {
-        for (int i = 0; i < DEV_W && done < d.value; ++i) {
+    const int size = devWorkSize(d);
+    const int want = devFilterMat(d);
+    for (int layer = 0; layer < size; ++layer) {
+        for (int i = 0; i < size; ++i) {
             int x, y;
-            devBoxCell(d, i, layer, &x, &y);
+            devWorkCell(d, i, layer, &x, &y);
             if (x < PLAY_X0 || x > PLAY_X1 || y < PLAY_Y0 || y > PLAY_Y1) continue;
             const u8 m = w.at(x, y).mat;
             if (m == MAT_EMPTY || m == MAT_WALL || m == MAT_DEVICE) continue;
@@ -2387,7 +2377,6 @@ static void devMineBox(World& w, Device& d) {
             if (devAt(x, y)) continue;
             if (!devTakeInto(d, m)) return;   /* full, or holding something else */
             w.setCell(x, y, MAT_EMPTY);
-            ++done;
         }
     }
 }
@@ -2652,6 +2641,50 @@ static void devDrawPass(const World& w, u32* px, int camX, int camY, bool lit,
             px[vy * VIEW_CELLS_W + vx] = lit ? shadeColor(c, viewShade(vx, vy)) : c;
         }
     }
+    /* --- the working square of every miner and placer --------------------
+       Asked for: "they should project a pale aura over the area they will
+       effect, so you can see where theyre gonna place or break."
+
+       Always drawn, not only while the panel is open, because the question it
+       answers -- "is this about to eat my wall?" -- is asked by someone walking
+       past, not by someone configuring it. Pale on purpose: the material under
+       the square has to stay readable, since that is what you are checking.
+
+       Two tints so the two machines can be told apart at a glance: a warm wash
+       for a miner (this will be taken away) and a cool one for a placer (this
+       will be filled). The cells come from devWorkCell, the same function the
+       tick uses, so the aura cannot disagree with what the machine does. */
+    for (int i = 0; i < MAX_DEVICES; ++i) {
+        const Device& d = g_devices[i];
+        if (!d.used || (d.type != DEV_MINER && d.type != DEV_PLACER)) continue;
+        const int size = devWorkSize(d);
+        /* Cull on the machine plus its reach, before walking any cells. */
+        if (d.x - camX + DEV_W + size < 0) continue;
+        if (d.y - camY + DEV_H + size < 0) continue;
+        if (d.x - camX - size >= VIEW_CELLS_W) continue;
+        if (d.y - camY - size >= VIEW_CELLS_H) continue;
+        const bool miner = d.type == DEV_MINER;
+        const u32 tr = miner ? 255 : 150, tg = miner ? 190 : 220, tb = miner ? 150 : 255;
+        for (int layer = 0; layer < size; ++layer) {
+            for (int a = 0; a < size; ++a) {
+                int x, y;
+                devWorkCell(d, a, layer, &x, &y);
+                const int vx = x - camX, vy = y - camY;
+                if (vx < 0 || vx >= VIEW_CELLS_W || vy < 0 || vy >= VIEW_CELLS_H) continue;
+                u32& p = px[vy * VIEW_CELLS_W + vx];
+                /* An eighth of the way to the tint inside, three eighths on the
+                   rim, so the square's EDGE is visible even where the tint
+                   happens to match the ground. */
+                const bool rim = layer == 0 || layer == size - 1 || a == 0 || a == size - 1;
+                const u32 k = rim ? 3 : 1;   /* out of 8 */
+                const u32 r = (p >> 16) & 0xFF, g = (p >> 8) & 0xFF, b = p & 0xFF;
+                p = (((r * (8 - k) + tr * k) >> 3) << 16) |
+                    (((g * (8 - k) + tg * k) >> 3) << 8) |
+                     ((b * (8 - k) + tb * k) >> 3);
+            }
+        }
+    }
+
     /* --- the heat lamp's cone ------------------------------------------
        Painted BEFORE the machines so a lamp's own housing is drawn over its
        beam rather than under it, and blended rather than replaced so you can
