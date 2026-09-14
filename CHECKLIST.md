@@ -5,7 +5,7 @@ chat, which meant it was re-derived from memory every session and quietly lost
 things. `HANDOFF.md` is **not** this file: it is gitignored scratch, is usually
 stale, and should not be trusted for release state.
 
-Released: **v0.6.1** (2026-09-11). `main` is level with it.
+Released: **v0.6.2** (2026-09-14). `main` is level with it.
 
 ---
 
@@ -25,6 +25,30 @@ Released: **v0.6.1** (2026-09-11). `main` is level with it.
       unset, so nothing renders.
 
 ## Ship it
+
+- [x] **Cut v0.6.2.** Tagged 2026-09-14, thirty-one commits past v0.6.1. The
+      wiki release, and the machines release.
+
+      **The wiki is live** at <https://cinderlift.com/wiki/>: 373 pages generated
+      from the game's own tables -- every material, item, recipe in both
+      directions, creature and device -- plus fifteen tutorials, search, and a
+      "what can I make right now" view. The site now sends new players to the
+      first tutorial and its controls strip is correct (left builds, right digs,
+      C crafts).
+
+      **Miners and placers were redesigned** around two settings, a facing and
+      the size of the square they work, with a per-pulse or always-on trigger
+      and a pale aura over exactly the cells they will touch. They connect to
+      item pipes now. On the way: the placer stopped sucking what it had just
+      placed back in through its face.
+
+      **The character can be switched off in multiplayer**, for building like the
+      sandbox in a shared world. The host applies it; nothing treats a player
+      in that mode as present. Network protocol changed, so everyone needs this
+      build to play together.
+
+      Also a hand-crafted GlowFluid recipe, and the Thermocouple back on the
+      wiki after a loop that started at 1 left it off.
 
 - [x] **Cut v0.6.1.** Tagged 2026-09-11 from `c0f21eb`. A patch release for one
       bug that was reported twice and was worth shipping on its own: creatures
