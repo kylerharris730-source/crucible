@@ -1204,6 +1204,20 @@ static bool g_menuOpen = false;
    Off, the palette behaves as the unlimited sandbox tool it has always been,
    which is still how you build a scene to test something in. */
 static bool g_survival = true;
+/* Does this player's input go to the authority as PlayerCommands?
+
+   `g_survival && g_playerOn` used to answer that, and offline it still does:
+   switch the character off in single player and the brush paints straight into
+   the world, because there is nobody else for it to disagree with. In a joined
+   or hosted game that is never true -- the host owns the world, and an edit a
+   client makes to its own copy is overwritten by the next chunk it is sent. So
+   online, input is commands whether the character is on or off, and the host
+   applies a sandbox player's building on their behalf. See
+   PlayerSession::sandbox.
+
+   Written as a function because the question is asked in a dozen places that
+   were each spelling out the offline answer. */
+static bool commandInput() { return g_survival && (g_playerOn || netRole() != NET_OFF); }
 /* --- which layer the brush acts on ---------------------------------------
    A modal toggle rather than a modifier key, because building a room means
    laying a lot of background in a row and holding a key through all of it is
@@ -1668,6 +1682,8 @@ static bool sendClientAction(u8 type, u8 container = 0, u8 a = 0, u8 b = 0, u8 f
 static void applyPlayerAction(const NetAction& action);
 static void throwHeld(bool fromCursor);
 static void applyPlayerUses(PlayerSession& session, const PlayerCommand& command);
+/* Defined beside updatePlayerFromCommand; client prediction reaches it first. */
+static void parkSandboxBody(Player& body, const PlayerCommand& command);
 static void fireToolFor(Player& player, Inventory& inventory, const Aim& aim);
 static bool throwGlowflareFor(Player& player, Inventory& inventory, const Aim& aim);
 static void placeDeviceStrokeFor(Inventory& inventory, int& previousX, int& previousY,
@@ -1708,14 +1724,14 @@ static void startLine() {
 
 static void commitLine() {
     if (!g_lineOn) return;
-    if (g_survival && g_playerOn) {
+    if (commandInput()) {
         g_lineCommitPulse = true;
         g_lineCommitBits = (u8)((g_lmb ? PCMD_USE_LEFT : 0) | (g_rmb ? PCMD_USE_RIGHT : 0));
         g_lineCommitX = g_lineX; g_lineCommitY = g_lineY;
     }
     g_lineOn   = false;
     g_lineDrew = true;      /* so releasing R does not also respawn */
-    if (g_survival && g_playerOn) { g_pmx = -1; return; }
+    if (commandInput()) { g_pmx = -1; return; }
     applyBrush();
     g_pmx = -1;
 }
@@ -2711,7 +2727,7 @@ static bool sendClientAction(u8 type, u8 container, u8 a, u8 b, u8 flags, i32 x,
 static void setDevicePanel(int index) {
     if (index >= 0) screenExclusive(SCREEN_DEVICE);
     g_devPanel = index;
-    if (!(g_survival && g_playerOn)) g_playerSessions[0].openDevice = index;
+    if (!commandInput()) g_playerSessions[0].openDevice = index;
 }
 
 static bool popLocalAction(NetAction* action) {
@@ -3291,8 +3307,11 @@ static bool handlePanelClick(int mx, int my) {
     if (inRect(g_actRect[ACT_VIEW],      mx, my)) { cycleView();                return true; }
     if (inRect(g_actRect[ACT_LIGHT],     mx, my)) { g_lightOn  = !g_lightOn;    return true; }
     if (inRect(g_actRect[ACT_PLAYER],    mx, my)) {
-        if (netRole() != NET_OFF) return true;
         g_playerOn = !g_playerOn;
+        /* Online the host owns the body: the next command carries the toggle,
+           and the host stands the character up under the camera. Resetting the
+           local copy here as well would fight the host's correction. */
+        if (netRole() != NET_OFF) return true;
         /* Into the middle of the VIEW, not the middle of the world -- switching
            the character on should put them where you are looking. */
         if (g_playerOn) {
@@ -3445,7 +3464,7 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_LBUTTONUP:
         commitWire();       /* before the button clears -- see commitLine */
         commitLine();
-        if (!(g_survival && g_playerOn)) undoFinish(LOCAL_PLAYER_ID, 0);
+        if (!commandInput()) undoFinish(LOCAL_PLAYER_ID, 0);
         g_lmb = false; g_useLatch = false; g_uiCapture = false;
         g_sizeDragging = false; ReleaseCapture(); return 0;
     case WM_RBUTTONDOWN:
@@ -3463,7 +3482,7 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                contraption to a stray drag would be far worse. */
             const Aim a = currentAim();
             Device* d = devAt(a.x, a.y);
-            if (g_survival && g_playerOn && (d || isDoor(g_world.at(a.x, a.y).mat))) {
+            if (commandInput() && (d || isDoor(g_world.at(a.x, a.y).mat))) {
                 g_interactPulse = true;
                 break;
             }
@@ -3520,7 +3539,7 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     case WM_RBUTTONUP:
         commitLine();
-        if (!(g_survival && g_playerOn)) undoFinish(LOCAL_PLAYER_ID, 0);
+        if (!commandInput()) undoFinish(LOCAL_PLAYER_ID, 0);
         g_rmb = false; ReleaseCapture(); return 0;
 
     case WM_CAPTURECHANGED:
@@ -3607,7 +3626,7 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         if (wp == 'Z' && (GetKeyState(VK_CONTROL) & 0x8000)
             && !(g_creativeOpen && g_creSearchFocus)) {
             if ((lp & (1L << 30)) == 0) {
-                if (g_survival && g_playerOn) sendClientAction(NACT_UNDO);
+                if (commandInput()) sendClientAction(NACT_UNDO);
                 else undoApply(LOCAL_PLAYER_ID, 0);
             }
             return 0;
@@ -3852,7 +3871,7 @@ static Aim currentAim() {
 }
 
 static void syncClientDeviceUi() {
-    if (!(g_survival && g_playerOn) || (netRole() == NET_CLIENT && !netClientReady())) return;
+    if (!commandInput() || (netRole() == NET_CLIENT && !netClientReady())) return;
     int index = g_playerSessions[0].openDevice;
     if (netRole() == NET_CLIENT && g_closeDevicePending >= 0) {
         if (index == g_closeDevicePending) {
@@ -3916,6 +3935,10 @@ static PlayerCommand localPlayerCommand() {
     c.pressed = (u8)(c.bits & ~previousBits);
     previousBits = c.bits;
     const Aim aim = currentAim(); c.aimX = aim.ghostX; c.aimY = aim.ghostY;
+    c.sandbox = !g_playerOn;
+    c.paletteDevice = (i16)(g_playerOn ? -1 : g_paletteDevice);
+    c.viewX = g_camX + viewCellsW() / 2;
+    c.viewY = g_camY + viewCellsH() / 2;
     return c;
 }
 
@@ -3923,7 +3946,12 @@ static void predictClientPlayer(const PlayerCommand& command, bool predictUses =
     PlayerSession& session = g_playerSessions[0];
     if (!session.connected) return;
     session.inventory.selected = imax(0, imin(INV_SLOTS - 1, (int)command.selected));
-    if (session.body.alive && session.restBed < 0) {
+    /* Predicted locally so the brush responds on the frame it is used; the
+       host's replicated flag corrects it on the next state packet. */
+    session.sandbox = command.sandbox;
+    if (session.sandbox) {
+        parkSandboxBody(session.body, command);
+    } else if (session.body.alive && session.restBed < 0) {
         PlayerInput input;
         input.left = (command.bits & PCMD_LEFT) != 0;
         input.right = (command.bits & PCMD_RIGHT) != 0;
@@ -4050,6 +4078,14 @@ static Aim commandAimFor(const PlayerSession& session, const PlayerCommand& comm
     Aim a;
     a.ghostX = command.aimX; a.ghostY = command.aimY;
     a.x = a.ghostX; a.y = a.ghostY; a.clamped = false;
+    /* Reach is a rule about a character. With the character off there is no
+       one to measure from -- the parked body under the camera is a stand-in,
+       not a position anybody is standing at. */
+    if (session.sandbox) {
+        a.x = imax(PLAY_X0, imin(PLAY_X1, a.x));
+        a.y = imax(PLAY_Y0, imin(PLAY_Y1, a.y));
+        return a;
+    }
     const float pcx = session.body.centreX(), pcy = session.body.centreY();
     const float dx = (float)a.x - pcx, dy = (float)a.y - pcy;
     const float reach = (float)(PLAYER_REACH + session.inventory.reachBonus());
@@ -4127,6 +4163,7 @@ static void interactFor(PlayerSession& session, const Aim& aim) {
     if (d) {
         const int idx = (int)(d - g_devices);
         if (d->type == DEV_BED) {
+            if (session.sandbox) return;   /* there is nobody to lie down */
             const float px = session.body.centreX(), py = session.body.centreY();
             const bool atBed = px >= d->x - 4 && px <= d->x + DEV_W + 4 &&
                                py >= d->y - 8 && py <= d->y + DEV_H + 8;
@@ -4332,6 +4369,78 @@ static bool captureLooseSparkFor(Inventory& inv, int x, int y) {
 
    Nothing replaces it yet -- see CHECKLIST.md. Whatever does has to be a
    gesture that cannot fire by accident. */
+/* --- building with the character off, on the authority -----------------------
+   The command-path twin of applyBrush's sandbox half, so a guest in a joined
+   game builds exactly the way the character-off sandbox does offline: paint and
+   erase with the brush, heat and cool, drop sparks, paint the backdrop, and lay
+   machines from the left catalog -- none of it costing anything, and none of it
+   limited by reach, because both of those are rules about a character and there
+   is no character.
+
+   Free building is not a new power in a joined game. The item grid (Tab) has
+   always handed any player any item in any quantity, so anything this can build
+   could already be built one stack at a time. What it adds is the SPEED of the
+   sandbox brush, which is the whole reason to switch the character off.
+
+   Kept a separate function rather than branches threaded through
+   applyPlayerUses, because every survival verb there is gated on the held item
+   and none of that applies: a player in sandbox is not holding anything. */
+static void applySandboxUses(PlayerSession& session, const PlayerCommand& command,
+                             const Aim& aim, bool left, bool right,
+                             int undoSlot, bool recordUndo) {
+    if (!left && !right) {
+        if (recordUndo) undoFinish(undoSlot, 0);
+        session.previousAimX = session.previousAimY = -1;
+        session.previousCommandBits = command.bits;
+        return;
+    }
+    if (session.previousAimX < 0) {
+        session.previousAimX = aim.x; session.previousAimY = aim.y;
+    }
+    netMarkWorldEdit(session.previousAimX, session.previousAimY,
+                     imax(4, (int)command.brushRadius + 3));
+
+    /* A machine from the catalog. Validated here, not trusted: the id arrives
+       from another computer. */
+    /* >= 0, not > 0: DEV_THERMOCOUPLE is device type ZERO, and -1 is "none". */
+    if (left && !right && !command.background &&
+        command.paletteDevice >= 0 && command.paletteDevice < DEV_COUNT) {
+        placeDeviceStrokeFor(session.inventory, session.previousAimX, session.previousAimY,
+                             (u8)command.paletteDevice, false, aim,
+                             recordUndo ? undoSlot : -1);
+        session.previousCommandBits = command.bits;
+        return;
+    }
+
+    const int sel = right ? (int)MAT_EMPTY : (int)command.brush;
+    const bool tool = sel == TOOL_HEAT || sel == TOOL_COOL || sel == TOOL_SPARK;
+    if (sel < 0 || (sel >= MAT_COUNT && !tool)) {
+        session.previousCommandBits = command.bits;
+        return;
+    }
+    const int radius = imax(1, imin(BRUSH_RADIUS_MAX, (int)command.brushRadius));
+    if (!tool && recordUndo) undoBegin(undoSlot, 0);
+
+    const int x0 = session.previousAimX, y0 = session.previousAimY;
+    const int steps = imax(abs(aim.x - x0), abs(aim.y - y0));
+    for (int st = 0; st <= steps; ++st) {
+        const int px = steps ? x0 + (aim.x - x0) * st / steps : aim.x;
+        const int py = steps ? y0 + (aim.y - y0) * st / steps : aim.y;
+        if (!tool && recordUndo) undoCaptureDisc(undoSlot, px, py, radius);
+        if (sel == TOOL_HEAT)       g_world.heat(px, py, radius,  HEAT_STEP);
+        else if (sel == TOOL_COOL)  g_world.heat(px, py, radius, -HEAT_STEP);
+        /* A spark is a moving thing, not a cell, so a client predicting it
+           would put a phantom pulse on its own wires. The authority only. */
+        else if (sel == TOOL_SPARK) { if (netRole() != NET_CLIENT) shedPlace(px, py); }
+        else if (command.background) g_world.paintBg(px, py, radius, (u8)sel);
+        else                         g_world.paint(px, py, radius, (u8)sel, command.overwrite);
+        if (!steps) break;
+    }
+    roomsNotifyEdit(g_world, aim.x, aim.y);
+    session.previousAimX = aim.x; session.previousAimY = aim.y;
+    session.previousCommandBits = command.bits;
+}
+
 static void applyPlayerUses(PlayerSession& session, const PlayerCommand& command) {
     const int undoSlot = (int)(&session - g_playerSessions);
     const bool recordUndo = netRole() != NET_CLIENT;
@@ -4407,6 +4516,14 @@ static void applyPlayerUses(PlayerSession& session, const PlayerCommand& command
     }
     if (!(bits & PCMD_USE_RIGHT)) session.suppressRightUse = false;
     if (session.suppressRightUse) right = false;
+    /* After interaction, so right-clicking a machine or a door still operates
+       it with the character off -- which is how a panel gets opened to set
+       one up, the thing this mode is for. Before the respawn verb, which moves
+       a body the sandbox is parking. */
+    if (session.sandbox) {
+        applySandboxUses(session, command, aim, left, right, undoSlot, recordUndo);
+        return;
+    }
     if ((pressed & PCMD_RESPAWN) && session.body.alive) {
         const float x = (float)imax(PLAY_X0, imin(PLAY_X1, command.aimX));
         const float y = (float)imax(PLAY_Y0, imin(PLAY_Y1, command.aimY));
@@ -4799,7 +4916,8 @@ static void playerWireCell(int slot, PlayerSession& session, int x, int y) {
     if (x < PLAY_X0 || x > PLAY_X1 || y < PLAY_Y0 || y > PLAY_Y1) return;
     const u8 old = g_world.at(x, y).mat;
     if (old == MAT_COPPER || old != MAT_EMPTY) return;
-    if (!session.inventory.take(MAT_COPPER, 1)) return;
+    /* Free with the character off, as every other sandbox edit is. */
+    if (!session.sandbox && !session.inventory.take(MAT_COPPER, 1)) return;
     undoCaptureCell(slot, x, y);
     g_world.setCell(x, y, MAT_COPPER);
 }
@@ -4856,7 +4974,7 @@ static void applyPlayerAction(const NetAction& action) {
         const float dx = terminal.x + DEV_W * 0.5f - session.body.centreX();
         const float dy = terminal.y + DEV_H * 0.5f - session.body.centreY();
         const float reach = (float)(PLAYER_REACH + session.inventory.reachBonus() + DEV_W);
-        if (dx * dx + dy * dy > reach * reach) return;
+        if (!session.sandbox && dx * dx + dy * dy > reach * reach) return;
         if (session.circuitWireFrom < 0) {
             session.circuitWireFrom = action.a; session.circuitWirePort = action.b & 1;
         } else {
@@ -4961,11 +5079,59 @@ static void tickDeadPlayer(int slot, PlayerSession& session) {
     session.body.occupy(g_world, slot);
 }
 
+/* Stand a sandbox player's body under their camera. Inert: no velocity, no
+   physics, no occupancy -- it is a marker for where they are looking, which is
+   what streaming and simulation read. Clamped so a camera over the world's
+   edge cannot put a body outside it. */
+static void parkSandboxBody(Player& body, const PlayerCommand& command) {
+    const float cx = (float)imax(PLAY_X0 + PLAYER_W, imin(PLAY_X1 - PLAYER_W, command.viewX));
+    const float cy = (float)imax(PLAY_Y0 + PLAYER_H, imin(PLAY_Y1 - PLAYER_H, command.viewY));
+    body.x = cx - PLAYER_W * 0.5f;
+    body.y = cy - body.height() * 0.5f;
+    body.vx = body.vy = 0.0f;
+}
+
+/* Enter or leave sandbox from the command, and run a sandbox frame. Returns
+   true when the session is in sandbox and has been handled completely, so the
+   ordinary character update must not run. */
+static bool sandboxTickFor(int slot, PlayerSession& session, PlayerCommand& command) {
+    if (command.sandbox && !session.sandbox) {
+        /* Whatever the character was in the middle of ends here. An undo stroke
+           left open would fold survival edits into the first sandbox stroke;
+           a line half-drawn would commit under the other set of rules. */
+        undoFinish(slot, &session.inventory);
+        session.sandbox = true;
+        session.restBed = -1;
+        session.lineActive = false;
+        session.previousAimX = session.previousAimY = -1;
+        session.previousCommandBits = 0;
+        session.swingFrame = 0;
+        session.suppressRightUse = false;
+    } else if (!command.sandbox && session.sandbox) {
+        undoFinish(slot, 0);
+        session.sandbox = false;
+        session.lineActive = false;
+        session.previousAimX = session.previousAimY = -1;
+        session.previousCommandBits = 0;
+        /* The body is already under the camera, so it stands up exactly where
+           they were looking -- what the single-player toggle does too. */
+        parkSandboxBody(session.body, command);
+        return false;
+    }
+    if (!session.sandbox) return false;
+    parkSandboxBody(session.body, command);
+    session.respawnFrames = 0;
+    applyPlayerUses(session, command);
+    command.pressed = 0;
+    return true;
+}
+
 static void updatePlayerFromCommand(int slot, PlayerSession& session, PlayerCommand& command,
                                     bool allowMovement) {
     if (!session.connected || session.generation != command.generation) return;
     playerHealingCooldownTick(session);
     session.inventory.selected = imax(0, imin(INV_SLOTS - 1, (int)command.selected));
+    if (sandboxTickFor(slot, session, command)) return;
     if (!session.body.alive) {
         undoFinish(slot, &session.inventory);
         tickDeadPlayer(slot, session);
@@ -8570,7 +8736,7 @@ static void clientInputTick() {
         g_interactPulse = false;
         g_respawnPulse = false;
         g_lineCommitPulse = false;
-    } else if (authoritative && g_survival && g_playerOn) {
+    } else if (authoritative && commandInput()) {
         g_localInput = localPlayerCommand();
         g_interactPulse = false;
         g_respawnPulse = false;
@@ -8609,7 +8775,7 @@ static void publishServerRegions() {
     g_world.clearBlockBoxes();
     if (g_playerOn) g_player.occupy(g_world, LOCAL_PLAYER_ID);
     for (int slot = 1; slot < MAX_PLAYERS; ++slot)
-        if (g_playerSessions[slot].connected)
+        if (g_playerSessions[slot].connected && !g_playerSessions[slot].sandbox)
             g_playerSessions[slot].body.occupy(g_world, slot);
 
     const int localX = g_playerOn ? (int)g_player.centreX() - viewCellsW() / 2 : g_camX;
@@ -8687,11 +8853,15 @@ static void serverTick(const LARGE_INTEGER& perfFrequency) {
         winScreenTick();
         treesTick(g_world);
         dayAdvance();
-        if (g_playerOn) {
+        /* Always, on a client. This used to be gated on the local character
+           being on, which was harmless while a joined game could not switch it
+           off -- and would now freeze every creature on the screen of a guest
+           in sandbox mode while the host's world carried on without them. */
+        {
             entTickPlayers(g_world);
             for (int slot = 0; slot < MAX_PLAYERS; ++slot) {
                 PlayerSession& session = g_playerSessions[slot];
-                if (!session.connected || !session.body.alive) continue;
+                if (!playerPresent(session)) continue;
                 accessoryTickFor(slot, session.body, session.inventory);
                 accessoryAshTrail(slot, session.body, session.inventory, g_world);
                 meleeTickFor(session);
@@ -8716,7 +8886,7 @@ static void serverTick(const LARGE_INTEGER& perfFrequency) {
     toolInstTick(g_inv.energyBonus());
     /* Survival always uses PlayerCommand. The direct brush remains only for
        the character-off creative sandbox, which has no player authority. */
-    if (!(g_survival && g_playerOn) && !g_menuOpen && !g_creativeOpen &&
+    if (!commandInput() && !g_menuOpen && !g_creativeOpen &&
         !g_craftOpen && g_chestOpen < 0 && !g_mapOpen) applyBrush();
 
     publishServerRegions();
@@ -8734,7 +8904,7 @@ static void serverTick(const LARGE_INTEGER& perfFrequency) {
     g_simMs = 1000.0 * (double)(end.QuadPart - begin.QuadPart) /
               (double)perfFrequency.QuadPart;
 
-    if (g_survival && g_playerOn) {
+    if (commandInput()) {
         const bool localCanMove = (!g_paused || singleStep) && !g_menuOpen &&
             !g_creativeOpen && !g_craftOpen && g_chestOpen < 0 && !g_mapOpen;
         updatePlayerFromCommand(0, g_playerSessions[0], g_localInput, localCanMove);
@@ -8743,7 +8913,7 @@ static void serverTick(const LARGE_INTEGER& perfFrequency) {
     /* Closing is a group decision. Every connected body has published its
        latest occupancy by now, so one distant client cannot undo the nearby
        client's automatic open earlier in this same frame. */
-    if ((!g_paused || singleStep) && g_survival && g_playerOn) doorAutoClose(g_world);
+    if ((!g_paused || singleStep) && g_survival && (g_playerOn || onlineHost)) doorAutoClose(g_world);
     processPlayerActions();
     refreshHostLogisticsPause();
 
@@ -8760,15 +8930,19 @@ static void serverTick(const LARGE_INTEGER& perfFrequency) {
     if (!g_paused && !uiPausesActors) {
         bool everyoneResting = true;
         for (int slot = 0; slot < MAX_PLAYERS; ++slot)
-            if (g_playerSessions[slot].connected && g_playerSessions[slot].body.alive &&
+            if (playerPresent(g_playerSessions[slot]) &&
                 g_playerSessions[slot].restBed < 0) everyoneResting = false;
         for (int step = 0; step < (everyoneResting ? 4 : 1); ++step) dayAdvance();
 
-        if (g_playerOn) {
+        /* Online, the world's actors run whether or not the HOST has their own
+           character switched on: other people are playing in it. Offline, a
+           switched-off character is the sandbox and the observer branch below
+           takes over. */
+        if (g_playerOn || onlineHost) {
             entTickPlayers(g_world);
             for (int slot = 0; slot < MAX_PLAYERS; ++slot) {
                 PlayerSession& session = g_playerSessions[slot];
-                if (!session.connected || !session.body.alive) continue;
+                if (!playerPresent(session)) continue;
                 accessoryTickFor(slot, session.body, session.inventory);
                 accessoryAshTrail(slot, session.body, session.inventory, g_world);
                 meleeTickFor(session);
@@ -8779,7 +8953,7 @@ static void serverTick(const LARGE_INTEGER& perfFrequency) {
                 for (int tries = 0; tries < MAX_PLAYERS; ++tries) {
                     const int slot = (spawnTurn + tries) % MAX_PLAYERS;
                     PlayerSession& session = g_playerSessions[slot];
-                    if (!session.connected || !session.body.alive) continue;
+                    if (!playerPresent(session)) continue;
                     spawnTurn = (slot + 1) % MAX_PLAYERS;
                     const int spawnCamX = (int)session.body.centreX() - viewCellsW() / 2;
                     const int spawnCamY = (int)session.body.centreY() - viewCellsH() / 2;
@@ -8884,7 +9058,9 @@ static void clientRender(HWND hwnd) {
     }
     for (int slot = 1; slot < MAX_PLAYERS; ++slot) {
         PlayerSession& other = g_playerSessions[slot];
-        if (!other.connected) continue;
+        /* A player with the character off is not in the world to see. Their
+           body is only a marker parked under their camera. */
+        if (!other.connected || other.sandbox) continue;
         /* Bound once and reused for the weapon, because a client draws a
            remote player from an interpolated visual copy: reading the body
            twice would hang the blade off the replicated position while the
@@ -8921,7 +9097,7 @@ static void clientRender(HWND hwnd) {
             drawPlayerIdentity(g_pixels, g_player, g_playerSessions[0].networkId);
         for (int slot = 1; slot < MAX_PLAYERS; ++slot) {
             const PlayerSession& other = g_playerSessions[slot];
-            if (!other.connected) continue;
+            if (!other.connected || other.sandbox) continue;
             const Player& body = (netRole() == NET_CLIENT && g_remoteVisualValid[slot])
                                ? g_remoteVisual[slot] : other.body;
             drawPlayerIdentity(g_pixels, body, other.networkId);
@@ -9527,6 +9703,75 @@ static int runLocalCommandSmoke() {
         const bool litWithDisplayOff = lightAtWorld(SX, SY - 20) > SPAWN_DARK;
         g_lightOn = wasLit;
         if (!litWithDisplayOff) return 277;
+        devClear();
+        g_world.reset();
+    }
+
+    /* --- the character switched off, through the command path ---------------
+       Asked for: "i want to be able to turn player off in multiplayer too. its
+       useful for setting stuff up like a creative mode sometimes".
+
+       Online, every edit is a PlayerCommand applied by the host, so this drives
+       exactly that path -- updatePlayerFromCommand with sandbox set -- rather
+       than applyBrush, which is the offline shortcut and never runs in a joined
+       game. What it must do, and each way it could quietly not:
+
+         build far out of reach        (reach is a character rule)
+         with an empty pack            (so is cost)
+         erase with the other button
+         lay a machine from the catalog
+         park the body under the camera, where streaming reads it from
+         and not count as present      (or creatures hunt the parked body)
+         then stand up where the camera is when switched back on. */
+    {
+        g_world.reset(); devClear(); playerSessionsReset();
+        g_survival = true; g_playerOn = true;
+        g_player.reset(400.0f, 400.0f); g_inv.clear();
+        PlayerSession& me = g_playerSessions[0];
+
+        const int VX = 1500, VY = 1200;      /* a camera a long way from the body */
+        PlayerCommand sb; memset(&sb, 0, sizeof(sb));
+        sb.player = LOCAL_PLAYER_ID; sb.generation = me.generation;
+        sb.sandbox = true; sb.paletteDevice = -1;
+        sb.viewX = VX; sb.viewY = VY;
+        sb.brushRadius = 2; sb.brush = MAT_STONE;
+        sb.bits = sb.pressed = PCMD_USE_LEFT;
+        sb.aimX = VX + 30; sb.aimY = VY;
+        updatePlayerFromCommand(0, me, sb, true);
+        if (!me.sandbox) return 280;
+        if (g_world.at(VX + 30, VY).mat != MAT_STONE) return 281;   /* out of reach, empty pack */
+        if (g_inv.countOf((ItemId)MAT_STONE) != 0) return 282;       /* and nothing appeared in it */
+        if (fabsf(me.body.centreX() - (float)VX) > 1.0f ||
+            fabsf(me.body.centreY() - (float)VY) > 1.0f) return 283;
+        if (playerPresent(me)) return 284;
+
+        /* Release, then erase with the right button. */
+        sb.bits = sb.pressed = 0;
+        updatePlayerFromCommand(0, me, sb, true);
+        sb.bits = sb.pressed = PCMD_USE_RIGHT;
+        updatePlayerFromCommand(0, me, sb, true);
+        if (g_world.at(VX + 30, VY).mat != MAT_EMPTY) return 285;
+
+        /* A machine from the catalog, free. */
+        sb.bits = sb.pressed = 0;
+        updatePlayerFromCommand(0, me, sb, true);
+        /* The thermocouple on purpose: it is device type ZERO, the one value a
+           "> 0 means a machine was picked" check silently refuses. */
+        sb.paletteDevice = DEV_THERMOCOUPLE;
+        sb.bits = sb.pressed = PCMD_USE_LEFT;
+        sb.aimX = VX - 60; sb.aimY = VY;
+        updatePlayerFromCommand(0, me, sb, true);
+        Device* placed = devAt(VX - 60, VY);
+        if (!placed || placed->type != DEV_THERMOCOUPLE) return 286;
+
+        /* Switched back on: the character stands where the camera is and is a
+           character again. */
+        sb.bits = sb.pressed = 0; sb.sandbox = false; sb.paletteDevice = -1;
+        sb.viewX = VX + 200; sb.viewY = VY - 100;
+        updatePlayerFromCommand(0, me, sb, true);
+        if (me.sandbox) return 287;
+        if (fabsf(me.body.centreX() - (float)(VX + 200)) > 2.0f) return 288;
+        if (!playerPresent(me)) return 289;
         devClear();
         g_world.reset();
     }

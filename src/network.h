@@ -37,6 +37,21 @@ struct PlayerCommand {
     static const int FILTER_BYTES = (MAT_COUNT + 7) / 8;
     u8 digFilter[FILTER_BYTES];
     i32 aimX, aimY;
+    /* --- the character switched off ---------------------------------------
+       `sandbox` is the player's own toggle, carried on every command so the
+       host needs no separate action to learn it and a lost packet cannot leave
+       the two disagreeing for longer than one command.
+
+       `paletteDevice` is the machine picked from the left catalog, or -1. With
+       the character off a machine is placed from that catalog rather than from
+       the pack, and the host has to know which one.
+
+       `viewX/viewY` is the centre of the player's camera. The host parks the
+       inert body there -- see PlayerSession::sandbox for why that one position
+       is what keeps their world streaming. */
+    bool sandbox;
+    i16 paletteDevice;
+    i32 viewX, viewY;
 };
 
 enum NetActionType {

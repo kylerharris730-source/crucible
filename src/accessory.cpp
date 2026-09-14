@@ -108,7 +108,7 @@ float accessoryPickupRadius(const Inventory& inv) {
 void accessoryRegisterLights() {
     for (int slot = 0; slot < MAX_PLAYERS; ++slot) {
         const PlayerSession& session = g_playerSessions[slot];
-        if (!session.connected || !session.body.alive) continue;
+        if (!playerPresent(session)) continue;
         const int glow = session.inventory.lightGlow();
         if (glow <= 0) continue;
         lightAddDynamic((int)session.body.centreX(), (int)session.body.centreY(),

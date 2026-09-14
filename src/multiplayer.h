@@ -154,6 +154,22 @@ struct PlayerSession {
     bool lineFilterOn;
     u8 lineFilter[(MAT_COUNT + 7) / 8];
     u8 previousCommandBits;
+    /* The character is switched off. Asked for: "i want to be able to turn
+       player off in multiplayer too. its useful for setting stuff up like a
+       creative mode sometimes".
+
+       Host-authoritative, set from each PlayerCommand, and replicated so every
+       client stops drawing that player. While it is on, the body is INERT and
+       INVISIBLE but still positioned: the host parks it at the centre of that
+       player's camera every frame. That is deliberate rather than tidy, because
+       everything that decides what a player can see -- which chunks are
+       streamed to them, which islands of the world are simulated -- is keyed to
+       their body, and parking it under the camera makes all of that follow the
+       camera with no second mechanism. When the character comes back on, it
+       stands up exactly where they were looking.
+
+       Nothing treats a sandbox player as being in the world; see playerPresent. */
+    bool sandbox;
     bool connected;
     bool local;
     PlayerId networkId;  /* authority's id; differs from local slot on clients */
@@ -230,6 +246,16 @@ bool rosterRestore(const char* id, PlayerSession& session);
 
 void rosterClear();
 bool playerSessionConnected(PlayerId id);
+
+/* Is this player physically in the world -- something a creature can chase, a
+   shot can hit, a pickup can fly to, a light can follow and a rocket can count
+   as crew? One rule, because it used to be `connected && body.alive` written out
+   at every site, and the sandbox is a third condition all of them have to agree
+   on. A site that checked only the first two would have creatures hunting an
+   invisible body parked under somebody's camera. */
+inline bool playerPresent(const PlayerSession& s) {
+    return s.connected && s.body.alive && !s.sandbox;
+}
 int playerSessionSlotForNetworkId(PlayerId networkId);
 /* Consumes exactly one healing item and starts the shared cooldown. Passive
    regeneration calls Player::heal directly and intentionally bypasses this. */

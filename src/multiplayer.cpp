@@ -28,6 +28,7 @@ static void clearSession(PlayerSession& s) {
     s.lineBackground = s.lineOverwrite = s.lineFilterOn = false;
     memset(s.lineFilter, 0, sizeof(s.lineFilter));
     s.previousCommandBits = 0;
+    s.sandbox = false;
     s.connected = false;
     s.local = false;
     s.networkId = PLAYER_NONE;

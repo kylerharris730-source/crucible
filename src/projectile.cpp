@@ -771,7 +771,7 @@ int projUpdate(World& w) {
                     for (int slot = 0; slot < MAX_PLAYERS; ++slot) {
                         PlayerSession& session = g_playerSessions[slot];
                         Player& player = session.body;
-                        if (!session.connected || !player.alive ||
+                        if (!playerPresent(session) ||
                             cx < player.left() || cx > player.right() ||
                             cy < player.top() || cy > player.bottom()) continue;
                         /* Armour belongs to the player actually struck; remote

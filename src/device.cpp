@@ -529,7 +529,7 @@ static int rocketCrewSession(int slot) {
 bool rocketCrew(const Device& d, int slot) {
     if (slot < 0 || slot >= MAX_PLAYERS) return false;
     const PlayerSession& s = g_playerSessions[rocketCrewSession(slot)];
-    if (!s.connected || !s.body.alive) return false;
+    if (!playerPresent(s)) return false;
     const float dx = s.body.centreX() - (float)(d.x + ROCKET_W / 2);
     const float dy = s.body.centreY() - (float)(d.y + ROCKET_H / 2);
     return dx * dx + dy * dy <= (float)(ROCKET_CREW_RANGE * ROCKET_CREW_RANGE);

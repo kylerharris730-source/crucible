@@ -902,7 +902,7 @@ static void pickupTickMode(World& w, const Player& fallbackPlayer, Inventory& fa
         if (multiplayer) {
             for (int slot = 0; slot < MAX_PLAYERS && p.used; ++slot) {
                 PlayerSession& session = g_playerSessions[slot];
-                if (!session.connected || !session.body.alive) continue;
+                if (!playerPresent(session)) continue;
                 if (p.delay > 0) continue;
                 pickupMagnet(p, session.body, session.inventory);
                 const float dx = session.body.centreX() - p.x;
@@ -3667,7 +3667,7 @@ static void entTickMode(World& w, Player& fallbackPlayer, Inventory& fallbackInv
         if (multiplayer)
             for (int slot = 0; slot < MAX_PLAYERS && n < MAX_PLAYERS + 1; ++slot) {
                 const PlayerSession& session = g_playerSessions[slot];
-                if (!session.connected || !session.body.alive) continue;
+                if (!playerPresent(session)) continue;
                 sx[n] = session.body.centreX();
                 sy[n] = (float)session.body.bottom();
                 ++n;
@@ -3699,7 +3699,7 @@ static void entTickMode(World& w, Player& fallbackPlayer, Inventory& fallbackInv
             float best2 = 1e30f;
             for (int slot = 0; slot < MAX_PLAYERS; ++slot) {
                 PlayerSession& session = g_playerSessions[slot];
-                if (!session.connected || !session.body.alive) continue;
+                if (!playerPresent(session)) continue;
                 const float dx = session.body.centreX() - e.centreX();
                 const float dy = session.body.centreY() - e.centreY();
                 const float d2 = dx * dx + dy * dy;
@@ -3875,7 +3875,19 @@ void entTick(World& w, Player& p, Inventory& inv) {
 }
 
 void entTickPlayers(World& w) {
-    entTickMode(w, g_player, g_inv, true);
+    /* The fallback target is the host's own body, which a creature falls back
+       to when no player is found nearer. With the host's character switched off
+       in a joined game that body is an invisible stand-in parked under their
+       camera, so hand the tick a copy that is not alive -- the same trick the
+       single-player sandbox uses, and for the same reason: "not alive" is the
+       one flag that stops it taking contact damage or collecting drops. */
+    if (playerPresent(g_playerSessions[0])) {
+        entTickMode(w, g_player, g_inv, true);
+    } else {
+        Player observer = g_player;
+        observer.alive = false;
+        entTickMode(w, observer, g_inv, true);
+    }
 }
 
 /* PlayerSession::swingHit is sized in bits and cannot say MAX_ENTITIES, because
@@ -4059,7 +4071,7 @@ void entSpawnTick(World& w, const Player& p, int camX, int camY, bool lightField
     if (g_spawnCool > 0) { --g_spawnCool; return; }
     int connected = 0;
     for (int slot = 0; slot < MAX_PLAYERS; ++slot)
-        if (g_playerSessions[slot].connected && g_playerSessions[slot].body.alive) ++connected;
+        if (playerPresent(g_playerSessions[slot])) ++connected;
     if (connected < 1) connected = 1;
     if (entSpawnedCount() >= ENT_MAX_ALIVE * connected) return;
 

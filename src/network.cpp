@@ -33,8 +33,8 @@
 #endif
 
 static const u32 NET_MAGIC = 0x54454E43u; /* CNET on little endian */
-static const u32 NET_PROTOCOL = 13;
-static const u32 NET_STATE_SCHEMA = 16;   /* + the swing, so other players' blades are visible */
+static const u32 NET_PROTOCOL = 14;       /* + sandbox, palette machine and view centre on commands */
+static const u32 NET_STATE_SCHEMA = 17;   /* + sandbox, so a player with the character off is not drawn */
 static const u32 NET_MAX_PACKET = 256u * 1024u * 1024u;
 
 enum PacketType {
@@ -622,6 +622,7 @@ static void sendState() {
            damage. Only what DRAWING needs: swingCool is the rhythm gate and
            stays the authority's business, since nobody renders a cooldown. */
         blob.i32f(s.swingFrame); blob.f32f(s.swingDirX); blob.f32f(s.swingDirY);
+        blob.boolf(s.sandbox);
     }
     codecOverlay(blob);
     Writer packed;
@@ -868,6 +869,7 @@ static void applyState(Reader& r) {
            damage. Only what DRAWING needs: swingCool is the rhythm gate and
            stays the authority's business, since nobody renders a cooldown. */
         blob.i32f(s.swingFrame); blob.f32f(s.swingDirX); blob.f32f(s.swingDirY);
+        blob.boolf(s.sandbox);
         if (!blob.ok) { r.ok = false; return; }
         s.connected = true; s.local = slot == 0; s.networkId = wire; s.generation = generation;
         if (slot == 0 && hadPredictedLocal && predictedLocal.generation == generation) {
@@ -1022,6 +1024,8 @@ static void handlePacket(Peer& peer, u8 type, const u8* data, size_t len, World&
         c.lineStartX = r.i32v(); c.lineStartY = r.i32v();
         c.digFilterOn = r.u8v() != 0; r.bytes(c.digFilter, sizeof(c.digFilter));
         c.aimX = r.i32v(); c.aimY = r.i32v();
+        c.sandbox = r.u8v() != 0; c.paletteDevice = (i16)r.u16v();
+        c.viewX = r.i32v(); c.viewY = r.i32v();
         /* A connection may only drive the player it was given. Trusting the id
            in the packet would let any client move, mine and spend the inventory
            of everybody else in the game. */
@@ -1272,7 +1276,10 @@ bool netSendCommand(const PlayerCommand& c) {
     w.u8v(c.lineCommit ? 1 : 0); w.u8v(c.lineCommitBits);
     w.i32v(c.lineStartX); w.i32v(c.lineStartY);
     w.u8v(c.digFilterOn ? 1 : 0); w.bytes(c.digFilter, sizeof(c.digFilter));
-    w.i32v(c.aimX); w.i32v(c.aimY); queuePacket(g_peers[0], PK_COMMAND, w.b); return true;
+    w.i32v(c.aimX); w.i32v(c.aimY);
+    w.u8v(c.sandbox ? 1 : 0); w.u16v((u16)c.paletteDevice);
+    w.i32v(c.viewX); w.i32v(c.viewY);
+    queuePacket(g_peers[0], PK_COMMAND, w.b); return true;
 }
 
 static Peer* peerForPlayer(PlayerId player) {

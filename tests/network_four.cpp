@@ -78,6 +78,12 @@ static int runClient(int index, bool impersonate) {
             /* Distinct per client, so a crossed peer is a wrong value rather
                than a missing one. */
             c.aimX = 1000 + index; c.aimY = 2000 + index;
+            /* The character-off fields, also distinct per client and with the
+               sandbox flag alternating, so a field the wire drops or swaps
+               shows up as a wrong value on a specific slot. */
+            c.sandbox = (index & 1) != 0;
+            c.paletteDevice = (i16)(5 + index);
+            c.viewX = 3000 + index; c.viewY = 4000 + index;
             if (!netSendCommand(c)) return 5;
             if (impersonate) {
                 /* Must be discarded by the host: this connection was not given
@@ -155,6 +161,8 @@ int main(int argc, char** argv) {
 
     u32 seen[MAX_PLAYERS]; memset(seen, 0, sizeof(seen));
     i32 aimX[MAX_PLAYERS], aimY[MAX_PLAYERS];
+    bool sandbox[MAX_PLAYERS]; i16 palette[MAX_PLAYERS];
+    i32 viewX[MAX_PLAYERS], viewY[MAX_PLAYERS];
     memset(aimX, 0, sizeof(aimX)); memset(aimY, 0, sizeof(aimY));
     int peakPeers = 0, failures = 0;
     bool overflowLaunched = false, impostorSeen = false;
@@ -180,6 +188,8 @@ int main(int argc, char** argv) {
                 }
                 if (c.aimX == 66666 || c.aimY == 77777) impostorSeen = true;
                 seen[slot] = c.sequence; aimX[slot] = c.aimX; aimY[slot] = c.aimY;
+                sandbox[slot] = c.sandbox; palette[slot] = c.paletteDevice;
+                viewX[slot] = c.viewX; viewY[slot] = c.viewY;
                 netMarkRemoteCommandApplied((PlayerId)slot, c.sequence);
             }
         }
@@ -214,6 +224,17 @@ int main(int argc, char** argv) {
             aimY[slot] != aimX[slot] + 1000) {
             fprintf(stderr, "player slot %d has aim (%d,%d)\n", slot, aimX[slot], aimY[slot]);
             ++failures;
+        }
+        /* The character-off fields arrived exactly as that client sent them. */
+        {
+            const int index = aimX[slot] - 1000;
+            if (sandbox[slot] != ((index & 1) != 0) || palette[slot] != 5 + index ||
+                viewX[slot] != 3000 + index || viewY[slot] != 4000 + index) {
+                fprintf(stderr, "player slot %d has sandbox %d, palette %d, view (%d,%d) "
+                                "for client %d\n", slot, (int)sandbox[slot], (int)palette[slot],
+                        viewX[slot], viewY[slot], index);
+                ++failures;
+            }
         }
         for (int other = 1; other < slot; ++other)
             if (aimX[other] == aimX[slot]) {
