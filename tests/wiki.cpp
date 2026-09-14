@@ -150,7 +150,10 @@ int main() {
     for (int t = 1; t < ENT_COUNT; ++t)
         expected.push_back((Expected){ "creatures/" + slugify(ENT_DEFS[t].name) + ".html",
                                        ENT_DEFS[t].name });
-    for (int d = 1; d < DEV_COUNT; ++d)
+    /* From zero: device type 0 is the Thermocouple, and a loop from 1 here is
+       exactly why the page being missing went unnoticed -- the generator and
+       this check made the same assumption, so they agreed with each other. */
+    for (int d = 0; d < DEV_COUNT; ++d)
         expected.push_back((Expected){ "devices/" + slugify(DEVS[d].name) + ".html",
                                        DEVS[d].name });
     for (int st = 0; st < STATION_COUNT; ++st)

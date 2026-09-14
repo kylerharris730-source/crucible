@@ -1816,7 +1816,10 @@ static void writeDevices() {
     ensureDir("web/wiki/devices");
 
     static char slugs[64][128];
-    for (int d = 1; d < DEV_COUNT; ++d) {
+    /* From ZERO. Materials and creatures start at 1 because id 0 is air and
+       "no creature"; device type 0 is a real machine, the Thermocouple, and
+       this loop copied the other two and quietly left it off the wiki. */
+    for (int d = 0; d < DEV_COUNT; ++d) {
         const DeviceInfo& dev = DEVS[d];
         slugify(slugs[d], sizeof(slugs[d]), dev.name);
         for (int j = 1; j < d; ++j)
@@ -1883,7 +1886,7 @@ static void writeDevices() {
     fputs("<h1>Devices</h1>\n", f);
     fprintf(f, "<p class=\"lede\">%d machines you can place, with what each one\n"
                "can be set to &mdash; and, more usefully, where each one stops.</p>\n",
-            (int)DEV_COUNT - 1);
+            (int)DEV_COUNT);
     fputs("<div class=\"tablewrap\">\n<table class=\"index\">\n", f);
     fputs("<thead><tr>\n"
           "<th class=\"sortable\">Device</th>\n"
@@ -1892,7 +1895,7 @@ static void writeDevices() {
           "<th class=\"sortable num\">Lowest</th>\n"
           "<th class=\"sortable num\">Highest</th>\n"
           "</tr></thead>\n<tbody>\n", f);
-    for (int d = 1; d < DEV_COUNT; ++d) {
+    for (int d = 0; d < DEV_COUNT; ++d) {
         const DeviceInfo& dev = DEVS[d];
         fputs("<tr data-search=\"", f);
         escapeTo(f, dev.name);
@@ -2686,7 +2689,7 @@ int main() {
         if (strcmp(SECTIONS[i].slug, "creatures") == 0)
             fprintf(f, " <span class=\"n\">%d</span>", (int)ENT_COUNT - 1);
         if (strcmp(SECTIONS[i].slug, "devices") == 0)
-            fprintf(f, " <span class=\"n\">%d</span>", (int)DEV_COUNT - 1);
+            fprintf(f, " <span class=\"n\">%d</span>", (int)DEV_COUNT);
         fputs("</li>\n", f);
     }
     fputs("</ul>\n", f);

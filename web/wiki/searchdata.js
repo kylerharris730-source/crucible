@@ -324,6 +324,7 @@ window.WIKI_PAGES = [
 ["The Effigy","creatures/the-effigy.html","creatures"],
 ["Effigy Arm","creatures/effigy-arm.html","creatures"],
 ["Effigy Crown","creatures/effigy-crown.html","creatures"],
+["Thermocouple","devices/thermocouple.html","devices"],
 ["Clock","devices/clock.html","devices"],
 ["Placer","devices/placer.html","devices"],
 ["Miner","devices/miner.html","devices"],
