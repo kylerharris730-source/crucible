@@ -5,7 +5,7 @@ chat, which meant it was re-derived from memory every session and quietly lost
 things. `HANDOFF.md` is **not** this file: it is gitignored scratch, is usually
 stale, and should not be trusted for release state.
 
-Released: **v0.6.3** (2026-09-14). `main` is level with it.
+Released: **v0.6.4** (2026-09-15). `main` is level with it.
 
 ---
 
@@ -25,6 +25,19 @@ Released: **v0.6.3** (2026-09-14). `main` is level with it.
       unset, so nothing renders.
 
 ## Ship it
+
+- [x] **Cut v0.6.4.** Tagged 2026-09-15, three commits past v0.6.3. Saves.
+
+      **An autosave slot.** Every five minutes of play, and on quit, the world
+      goes to its own slot on the save screen, so forgetting to save loses
+      minutes rather than an evening. A due autosave waits for a calm moment --
+      no boss alive, nobody dead -- but only for so long.
+
+      **Saving and loading are faster.** A save went from about 190 ms to under
+      40 and a load from about 186 to about 65, on the spare cores and a faster
+      compressor. The file format did not change: checked section by section
+      against the old code on real saves, and held by `tests/save_codec.cpp`.
+      Saves move freely between old and new builds.
 
 - [x] **Cut v0.6.3.** Tagged 2026-09-14, two commits past v0.6.2. A patch
       release for multiplayer, and one convenience.
