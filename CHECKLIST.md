@@ -5,7 +5,7 @@ chat, which meant it was re-derived from memory every session and quietly lost
 things. `HANDOFF.md` is **not** this file: it is gitignored scratch, is usually
 stale, and should not be trusted for release state.
 
-Released: **v0.6.4** (2026-09-15). `main` is level with it.
+Released: **v0.6.5** (2026-09-15). `main` is level with it.
 
 ---
 
@@ -25,6 +25,19 @@ Released: **v0.6.4** (2026-09-15). `main` is level with it.
       unset, so nothing renders.
 
 ## Ship it
+
+- [x] **Cut v0.6.5.** Tagged 2026-09-15, two commits past v0.6.4. Creatures.
+
+      **Bees find their way round a base.** Each hive keeps a breadth-first
+      route field rooted at its door, so a colony flies over walls, out of rooms
+      by their doors, up to ledges and into flower shelves, and never picks a
+      flower it cannot reach. The flower search also stopped missing single-row
+      beds three scans in four. Measured in `tests/bee_routes.cpp`: an open bed
+      went from 10 round trips to 109, and every walled layout from 0 to 45-77.
+
+      **Rock mites no longer chew through walls.** They route and hop like the
+      other walkers instead (`tests/mite_walls.cpp`). The Brood Mother still
+      ploughs through rock; that is her fight.
 
 - [x] **Cut v0.6.4.** Tagged 2026-09-15, three commits past v0.6.3. Saves.
 
