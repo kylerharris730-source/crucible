@@ -1249,12 +1249,47 @@ static RECT g_menuUiMinus, g_menuUiValue, g_menuUiPlus;
    14:48?" -- and a column of ten pictures of the places is not a puzzle at all.
    See SAVE_THUMB_W for why it is small enough to be free. */
 static const int SAVE_SLOTS = 10;
+
+/* --- the autosave -----------------------------------------------------------
+   Asked for: "I want a simgle autosave slot just incase you forget to save a
+   lot of progress, it can save automatically every few minutes."
+
+   An eleventh slot with its own file, never one of the ten. Writing into a slot
+   the player chose would be the game deciding which of their saves to destroy;
+   a slot that only the game writes, and that the Save screen will not let a
+   player overwrite by hand, cannot cost them anything they put somewhere on
+   purpose.
+
+   WHEN. Every AUTOSAVE_EVERY of play -- frames the world actually advanced, so
+   a game left paused or sitting in a menu does not keep writing the same world
+   -- and when the game is quit, since forgetting to save before closing is the
+   single most likely way to lose an evening.
+
+   CALM. A save stops the game thread for a moment: measured at about 190 ms for
+   a freshly generated world, and more for a lived-in one. That is invisible
+   while walking and a real hitch in a boss fight, so a due autosave waits while
+   a boss is alive or a player is dead -- but only for AUTOSAVE_PATIENCE, so a
+   boss left alive in a corner cannot switch autosave off.
+
+   THE ONE RISK a single slot has, and why quitting needs a minute of play: the
+   game starts every launch in a freshly generated world. A launch and quick
+   exit that autosaved would replace the autosave of the world you actually
+   lost with one you never played. */
+static const int AUTOSAVE_SLOT = SAVE_SLOTS;
+static const int AUTOSAVE_EVERY = 5 * 60 * 60;          /* five minutes, in frames */
+static const int AUTOSAVE_PATIENCE = 2 * 60 * 60;       /* then save regardless */
+static const int AUTOSAVE_MIN_PLAY_TO_QUIT = 60 * 60;   /* a minute, for the on-quit save */
+/* Frames of play since the world was last saved, loaded or made. Reset by all
+   three, so an autosave never lands moments after you saved it yourself. */
+static int g_playSinceSave = 0;
+
 enum SaveScreenMode { SAVESCREEN_OFF = 0, SAVESCREEN_SAVE, SAVESCREEN_LOAD };
 static int  g_saveScreen = SAVESCREEN_OFF;
-static RECT g_savePanel, g_saveSlotRect[SAVE_SLOTS], g_saveBack;
-/* Refreshed when the screen opens, not every frame: ten savePeek calls is ten
-   file opens, which is nothing once but is not something to do at 60 Hz. */
-static SaveSlotInfo g_saveSlot[SAVE_SLOTS];
+static RECT g_savePanel, g_saveSlotRect[SAVE_SLOTS + 1], g_saveBack;
+/* Refreshed when the screen opens, not every frame: eleven savePeek calls is
+   eleven file opens, which is nothing once but is not something to do at 60 Hz.
+   Index AUTOSAVE_SLOT is the autosave. */
+static SaveSlotInfo g_saveSlot[SAVE_SLOTS + 1];
 
 /* "cinderlift.sav" -> "cinderlift3.sav". Derived from SAVE_PATH rather than being a
    second constant, so a build with its own save path (a diagnostic one, say)
@@ -1279,7 +1314,19 @@ static bool saveFileExists(const char* path) {
 }
 
 static const char* saveSlotPath(int slot) {
-    static char buf[SAVE_SLOTS][64];
+    static char buf[SAVE_SLOTS + 1][64];
+    /* "cinderlift.sav" -> "cinderlift-auto.sav", derived from SAVE_PATH for the
+       same reason the numbered slots are: a build with its own save path gets
+       its own autosave too, and cannot write into the player's. */
+    if (slot == AUTOSAVE_SLOT) {
+        char stem[48];
+        strncpy(stem, SAVE_PATH, sizeof(stem) - 1);
+        stem[sizeof(stem) - 1] = 0;
+        char* dot = strrchr(stem, '.');
+        if (dot) *dot = 0;
+        snprintf(buf[slot], sizeof(buf[slot]), "%s-auto.sav", stem);
+        return buf[slot];
+    }
     if (slot < 0 || slot >= SAVE_SLOTS) return SAVE_PATH;
     saveSlotName(buf[slot], sizeof(buf[slot]), SAVE_PATH, slot);
     /* An existing world keeps the filename it already has -- see the note on
@@ -1297,7 +1344,7 @@ static const char* saveSlotPath(int slot) {
 }
 
 static void saveSlotsRefresh() {
-    for (int i = 0; i < SAVE_SLOTS; ++i)
+    for (int i = 0; i <= AUTOSAVE_SLOT; ++i)
         if (!savePeek(saveSlotPath(i), &g_saveSlot[i]))
             memset(&g_saveSlot[i], 0, sizeof(g_saveSlot[i]));
 }
@@ -2098,8 +2145,10 @@ static void saveToSlot(int slot) {
         /* The bytes are in the filesystem; on the web that is not yet the
            same as being kept. See savePersist(). */
         savePersist();
+        g_playSinceSave = 0;
         const double mb = (double)saveTotalBytes() / (1024.0 * 1024.0);
-        sprintf(g_saveMsg, "Saved slot %d -- %.2f MB", slot + 1, mb);
+        if (slot == AUTOSAVE_SLOT) sprintf(g_saveMsg, "Autosaved -- %.2f MB", mb);
+        else                       sprintf(g_saveMsg, "Saved slot %d -- %.2f MB", slot + 1, mb);
     } else {
         sprintf(g_saveMsg, "SAVE FAILED: %s", saveError());
     }
@@ -2119,8 +2168,12 @@ static void loadFromSlot(int slot) {
         /* Saves contain the durable hotbar selection only. Older or malformed
            files are clamped here before `held()` can index the pack. */
         selectHotbar(g_inv.selected);
+        g_playSinceSave = 0;
         const double mb = (double)saveTotalBytes() / (1024.0 * 1024.0);
-        sprintf(g_saveMsg, "Loaded slot %d -- %.2f MB%s%s", slot + 1, mb,
+        char which[24];
+        if (slot == AUTOSAVE_SLOT) strcpy(which, "the autosave");
+        else                       sprintf(which, "slot %d", slot + 1);
+        sprintf(g_saveMsg, "Loaded %s -- %.2f MB%s%s", which, mb,
                 saveError()[0] ? " -- " : "", saveError());
         updateCamera(true);
         droneReset();
@@ -2134,17 +2187,55 @@ static void loadFromSlot(int slot) {
     g_saveMsgFrames = 240;
 }
 
+/* Is this a good moment to stop the game thread for a fifth of a second? Not
+   while a boss is alive -- that is a fight -- and not while a player is dead,
+   when the next thing that happens is a respawn somebody is waiting for. */
+static bool autosaveCalm() {
+    if (g_winOpen) return false;
+    for (int i = 0; i < MAX_ENTITIES; ++i)
+        if (g_entities[i].alive() && ENT_DEFS[g_entities[i].type].isBoss) return false;
+    for (int slot = 0; slot < MAX_PLAYERS; ++slot) {
+        const PlayerSession& s = g_playerSessions[slot];
+        if (s.connected && !s.sandbox && !s.body.alive) return false;
+    }
+    return true;
+}
+
+/* One frame of play has passed. Called only on frames the world advanced. */
+static void autosaveTick() {
+    if (netRole() == NET_CLIENT) return;       /* the host owns the save */
+    ++g_playSinceSave;
+    if (g_playSinceSave < AUTOSAVE_EVERY) return;
+    if (!autosaveCalm() && g_playSinceSave < AUTOSAVE_EVERY + AUTOSAVE_PATIENCE) return;
+    saveToSlot(AUTOSAVE_SLOT);
+    /* A failed write keeps g_playSinceSave where it is, so it would retry every
+       frame and hitch the game sixty times a second. Back off a full interval
+       instead; the failure message has already said what went wrong. */
+    if (g_playSinceSave != 0) g_playSinceSave = 0;
+}
+
+/* On the way out: only a world with real, unsaved play in it. See the note on
+   AUTOSAVE_MIN_PLAY_TO_QUIT for what saving a world nobody played would cost. */
+static void autosaveOnQuit() {
+    if (netRole() == NET_CLIENT) return;
+    if (g_playSinceSave < AUTOSAVE_MIN_PLAY_TO_QUIT) return;
+    saveToSlot(AUTOSAVE_SLOT);
+}
+
 /* Five across and two down, which is the shape that fits ten 4:3 pictures into
    the view without either running off the side or shrinking them past the point
    of being recognisable. */
 static void layoutSaveScreen() {
-    const int cols = 5, rows = 2;
+    /* Three rows: the ten slots as they always were, so nobody's muscle memory
+       moves, and the autosave alone underneath where it cannot be mistaken for
+       one of them. */
+    const int cols = 5, rows = 3;
     const int cellW = 176, cellH = 158, gap = 10, pad = 18;
     const int w = pad * 2 + cols * cellW + (cols - 1) * gap;
     const int h = pad + 40 + rows * cellH + (rows - 1) * gap + 52;
     const int cx = PANEL_W + VIEW_W / 2, cy = VIEW_H / 2;
     SetRect(&g_savePanel, cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2);
-    for (int i = 0; i < SAVE_SLOTS; ++i) {
+    for (int i = 0; i <= AUTOSAVE_SLOT; ++i) {
         const int c = i % cols, r = i / cols;
         const int x = g_savePanel.left + pad + c * (cellW + gap);
         const int y = g_savePanel.top + pad + 40 + r * (cellH + gap);
@@ -2168,14 +2259,16 @@ static void drawSaveScreen(HDC hdc) {
                           : "LOAD  --  click a slot to open it",
               -1, &title, DT_LEFT | DT_TOP | DT_SINGLELINE);
 
-    for (int i = 0; i < SAVE_SLOTS; ++i) {
+    for (int i = 0; i <= AUTOSAVE_SLOT; ++i) {
         RECT r = g_saveSlotRect[i];
         const SaveSlotInfo& info = g_saveSlot[i];
         const bool hot = inRect(r, g_mx, g_my);
+        const bool autosave = i == AUTOSAVE_SLOT;
         /* An empty slot is not clickable in LOAD mode, so it must not light up
            under the cursor either -- a hover state on a dead control is the
-           interface promising something it will not do. */
-        const bool live = saving || (info.used && info.readable);
+           interface promising something it will not do. The autosave is never
+           clickable in SAVE mode, for the same reason. */
+        const bool live = saving ? !autosave : (info.used && info.readable);
 
         FillRect(hdc, &r, (hot && live) ? g_btnBgHot : g_btnBg);
         FrameRect(hdc, &r, (hot && live) ? g_accentBrush : g_borderBrush);
@@ -2219,7 +2312,8 @@ static void drawSaveScreen(HDC hdc) {
         }
 
         char head[48];
-        sprintf(head, "Slot %d", i + 1);
+        if (autosave) strcpy(head, "Autosave");
+        else          sprintf(head, "Slot %d", i + 1);
         RECT hr = r; hr.left += 8; hr.top += 4;
         SetTextColor(hdc, live ? RGB(226, 230, 238) : RGB(120, 128, 142));
         DrawTextA(hdc, head, -1, &hr, DT_LEFT | DT_TOP | DT_SINGLELINE);
@@ -2229,7 +2323,7 @@ static void drawSaveScreen(HDC hdc) {
            slots apart a day later, which is the entire job here. */
         char foot[80] = "";
         if (!info.used) {
-            strcpy(foot, "-");
+            strcpy(foot, autosave ? "every 5 minutes" : "-");
         } else if (!info.readable) {
             sprintf(foot, "%s", info.note);
         } else if (info.when) {
@@ -2252,23 +2346,32 @@ static void drawSaveScreen(HDC hdc) {
     RECT hint = g_savePanel;
     hint.left += 150; hint.top = g_savePanel.bottom - 38;
     SetTextColor(hdc, RGB(140, 148, 162));
-    DrawTextA(hdc, saving ? "Writing a slot replaces whatever is in it. Esc to go back."
+    DrawTextA(hdc, saving ? "Writing a slot replaces whatever is in it. The autosave writes itself. Esc to go back."
                           : "Esc to go back.",
               -1, &hint, DT_LEFT | DT_TOP | DT_SINGLELINE);
 }
 
 static bool handleSaveScreenClick(int mx, int my) {
     if (inRect(g_saveBack, mx, my)) { g_saveScreen = SAVESCREEN_OFF; return true; }
-    for (int i = 0; i < SAVE_SLOTS; ++i) {
+    for (int i = 0; i <= AUTOSAVE_SLOT; ++i) {
         if (!inRect(g_saveSlotRect[i], mx, my)) continue;
         if (g_saveScreen == SAVESCREEN_SAVE) {
+            /* Refused, and said. The autosave belongs to the game; letting a
+               player write into it would make it one more slot to keep track of
+               and take away the one place that is always the latest. */
+            if (i == AUTOSAVE_SLOT) {
+                sprintf(g_saveMsg, "The autosave is written automatically every 5 minutes");
+                g_saveMsgFrames = 180;
+                return true;
+            }
             saveToSlot(i);
         } else {
             /* Refused rather than silently ignored. Clicking an empty slot in
                load mode is a reasonable thing to try, and saying nothing at all
                reads as the button being broken. */
             if (!g_saveSlot[i].used) {
-                sprintf(g_saveMsg, "Slot %d is empty", i + 1);
+                if (i == AUTOSAVE_SLOT) sprintf(g_saveMsg, "Nothing has been autosaved yet");
+                else                    sprintf(g_saveMsg, "Slot %d is empty", i + 1);
                 g_saveMsgFrames = 150;
                 return true;
             }
@@ -3190,6 +3293,7 @@ static void makeWorld() {
     /* Machines are entities beside the grid, so clearing the world does not clear
        them -- they have to be dropped explicitly or a fresh world arrives haunted
        by the last one's contraptions. Same reason roomsClear() exists. */
+    g_playSinceSave = 0;
     undoClearAll();
     devClear();
     g_restBed = -1;
@@ -9080,6 +9184,7 @@ static void serverTick(const LARGE_INTEGER& perfFrequency) {
             !g_creativeOpen && !g_craftOpen && g_chestOpen < 0 && !g_mapOpen;
         updatePlayerFromCommand(0, g_playerSessions[0], g_localInput, localCanMove);
     }
+    if (singleStep || (!g_paused && !menuPausesWorld)) autosaveTick();
     if (onlineHost) updateRemotePlayersFromCommands(!g_paused || singleStep);
     /* Closing is a group decision. Every connected body has published its
        latest occupancy by now, so one distant client cannot undo the nearby
@@ -10017,6 +10122,83 @@ static int runLocalCommandSmoke() {
         g_world.reset();
     }
 
+    /* --- the autosave -----------------------------------------------------------
+       Asked for: "I want a simgle autosave slot just incase you forget to save a
+       lot of progress, it can save automatically every few minutes."
+
+       This WRITES the real autosave file, so anything already there is set aside
+       first and put back after -- a smoke test run on somebody's own install must
+       not be the thing that costs them the save it exists to protect. */
+    {
+        g_world.reset(); devClear(); entReset(); playerSessionsReset();
+        g_survival = true; g_playerOn = true; g_winOpen = false;
+        g_player.reset(400.0f, 400.0f); g_inv.clear();
+        makeWorld();
+        g_player.reset(400.0f, 400.0f);
+
+        const char* autoPath = saveSlotPath(AUTOSAVE_SLOT);
+        for (int i = 0; i < SAVE_SLOTS; ++i)
+            if (strcmp(autoPath, saveSlotPath(i)) == 0) return 301;   /* its own file */
+        char aside[96];
+        snprintf(aside, sizeof(aside), "%s.smoke-aside", autoPath);
+        remove(aside);
+        const bool hadOne = saveFileExists(autoPath) && rename(autoPath, aside) == 0;
+
+        int result = 0;
+        /* Nothing until a full interval of play has passed. */
+        for (int t = 0; t < AUTOSAVE_EVERY - 1 && !result; ++t) autosaveTick();
+        if (!result && saveFileExists(autoPath)) result = 302;
+        /* A boss alive defers it... */
+        const int boss = entSpawn(g_world, ENT_BROOD, 900.0f, 900.0f);
+        if (!result && boss < 0) result = 303;
+        for (int t = 0; t < 60 && !result; ++t) autosaveTick();
+        if (!result && saveFileExists(autoPath)) result = 304;
+        /* ...but only for so long. */
+        for (int t = 0; t < AUTOSAVE_PATIENCE && !result; ++t) autosaveTick();
+        if (!result && !saveFileExists(autoPath)) result = 305;
+        /* The clock restarted at the save: the loop ran on for the few frames
+           left after it, so it reads a handful, not an interval's worth. */
+        if (!result && g_playSinceSave > 60) result = 306;
+        if (boss >= 0) g_entities[boss].type = ENT_NONE;
+
+        /* It loads back, and the Save screen will not write into it by hand. */
+        if (!result) {
+            SaveSlotInfo info;
+            if (!savePeek(autoPath, &info) || !info.used || !info.readable) result = 307;
+        }
+        if (!result) {
+            remove(autoPath);
+            g_saveScreen = SAVESCREEN_SAVE;
+            saveSlotsRefresh();
+            layoutSaveScreen();
+            const RECT& tile = g_saveSlotRect[AUTOSAVE_SLOT];
+            handleSaveScreenClick((tile.left + tile.right) / 2, (tile.top + tile.bottom) / 2);
+            g_saveScreen = SAVESCREEN_OFF;
+            if (saveFileExists(autoPath)) result = 308;
+        }
+
+        /* Quitting a world nobody played does not overwrite the autosave; quitting
+           after real play does. */
+        if (!result) {
+            makeWorld();
+            g_player.reset(400.0f, 400.0f);
+            for (int t = 0; t < 60 * 10; ++t) autosaveTick();     /* ten seconds */
+            autosaveOnQuit();
+            if (saveFileExists(autoPath)) result = 309;
+        }
+        if (!result) {
+            for (int t = 0; t < AUTOSAVE_MIN_PLAY_TO_QUIT; ++t) autosaveTick();
+            autosaveOnQuit();
+            if (!saveFileExists(autoPath)) result = 310;
+        }
+
+        remove(autoPath);
+        if (hadOne) rename(aside, autoPath);
+        devClear();
+        g_world.reset();
+        if (result) return result;
+    }
+
     puts("local command loopback smoke passed");
     return 0;
 }
@@ -10222,6 +10404,10 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR commandLine, int) {
             tFpsBase = tNow;
         }
     }
+
+    /* After the loop, while the world is still whole. Quitting without saving
+       is the likeliest way to lose an evening's work. */
+    autosaveOnQuit();
 
     timeEndPeriod(1);
     SelectObject(g_backDC, g_backOldBmp);
