@@ -15,9 +15,13 @@ That makes one table the whole of this page.
 
 ## Steps
 
-1. **Build a pit or a basin** out of something that does not melt.
-   [Stone](../materials/stone.html) is fine and conducts heat well (85 of 255);
-   [Iron](../materials/iron.html) is better still at 255.
+1. **Build a pit or a basin** out of something that will not melt at the heat
+   you are using. [Stone](../materials/stone.html) conducts heat well (85 of
+   255) but turns to lava at 185 °C, so it only does for tin, gold and copper.
+   [Iron](../materials/iron.html) conducts at 255 and holds until 200 °C, which
+   a fuel fire passes. For iron ore and up, use
+   [Ceramic](../materials/ceramic.html) — fired clay, which never melts — and
+   put the fire *in the basin with the ore*, because ceramic insulates.
 2. **Put the ore in it.**
 3. **Heat it from outside** with a fuel hot enough for that ore.
 4. **Wait for it to run.** The ore becomes a molten metal, which is a liquid and
@@ -65,6 +69,16 @@ The cheap surprise: burning *leaves, cotton or rope* gives open fire at 205 °C,
 hotter than coal. It is the cheapest route to iron and titanium, and it burns
 out fast.
 
+**Steel is not an ore and has no recipe.** It is iron that has taken up carbon:
+pour [coal](../materials/coal.html) onto
+[molten iron](../materials/moltiron.html) while it is still liquid. The coal
+catches on the hot metal, and where the burning coal
+([Ember](../materials/ember.html)) touches the melt, that melt becomes
+[molten steel](../materials/steelmlt.html) and the ember is used up — roughly
+one cell of steel for each cell of coal. Molten steel sets into
+[Steel](../materials/steel.html) below 170 °C, and it melts again at 210 °C,
+ten degrees hotter than iron, which is the point of it.
+
 ## When it does not
 
 **The ore sits there and nothing happens.** Your fire is not hot enough. Check
@@ -77,6 +91,11 @@ Build the basin before you light the fire.
 **The metal set somewhere you cannot reach.** Same cause. Note the setting
 points are *lower* than the melting points — molten iron stays liquid down to
 160 °C — so it keeps running for a while after you stop heating.
+
+**You poured coal on and got no steel.** The iron had already set — molten
+iron is liquid down to 160 °C, and solid iron does not take up carbon. Or the
+coal never touched the melt: it has to land *on* the liquid, and a crust of
+set iron or slag between them stops it. Keep the fire going while you pour.
 
 **Your basin melted too.** Check what you built it from. Stone melts to lava at
 185 °C, which is below several of the temperatures on this page.

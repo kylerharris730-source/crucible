@@ -476,6 +476,28 @@ int main() {
             printf("  the coke guide does not quote coke ember's %s\n", needle);
             ++wrong;
         }
+        /* How to make steel. Asked from play -- "why cant i find that info in
+           the steel page" -- because the page's "how to get it" read recipes
+           only and steel has none. The material pages now read the reaction
+           and phase tables backwards; this holds the one that was reported. */
+        {
+            const std::string steel = readFile(wikiPath("materials/steel.html"));
+            const std::string ironMelt = slugify(MATS[MAT_IRON_MELT].name) + ".html";
+            const std::string ember = slugify(MATS[MAT_EMBER].name) + ".html";
+            const size_t get = steel.find("How to get it");
+            if (get == std::string::npos ||
+                steel.find(ironMelt, get) == std::string::npos ||
+                steel.find(ember, get) == std::string::npos) {
+                printf("  the Steel page does not say it comes from molten iron and ember\n");
+                ++wrong;
+            }
+            snprintf(needle, sizeof(needle), "%d %sC",
+                     (int)MATS[MAT_STEEL_MELT].coolTemp - TEMP_OFFSET, DEG);
+            if (smelt.find(needle) == std::string::npos) {
+                printf("  the smelting guide does not quote steel's setting point %s\n", needle);
+                ++wrong;
+            }
+        }
         /* The heat lamp cap, which is the fact that cost a play session. */
         snprintf(needle, sizeof(needle), "100 %sC", DEG);
         if (coke.find(needle) == std::string::npos) {

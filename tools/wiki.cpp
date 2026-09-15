@@ -666,17 +666,29 @@ static void writeRecipeLine(FILE* f, int r, const int* cellOfItem,
     fputs("</li>\n", f);
 }
 
+static bool writeWorldSources(FILE* f, int id, bool headingWritten);
+
 /* The two sections that go at the bottom of every material and item page.
    Omitted when empty, like every other section -- see the note on writeMaterialPage. */
-static void writeCrossLinks(FILE* f, ItemId id, const int* cellOfItem) {
+static void writeCrossLinks(FILE* f, ItemId id, const int* cellOfItem,
+                            bool material) {
     const RecipeRefs& refs = g_refs[id];
 
+    /* Recipes, and for a material every way the WORLD makes it too. Asked from
+       play: "how do i make steel, and why cant i find that info in the steel
+       page". Steel has no recipe -- molten iron touching a coal fire becomes
+       molten steel, which sets into steel -- and this section used to read
+       only RECIPES[], so the Steel page said what steel is for and never where
+       it comes from. Every transition was written on its SOURCE's page only. */
+    bool open = false;
     if (refs.nMadeBy) {
         fputs("<h2>How to get it</h2>\n<ul>\n", f);
+        open = true;
         for (int i = 0; i < refs.nMadeBy; ++i)
             writeRecipeLine(f, refs.madeBy[i], cellOfItem, false);
-        fputs("</ul>\n", f);
     }
+    if (material && (int)id < MAT_COUNT) open = writeWorldSources(f, (int)id, open);
+    if (open) fputs("</ul>\n", f);
 
     if (refs.nUsedIn) {
         fputs("<h2>What it is for</h2>\n<ul>\n", f);
@@ -799,10 +811,6 @@ static const CodeRule CODE_RULES[] = {
     { MAT_FUEL, MAT_COKE_GAS,
       "the other half of coking, and it needs somewhere to go &mdash; vent it "
       "through gas sieve" },
-    { MAT_COKE, MAT_FUEL,
-      "coke is made by coking fuel in a sealed vessel, not by a recipe" },
-    { MAT_COKE_GAS, MAT_FUEL,
-      "given off when fuel is coked" },
 };
 static const int N_CODE_RULES =
     (int)(sizeof(CODE_RULES) / sizeof(CODE_RULES[0]));
@@ -823,6 +831,136 @@ static void writeCodeRules(FILE* f, int id) {
                 CODE_RULES[i].how);
     }
     if (any) fputs("</ul>\n", f);
+}
+
+/* --- where a material comes from -------------------------------------------
+
+   The inverse of the heat chain and the reaction lines above: every table that
+   says "X becomes Y", read backwards for Y. Derived, so it cannot disagree with
+   the forward chain on X's page -- both come out of the same columns.
+
+   One level of look-behind, and only for REACTIONS. Steel's direct source is
+   Steel Melt cooling, which is true and useless on its own: the reader's next
+   question is where Steel Melt comes from, and the answer is a contact rule on
+   another material's row. So a source that is itself made by touching or
+   mixing carries that on the same line. Not deeper, and not
+   for temperature chains, or a page for Ash would recite half the game. */
+
+static void materialLink(FILE* f, int m) {
+    char slug[128];
+    slugify(slug, sizeof(slug), MATS[m].name);
+    fprintf(f, "<a href=\"%s.html\">", slug);
+    escapeTo(f, MATS[m].name);
+    fputs("</a>", f);
+}
+
+/* "made when A touches B", "made by mixing A with B", or a rule's words.
+   Writes the reactions producing `id`, joined with "or"; returns how many. */
+static int reactionSourceCount(int id) {
+    int n = 0;
+    for (int s = 1; s < MAT_COUNT; ++s) {
+        if (g_matWetInto[s] == id && g_matWetBy[s] && g_matWetBy[s] < MAT_COUNT) ++n;
+        if (g_matAlloysTo[s] == id && g_matAlloyWith[s] && g_matAlloyWith[s] < MAT_COUNT &&
+            !(g_matAlloysTo[g_matAlloyWith[s]] == id && g_matAlloyWith[s] < s)) ++n;
+    }
+    return n;
+}
+
+static int writeReactionSources(FILE* f, int id, const char* lead) {
+    int n = 0;
+    for (int s = 1; s < MAT_COUNT; ++s) {
+        if (g_matWetInto[s] == id && g_matWetBy[s] && g_matWetBy[s] < MAT_COUNT) {
+            fputs(n ? " or when " : lead, f);
+            materialLink(f, s); fputs(" touches ", f); materialLink(f, g_matWetBy[s]);
+            ++n;
+        }
+        /* An alloy is written on both metals' rows. Name the pair once. */
+        if (g_matAlloysTo[s] == id && g_matAlloyWith[s] && g_matAlloyWith[s] < MAT_COUNT &&
+            !(g_matAlloysTo[g_matAlloyWith[s]] == id && g_matAlloyWith[s] < s)) {
+            fputs(n ? " or when " : lead, f);
+            materialLink(f, s); fputs(" mixes with ", f); materialLink(f, g_matAlloyWith[s]);
+            ++n;
+        }
+    }
+    return n;
+}
+
+static bool writeWorldSources(FILE* f, int id, bool open) {
+    const auto begin = [&]() {
+        if (!open) { fputs("<h2>How to get it</h2>\n<ul>\n", f); open = true; }
+    };
+
+    /* Reactions first: they are the answer when there is one, because a
+       contact product has no other way to exist. */
+    if (reactionSourceCount(id)) {
+        begin();
+        fputs("<li>", f);
+        writeReactionSources(f, id, "made when ");
+        fputs("</li>\n", f);
+    }
+    for (int i = 0; i < N_CODE_RULES; ++i) {
+        if (CODE_RULES[i].to != id) continue;
+        begin();
+        fputs("<li>", f); materialLink(f, CODE_RULES[i].from);
+        fprintf(f, " <span class=\"dim\">&mdash; %s</span></li>\n", CODE_RULES[i].how);
+    }
+
+    /* Then heat and cooling. Burning is collected rather than listed: two dozen
+       things burn to Fire, and a page that recites them one per line buries
+       everything under it. */
+    int burners[MAT_COUNT], nBurners = 0, lo = 999, hi = 0;
+    bool listed[MAT_COUNT] = { false };
+    for (int s = 1; s < MAT_COUNT; ++s) {
+        if (s == id || !MATS[s].name) continue;
+        const MatInfo& m = MATS[s];
+        if (m.igniteTemp && m.burnsTo == id) {
+            burners[nBurners++] = s;
+            const int c = (int)m.igniteTemp - TEMP_OFFSET;
+            if (c < lo) lo = c;
+            if (c > hi) hi = c;
+            listed[s] = true;
+            continue;
+        }
+        const bool boils = m.boilTemp && m.boilsTo == id;
+        const bool cools = !boils && m.coolTemp && m.coolsTo == id;
+        if (!boils && !cools) continue;
+        begin();
+        listed[s] = true;
+        fputs("<li>", f);
+        materialLink(f, s);
+        if (boils)
+            fprintf(f, " <span class=\"dim\">&mdash; heated to %d&nbsp;&deg;C or above",
+                    (int)m.boilTemp - TEMP_OFFSET);
+        else
+            fprintf(f, " <span class=\"dim\">&mdash; as it cools below %d&nbsp;&deg;C",
+                    (int)m.coolTemp - TEMP_OFFSET);
+        writeReactionSources(f, s, "; it is made when ");
+        fputs("</span></li>\n", f);
+    }
+    if (nBurners) {
+        begin();
+        fputs("<li>burning ", f);
+        for (int i = 0; i < nBurners; ++i) {
+            if (i) fputs(i + 1 == nBurners ? " or " : ", ", f);
+            materialLink(f, burners[i]);
+        }
+        if (lo == hi)
+            fprintf(f, " <span class=\"dim\">&mdash; ignites at %d&nbsp;&deg;C</span></li>\n", lo);
+        else
+            fprintf(f, " <span class=\"dim\">&mdash; they ignite between %d and "
+                       "%d&nbsp;&deg;C</span></li>\n", lo, hi);
+    }
+
+    /* Decay last, and not again for something already named above: Brimfire
+       both cools and decays into Ash, which is one source rather than two. */
+    for (int s = 1; s < MAT_COUNT; ++s) {
+        if (g_matDecay[s] && g_matDecaysTo[s] == id && s != id && !listed[s]) {
+            begin();
+            fputs("<li>", f); materialLink(f, s);
+            fputs(" <span class=\"dim\">&mdash; decays into it</span></li>\n", f);
+        }
+    }
+    return open;
 }
 
 static void writeMaterialPage(int id, const int* cellOfItem) {
@@ -1009,7 +1147,7 @@ static void writeMaterialPage(int id, const int* cellOfItem) {
     }
 
     writeCodeRules(f, id);
-    writeCrossLinks(f, (ItemId)id, cellOfItem);
+    writeCrossLinks(f, (ItemId)id, cellOfItem, true);
 
     fputs("<p class=\"n\"><a href=\"index.html\">&larr; all materials</a></p>\n", f);
     pageClose(f, 1);
@@ -1293,7 +1431,7 @@ static void writeItemPage(int id, const int* cellOfItem) {
               "added up: the one that counts is the largest single bonus you "
               "are wearing. Two cheap pieces never beat one good one.</p>\n", f);
 
-    writeCrossLinks(f, (ItemId)id, cellOfItem);
+    writeCrossLinks(f, (ItemId)id, cellOfItem, false);
 
     fputs("<p class=\"n\"><a href=\"index.html\">&larr; all items</a></p>\n", f);
     pageClose(f, 1);
