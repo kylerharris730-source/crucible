@@ -22,8 +22,9 @@
    onto this one. An enemy that interacts with the SIMULATION makes every
    thermal decision a defensive decision as well, and costs almost nothing in
    new systems because the simulation is already there. So the three creatures
-   here are a burrower that eats through your walls, a heat-seeker that finds
-   your furnace, and a corroder that leaves acid where it walks. Each one is a
+   here were a burrower that ate through your walls, a heat-seeker that finds
+   your furnace, and a corroder that leaves acid where it walks. (The burrower
+   no longer burrows; see miteTick.) Each one is a
    gradient follower -- toward the player, toward heat -- and none of them
    pathfinds, because a gradient is both far cheaper and far more in keeping
    with a world that is itself a field of values.
@@ -49,7 +50,7 @@ enum EntityType {
     /* --- layer 1 --------------------------------------------------------
        Treacherous with bare hands, trivial once you have a Shot Module: the
        whole difficulty curve of the first layer is "get a weapon". */
-    ENT_MITE,            /* burrower: walks at you, chews through rock */
+    ENT_MITE,            /* walks at you and hops what is in the way */
     ENT_MOTH,            /* heat-seeker: flies to the hottest cell it can find */
     ENT_SLIME,           /* corroder: slow, and leaves acid behind it */
     /* --- the Terraria half ----------------------------------------------

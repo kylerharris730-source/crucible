@@ -234,10 +234,12 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
 
     /* --- rock mite ---------------------------------------------------------
        The one that makes the first twenty minutes treacherous. Slow enough to
-       outrun, tough enough that punching it is a bad idea, and it CHEWS ROCK --
-       so a wall is a delay rather than a solution and sealing yourself in is
-       not a strategy. That last property is the whole reason it exists: it is
-       the cheapest possible way to make the world's solidity negotiable.
+       outrun, tough enough that punching it is a bad idea, and persistent: it
+       routes to you and hops what is in the way.
+
+       It used to CHEW ROCK, so that a wall was a delay rather than a solution.
+       Removed on request ("those beetles chewing through walls is too
+       annoying") -- a wall you built is a wall now. See miteTick.
 
        Drops chitin, which is what calls the layer's boss -- so the commonest
        creature in layer 1 is also the one you farm to pick a fight with its
@@ -1202,35 +1204,39 @@ static void moveAxis(const World& w, Entity& e, float dx, float dy) {
 /* Defined below, beside groundChase, because that is where the reasoning
    lives; declared here because the mite and the slime come first in the file. */
 static float routedDir(Entity& e, const Player& p, bool* climb);
+static void groundChase(Entity& e, const Player& p, float speed, float accel,
+                        float standOff, bool* climb);
 
-static void miteTick(World& w, Entity& e, const Player& p) {
+static void miteTick(Entity& e, const Player& p) {
+    /* It used to CHEW: any rock-strength cell it was pressed against went, a
+       bite every fourteen frames, and it was deliberately left unrouted so it
+       would keep pressing. Removed on request -- "those beetles chewing through
+       walls is too annoying" -- because a wall the player built should be a
+       wall. Taking the teeth away from a creature that only knows how to push
+       leaves one that walks into a wall and stops, so it routes and hops like
+       the husk now. tests/mite_walls.cpp holds both halves.
+
+       The hop is the husk's, and not lower for a smaller animal, because the
+       route it follows is the shared walker field and that field assumes a
+       climb of twelve cells (NAV_CLIMB in navigate.cpp). A lower hop -- 2.0 was
+       tried -- clears eleven, and the mite stood forever at the foot of steps
+       the field had told it to climb. */
     const EntityDef& d = ENT_DEFS[e.type];
-    /* NOT routed, alone among the walkers, and that is the creature rather
-       than an oversight: a mite's answer to a wall is to EAT it. Send it round
-       the long way and the chew below never triggers, because chewing only
-       happens when it is pressed against something. The one thing that makes
-       this creature different from a slow husk would quietly stop happening. */
-    const float toward = p.centreX() - e.centreX();
-    if (toward > 1.0f)      e.facing = 1;
-    else if (toward < -1.0f) e.facing = -1;
-    e.vx += (float)e.facing * d.accel;
-    if (e.vx >  d.speed) e.vx =  d.speed;
-    if (e.vx < -d.speed) e.vx = -d.speed;
-
-    /* Chewing. Only when actually pressed against something, and only rock and
-       softer -- so it eats stone, dirt and a wooden door, and is stopped cold
-       by a metal wall or by a layer barrier. That ladder is the point: a wall
-       is a delay whose length you choose by what you build it out of. */
-    const int ahead = e.facing > 0 ? e.right() + 1 : e.left() - 1;
-    if (ahead > PLAY_X0 && ahead < PLAY_X1 && ++e.actTimer >= 14) {
-        e.actTimer = 0;
-        for (int y = e.top(); y <= e.bottom(); ++y) {
-            const u8 m = w.at(ahead, y).mat;
-            if (m == MAT_EMPTY || g_matStrength[m] > STR_ROCK) continue;
-            w.setCell(ahead, y, MAT_EMPTY);
-            break;   /* one cell per bite; a mite is not a mining tool */
-        }
-    }
+    bool climb = false;
+    /* Read BEFORE the chase: moveAxis zeroes vx against a wall, and the chase
+       adds a frame of acceleration straight back onto it. */
+    const bool blocked = e.vx == 0.0f;
+    groundChase(e, p, d.speed, d.accel, 0.0f, &climb);
+    /* And it hops whenever it is simply blocked, whatever the field says --
+       the rule the Spitter already uses. A husk gets up a ten-cell step by
+       walking, because moveAxis lifts a body half its own height; a mite is
+       nine cells tall and is lifted four. The field does not always know such
+       a step is climbable (measured: it had no route up a ten-cell step from
+       the floor beside it, for either size class), so without this a mite
+       stood at the foot of one forever. Against a wall too tall to clear it
+       bounces, which reads as trying, and chewing was the alternative. */
+    if (e.onGround && (climb || blocked))
+        e.vy = -2.2f;
 }
 
 bool stalkTick(Entity& e, const Player& p, const StalkSpec& spec) {
@@ -3798,7 +3804,7 @@ static void entTickMode(World& w, Player& fallbackPlayer, Inventory& fallbackInv
         if (e.touchTimer > 0) --e.touchTimer;
 
         switch (e.type) {
-        case ENT_MITE:    miteTick(w, e, p);    break;
+        case ENT_MITE:    miteTick(e, p);       break;
         case ENT_MOTH:    mothTick(w, e, p);    break;
         case ENT_SLIME:   slimeTick(w, e, p);   break;
         case ENT_HUSK:    huskTick(e, p);       break;

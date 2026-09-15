@@ -618,7 +618,7 @@ of gimmicks is a layer where every fight is a puzzle.
 
 | | size | hp | touch | speed | what it is |
 |---|---|---|---|---|---|
-| Rock mite | 12x9 | 18 | 6 | 0.34 | chews rock; a wall is a delay |
+| Rock mite | 12x9 | 18 | 6 | 0.34 | routes and hops; no longer chews rock (removed 2026-09-15, too annoying in play) |
 | Cinder moth | 9x7 | 10 | 4 | 0.52 | flies to the hottest cell |
 | Drip slime | 11x8 | 24 | 5 | 0.20 | leaves acid that outlives it |
 | Husk | 11x22 | 46 | 11 | 0.42 | walks at you and does not stop |
