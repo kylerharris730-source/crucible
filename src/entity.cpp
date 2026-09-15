@@ -8,6 +8,7 @@
 #include "worldgen.h"
 #include "accessory.h"
 #include "navigate.h"
+#include "bee_route.h"     /* how a bee gets round a base */
 #include <string.h>
 #include <math.h>
 
@@ -777,6 +778,7 @@ static int g_spawnCool = 0;
 
 void entReset() {
     navReset();
+    beeRouteReset();
     memset(g_entities, 0, sizeof(g_entities));
     memset(g_pickups, 0, sizeof(g_pickups));
     /* Or a new world inherits the last one's cooldown -- which would be a
@@ -1999,21 +2001,24 @@ static void stooperTick(const World& w, Entity& e, const Player& p) {
    enough to be doing something, carry the pollen home, hand it over, repeat.
    The hive turns each delivery into wax and honey -- see devHive.
 
-   The search is bounded and OCCASIONAL rather than per-frame. A bee that
-   re-scanned a 200-cell box every frame would cost more than every enemy in
-   the game put together, and it would also look wrong: a bee that
-   instantly re-targets whenever a nearer flower appears drifts sideways
-   like a compass needle instead of committing to a flower and going to it.
-   `aimHold` is that commitment, exactly as it is for a bat. */
+   The search is OCCASIONAL rather than per-frame, and a bee commits to what
+   it found: `aimHold` is that commitment, exactly as it is for a bat. A bee
+   that re-targeted whenever a nearer flower appeared would drift sideways like
+   a compass needle instead of going to a flower.
 
-static const int BEE_SEARCH_R    = 150;  /* how far a bee will look for work */
-static const int BEE_SEARCH_STEP = 2;    /* sampled, not exhaustive */
+   Where it goes and how it gets there is bee_route.cpp: a breadth-first field
+   per hive rooted at the door, which is also what picks the flower. */
+
 static const int BEE_GATHER      = 40;   /* frames spent on the flower */
 static const int BEE_ARRIVE      = 3;    /* cells that count as `there` */
 /* Roomier for the hive than for a flower. A flower is one cell and landing
    on it should mean landing on it; a hive is a fourteen-cell box the bee
    cannot enter, so `home` has to mean `at the door`. */
 static const int BEE_HOME_ARRIVE = 8;
+/* How long past its commitment a bee keeps trying for one flower before it
+   chooses again, in frames: a flower walled off since the field was built, or
+   one a bee keeps being knocked away from, is given up on after this. */
+static const int BEE_GIVE_UP     = 600;
 /* Soot needed to change species -- a fifth of a second of contact.
 
    It was 90, a second and a half, on the reasoning that brushing past a seam
@@ -2029,58 +2034,43 @@ static const int BEE_HOME_ARRIVE = 8;
    turns. */
 static const int BEE_SOOT_FULL   = 12;
 
-
-/* Can a bee see this from where it is? Sampled, like every other sight line in
-   this file. */
-static bool beeSees(const World& w, float cx, float cy, int tx, int ty) {
-    const float dx = (float)tx - cx, dy = (float)ty - cy;
-    for (int k = 1; k <= 10; ++k) {
-        const int sx = (int)(cx + dx * (float)k / 11.0f);
-        const int sy = (int)(cy + dy * (float)k / 11.0f);
-        if (sx < PLAY_X0 || sx > PLAY_X1 || sy < PLAY_Y0 || sy > PLAY_Y1) return false;
-        if (playerSolid(w, sx, sy)) return false;
-    }
-    return true;
+/* Which field a bee reads. A hive's colony shares its hive's, rooted at the
+   door. A bee with no hive has two of its own: one rooted where it is, to
+   choose a flower, and one rooted at that flower, to get to it -- there is no
+   door to share, and those are rare enough (a bee let out of a jar) that the
+   extra builds do not matter. */
+static int beeSlot(const Entity& e) { return (int)(&e - g_entities); }
+static int beeSearchKey(const Entity& e, bool hasHive) {
+    return hasHive ? e.home : MAX_DEVICES + beeSlot(e);
+}
+static int beeFlowerKey(const Entity& e) {
+    return MAX_DEVICES + MAX_ENTITIES + beeSlot(e);
 }
 
-/* Nearest flower it can SEE, falling back to nearest at all.
+/* Nearest flower the colony can actually REACH.
 
-   The fallback matters as much as the preference. Sight is the cheap stand-in
-   for reachability and it is wrong in both directions -- a flower round a
-   gentle corner is reachable and unseen, and one across a chasm is seen and
-   not reachable -- so it decides which flower to PREFER and never which to
-   forbid. A bee with only unseen flowers still goes and tries, and the local
-   avoidance in beeHeading gets it round most of what is in the way.
+   It used to be the nearest flower in a sampled scan, preferring ones the bee
+   could see. Two things were wrong with that, and both were measured in
+   tests/bee_routes.cpp:
 
-   What this fixes is fixation: without it a bee locks onto whatever is
-   nearest in a straight line, and if that one is behind a wall it will keep
-   choosing it every time it re-aims, forever, while a perfectly good flower
-   sits twenty cells further off. */
-static bool beeFindFlower(const World& w, Entity& e) {
-    const int cx = (int)e.centreX(), cy = (int)e.centreY();
-    int bestD2 = BEE_SEARCH_R * BEE_SEARCH_R + 1, bx = 0, by = 0;
-    int seenD2 = BEE_SEARCH_R * BEE_SEARCH_R + 1, sx2 = 0, sy2 = 0;
-    bool seen = false;
-    bool found = false;
-    for (int y = cy - BEE_SEARCH_R; y <= cy + BEE_SEARCH_R; y += BEE_SEARCH_STEP) {
-        if (y < PLAY_Y0 || y > PLAY_Y1) continue;
-        for (int x = cx - BEE_SEARCH_R; x <= cx + BEE_SEARCH_R; x += BEE_SEARCH_STEP) {
-            if (x < PLAY_X0 || x > PLAY_X1) continue;
-            if (w.at(x, y).mat != MAT_FLOWER) continue;
-            const int dx = x - cx, dy = y - cy, d2 = dx * dx + dy * dy;
-            /* The sight test runs only when a candidate is closer than the
-               best SEEN one so far, so it costs a handful of rays over the
-               whole scan rather than one per flower. */
-            if (d2 < seenD2 && beeSees(w, e.centreX(), e.centreY(), x, y)) {
-                seenD2 = d2; sx2 = x; sy2 = y; seen = true;
-            }
-            if (d2 >= bestD2) continue;
-            bestD2 = d2; bx = x; by = y; found = true;
-        }
-    }
-    if (seen)       { e.aimX = (float)sx2; e.aimY = (float)sy2; return true; }
-    if (found)      { e.aimX = (float)bx;  e.aimY = (float)by;  }
-    return found;
+     - The scan read every SECOND cell in both directions. A flower is one
+       cell, and a flower bed is one row of them, so whether a bee could see a
+       bed depended on the parity of where it happened to be hovering: three
+       times in four it saw nothing and milled around the hive. A five-bee
+       colony with an open bed ninety cells away made 10 round trips in six
+       thousand frames. Reading every cell of the search instead: 115.
+
+     - Sight is a poor stand-in for reachability. A flower round a corner is
+       reachable and unseen; one behind glass is seen and unreachable. The
+       field answers the real question, so a flower the colony cannot get to
+       is never chosen at all. */
+static bool beeFindFlower(const World& w, Entity& e, const Device* hive) {
+    float rx = e.centreX(), ry = e.centreY();
+    if (hive) hiveTarget(w, *hive, &rx, &ry);
+    int fx, fy;
+    if (!beeRouteFlower(w, beeSearchKey(e, hive != 0), rx, ry, &fx, &fy)) return false;
+    e.aimX = (float)fx; e.aimY = (float)fy;
+    return true;
 }
 
 /* What has settled on this bee this frame. Coal is the one that matters so
@@ -2183,6 +2173,51 @@ static void beeSteer(const World& w, Entity& e, float tx, float ty) {
     if (e.vx > 0.05f) e.facing = 1; else if (e.vx < -0.05f) e.facing = -1;
 }
 
+/* Fly toward (tx, ty) along the field rather than straight at it.
+
+   `toFlower` says which end of the route the bee is heading for: false is the
+   field's root -- the hive door, or for a bee with no hive, the flower its own
+   field is rooted at -- and true is a flower, out along the hive's field.
+
+   The waypoint is re-derived four frames in five from a cache, because working
+   it out walks the route and sweeps the body along a couple of dozen lines, and
+   a bee does not change its mind about a corner in a fifteenth of a second.
+   When the field cannot help -- outside it, or somewhere it never reached --
+   the bee steers straight at the target with local avoidance, which is what
+   it did before any of this and is never worse than it. */
+static float g_beeWayX[MAX_ENTITIES], g_beeWayY[MAX_ENTITIES];
+static float g_beeWayForX[MAX_ENTITIES], g_beeWayForY[MAX_ENTITIES];
+static u8    g_beeWayAge[MAX_ENTITIES];
+
+static void beeGo(const World& w, Entity& e, const Device* hive,
+                  float tx, float ty, bool toFlower) {
+    const int slot = beeSlot(e);
+    float wx = tx, wy = ty;
+    const bool sameTarget = g_beeWayForX[slot] == tx && g_beeWayForY[slot] == ty;
+    if (sameTarget && g_beeWayAge[slot] > 0) {
+        --g_beeWayAge[slot];
+        wx = g_beeWayX[slot]; wy = g_beeWayY[slot];
+    } else {
+        int key; float rx, ry; bool out = toFlower;
+        if (hive) {
+            key = e.home; hiveTarget(w, *hive, &rx, &ry);
+        } else {
+            /* No hive: the field is rooted at the target itself, so every trip
+               is `home`. */
+            key = beeFlowerKey(e); rx = tx; ry = ty; out = false;
+        }
+        float px, py;
+        if (beeRouteWaypoint(w, key, rx, ry, e.centreX(), e.centreY(),
+                             out, (int)tx, (int)ty, &px, &py)) {
+            wx = px; wy = py;
+        }
+        g_beeWayX[slot] = wx; g_beeWayY[slot] = wy;
+        g_beeWayForX[slot] = tx; g_beeWayForY[slot] = ty;
+        g_beeWayAge[slot] = 4;
+    }
+    beeSteer(w, e, wx, wy);
+}
+
 static void beeTick(World& w, Entity& e) {
     /* --- what it has been through ------------------------------------ */
     if (e.type == ENT_BEE) {
@@ -2226,7 +2261,7 @@ static void beeTick(World& w, Entity& e) {
        with no hive to go to just keeps flying; it has nowhere to be. */
     if (isNight() && hive) {
         float hx, hy; hiveTarget(w, *hive, &hx, &hy);
-        beeSteer(w, e, hx, hy);
+        beeGo(w, e, hive, hx, hy, false);
         const float dx = hx - e.centreX(), dy = hy - e.centreY();
         if (dx * dx + dy * dy <= (float)(BEE_HOME_ARRIVE * BEE_HOME_ARRIVE)) {
             if (e.phase == 1) hiveDeliver(g_devices[e.home], e.type == ENT_COAL_BEE);
@@ -2245,7 +2280,7 @@ static void beeTick(World& w, Entity& e) {
         /* Carrying. Home is a fixed point, so no searching is needed. */
         if (!hive) { e.phase = 0; e.aimHold = 0; return; }
         float hx, hy; hiveTarget(w, *hive, &hx, &hy);
-        beeSteer(w, e, hx, hy);
+        beeGo(w, e, hive, hx, hy, false);
         const float dx = hx - e.centreX(), dy = hy - e.centreY();
         if (dx * dx + dy * dy <= (float)(BEE_HOME_ARRIVE * BEE_HOME_ARRIVE)) {
             hiveDeliver(g_devices[e.home], e.type == ENT_COAL_BEE);
@@ -2265,8 +2300,14 @@ static void beeTick(World& w, Entity& e) {
         return;
     }
 
-    if (--e.aimHold <= 0) {
-        if (!beeFindFlower(w, e)) {
+    /* Committed to a flower that is still there: keep it. Re-choosing on the
+       clock would pick a different blossom of the same bed every second, and a
+       bee that changes its mind mid-flight wanders. */
+    const int ax = (int)e.aimX, ay = (int)e.aimY;
+    const bool onFlower = ax >= PLAY_X0 && ax <= PLAY_X1 && ay >= PLAY_Y0 && ay <= PLAY_Y1 &&
+                          w.at(ax, ay).mat == MAT_FLOWER;
+    if (--e.aimHold <= 0 && !(onFlower && e.aimHold > -BEE_GIVE_UP)) {
+        if (!beeFindFlower(w, e, hive)) {
             /* Nothing to work. Mill around home rather than wander off and be
                despawned by distance -- a hive whose flowers were cut down
                should still have its bees when you plant more. */
@@ -2278,7 +2319,12 @@ static void beeTick(World& w, Entity& e) {
         e.aimHold = 30 + (int)(rngNext() % 30u);
     }
 
-    beeSteer(w, e, e.aimX, e.aimY);
+    /* Out along the route to a flower; straight at a point when milling about. */
+    const int tax = (int)e.aimX, tay = (int)e.aimY;
+    const bool toFlower = tax >= PLAY_X0 && tax <= PLAY_X1 && tay >= PLAY_Y0 && tay <= PLAY_Y1 &&
+                          w.at(tax, tay).mat == MAT_FLOWER;
+    if (toFlower) beeGo(w, e, hive, e.aimX, e.aimY, true);
+    else          beeSteer(w, e, e.aimX, e.aimY);
 
     /* Arrived at something that is still a flower. Checked rather than
        assumed: the target was chosen up to a second ago and the world is
@@ -3674,6 +3720,7 @@ static void entTickMode(World& w, Player& fallbackPlayer, Inventory& fallbackInv
             }
         navUpdate(w, sx, sy, n);
     }
+    beeRouteTick();
 
     for (int i = 0; i < MAX_ENTITIES; ++i) {
         Entity& e = g_entities[i];
