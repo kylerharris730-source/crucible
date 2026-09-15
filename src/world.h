@@ -827,7 +827,12 @@ struct World {
     }
     bool blocksCell(int x, int y) const { return blockerAt(x, y) >= 0; }
 
-    void reset();
+    /* `rollTint` false skips the per-cell speckle -- 37.7 million random draws,
+       about 52 ms, a third of a load -- for the one caller that immediately
+       replaces every one of them: saveRead, which re-rolls tint from each cell's
+       index. Everything else wants the default; see the note inside reset on
+       why the draws are left alone for a new world. */
+    void reset(bool rollTint = true);
     void step();
     /* replace=false leaves whatever is already there alone, so you can pour
        into a scene without carving through it. Erasing ignores the flag. */

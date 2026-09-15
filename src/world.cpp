@@ -453,7 +453,7 @@ void World::addLiveWindow(int x0, int y0, int x1, int y1) {
     markLiveCore(*this, x0, y0, x1, y1);
 }
 
-void World::reset() {
+void World::reset(bool rollTint) {
     clearBlockBoxes();
     /* setLiveWindow() compares the chunk-rounded core to decide whether old
        fingers remain valid, so establish a known sentinel before its first
@@ -491,7 +491,8 @@ void World::reset() {
        37.7 million times, and where it leaves g_rng is where worldgen starts
        -- so moving it onto a lane would quietly re-roll every world from a
        different point in the stream. Nothing here runs in a stripe. */
-    for (int i = 0; i < SIM_W * SIM_H; ++i) cells[i].tint = (u8)rngBits(8);
+    if (rollTint)
+        for (int i = 0; i < SIM_W * SIM_H; ++i) cells[i].tint = (u8)rngBits(8);
 }
 
 /* A wood cell is about to become something else. See World::felled -- this is

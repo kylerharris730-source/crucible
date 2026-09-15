@@ -1265,11 +1265,14 @@ static const int SAVE_SLOTS = 10;
    -- and when the game is quit, since forgetting to save before closing is the
    single most likely way to lose an evening.
 
-   CALM. A save stops the game thread for a moment: measured at about 190 ms for
-   a freshly generated world, and more for a lived-in one. That is invisible
-   while walking and a real hitch in a boss fight, so a due autosave waits while
-   a boss is alive or a player is dead -- but only for AUTOSAVE_PATIENCE, so a
-   boss left alive in a corner cannot switch autosave off.
+   CALM. A save still stops the game thread for a moment. It was about 190 ms
+   when this was written, which is what the waiting below was for; save.cpp has
+   since cut it to under 40 ms on Windows -- two frames -- and about 70 in the
+   single-threaded browser build. Small enough that the rule is now polish
+   rather than necessity, and it stays because two dropped frames at the moment
+   a boss swings are still two too many. A due autosave waits while a boss is
+   alive or a player is dead -- but only for AUTOSAVE_PATIENCE, so a boss left
+   alive in a corner cannot switch autosave off.
 
    THE ONE RISK a single slot has, and why quitting needs a minute of play: the
    game starts every launch in a freshly generated world. A launch and quick
