@@ -5,7 +5,7 @@ chat, which meant it was re-derived from memory every session and quietly lost
 things. `HANDOFF.md` is **not** this file: it is gitignored scratch, is usually
 stale, and should not be trusted for release state.
 
-Released: **v0.6.2** (2026-09-14). `main` is level with it.
+Released: **v0.6.3** (2026-09-14). `main` is level with it.
 
 ---
 
@@ -25,6 +25,23 @@ Released: **v0.6.2** (2026-09-14). `main` is level with it.
       unset, so nothing renders.
 
 ## Ship it
+
+- [x] **Cut v0.6.3.** Tagged 2026-09-14, two commits past v0.6.2. A patch
+      release for multiplayer, and one convenience.
+
+      **The Emberwing Feather works on a joined client.** A client rebuilds its
+      body from every state packet and replays unacknowledged input on top, and
+      the packet never carried the air-jump memory -- so a jump held through a
+      fall re-fired the feather on every packet, which looked like flying while
+      the host kept pulling the body back down. Reproduced in
+      `tests/air_jump_replay.cpp` before the fix (the client drifted 27.6 cells
+      from the host) and exact after it. Network format changed again, so
+      everyone needs this build to play together.
+
+      **Shift-click** sends a stack where it belongs, as in Minecraft: armour,
+      trinkets and drones put themselves on, modules go into a drone, a chest
+      stores and returns, and everything else crosses between the hotbar and the
+      pack.
 
 - [x] **Cut v0.6.2.** Tagged 2026-09-14, thirty-one commits past v0.6.1. The
       wiki release, and the machines release.
