@@ -5,7 +5,7 @@ chat, which meant it was re-derived from memory every session and quietly lost
 things. `HANDOFF.md` is **not** this file: it is gitignored scratch, is usually
 stale, and should not be trusted for release state.
 
-Released: **v0.6.5** (2026-09-15). `main` is level with it.
+Released: **v0.6.6** (2026-09-15). `main` is level with it.
 
 ---
 
@@ -25,6 +25,14 @@ Released: **v0.6.5** (2026-09-15). `main` is level with it.
       unset, so nothing renders.
 
 ## Ship it
+
+- [x] **Cut v0.6.6.** Tagged 2026-09-15, one commit past v0.6.5.
+
+      **Titanium smelts in a fuel fire.** Ore and metal both melt at 201 C now,
+      under fuel fire's 202, where they were 208 and 205 and coke-only. Coal
+      still cannot reach it, and tungsten stays coke's alone. The smelting,
+      coke-retort and going-down guides, the Fuel and Coke tooltips and the
+      home page say so, and the wiki is regenerated.
 
 - [x] **Cut v0.6.5.** Tagged 2026-09-15, two commits past v0.6.4. Creatures.
 
