@@ -108,6 +108,11 @@ enum NetSlotContainer {
     NSLOT_CHEST
 };
 
+/* NACT_SLOT flag bits. Bit 0 is the right mouse button. NSLOT_SHIFT is a quick
+   move -- shift-click -- which sends a stack straight to where it belongs
+   instead of onto the cursor. See shiftClickPack in main.cpp. */
+static const u8 NSLOT_SHIFT = 2;
+
 struct NetAction {
     u32 sequence;
     PlayerId player;

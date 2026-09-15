@@ -2817,16 +2817,23 @@ static void screenExclusive(int keep) {
     }
 }
 
+/* The flags for an inventory slot click: the right button, and shift for a
+   quick move. Read at the moment of the click, which is when the modifier means
+   something to the person pressing it. */
+static u8 slotFlags(bool right) {
+    return (u8)((right ? 1 : 0) | ((GetKeyState(VK_SHIFT) & 0x8000) ? NSLOT_SHIFT : 0));
+}
+
 static bool handleChestClick(int mx, int my, bool right) {
     if (g_chestOpen < 0) return false;
     if (inRect(g_chestClose, mx, my)) { closeChest(); return true; }
     if (inRect(g_chestSlot, mx, my)) {
-        sendClientAction(NACT_SLOT, NSLOT_CHEST, 0, 0, right ? 1 : 0);
+        sendClientAction(NACT_SLOT, NSLOT_CHEST, 0, 0, slotFlags(right));
         return true;
     }
     for (int i = 0; i < INV_SLOTS; ++i)
         if (inRect(g_chestPack[i], mx, my)) {
-            sendClientAction(NACT_SLOT, NSLOT_PACK, (u8)i, 0, right ? 1 : 0);
+            sendClientAction(NACT_SLOT, NSLOT_PACK, (u8)i, 0, slotFlags(right));
             return true;
         }
     return true;
@@ -2920,7 +2927,7 @@ static bool handleCreativeClick(int mx, int my, bool remove) {
 
     if (g_signalPickerDevice < 0) for (int i = 0; i < INV_SLOTS; ++i)
         if (inRect(g_packRect[i], mx, my)) {
-            sendClientAction(NACT_SLOT, NSLOT_PACK, (u8)i, 0, remove ? 1 : 0);
+            sendClientAction(NACT_SLOT, NSLOT_PACK, (u8)i, 0, slotFlags(remove));
             /* Picking a tool up or putting one down changes whether the bench
                exists, which changes the panel height. */
             layoutCreative();
@@ -2929,14 +2936,14 @@ static bool handleCreativeClick(int mx, int my, bool remove) {
 
     if (g_signalPickerDevice < 0) for (int i = 0; i < EQ_COUNT; ++i)
         if (inRect(g_eqRect[i], mx, my)) {
-            sendClientAction(NACT_SLOT, NSLOT_EQUIP, (u8)i, 0, remove ? 1 : 0);
+            sendClientAction(NACT_SLOT, NSLOT_EQUIP, (u8)i, 0, slotFlags(remove));
             layoutCreative(); return true;
         }
 
     if (g_signalPickerDevice < 0) for (int d = 0; d < MAX_DRONES; ++d)
         for (int i = 0; i < Inventory::DRONE_MODULE_SLOTS_MAX; ++i)
             if (inRect(g_droneModuleRect[d][i], mx, my)) {
-                sendClientAction(NACT_SLOT, NSLOT_DRONE_MODULE, (u8)d, (u8)i, remove ? 1 : 0);
+                sendClientAction(NACT_SLOT, NSLOT_DRONE_MODULE, (u8)d, (u8)i, slotFlags(remove));
                 layoutCreative(); return true;
             }
 
@@ -4699,10 +4706,174 @@ static bool slotClickFor(ItemStack& cursor, ItemStack& slot, bool right) {
     const ItemStack swap = slot; slot = cursor; cursor = swap; return true;
 }
 
+/* --- shift-click ----------------------------------------------------------------
+   Asked for: "you should be able to shift click stuff on like in minecraft, like
+   armor and drones".
+
+   A quick move sends a stack straight to wherever it obviously belongs, without
+   carrying it on the cursor. It lives here, in the action the host applies, so
+   it is the same rule for everyone and a client predicts it with the same code.
+   NSLOT_SHIFT in the flags marks one; the right-button bit is ignored with it.
+
+   Every move either completes or leaves things exactly as they were. An item
+   is never overwritten, and a stack only leaves one place once there is room
+   for it in the other. */
+
+/* Move as much of `from` as fits into pack slots [lo, hi): onto matching stacks
+   first, then the first empty one. A stack carrying a tool instance cannot
+   merge -- it is one particular tool -- so it only ever moves whole into an
+   empty slot. Returns whether anything moved. */
+static bool quickMoveInto(Inventory& inv, ItemStack& from, int lo, int hi) {
+    if (from.empty()) return false;
+    const u32 before = from.count;
+    const u32 cap = (u32)imax(1, (int)ITEMS[from.item].maxStack);
+    if (!from.inst) {
+        for (int i = lo; i < hi && from.count; ++i) {
+            ItemStack& to = inv.slot[i];
+            if (to.empty() || to.item != from.item || to.inst || to.count >= cap) continue;
+            const u32 n = (u32)imin((int)from.count, (int)(cap - to.count));
+            to.count += n; from.count -= n;
+        }
+    }
+    for (int i = lo; i < hi && from.count; ++i) {
+        ItemStack& to = inv.slot[i];
+        if (!to.empty()) continue;
+        to = from;
+        from = ItemStack();
+    }
+    if (from.count == 0 && from.item != ITEM_NONE) from = ItemStack();
+    return from.empty() || from.count != before;
+}
+
+/* Which drone bay an equipment slot is, or -1. */
+static int droneBayOf(int eqSlot) {
+    return eqSlot == EQ_LIGHT_DRONE ? 0 : eqSlot == EQ_DRONE_A ? 1 :
+           eqSlot == EQ_DRONE_B ? 2 : eqSlot == EQ_DRONE_C ? 3 : -1;
+}
+
+static bool droneCarriesModules(const Inventory& inv, int eqSlot) {
+    const int bay = droneBayOf(eqSlot);
+    if (bay < 0) return false;
+    for (int m = 0; m < Inventory::DRONE_MODULE_SLOTS_MAX; ++m)
+        if (!inv.droneModule[bay][m].empty()) return true;
+    return false;
+}
+
+/* The equipment slot a pack stack should go into: an EMPTY one it fits first,
+   and only if every slot it fits is taken, the first of those to swap with. A
+   drone bay still carrying modules is never a swap target -- the ordinary click
+   refuses to lift that drone out, and a shortcut must not be a way round it.
+   The same order Inventory::equipFromPack settled on, for the reason it gives:
+   without it a second trinket replaced the first while the slot beside it sat
+   empty. */
+static int quickEquipTarget(const Inventory& inv, ItemId item) {
+    for (int i = 0; i < EQ_COUNT; ++i)
+        if (equipFits(item, i) && inv.droneBayUnlocked(i) && inv.equip[i].empty()) return i;
+    for (int i = 0; i < EQ_COUNT; ++i)
+        if (equipFits(item, i) && inv.droneBayUnlocked(i) && !droneCarriesModules(inv, i))
+            return i;
+    return -1;
+}
+
+static void shiftClickPack(PlayerSession& session, int index) {
+    Inventory& inv = session.inventory;
+    ItemStack& stack = inv.slot[index];
+    if (stack.empty()) return;
+
+    /* 1. A chest is open: the stack goes into it. A chest holds one material, so
+          anything else stays put rather than falling through to equipping --
+          with a chest on screen, shift-click means "store". */
+    if (session.openDevice >= 0 && session.openDevice < MAX_DEVICES) {
+        Device& d = g_devices[session.openDevice];
+        if (d.used && d.type == DEV_CHEST) {
+            if (stack.inst || stack.item >= MAT_COUNT) return;
+            if (d.count > 0 && d.mat != (u8)stack.item) return;
+            const int n = imin((int)stack.count, CHEST_CAP - (int)d.count);
+            if (n <= 0) return;
+            d.mat = (u8)stack.item; d.count += n; stack.count -= (u32)n;
+            if (!stack.count) stack = ItemStack();
+            return;
+        }
+    }
+
+    /* 2. Armour, trinkets, flight gear and drones: put it on. A swap hands the
+          old piece back into the very slot this one came from, so a full pack
+          can never lose it. Equipment is one to a slot, so a stack of several
+          sends one, and only into an empty slot -- there is nowhere to put the
+          old piece while the rest of the stack still fills this one. */
+    const int eq = quickEquipTarget(inv, stack.item);
+    if (eq >= 0) {
+        ItemStack& worn = inv.equip[eq];
+        if (stack.count > 1) {
+            if (!worn.empty()) return;
+            worn = stack; worn.count = 1; worn.inst = 0;
+            stack.count -= 1;
+        } else {
+            const ItemStack old = worn;
+            worn = stack;
+            stack = old;
+        }
+        return;
+    }
+
+    /* 3. A drone module: into the first drone with a free socket for it. */
+    if (ITEMS[stack.item].kind == ITEMK_DRONE_MODULE) {
+        static const int BAY_EQ[MAX_DRONES] = { EQ_LIGHT_DRONE, EQ_DRONE_A, EQ_DRONE_B, EQ_DRONE_C };
+        for (int bay = 0; bay < MAX_DRONES; ++bay) {
+            if (inv.equip[BAY_EQ[bay]].empty() || !inv.droneBayUnlocked(BAY_EQ[bay])) continue;
+            for (int m = 0; m < Inventory::DRONE_MODULE_SLOTS_MAX; ++m) {
+                ItemStack& socket = inv.droneModule[bay][m];
+                if (!socket.empty()) continue;
+                socket = stack; socket.count = 1; socket.inst = 0;
+                if (--stack.count == 0) stack = ItemStack();
+                return;
+            }
+        }
+        return;
+    }
+
+    /* 4. Anything else crosses between the hotbar and the rest of the pack. */
+    if (index < HOTBAR_SLOTS) quickMoveInto(inv, stack, HOTBAR_SLOTS, INV_SLOTS);
+    else                      quickMoveInto(inv, stack, 0, HOTBAR_SLOTS);
+}
+
+static void shiftClickSlot(PlayerSession& session, const NetAction& action) {
+    Inventory& inv = session.inventory;
+    switch (action.container) {
+    case NSLOT_PACK:
+        if (action.a < INV_SLOTS) shiftClickPack(session, action.a);
+        break;
+    case NSLOT_EQUIP:
+        /* Off, into the pack -- unless it is a drone still carrying modules,
+           which the ordinary click refuses to lift as well. */
+        if (action.a < EQ_COUNT && !inv.equip[action.a].empty() &&
+            !droneCarriesModules(inv, action.a))
+            quickMoveInto(inv, inv.equip[action.a], 0, INV_SLOTS);
+        break;
+    case NSLOT_DRONE_MODULE:
+        if (action.a < MAX_DRONES && action.b < Inventory::DRONE_MODULE_SLOTS_MAX)
+            quickMoveInto(inv, inv.droneModule[action.a][action.b], 0, INV_SLOTS);
+        break;
+    case NSLOT_CHEST:
+        if (session.openDevice >= 0 && session.openDevice < MAX_DEVICES) {
+            Device& d = g_devices[session.openDevice];
+            if (!d.used || d.type != DEV_CHEST || d.count <= 0) return;
+            ItemStack chest;
+            chest.item = (ItemId)d.mat; chest.count = (u32)d.count; chest.inst = 0;
+            quickMoveInto(inv, chest, 0, INV_SLOTS);
+            d.count = chest.empty() ? 0 : (i32)chest.count;
+            if (d.count == 0) d.mat = (u8)MAT_EMPTY;
+        }
+        break;
+    default: break;
+    }
+}
+
 static void applySlotAction(PlayerSession& session, const NetAction& action) {
     Inventory& inv = session.inventory;
     ItemStack& cursor = session.cursor;
     const bool right = (action.flags & 1) != 0;
+    if (action.flags & NSLOT_SHIFT) { shiftClickSlot(session, action); return; }
     switch (action.container) {
     case NSLOT_PACK:
         if (action.a < INV_SLOTS) slotClickFor(cursor, inv.slot[action.a], right);
@@ -9772,6 +9943,76 @@ static int runLocalCommandSmoke() {
         if (me.sandbox) return 287;
         if (fabsf(me.body.centreX() - (float)(VX + 200)) > 2.0f) return 288;
         if (!playerPresent(me)) return 289;
+        devClear();
+        g_world.reset();
+    }
+
+    /* --- shift-click ------------------------------------------------------------
+       Asked for: "you should be able to shift click stuff on like in minecraft,
+       like armor and drones". Driven through sendClientAction, the same route a
+       real click takes, so the flag, the queue and the host rule are all real. */
+    {
+        g_world.reset(); devClear(); playerSessionsReset();
+        g_survival = true; g_playerOn = true;
+        g_player.reset(400.0f, 400.0f); g_inv.clear(); g_drag = ItemStack();
+        Inventory& inv = g_inv;
+        const u8 SH = NSLOT_SHIFT;
+        const int P = HOTBAR_SLOTS + 3;          /* a main-pack slot */
+
+        /* Armour goes on, and comes off again. */
+        inv.slot[P].item = ITEM_STEEL_HELMET; inv.slot[P].count = 1;
+        sendClientAction(NACT_SLOT, NSLOT_PACK, (u8)P, 0, SH); processPlayerActions();
+        if (inv.equip[EQ_HEAD].item != ITEM_STEEL_HELMET || !inv.slot[P].empty()) return 290;
+
+        /* A second helmet swaps, and the first lands in the slot it came from. */
+        inv.slot[P].item = ITEM_TITANIUM_HELMET; inv.slot[P].count = 1;
+        sendClientAction(NACT_SLOT, NSLOT_PACK, (u8)P, 0, SH); processPlayerActions();
+        if (inv.equip[EQ_HEAD].item != ITEM_TITANIUM_HELMET ||
+            inv.slot[P].item != ITEM_STEEL_HELMET) return 291;
+
+        sendClientAction(NACT_SLOT, NSLOT_EQUIP, (u8)EQ_HEAD, 0, SH); processPlayerActions();
+        if (!inv.equip[EQ_HEAD].empty() || inv.countOf(ITEM_TITANIUM_HELMET) != 1) return 292;
+
+        /* Two trinkets fill two slots rather than the second replacing the first. */
+        inv.slot[P].item = ITEM_LENS;  inv.slot[P].count = 1;
+        inv.slot[P + 1].item = ITEM_RELAY; inv.slot[P + 1].count = 1;
+        sendClientAction(NACT_SLOT, NSLOT_PACK, (u8)P, 0, SH);
+        sendClientAction(NACT_SLOT, NSLOT_PACK, (u8)(P + 1), 0, SH);
+        processPlayerActions();
+        int trinkets = 0;
+        for (int e = 0; e < EQ_COUNT; ++e)
+            if (inv.equip[e].item == ITEM_LENS || inv.equip[e].item == ITEM_RELAY) ++trinkets;
+        if (trinkets != 2 || !inv.slot[P].empty() || !inv.slot[P + 1].empty()) return 293;
+
+        /* A drone goes on, a module goes into it, and the drone then refuses to
+           come off while it carries one -- as the ordinary click does. */
+        inv.slot[P].item = ITEM_LIGHT_DRONE; inv.slot[P].count = 1;
+        sendClientAction(NACT_SLOT, NSLOT_PACK, (u8)P, 0, SH); processPlayerActions();
+        if (inv.equip[EQ_LIGHT_DRONE].item != ITEM_LIGHT_DRONE) return 294;
+        inv.slot[P].item = ITEM_OVERCLOCK_CHIP; inv.slot[P].count = 1;
+        sendClientAction(NACT_SLOT, NSLOT_PACK, (u8)P, 0, SH); processPlayerActions();
+        if (inv.droneModule[0][0].item != ITEM_OVERCLOCK_CHIP || !inv.slot[P].empty()) return 295;
+        sendClientAction(NACT_SLOT, NSLOT_EQUIP, (u8)EQ_LIGHT_DRONE, 0, SH); processPlayerActions();
+        if (inv.equip[EQ_LIGHT_DRONE].item != ITEM_LIGHT_DRONE) return 296;
+
+        /* Anything else crosses between the hotbar and the pack. */
+        inv.slot[2].item = (ItemId)MAT_STONE; inv.slot[2].count = 30;
+        sendClientAction(NACT_SLOT, NSLOT_PACK, 2, 0, SH); processPlayerActions();
+        if (!inv.slot[2].empty() || inv.countOf((ItemId)MAT_STONE) != 30) return 297;
+
+        /* With a chest open, shift-click stores, and shift-clicking the chest
+           takes it all back. */
+        if (!devPlace(g_world, DEV_CHEST, 420, 400)) return 298;
+        Device* chest = devAt(420, 400);
+        if (!chest) return 298;
+        g_playerSessions[0].openDevice = (int)(chest - g_devices);
+        int stoneSlot = -1;
+        for (int i = 0; i < INV_SLOTS; ++i) if (inv.slot[i].item == (ItemId)MAT_STONE) stoneSlot = i;
+        sendClientAction(NACT_SLOT, NSLOT_PACK, (u8)stoneSlot, 0, SH); processPlayerActions();
+        if (chest->count != 30 || inv.countOf((ItemId)MAT_STONE) != 0) return 299;
+        sendClientAction(NACT_SLOT, NSLOT_CHEST, 0, 0, SH); processPlayerActions();
+        if (chest->count != 0 || inv.countOf((ItemId)MAT_STONE) != 30) return 300;
+        g_playerSessions[0].openDevice = -1;
         devClear();
         g_world.reset();
     }
