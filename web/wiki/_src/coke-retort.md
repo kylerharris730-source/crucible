@@ -7,8 +7,9 @@ on a lump of [Fuel](../materials/fuel.html).
 
 This is the most consequential process in the game and the least discoverable.
 [Coke Ember](../materials/coke-ember.html) burns at 215 °C, and it is the only
-thing that will smelt titanium and tungsten — everything past iron is on the
-far side of this page.
+thing you can make that will smelt tungsten — the top of the metal ladder is on
+the far side of this page. (Titanium does not need it: an ordinary
+[fuel fire](../materials/fuelfire.html) melts it.)
 
 ## You will need
 
@@ -39,9 +40,9 @@ far side of this page.
 ## When it works
 
 You open a cooled retort and it is full of coke. Burn that, and you have a
-215 °C bed — enough for [titanium](../materials/tiore.html) at 208 °C and
-[tungsten](../materials/wore.html) at 211 °C, which nothing else in the game
-reaches.
+215 °C bed — enough for [tungsten](../materials/wore.html) at 211 °C, which no
+fuel you can burn short of coke reaches, and a fast, comfortable margin over
+[titanium](../materials/tiore.html) at 201 °C.
 
 The rule underneath, exactly: a fuel cell converts when **no neighbouring cell
 is empty air and none is flame**, and it is at **125 °C or hotter**.

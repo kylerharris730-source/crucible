@@ -35,7 +35,7 @@ That makes one table the whole of this page.
 | [Gold](../materials/goldore.html) | 160 °C | [Gold Melt](../materials/goldmelt.html) | 120 °C |
 | [Copper](../materials/cuore.html) | 165 °C | [Molten Copper](../materials/moltcopp.html) | 140 °C |
 | [Iron](../materials/feore.html) | 190 °C | [Molten Iron](../materials/moltiron.html) | 160 °C |
-| [Titanium](../materials/tiore.html) | 208 °C | [Ti Melt](../materials/timelt.html) | 175 °C |
+| [Titanium](../materials/tiore.html) | 201 °C | [Ti Melt](../materials/timelt.html) | 175 °C |
 | [Tungsten](../materials/wore.html) | 211 °C | [W Melt](../materials/wmelt.html) | 195 °C |
 
 **What each fuel reaches:**
@@ -45,21 +45,25 @@ That makes one table the whole of this page.
 | [Wood Ember](../materials/wood-ember.html) | 130 °C | tin |
 | [Fumarole](../materials/fumarole.html) | 150 °C | tin |
 | [Ember](../materials/ember.html) (coal) | 185 °C | tin, gold, copper |
-| [Fire](../materials/fire.html) (leaves, cotton, rope) | 205 °C | + iron |
-| [Fuel Fire](../materials/fuelfire.html) | 202 °C | + iron |
+| [Fire](../materials/fire.html) (leaves, cotton, rope) | 205 °C | + iron, titanium |
+| [Fuel Fire](../materials/fuelfire.html) | 202 °C | + iron, titanium |
 | [Coke Ember](../materials/coke-ember.html) | 215 °C | **everything** |
 | [Lava](../materials/lava.html), [Brimfire](../materials/brimfire.html) | 215 °C | everything |
 
 Read the two tables against each other and the progression falls out of them.
 **Coal takes you to copper and stops.** Its embers sit at 185 °C and iron needs
 190 — five degrees short, and no amount of patience closes it. **Fuel fire at
-202 °C gets you iron and steel and stops**, because titanium needs 208. **Only
-coke ember at 215 °C reaches titanium and tungsten**, and coke is not something
-you find. You make it, in a sealed vessel, and nothing in the game tells you
-how — see [Coke, and the sealed retort](coke-retort.html).
+202 °C gets you iron, steel and titanium and stops**, because tungsten needs
+211. Titanium only just makes it — it melts at 201 °C, one degree above iron metal —
+so keep the fire packed right against the ore. The same fuel fire melts
+titanium *metal* too, so do not build a fuel furnace out of it. **Only coke
+ember at 215 °C reaches tungsten**, and coke is not something you find. You
+make it, in a sealed vessel, and nothing in the game tells you how — see
+[Coke, and the sealed retort](coke-retort.html).
 
 The cheap surprise: burning *leaves, cotton or rope* gives open fire at 205 °C,
-hotter than coal. It is the cheapest route to iron and it burns out fast.
+hotter than coal. It is the cheapest route to iron and titanium, and it burns
+out fast.
 
 ## When it does not
 

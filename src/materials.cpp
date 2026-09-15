@@ -829,14 +829,15 @@ MatInfo MATS[MAT_COUNT] = {
   { "GoldMelt",KIND_LIQUID, 236,   0,    0,   4,   0,   0,  0,  255,  1,   0, degC(150), degC(120), MAT_GOLD,    0, MAT_EMPTY,   0, MAT_EMPTY,   0,  0xFFE060, 0xE8C838, 0xFFE060, 0xE8C838, 0 },
 
   /* --- titanium -------------------------------------------------------------
-     205 to melt -- above iron's 200, below the byte's own ceiling -- so a
-     wood, coal, and ordinary fuel cannot smelt its 208 C ore. Coke can.
-     That is "you physically cannot build a furnace hot enough" expressed
-     honestly against a temperature scale that tops out at 215, rather than
-     invented as a number the byte cannot hold. */
-  { "TiOre",   KIND_POWDER, 180,  90,   40,   0,   0,   0,  0,  110,  1,   0,   0,    0,  MAT_EMPTY, degC(208), MAT_TITANIUM_MELT, 0, MAT_EMPTY,    0,  0x6C7078, 0x9098A4, 0x6C7078, 0x9098A4, 0 },
-  { "Titanium",KIND_STATIC, 215,   0,    0,   0,   0,   0,  0,  150,  0,   2,   0,    0,  MAT_EMPTY, degC(205), MAT_TITANIUM_MELT, 0, MAT_EMPTY,    0,  0xC8CCD2, 0xC8CCD2, 0xC8CCD2, 0xC8CCD2, 0 },
-  { "TiMelt",  KIND_LIQUID, 210,   0,    0,   3,   0,   0,  0,  150,  1,   0, degC(205), degC(175), MAT_TITANIUM, 0, MAT_EMPTY,  0, MAT_EMPTY,   0,  0xE8ECF0, 0xC8CCD2, 0xE8ECF0, 0xC8CCD2, 0 },
+     201 to melt, ore and metal alike: one degree above iron's 200 and one
+     below fuel fire's 202. It used to be 205 (208 for the ore), which made it
+     coke-only; changed on request -- "titanium should be meltable by fuel
+     too" -- so the coke retort now gates tungsten alone. Coal (185) still
+     cannot touch it. tests/coke_retort.cpp measures a fuel furnace smelting
+     the ore and melting the metal. */
+  { "TiOre",   KIND_POWDER, 180,  90,   40,   0,   0,   0,  0,  110,  1,   0,   0,    0,  MAT_EMPTY, degC(201), MAT_TITANIUM_MELT, 0, MAT_EMPTY,    0,  0x6C7078, 0x9098A4, 0x6C7078, 0x9098A4, 0 },
+  { "Titanium",KIND_STATIC, 215,   0,    0,   0,   0,   0,  0,  150,  0,   2,   0,    0,  MAT_EMPTY, degC(201), MAT_TITANIUM_MELT, 0, MAT_EMPTY,    0,  0xC8CCD2, 0xC8CCD2, 0xC8CCD2, 0xC8CCD2, 0 },
+  { "TiMelt",  KIND_LIQUID, 210,   0,    0,   3,   0,   0,  0,  150,  1,   0, degC(201), degC(175), MAT_TITANIUM, 0, MAT_EMPTY,  0, MAT_EMPTY,   0,  0xE8ECF0, 0xC8CCD2, 0xE8ECF0, 0xC8CCD2, 0 },
 
   /* --- tungsten ---------------------------------------------------------
      213 to melt: two below the absolute ceiling of the temperature byte,

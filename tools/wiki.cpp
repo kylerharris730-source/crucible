@@ -777,7 +777,7 @@ static void writeReaction(FILE* f, const char* verb, u8 partner,
 
    The fuel-to-coke chain is the whole reason this exists, and it is not a
    marginal case: it is the most consequential process in the game -- coke
-   ember at 215 C is the only thing that smelts titanium and tungsten -- and
+   ember at 215 C is the only thing that smelts tungsten -- and
    before this the Fuel page linked only to Fuel Fire. A reader could walk
    Coke to Coke Ember by clicking and could never get from Fuel to Coke at
    all, because that step is the retort rule and a retort is not an item, not

@@ -50,8 +50,9 @@ either column — the step between layers is visible as a number.
 which is the thing everyone does once.
 
 **You cannot find the ore you came for.** Ore is layer-dependent. Titanium and
-tungsten are deep, and they also need [coke](coke-retort.html) to smelt once you
-have them — check you can actually use a thing before you go a long way for it.
+tungsten are deep. Titanium smelts in a [fuel fire](smelting.html), but tungsten
+also needs [coke](coke-retort.html) once you have it — check you can actually
+use a thing before you go a long way for it.
 
 ## Next
 

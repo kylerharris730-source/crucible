@@ -2393,8 +2393,8 @@ void initItems() {
     ITEMS[ITEM_COAL_BEE].description = "A bee that has been through coal. Its wax and honey boil back down into coal.";
     ITEMS[ITEM_HONEY_POTION].description = "Thick and sweet. Restores more than bread does.";
     ITEMS[ITEM_FLOWER_SEED].description = "Drop onto dirt or grass to grow flowers. Bees visit the blooms near their hive.";
-    ITEMS[MAT_FUEL].description = "Burns at 202 C. Pack a closed retort and heat above 125 C without air or flame contact: two Fuel make one Coke and one Coke Gas. Vent gas through a gas sieve.";
-    ITEMS[MAT_COKE].description = "Retort-made fuel. Burns at 215 C for titanium and tungsten. Cool before opening the retort; hot coke exposed to air ignites.";
+    ITEMS[MAT_FUEL].description = "Burns at 202 C, enough to smelt iron and titanium. Pack a closed retort and heat above 125 C without air or flame contact: two Fuel make one Coke and one Coke Gas. Vent gas through a gas sieve.";
+    ITEMS[MAT_COKE].description = "Retort-made fuel. Burns at 215 C, hot enough for tungsten. Cool before opening the retort; hot coke exposed to air ignites.";
     ITEMS[MAT_COKE_GAS].description = "Flammable retort byproduct. Route through gas sieves and burn for heat; prevent flame from reaching your retort.";
     ITEMS[ITEM_BROOD_CALL].description = "Consume to summon the Brood Queen nearby.";
 

@@ -56,10 +56,13 @@ static int furnace(u8 ore, u8 fire) {
 }
 int main() {
     initMaterials(); initItems();
-    check(MATS[MAT_FUELFIRE].spawnTemp<MATS[MAT_TITANIUM_ORE].boilTemp,"fuel is below titanium threshold");
+    // Titanium was coke-only; on request it is "meltable by fuel too", so fuel
+    // fire now clears both the ore and the metal. Tungsten stays coke's.
+    check(MATS[MAT_FUELFIRE].spawnTemp>MATS[MAT_TITANIUM_ORE].boilTemp,"fuel clears the titanium ore threshold");
+    check(MATS[MAT_FUELFIRE].spawnTemp>MATS[MAT_TITANIUM].boilTemp,"and titanium metal's melting point");
     check(MATS[MAT_FUELFIRE].spawnTemp<MATS[MAT_TUNGSTEN_ORE].boilTemp,"fuel is below tungsten threshold");
     check(MATS[MAT_COKE_EMBER].spawnTemp>MATS[MAT_TUNGSTEN_ORE].boilTemp,"coke can reach both top ore thresholds");
-    check(MATS[MAT_FIRE].spawnTemp<MATS[MAT_TITANIUM_ORE].boilTemp,"recovered gas fire stays below titanium smelting heat");
+    check(MATS[MAT_FIRE].spawnTemp<MATS[MAT_TUNGSTEN_ORE].boilTemp,"recovered gas fire stays below tungsten smelting heat");
     retort(160,false);
     for(int f=0;f<1000;++f) { heatWalls(160); g_world.step(); }
     const int coke=count(MAT_COKE), gas=count(MAT_COKE_GAS), fuel=count(MAT_FUEL);
@@ -110,7 +113,10 @@ int main() {
     }
     check(escaped,"coke gas escapes through a gas-sieve outlet");
     check(furnace(MAT_IRON_ORE,MAT_FUELFIRE)>0,"ordinary fuel still smelts iron");
-    check(furnace(MAT_TITANIUM_ORE,MAT_FUELFIRE)==0,"ordinary fuel cannot smelt titanium");
+    check(furnace(MAT_TITANIUM_ORE,MAT_FUELFIRE)>=20,"ordinary fuel smelts titanium ore");
+    // Slower than the ore -- measured 16/25 in the window, where the ore is 24
+    // -- because solid metal conducts heat onward into the furnace wall.
+    check(furnace(MAT_TITANIUM,MAT_FUELFIRE)>=10,"and melts titanium metal");
     check(furnace(MAT_TUNGSTEN_ORE,MAT_FUELFIRE)==0,"ordinary fuel cannot smelt tungsten");
     check(furnace(MAT_TITANIUM_ORE,MAT_COKE_EMBER)>0,"coke furnace smelts titanium");
     check(furnace(MAT_TUNGSTEN_ORE,MAT_COKE_EMBER)>0,"coke furnace smelts tungsten");
