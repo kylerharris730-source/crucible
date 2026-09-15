@@ -1267,8 +1267,8 @@ static const int SAVE_SLOTS = 10;
 
    CALM. A save still stops the game thread for a moment. It was about 190 ms
    when this was written, which is what the waiting below was for; save.cpp has
-   since cut it to under 40 ms on Windows -- two frames -- and about 70 in the
-   single-threaded browser build. Small enough that the rule is now polish
+   since cut it to under 40 ms on Windows -- two frames. The browser build is
+   single-threaded and slower; it has not been measured. Small enough that the rule is now polish
    rather than necessity, and it stays because two dropped frames at the moment
    a boss swings are still two too many. A due autosave waits while a boss is
    alive or a player is dead -- but only for AUTOSAVE_PATIENCE, so a boss left
