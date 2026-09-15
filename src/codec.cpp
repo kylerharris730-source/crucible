@@ -23,6 +23,13 @@ void codecPlayer(Blob& b, Player& p) {
     codecTemp(b, p.resist);
     b.boolf(p.swimming); b.boolf(p.underwater); b.intf(p.breath);
     b.boolf(p.climbing); b.f32f(p.speedMul); b.f32f(p.lastFall);
+    /* The air-jump memory. A joined client rebuilds its body from this every
+       state packet and replays unacknowledged input on top; without these two
+       the rebuilt body had never pressed jump and had every air jump left, so a
+       jump held through a fall re-fired the Emberwing Feather on every packet.
+       Reported as "glitchy and triggers a lot and it looks like theyre flying".
+       See tests/air_jump_replay.cpp. */
+    b.intf(p.airJumpsUsed); b.boolf(p.jumpHeld);
 }
 
 void codecItemStack(Blob& b, ItemStack& s) {

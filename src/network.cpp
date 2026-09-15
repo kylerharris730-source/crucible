@@ -34,7 +34,7 @@
 
 static const u32 NET_MAGIC = 0x54454E43u; /* CNET on little endian */
 static const u32 NET_PROTOCOL = 14;       /* + sandbox, palette machine and view centre on commands */
-static const u32 NET_STATE_SCHEMA = 17;   /* + sandbox, so a player with the character off is not drawn */
+static const u32 NET_STATE_SCHEMA = 18;   /* + air-jump memory, so the feather does not re-fire on a client */
 static const u32 NET_MAX_PACKET = 256u * 1024u * 1024u;
 
 enum PacketType {
