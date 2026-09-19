@@ -20,9 +20,12 @@
    did on nearly every frame, the tallest sixteen. A boiling surface is froth,
    and a splash three or four cells high among the bubbles is fair; a column
    of five is a spike. And the lift must still work where it is right: steam
-   under a one-wide pipe of water still pushes the water up the pipe. (Five
-   cells, the same five as before this change -- the fast path's own reach in
-   that geometry, not a new limit.)
+   under a one-wide pipe of water pushes the water up and out of the pipe.
+   That one used to stall five cells up -- steam got in between the water
+   parcels, and the lift only looked through unbroken liquid, so after one
+   push the steam could only bubble up through the water while the water
+   trickled down into the boiler. A slug in a pipe now lifts whole, bubbles
+   and all (liftOutlet in world.cpp), and clears the 60-cell pipe.
 
    Compile with every source file except main.cpp. No socket, no window. */
 
@@ -95,7 +98,8 @@ int main() {
     }
 
     /* The pipe: a one-wide shaft of water 20 tall over a sealed steam
-       chamber. Pressure has nowhere to go but up the pipe. */
+       chamber, 60 cells of empty pipe above it. Pressure has nowhere to go
+       but up the pipe. */
     {
         w.reset();
         const int X = 1200, BOTTOM = 3400, TOP = BOTTOM - 30;
@@ -117,7 +121,7 @@ int main() {
                 if (w.at(X, y).mat == MAT_WATER) { highest = y; break; }
         }
         printf("  pipe: water top rose %d cells\n", startTop - highest);
-        if (startTop - highest < 5) {
+        if (startTop - highest < 40) {
             fprintf(stderr, "steam under a pipe no longer lifts the water up it (%d cells)\n",
                     startTop - highest);
             ++failures;
@@ -125,6 +129,6 @@ int main() {
     }
 
     if (failures) return 1;
-    printf("PASS: boiling does not grow spikes; a pipe still lifts\n");
+    printf("PASS: boiling does not grow spikes; steam drives water up a pipe\n");
     return 0;
 }

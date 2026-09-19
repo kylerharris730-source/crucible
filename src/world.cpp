@@ -1932,6 +1932,63 @@ void World::updateLiquid(Lane& L, int x, int y) {
    and powder paths still move one conserved volume at a time. If the parcel is
    sealed, its excess remains in the cell and costs nothing once equalized;
    changing a boundary dirties the neighbourhood and wakes it again. */
+/* The open row a straight column above (x, y) can be lifted into, or -1.
+
+   The column is liquid with gas mixed through it -- a slug, not only an
+   unbroken run of liquid. It used to stop at the first gas cell, and that
+   stopped every pipe after the first lift: steam that got into the pipe sat
+   between the water parcels, the lift could no longer see the air, and from
+   then on the steam could only bubble up through the water one cell at a
+   time while the water trickled down past it into the boiler. A slug moves
+   as a whole, its bubbles with it.
+
+   Only where the slug is CONFINED, though: a gas cell belongs to the column
+   only if its row is a channel no wider than GAS_PRESSURE_PIPE_W, fluid all
+   the way across between solid on both sides -- a pipe, a shaft.
+   Letting bubbles through anywhere was tried and turned a boiling pool into
+   upright stripes of water and steam -- every column of the foam was lifted
+   as a slug -- and made the inside of a broad steam blob count as vented,
+   so its pressure stopped routing to the skin (tests/live_grace_test). In
+   open water a bubble still ends the column, as it always did.
+
+   The top of the column must be LIQUID, with the open cell right above it:
+   a column that tops out in gas has nothing to push. Anything that is
+   neither liquid nor gas ends the column. */
+static const int GAS_PRESSURE_PIPE_W = 8;
+static int liftOutlet(const Cell* cells, int x, int y) {
+    const auto solid = [&](int nx, int ny) {
+        if (nx < PLAY_X0 || nx > PLAY_X1) return true;
+        const u8 m = cells[ny * SIM_W + nx].mat;
+        const u8 k = MATS[m].kind;
+        return m != MAT_EMPTY && k != KIND_LIQUID && k != KIND_GAS;
+    };
+    /* Fluid cells from x to the wall on each side; open air is not fluid
+       here, so a channel with a gap in its wall is not a channel. */
+    const auto piped = [&](int ny) {
+        int width = 1;
+        for (int side = -1; side <= 1; side += 2) {
+            int nx = x + side;
+            for (;; nx += side) {
+                if (solid(nx, ny)) break;
+                const u8 m = cells[ny * SIM_W + nx].mat;
+                if (m == MAT_EMPTY || ++width > GAS_PRESSURE_PIPE_W) return false;
+            }
+        }
+        return true;
+    };
+    bool topLiquid = false;
+    for (int d = 1; d <= GAS_PRESSURE_VERTICAL_REACH && y - d >= PLAY_Y0; ++d) {
+        const int ny = y - d;
+        const u8 mat = cells[ny * SIM_W + x].mat;
+        if (mat == MAT_EMPTY) return topLiquid ? ny : -1;
+        const u8 kind = MATS[mat].kind;
+        if (kind == KIND_LIQUID) topLiquid = true;
+        else if (kind == KIND_GAS && piped(ny)) topLiquid = false;
+        else return -1;
+    }
+    return -1;
+}
+
 bool World::updateGasPressure(Lane& L, int x, int y) {
     const int i = y * SIM_W + x;
     Cell& c = cells[i];
@@ -2013,14 +2070,10 @@ bool World::updateGasPressure(Lane& L, int x, int y) {
     };
 
     /* Fast path: the overwhelmingly common boiler geometry is liquid directly
-       above the gas with open air above that column. Shift from the surface
-       downward so no parcel is overwritten before it has been copied. */
-    int outletY = -1;
-    for (int d = 1; d <= GAS_PRESSURE_VERTICAL_REACH && y - d >= PLAY_Y0; ++d) {
-        const u8 mat = cells[(y - d) * SIM_W + x].mat;
-        if (mat == MAT_EMPTY) { outletY = y - d; break; }
-        if (MATS[mat].kind != KIND_LIQUID) break;
-    }
+       above the gas with open air above that column -- see liftOutlet. Shift
+       from the surface downward so no parcel is overwritten before it has
+       been copied. */
+    const int outletY = liftOutlet(cells, x, y);
     if (outletY >= 0 && !blocksCell(x, outletY)) {
         const int wanted = imin((int)excess, GAS_PRESSURE_EXPANSION_BURST);
         int room = 0;
@@ -2186,13 +2239,12 @@ bool World::updateGasPressure(Lane& L, int x, int y) {
            labels the sides and bottom of a Steam blob as outlets even though
            neither can create volume; shared pressure then piles up there and
            waits for bubbles to crawl upward. A straight liquid column counts
-           only when it actually reaches open space within the lift bound. Bent
-           local outlets are still handled by the bounded liquid search below. */
-        for (int d = 1; d <= GAS_PRESSURE_VERTICAL_REACH && gy - d >= PLAY_Y0; ++d) {
-            const int ny = gy - d;
-            const Cell& n = cells[ny * SIM_W + gx];
-            if (n.mat == MAT_EMPTY) return !blocksCell(gx, ny);
-            if (MATS[n.mat].kind != KIND_LIQUID) break;
+           only when it actually reaches open space within the lift bound -- the
+           same column the fast path lifts, see liftOutlet. Bent local outlets
+           are still handled by the bounded liquid search below. */
+        {
+            const int oy = liftOutlet(cells, gx, gy);
+            if (oy >= 0) return !blocksCell(gx, oy);
         }
 
         /* A non-reactive powder face is relief only when the complete short
