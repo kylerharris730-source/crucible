@@ -129,7 +129,11 @@ const u8* lightRow(int vy) {
     static int cached = -1, cachedX = -1, cachedY = -1;
     if (cached == vy && cachedX == g_lightViewX && cachedY == g_lightViewY) return row;
     cached = vy; cachedX = g_lightViewX; cachedY = g_lightViewY;
+    lightRowInto(vy, row);
+    return row;
+}
 
+void lightRowInto(int vy, u8* row) {
     const int fy = lightBiasedY(vy);
     int sy = fy >> (LIGHT_SHIFT + 1);
     const int ty = fy - (sy << (LIGHT_SHIFT + 1));
@@ -158,7 +162,6 @@ const u8* lightRow(int vy) {
         if (l < floorL) l = floorL;
         row[vx] = (u8)l;
     }
-    return row;
 }
 
 /* --- reading the world at sample resolution ---------------------------------
@@ -786,6 +789,40 @@ void lightAddDynamic(int wx, int wy, u8 level) {
     g_dyn.push_back(source);
 }
 
+/* --- the world, read into the sample grid on the thread pool ---------------
+   sampleBlock reads a LIGHT_CELL x LIGHT_CELL block of cells for every sample
+   of the field, and was the largest single cost in the light solve: sampled on
+   steamprof's lava-into-water, about 8% of the whole program, all of it on the
+   main thread while the sim's workers sat idle. Every sample depends on
+   nothing but the world, so the gather's reading half is done here first, in
+   bands of rows across the pool, and the gather itself -- which carries the
+   sun rays row to row and so cannot be split -- reads the results back. The
+   same arithmetic in the same order per sample, so the field is identical. */
+static u8 g_sEmit[LIGHT_W * LIGHT_H];
+static u8 g_sAtt[LIGHT_W * LIGHT_H];
+static u8 g_sSolid[LIGHT_W * LIGHT_H];
+static u8 g_sSheer[LIGHT_W * LIGHT_H];
+
+struct SampleJob {
+    const World* w;
+    int wx0, wy0, lx0, lx1, gy0, gy1;
+};
+static const int SAMPLE_BAND_ROWS = 8;
+
+static void sampleBand(void* ctx, int band) {
+    const SampleJob& j = *(const SampleJob*)ctx;
+    const int y0 = j.gy0 + band * SAMPLE_BAND_ROWS;
+    const int y1 = imin(j.gy1, y0 + SAMPLE_BAND_ROWS - 1);
+    for (int ly = y0; ly <= y1; ++ly) {
+        const int wy = j.wy0 + (ly << LIGHT_SHIFT);
+        if (wy < 0 || wy >= SIM_H) continue;   /* the gather fills these rows itself */
+        const int row = ly * LIGHT_W;
+        for (int lx = j.lx0; lx < j.lx1; ++lx)
+            sampleBlock(*j.w, j.wx0 + (lx << LIGHT_SHIFT), wy, &g_sEmit[row + lx],
+                        &g_sAtt[row + lx], &g_sSolid[row + lx], &g_sSheer[row + lx]);
+    }
+}
+
 static void lightSolve(const World& w, int wx0, int wy0, LRect wr) {
 
     /* The horizontal span actually inside the world, in SAMPLES. */
@@ -869,6 +906,10 @@ static void lightSolve(const World& w, int wx0, int wy0, LRect wr) {
        whatever wr says; without them, only the rows wr covers. */
     const int gy0 = anySky ? 0 : imax(0, wr.y0);
     const int gy1 = anySky ? LIGHT_H - 1 : imin(LIGHT_H - 1, wr.y1);
+    if (gy1 >= gy0 && lx1 > lx0) {
+        SampleJob job = { &w, wx0, wy0, lx0, lx1, gy0, gy1 };
+        simParallel((gy1 - gy0 + SAMPLE_BAND_ROWS) / SAMPLE_BAND_ROWS, sampleBand, &job);
+    }
 
     for (int ly = gy0; ly <= gy1; ++ly) {
         const int wy = wy0 + (ly << LIGHT_SHIFT);
@@ -917,8 +958,8 @@ static void lightSolve(const World& w, int wx0, int wy0, LRect wr) {
                down to the region being solved -- the whole reason a patch
                underground is so much cheaper than one at the surface. */
             for (int lx = imax(lx0, wa); lx <= imin(lx1 - 1, wb); ++lx) {
-                u8 emit, att, solid, sheer;
-                sampleBlock(w, wx0 + (lx << LIGHT_SHIFT), wy, &emit, &att, &solid, &sheer);
+                const int si = ly * LIGHT_W + lx;
+                const u8 emit = g_sEmit[si], att = g_sAtt[si], solid = g_sSolid[si];
                 L[lx] = emit;
                 A[lx] = att;
                 S[lx] = 0;
@@ -933,8 +974,9 @@ static void lightSolve(const World& w, int wx0, int wy0, LRect wr) {
         for (int r = 0; r < SUN_RAYS; ++r) off[r] = (RAY_HALF[r] * ly) / 2;
 
         for (int lx = lx0; lx < lx1; ++lx) {
-            u8 emit, att, solid, blockSheer;
-            sampleBlock(w, wx0 + (lx << LIGHT_SHIFT), wy, &emit, &att, &solid, &blockSheer);
+            const int si = ly * LIGHT_W + lx;
+            const u8 emit = g_sEmit[si], att = g_sAtt[si], solid = g_sSolid[si];
+            const u8 blockSheer = g_sSheer[si];
             u8 lit = emit;
             A[lx] = att;
             u8 sky = 0;

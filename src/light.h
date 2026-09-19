@@ -301,6 +301,12 @@ u8 lightAtWorld(int wx, int wy);
    row is built once and cached; calling it for the row being drawn costs one
    pass over 512 bytes rather than a bilinear sample per pixel. */
 const u8* lightRow(int vy);
+/* The same row, written into the caller's VIEW_CELLS_W bytes. lightRow hands
+   back one shared static buffer, which is only safe from one thread: the
+   renderer draws row bands on the sim's pool, and two bands asking lightRow
+   for different rows at once got each other's light. Reads nothing but the
+   finished light field, so any number of threads may call it together. */
+void lightRowInto(int vy, u8* row);
 
 /* --- what you have already seen --------------------------------------------
 

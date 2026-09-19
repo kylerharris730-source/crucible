@@ -107,7 +107,11 @@ static int renderRows(const RenderJob& j, int vy0, int vy1) {
     for (int vy = vy0; vy < vy1; ++vy) {
         const int wy = camY + vy;
         u32* row = out + vy * cellsW;
-        const u8* lrow = lit ? lightRow(vy) : 0;
+        /* Into this band's own buffer: lightRow's is shared, and bands run
+           at once on the pool -- see lightRowInto. */
+        u8 lrowBuf[VIEW_CELLS_W];
+        const u8* lrow = 0;
+        if (lit) { lightRowInto(vy, lrowBuf); lrow = lrowBuf; }
 
         if (wy < 0 || wy >= SIM_H) {
             for (int vx = 0; vx < cellsW; ++vx) row[vx] = VOID_COLOUR;
