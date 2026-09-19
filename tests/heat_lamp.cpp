@@ -228,15 +228,24 @@ int main() {
         g_world.setLiveWindow(LX - 40, LY - 40, LX + 40, LY + 40);
         for (int x = LX - 10; x <= LX + 10; ++x) g_world.setCell(x, LY + 1, MAT_STONE);
         g_world.setCell(LX, LY, MAT_BEESWAX);
+        /* The wax is FOLLOWED rather than watched at one cell. Molten wax is a
+           liquid, and since the fluid pass (FLUID_SUBSTEPS in world.h) it can
+           take a step sideways before the full pass gets to light it, so it
+           catches one cell over from where it started. What this checks is
+           that held wax ignites, not where. */
         bool burned = false;
         for (int f = 0; f < 600 && !burned; ++f) {
-            if (g_world.at(LX, LY).mat == MAT_BEESWAX ||
-                g_world.at(LX, LY).mat == MAT_BEESWAX_MELT) {
-                g_world.temp[LY * SIM_W + LX] = (u8)(MATS[MAT_BEESWAX].igniteTemp + 20);
-                g_world.dirtyPoint(LX, LY);
-            }
+            for (int y = LY - 2; y <= LY; ++y)
+                for (int x = LX - 10; x <= LX + 10; ++x) {
+                    const u8 m = g_world.at(x, y).mat;
+                    if (m != MAT_BEESWAX && m != MAT_BEESWAX_MELT) continue;
+                    g_world.temp[y * SIM_W + x] = (u8)(MATS[MAT_BEESWAX].igniteTemp + 20);
+                    g_world.dirtyPoint(x, y);
+                }
             g_world.step();
-            if (g_world.at(LX, LY).mat == MAT_WAX_EMBER) burned = true;
+            for (int y = LY - 2; y <= LY; ++y)
+                for (int x = LX - 10; x <= LX + 10; ++x)
+                    if (g_world.at(x, y).mat == MAT_WAX_EMBER) burned = true;
         }
         check(burned, "wax held at its ignition point becomes a wax ember");
     }

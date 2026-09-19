@@ -93,7 +93,14 @@ int main() {
         g_world.temp[Y*SIM_W+X]-TEMP_OFFSET,g_world.temp[Y*SIM_W+X-5]-TEMP_OFFSET);
     check(count(MAT_COKE)>0,"external coal heat through iron walls cooks a cold batch");
     reset();
-    g_world.setCell(X,Y+1,MAT_CERAMIC); g_world.setCell(X,Y,MAT_FUEL);
+    // A ceramic cup, so the fuel cannot slide off its one cell: fuel is a
+    // liquid, and since the fluid pass (FLUID_SUBSTEPS) it moves before the
+    // full pass lights it. The corners matter -- without them it slipped out
+    // diagonally between the side and the floor. The top stays open: this is
+    // the EXPOSED case.
+    for(int d=-1;d<=1;++d) g_world.setCell(X+d,Y+1,MAT_CERAMIC);
+    g_world.setCell(X-1,Y,MAT_CERAMIC); g_world.setCell(X+1,Y,MAT_CERAMIC);
+    g_world.setCell(X,Y,MAT_FUEL);
     g_world.temp[Y*SIM_W+X]=degC(160); g_world.step();
     check(g_world.at(X,Y).mat==MAT_FUELFIRE,"exposed hot fuel burns rather than coking");
     reset();

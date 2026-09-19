@@ -63,6 +63,14 @@ static Device* buildApiary(int flowerOffset) {
 
     for (int x = HX - 300; x <= HX + 300; ++x)
         g_world.setCell(x, HY + DEV_H / 2 + 1, MAT_STONE);
+    /* A curb at each end, so the honey that flows off is still on the floor
+       when countMat looks for it. Liquids move twice a frame since the fluid
+       pass (FLUID_SUBSTEPS in world.h), and over a long run a film of honey
+       reached both ends of the floor and dropped out of the counted area. */
+    for (int y = HY + DEV_H / 2 - 3; y <= HY + DEV_H / 2; ++y) {
+        g_world.setCell(HX - 300, y, MAT_STONE);
+        g_world.setCell(HX + 300, y, MAT_STONE);
+    }
 
     if (!devPlace(g_world, DEV_HIVE, HX, HY)) return 0;
     Device* d = devAt(HX, HY);

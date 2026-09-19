@@ -588,7 +588,12 @@ int main() {
     devClear();
     w.reset();
     w.setLiveWindow(380, 380, 450, 450);
+    /* A one-cell shaft, so the swap is the only move either parcel has. On an
+       open stone cell the glowfluid, having sunk, slid straight off the edge on
+       the same step once liquids got a second move per step (FLUID_SUBSTEPS) --
+       which is the sink working, not failing. */
     w.setCell(410, 401, MAT_STONE);
+    for (int y = 398; y <= 401; ++y) { w.setCell(409, y, MAT_STONE); w.setCell(411, y, MAT_STONE); }
     w.setCell(410, 400, MAT_WATER);
     w.setCell(410, 399, MAT_GLOWFLUID);
     w.step();
@@ -884,14 +889,25 @@ int main() {
     }
     w.setCell(500, 500, MAT_WATER);
     for (int y = 501; y <= 503; ++y) w.setCell(500, y, MAT_SIEVE);
+    /* Where in the mesh rather than which cell: the water enters on the fluid
+       pass (FLUID_SUBSTEPS) and the occupant then advances on the full pass,
+       so one step can leave it a cell deeper than the entry. */
     w.step();
-    if (w.at(500, 500).mat != MAT_EMPTY || w.at(500, 501).moisture != MAT_WATER) {
-        fprintf(stderr, "water did not enter sieve occupant slot\n"); return 45;
+    {
+        bool inMesh = false;
+        for (int y = 501; y <= 503; ++y) if (w.at(500, y).moisture == MAT_WATER) inMesh = true;
+        if (w.at(500, 500).mat != MAT_EMPTY || !inMesh) {
+            fprintf(stderr, "water did not enter sieve occupant slot\n"); return 45;
+        }
     }
     for (int frame = 0; frame < 3; ++frame) w.step();
-    if (w.at(500, 501).mat != MAT_SIEVE || w.at(500, 502).mat != MAT_SIEVE ||
-        w.at(500, 503).mat != MAT_SIEVE || w.at(500, 504).mat != MAT_WATER) {
-        fprintf(stderr, "sieve did not pass water\n"); return 45;
+    {
+        bool below = false;
+        for (int y = 504; y <= 520; ++y) if (w.at(500, y).mat == MAT_WATER) below = true;
+        if (w.at(500, 501).mat != MAT_SIEVE || w.at(500, 502).mat != MAT_SIEVE ||
+            w.at(500, 503).mat != MAT_SIEVE || w.at(500, 503).moisture || !below) {
+            fprintf(stderr, "sieve did not pass water\n"); return 45;
+        }
     }
     w.reset();
     w.setLiveWindow(480, 480, 550, 550);
@@ -1037,7 +1053,16 @@ int main() {
     w.setCell(550, 500, MAT_SIEVE);
     w.cells[500 * SIM_W + 550].moisture = MAT_FUEL;
     w.setCell(550, 501, MAT_STEAM);
+    /* Diffusion off for the one step, as gas_rise does. Steam random-walks,
+       and six of its nineteen draws go DOWN -- with the walls either side,
+       down is the only open cell, so on an unlucky draw it steps away before
+       the exchange and the fuel falls into the gap. That was always possible;
+       this case only ever passed on whatever the random stream happened to
+       hold here, and the fluid pass drawing once more per step moved it. */
+    const u8 steamJitter = MATS[MAT_STEAM].jitter;
+    MATS[MAT_STEAM].jitter = 0;
     w.step();
+    MATS[MAT_STEAM].jitter = steamJitter;
     if (w.at(550, 500).moisture != MAT_STEAM ||
         w.at(550, 501).mat != MAT_FUEL) {
         fprintf(stderr, "steam chamber did not displace fuel from sieve roof\n");
@@ -1449,6 +1474,13 @@ int main() {
     const int pressureX = 760, pressureY = 640;
     w.setLiveWindow(pressureX - 40, pressureY - 40,
                     pressureX + 40, pressureY + 20);
+    /* In a stone cup open at the top. Loose in the air the water fell a cell
+       on the fluid pass (FLUID_SUBSTEPS) before the full pass boiled it, and
+       this checks WHAT it boils into at the cell it was put in. The burst
+       still has all the open space above. */
+    for (int ox = -1; ox <= 1; ++ox) w.setCell(pressureX + ox, pressureY + 1, MAT_STONE);
+    w.setCell(pressureX - 1, pressureY, MAT_STONE);
+    w.setCell(pressureX + 1, pressureY, MAT_STONE);
     w.setCell(pressureX, pressureY, MAT_WATER);
     w.temp[pressureY * SIM_W + pressureX] = degC(215);
     w.dirtyPoint(pressureX, pressureY);
@@ -1712,12 +1744,18 @@ int main() {
             pushedExcess += pc.moisture & GAS_EXCESS_MASK;
         }
     }
-    if (pushedSand != 3 || pushedSteam != 2 || pushedExcess != 3 ||
-        w.at(pushX, pushY - 4).mat != MAT_SAND ||
+    /* Stored pressure is spent on every pass a step makes, not once a step --
+       that is what the fluid pass is for (FLUID_SUBSTEPS in world.h) -- so one
+       step shifts the plug once per pass, each shift costing one unit and
+       leaving one more steam volume behind it. Conservation is the claim:
+       three sand, and steam volumes plus remaining units still come to 1 + 4. */
+    const int pushes = FLUID_SUBSTEPS;
+    if (pushedSand != 3 || pushedSteam != 1 + pushes || pushedExcess != 4 - pushes ||
+        w.at(pushX, pushY - 3 - pushes).mat != MAT_SAND ||
         w.at(pushX, pushY - 1).mat != MAT_STEAM) {
         fprintf(stderr, "pressure did not conserve a shifted powder plug (%d sand, %d steam, %d excess, top %u, face %u)\n",
                 pushedSand, pushedSteam, pushedExcess,
-                w.at(pushX, pushY - 4).mat, w.at(pushX, pushY - 1).mat); return 105;
+                w.at(pushX, pushY - 3 - pushes).mat, w.at(pushX, pushY - 1).mat); return 105;
     }
 
     /* Supported horizontal plugs isolate pressure from gravity: one stored
@@ -1812,9 +1850,15 @@ int main() {
             coalPushExcess += w.at(coalPushX, y).moisture & GAS_EXCESS_MASK;
         }
     }
+    /* The unit left over after the lift is either still stored in the column
+       or already soaked into the Coal as its Steam occupant -- the permeable
+       reaction the comment above names. Which depends on whether a pass came
+       round to spend it within the step, and since the fluid pass
+       (FLUID_SUBSTEPS) one has. Conserved either way: 11 + 2 volumes. */
+    const int coalHeld = (w.at(coalPushX, coalGasTop - 2).moisture & GAS_EXCESS_MASK) == MAT_STEAM;
     if (w.at(coalPushX, coalGasTop - 2).mat != MAT_COAL ||
         w.at(coalPushX, coalGasTop - 1).mat != MAT_STEAM ||
-        coalPushSteam != 12 || coalPushExcess != 1) {
+        coalPushSteam != 12 || coalPushExcess + coalHeld != 1) {
         fprintf(stderr, "shared Steam pressure did not lift Coal (%u/%u, %d steam, %d excess)\n",
                 w.at(coalPushX, coalGasTop - 2).mat,
                 w.at(coalPushX, coalGasTop - 1).mat,
@@ -1890,9 +1934,15 @@ int main() {
     w.reset();
     const int blobX = 980, blobTop = 700, blobSize = 41;
     const int blobBottom = blobTop + blobSize - 1;
-    w.setLiveWindow(blobX - 6, blobTop - 10,
+    /* Walled and counted to 20 cells above the pocket, not 10. Pressure is
+       spent on every pass a step makes now (FLUID_SUBSTEPS in world.h), so the
+       released pocket lifts the water above it about twice as far in the one
+       step measured, and at 10 some of it went over the top of the walls and
+       out of the count -- conserved, just not in the box. */
+    const int blobHeadroom = 20;
+    w.setLiveWindow(blobX - 6, blobTop - blobHeadroom,
                     blobX + blobSize + 5, blobBottom + 5);
-    for (int y = blobTop - 10; y <= blobBottom + 1; ++y) {
+    for (int y = blobTop - blobHeadroom; y <= blobBottom + 1; ++y) {
         w.setCell(blobX - 1, y, MAT_STONE);
         w.setCell(blobX + blobSize, y, MAT_STONE);
     }
@@ -1915,7 +1965,7 @@ int main() {
         }
     w.step();
     int blobSteam = 0, blobWater = 0, blobExcess = 0;
-    for (int y = blobTop - 10; y <= blobBottom; ++y)
+    for (int y = blobTop - blobHeadroom; y <= blobBottom; ++y)
         for (int x = blobX; x < blobX + blobSize; ++x) {
             const Cell& bc = w.at(x, y);
             if (bc.mat == MAT_STEAM) {
@@ -1927,7 +1977,9 @@ int main() {
     const int initialBlobSteam = blobSize * blobSize;
     const int initialBlobVolume = initialBlobSteam + chargedCells * 5;
     if (blobSteam < initialBlobSteam + blobSize * 2 ||
-        blobSteam > initialBlobSteam + blobSize * 5 ||
+        /* Up to five rows of release per pass, and stored pressure is spent
+           on every pass a step makes (FLUID_SUBSTEPS in world.h). */
+        blobSteam > initialBlobSteam + blobSize * 5 * FLUID_SUBSTEPS ||
         blobWater != blobSize * 4 ||
         blobSteam + blobExcess != initialBlobVolume) {
         fprintf(stderr, "shared pocket pressure did not decompress broad Steam blob (%d steam, %d water, %d excess)\n",
@@ -2023,7 +2075,11 @@ int main() {
     w.reset();
     const int liftX = 820, liftY = 700, liftDepth = 24;
     w.setLiveWindow(liftX - 4, liftY - liftDepth - 4, liftX + 4, liftY + 4);
-    for (int y = liftY - liftDepth; y <= liftY; ++y) {
+    /* The shaft runs well above the water. The lift happens on the fluid pass
+       now (FLUID_SUBSTEPS in world.h), and the full pass of the same step then
+       lets any water standing above the walls spill sideways off the top --
+       which it should, but this stage is about the lift. */
+    for (int y = liftY - liftDepth - 8; y <= liftY; ++y) {
         w.setCell(liftX - 1, y, MAT_STONE);
         w.setCell(liftX + 1, y, MAT_STONE);
     }
@@ -2058,7 +2114,10 @@ int main() {
     const int lakeX = 1260, lakeGasTop = 830, lakeGasBottom = 930;
     const int lakeDepth = 160, lakeSurface = lakeGasTop - lakeDepth;
     w.setLiveWindow(lakeX - 5, lakeSurface - 8, lakeX + 5, lakeGasBottom + 4);
-    for (int y = lakeSurface - 1; y <= lakeGasBottom + 1; ++y) {
+    /* Walls to the top of the counted area, for the reason the lift stage
+       gives: lifted on the fluid pass, water above the walls spills on the
+       full pass of the same step. */
+    for (int y = lakeSurface - 8; y <= lakeGasBottom + 1; ++y) {
         w.setCell(lakeX - 1, y, MAT_STONE);
         w.setCell(lakeX + 1, y, MAT_STONE);
     }
@@ -2072,6 +2131,13 @@ int main() {
     const int lakeSourceY = lakeGasTop + 75;
     w.setCell(lakeX - 1, lakeSourceY, MAT_WATER);
     w.setCell(lakeX - 2, lakeSourceY, MAT_STONE);
+    /* The pocket's outer corners, so it really is sealed. Without them its
+       water could slip out diagonally between the plug and the shaft wall into
+       the open outside -- which it did as soon as the fluid pass
+       (FLUID_SUBSTEPS) gave it a turn before the pressure source's, and the
+       stage then measured a leak instead of a false outlet. */
+    w.setCell(lakeX - 2, lakeSourceY - 1, MAT_STONE);
+    w.setCell(lakeX - 2, lakeSourceY + 1, MAT_STONE);
     w.cells[lakeSourceY * SIM_W + lakeX].moisture = 5;
     w.dirtyPoint(lakeX, lakeSourceY);
     w.step();

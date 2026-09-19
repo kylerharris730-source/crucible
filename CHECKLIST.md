@@ -283,6 +283,17 @@ the bees-and-wax idea -- lives in [ROADMAP.md](ROADMAP.md).
 
 Not bugs, and not scheduled — written down so they stop being rediscovered.
 
+- **powderlike is not in releases, on purpose.** Added 2026-09-17:
+  `build_powderlike.bat` / `mingw32-make powderlike` builds
+  `build\powderlike.exe`, a second front-end over the same simulation with no
+  character, no camera, no saving, and a cell scale that makes the world
+  512x384, 1024x768 or 2048x1536 cells. Nothing in the launcher, the CI
+  workflow or the release notes knows about it, and it has no version resource,
+  because it is a window onto the physics rather than a product with its own
+  support burden. It is also not covered by `tests/` -- it is a shell, and the
+  simulation underneath it is what the suite tests. If it ever ships, it needs
+  a `VER_TARGET` in `res/version.rc` and a line in the workflow first.
+
 - **Bees cannot be picked up, and that is fine.** `ITEM_BEE` and
   `ITEM_COAL_BEE` have no survival source: right-click capture was built and
   removed on 2026-09-01 because right-click is also the dig verb, so every

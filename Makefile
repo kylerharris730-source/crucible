@@ -60,8 +60,33 @@ $(OUT): $(SRC) $(HDR) $(RES)
 run: $(OUT)
 	$(OUT)
 
+# --- powderlike ------------------------------------------------------------
+# The sandbox front-end: the same simulation with no character, no camera and a
+# selectable cell scale. Every src/*.cpp EXCEPT main.cpp, plus its own main --
+# the shape the test suite already uses, and for the same reason.
+#
+# Deliberately NOT part of `all`, and deliberately not a release artefact:
+# nothing in the launcher or the CI workflow knows about it. `mingw32-make
+# powderlike` when you want it. build_powderlike.bat is the same thing in cmd
+# and the two have to stay in step, exactly as build.bat and this file do.
+#
+# No version resource. That exists so Windows can name the publisher of a
+# binary people DOWNLOAD (see res/version.rc); this one is built on the machine
+# it runs on and never leaves it.
+POWDER_SRC := $(filter-out src/main.cpp,$(SRC)) src/powder/main.cpp
+POWDER_HDR := $(HDR) $(wildcard src/powder/*.h)
+POWDER_OUT := build/powderlike.exe
+
+powderlike: $(POWDER_OUT)
+
+$(POWDER_OUT): $(POWDER_SRC) $(POWDER_HDR)
+	@if not exist build mkdir build
+	$(CXX) $(CXXFLAGS) $(POWDER_SRC) -o $(POWDER_OUT) $(LDFLAGS)
+
 clean:
 	@if exist $(OUT) del /q $(OUT)
+	@if exist $(POWDER_OUT) del /q $(POWDER_OUT)
+	@if exist build\powderlike.new.exe del /q build\powderlike.new.exe
 	@if exist build\cinderlift.new.exe del /q build\cinderlift.new.exe
 	@if exist $(OBJDIR) rmdir /s /q $(OBJDIR)
 
@@ -85,4 +110,4 @@ T ?=
 test:
 	@bash scripts/run_tests.sh $(T)
 
-.PHONY: all run clean test
+.PHONY: all run clean test powderlike

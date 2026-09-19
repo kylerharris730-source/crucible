@@ -34,4 +34,15 @@ static const int VIEW_CELLS_H = 384;
    passing one that does not line up. Defaults off, so every headless harness
    that renders the world keeps seeing material colours rather than a dark
    rectangle. */
-int renderView(const World& w, u32* out, int view, int camX, int camY, bool lit = false);
+/* `cellsW`/`cellsH` override how much world is drawn, and `out`'s row stride
+   with it. They exist for the powderlike front-end, whose whole point is a
+   view that is not 512x384: at half-size pixels it draws 1024x768 cells into
+   the same window and at quarter-size 2048x1536. Defaulted, so every existing
+   caller -- the game, the harnesses, the benchmarks -- is untouched and still
+   gets the fixed window geometry the light buffer is tied to.
+
+   `lit` is only valid at the default size, for that reason: lightRow() indexes
+   a buffer built for VIEW_CELLS_W/H. Asking for both is a caller error and
+   renders unlit rather than reading past the end of the light field. */
+int renderView(const World& w, u32* out, int view, int camX, int camY, bool lit = false,
+               int cellsW = VIEW_CELLS_W, int cellsH = VIEW_CELLS_H);

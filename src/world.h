@@ -79,7 +79,7 @@ static const int CHUNK_COUNT = CHUNKS_X * CHUNKS_Y;
      gas pocket flood       32   receiver inside a 32-radius pocket
      heat long-range hop    28   max heatSpread in MATS (Graphene)
      gas bent-outlet BFS    16   the liquid path, inside a 16-radius box
-     liquid dispersion       8   max dispersion in MATS (Glowfluid)
+     liquid sideways hop    40   dispersion (max 8, Glowfluid) + PRESSURE_MAX
      gas powder shove        8 + 1
      gas expansion burst     3
      fluid convection        3
@@ -157,6 +157,16 @@ Lane& simMainLane(void);
    0; main.cpp turns it up. */
 void simSetWorkers(int threads);
 int  simWorkers(void);
+/* Run fn(ctx, 0) .. fn(ctx, count - 1) on the sim's thread pool, the caller
+   working too, and return once every one has finished. For work that is not
+   the simulation but is shaped like it -- the renderer's rows are the user --
+   so the pool is not idle for the whole of the frame it does not step in.
+
+   The jobs must be independent of each other and must not step or edit the
+   world. Never call it from inside step() or from a job: the pool is running
+   the scan then and this would wait on itself. Without a pool (the browser
+   build) it simply runs the jobs in order on the caller. */
+void simParallel(int count, void (*fn)(void* ctx, int job), void* ctx);
 /* Five seconds at the normal 60 simulation steps/sec.  This is deliberately a
    per-chunk countdown rather than a wider permanent window: a waterfall keeps
    falling after the camera leaves, while settled terrain remains free. */
@@ -546,8 +556,55 @@ static const int MACHINE_DRIVE  = 64;
    How many cells of liquid overhead are counted as pressure. Each one adds a
    cell of sideways reach, so buried liquid spreads further than surface liquid
    and a pile slumps into a dome instead of holding vertical walls. Capped
-   because it is a short upward scan per settled liquid cell. */
-static const int PRESSURE_MAX   = 10;
+   because it is a short upward scan per settled liquid cell.
+
+   Raised 10 -> 32, and the cap was the reason for the walls it was meant to
+   prevent. Past the cap every row has the same reach, so every row drains at
+   the same rate and the side of a deep body stays vertical -- at 10 that meant
+   anything deeper than ten cells. Measured on powderbench's water pour and a
+   200x300 block on a floor, 600 frames after release:
+
+       cap    block height    walls              settling sim, 8 threads
+        10         199        vertical, 300 tall        1.23 ms
+        20         141        vertical, shorter         1.43 ms
+        32         119        none, a smooth mound      1.60 ms
+
+   32 is the ceiling, not a choice along a curve: the hop is dispersion PLUS
+   this, the most dispersive liquid is 8, and 40 is as far sideways as a rule
+   may write while stripes run in parallel -- see RULE_WRITE_REACH_X. The test
+   liquid_reach holds the sum to it. */
+static const int PRESSURE_MAX   = 32;
+
+/* ---- fluids move more often than everything else --------------------------
+   How many scan passes a step() makes. The last is the full pass: every rule
+   for every cell, exactly as a step always was. Each one before it is a FLUID
+   pass, in which only two things happen:
+
+     - a liquid parcel that is RESTING on something takes its movement turn --
+       sliding, levelling and the sideways hop through its own body -- but not
+       convection, heat, evaporation or any reaction. A parcel whose column of
+       liquid stands on air or gas is falling and sits the pass out (see
+       World::liquidFalling): falling stays at one cell a frame, because two
+       read as a pour dropping like a stone;
+     - a gas parcel holding stored pressure spends it (updateGasPressure). An
+       ordinary gas does not move, so fire and steam plumes keep their height.
+
+   Everything else -- heat, burning, phase changes, powders, growth, decay --
+   waits for the full pass, so it runs at the rate it always has, and nothing
+   the fluid pass skips loses its turn: the work list is carried into the full
+   pass untouched, and the live-window grace counts full passes only.
+
+   Why: a liquid levels only as fast as its turns let it, and at powderlike's
+   smaller cells a pool took visibly long to settle. Turning the whole
+   simulation up to compensate would speed up fire, heat, plant growth and
+   falling with it. This doubles settling and pressure release and nothing
+   else. Measured, a 200 x 300 block of water on a floor stands 82 tall after
+   600 frames, against 119 with one pass; and on steamprof's lava-into-water
+   the sim goes 5.7 -> 7.6 ms mean at 8 threads.
+
+   1 turns the fluid pass off and is exactly the old step -- same stamps, same
+   scan order, same world hash on powderbench. */
+static const int FLUID_SUBSTEPS = 2;
 
 struct Cell {
     u8 mat;
@@ -658,7 +715,14 @@ struct World {
     u8    bg[SIM_W * SIM_H];
     Chunk cur[CHUNK_COUNT];       /* work list being processed this frame */
     Chunk next[CHUNK_COUNT];      /* being accumulated for the next frame */
+    /* Displayed frames. Game time: devices, rooms and creatures count it, so
+       it advances once per step() however many scan passes the step makes. */
     u32   frame;
+    /* Scan passes -- FLUID_SUBSTEPS of them per step(). The movement stamp is
+       taken from this rather than from `frame`, because "already had its turn"
+       means this PASS: a parcel that moved in the fluid pass must still get
+       its turn in the full one. */
+    u32   pass;
     int   activeChunks;           /* stat, for the HUD */
 
     /* --- the live window -------------------------------------------------
@@ -833,10 +897,37 @@ struct World {
        index. Everything else wants the default; see the note inside reset on
        why the draws are left alone for a new world. */
     void reset(bool rollTint = true);
+    /* One displayed frame: FLUID_SUBSTEPS - 1 fluid passes, then the full
+       pass. See FLUID_SUBSTEPS. */
     void step();
     /* replace=false leaves whatever is already there alone, so you can pour
        into a scene without carving through it. Erasing ignores the flag. */
     void paint(int cx, int cy, int r, u8 mat, bool replace = true);
+    /* The rectangle the brush may change, inclusive. Defaults to the whole
+       playable world, inside its permanent outer ring, and reset() puts it
+       back there. A front-end whose world is a box smaller than the world --
+       powderlike -- narrows it to the inside of its own walls, so erasing or
+       painting over a wall cannot open the box and pour everything out.
+
+       This is the only door that needed shutting. Nothing in the simulation
+       removes MAT_WALL: void and acid skip it and its strength is absolute. The
+       brush was the one thing that wrote cells without asking.
+
+       Stored with a flag rather than as bare numbers because World is used as
+       a zeroed static by tests that never call reset(), and a zeroed rectangle
+       would be a one-cell brush in the corner of the world. Unset means the
+       default. */
+    bool editSet;
+    i32  editX0, editY0, editX1, editY1;
+    void setEditBounds(int x0, int y0, int x1, int y1) {
+        editX0 = imax(PLAY_X0, x0); editY0 = imax(PLAY_Y0, y0);
+        editX1 = imin(PLAY_X1, x1); editY1 = imin(PLAY_Y1, y1);
+        editSet = true;
+    }
+    int editLoX() const { return editSet ? editX0 : PLAY_X0; }
+    int editLoY() const { return editSet ? editY0 : PLAY_Y0; }
+    int editHiX() const { return editSet ? editX1 : PLAY_X1; }
+    int editHiY() const { return editSet ? editY1 : PLAY_Y1; }
     void paintBg(int cx, int cy, int r, u8 mat);
     void heat(int cx, int cy, int r, int delta);
     /* A striker's spark: warms a small disc TOWARD a ceiling and no further.
@@ -895,8 +986,12 @@ struct World {
     /* Schedule cells for simulation next frame. dirtyArea covers a span plus a
        one-cell margin; anything that moves further than one cell in a step
        must use it, or cells along the swept path never get woken. */
+    /* Defined in world.cpp and forced inline THERE, which is only possible
+       because nothing outside world.cpp calls these two -- everything else goes
+       through the lane-less entry points below, which are ordinary out-of-line
+       functions. See the note on the definition. */
     void dirtyArea(Lane& L, int x0, int y0, int x1, int y1);
-    void dirtyPoint(Lane& L, int x, int y) { dirtyArea(L, x, y, x, y); }
+    void dirtyPoint(Lane& L, int x, int y);
 
     /* --- the same handful of entry points, for callers with no lane -------
        Everything outside the simulation -- worldgen, the brush, devices,
@@ -940,7 +1035,7 @@ struct World {
     }
     void clearBg(int x, int y) { bg[y * SIM_W + x] = 0; }
 
-    u8 stamp() const { return (u8)(frame & STAMP_MASK); }
+    u8 stamp() const { return (u8)(pass & STAMP_MASK); }
 
     /* --- seeds that have come to rest -----------------------------------
        Cells where a tree seed is sitting on wet ground, reported by the
@@ -998,6 +1093,8 @@ struct World {
 
 private:
     void updateCell(Lane& L, int x, int y);
+    void updateCellFluid(Lane& L, int x, int y);
+    bool liquidFalling(Lane& L, int x, int y, u8 mat);
     void reportFelled(Lane& L, int x, int y, u8 was, u8 now);
 
 public:
@@ -1005,6 +1102,7 @@ public:
        because the lane threads call it; nothing else should. */
     void runStripe(int stripe);
 private:
+    void scanPass(bool fluidPass);
     void updateClone(Lane& L, int x, int y);
     void updateVoid(Lane& L, int x, int y);
     void spawnCell(Lane& L, int x, int y, u8 mat);

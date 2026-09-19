@@ -62,6 +62,48 @@ toggle borderless fullscreen. The pause menu has a persistent 80--120% UI scale
 setting for interface text and item artwork; 100% uses the compact 34-pixel icon
 baseline while leaving click targets comfortably sized.
 
+## powderlike
+
+A second executable over the same simulation: the falling-sand toy with the
+game taken off it. No character, no camera, no minimap, no inventory -- one
+fixed screen, the material palette, and the physics.
+
+```bash
+build_powderlike.bat
+```
+
+Then launch `build\powderlike.exe`. `mingw32-make powderlike` does the same
+thing. It is **not** a release artefact: nothing in the launcher or the CI
+workflow builds it, and it has no version resource and no saving.
+
+It links every `src/*.cpp` except `main.cpp`, plus its own `src/powder/main.cpp`
+-- the same shape the test suite uses. So it inherits simulation changes for
+free: a change to how sand piles or what titanium melts at lands in both
+programs the next time each is built. The material palette is shared through
+`src/brushes.h` for the same reason.
+
+**World size** is the feature the game does not have. There is no camera, so a
+smaller cell does not zoom out -- it makes the world bigger. Normal is two
+pixels a cell and a 512x384 world, Half is one pixel and 1024x768, Quarter is
+half a pixel and 2048x1536 -- 3.15 million cells and 3,072 chunks, all of them
+live every frame. Changing it clears the world, because the walls that hold the
+material in move.
+
+Drawing runs on the simulation's thread pool, so even Quarter draws in about
+4 ms; the panel reports sim and draw milliseconds separately so you can see
+which half a slow frame is paying. `tools/powderbench.cpp` reproduces a water
+pour at Half headless, with a sampling profiler and a world hash for checking
+that an optimisation changed nothing.
+
+Material also moves a fixed number of *cells* per frame, so at Quarter
+everything crosses the screen four times slower in seconds -- that is what the
+speed control is for.
+
+Left button paints, right button erases, the wheel sizes the brush (or scrolls
+the palette when it is over it), `Space` pauses, `.` steps one frame, `[` and
+`]` size the brush, `V` cycles the view, `C` clears, `1`/`2`/`3` pick the world
+size, and `Esc` quits.
+
 ## Documentation
 
 - [DESIGN.md](DESIGN.md) - game direction, open decisions, and long-term risks.
@@ -78,3 +120,7 @@ Cinderlift is a fork of
 falling-sand sandbox that supplied the simulation foundation. The projects now
 diverge: Cinderlift adds a scrolling world, player systems, machines, automation,
 and game progression.
+
+`powderlike` above is that sandbox rebuilt as a Cinderlift derivative rather
+than kept as a separate project, so it tracks the simulation instead of
+drifting from it.

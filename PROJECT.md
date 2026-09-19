@@ -300,6 +300,17 @@ build_launcher.bat             # installer   -> build\cinderlift-launcher.exe
 ./build_web.sh                 # wasm        -> web\ (must be served, not file://)
 ```
 
+```bash
+build_powderlike.bat           # sandbox     -> build\powderlike.exe
+```
+
+- **powderlike is a second front-end, not a second product.** Same simulation,
+  no character, no camera, no saving, and a selectable cell scale that makes
+  the world 512x384, 1024x768 or 2048x1536 cells. It links every `src/*.cpp`
+  except `main.cpp` plus `src/powder/main.cpp`, the shape the tests already
+  use, so it inherits simulation work rather than tracking it. Not released:
+  no launcher entry, no CI, no version resource. README.md has the keys.
+
 - `make` is the g++ equivalent of `build.bat`; `make clean` removes compiler
   output only, never saves.
 - Tests build like the tools: every `src/*.cpp` except `main.cpp`, plus the one

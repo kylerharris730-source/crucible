@@ -46,11 +46,19 @@ World g_world;
    straight into the world arrays exactly as they always did. */
 
 
-static i32 g_stripeSprout[STRIPE_COUNT][World::MAX_SPROUTS];
-static int g_stripeSproutN[STRIPE_COUNT];
-static i32 g_stripeFelled[STRIPE_COUNT][World::MAX_FELLED];
-static int g_stripeFelledN[STRIPE_COUNT];
-static int g_stripeActive[STRIPE_COUNT];
+/* One more stripe than there are chunk columns: the grid is shifted sideways
+   by up to a stripe each pass (see stripeShift), so the first and last stripes
+   can be partial and there is one extra at the end. */
+static const int STRIPE_SLOTS = STRIPE_COUNT + 1;
+static i32 g_stripeSprout[STRIPE_SLOTS][World::MAX_SPROUTS];
+static int g_stripeSproutN[STRIPE_SLOTS];
+static i32 g_stripeFelled[STRIPE_SLOTS][World::MAX_FELLED];
+static int g_stripeFelledN[STRIPE_SLOTS];
+/* Whether each chunk is simulated on this pass, decided once before the
+   stripes run -- a chunk can straddle two stripes now, and the decision
+   spends live-window grace, so it cannot be made by whichever stripe gets
+   there first. */
+static u8  g_chunkSim[CHUNK_COUNT];
 
 
 /* ======================================================================
@@ -91,6 +99,19 @@ struct DirtyLog {
     int   n;
 };
 static DirtyLog g_dirtyLog[MAX_LANE_THREADS];
+
+/* Everything a stripe needs to know about the frame it is in, and nothing
+   that changes while it runs. Written by scanPass() before any lane starts and
+   read-only for the rest of the frame. */
+struct StripeFrame {
+    int  coreCX0, coreCX1, coreCY0, coreCY1;
+    int  liveCX0, liveCX1, liveCY0, liveCY1;
+    bool leftFirst;
+    bool fluidPass;   /* see FLUID_SUBSTEPS */
+    int  shift;       /* see stripeShift */
+    u32  seedBase;
+};
+static StripeFrame g_sf;
 
 /* 0 means "write straight to next[]", which is what everything outside the
    parallel scan does -- worldgen, the brush, devices, entities. */
@@ -243,8 +264,25 @@ struct Lane {
     u32         rngOwn;
     u32*        rng;
     int         stripe;          /* -1 outside the scan */
+    i32         stripeX0, stripeX1;   /* the cells of that stripe, inclusive */
     DirtyLog*   dirty;           /* null: write through to next[] */
     LaneScratch scratch;
+
+    /* Bumped by every dirtyArea this lane makes -- and every cell write in the
+       scan dirties, which is what the chunk system already depends on. So an
+       unchanged count means nothing this lane touched has changed since. */
+    u32         writeEpoch;
+    /* The run of one liquid along one row that updateLiquid last measured:
+       where its ends are, and whether the cell past each end is somewhere a
+       parcel can hop to. See the note in updateLiquid. Valid only while
+       writeEpoch is unchanged and only within one stripe's scan. */
+    struct LiquidRun {
+        u32 epoch;
+        i32 y, lo, hi;          /* cells lo..hi may use it */
+        i32 openL, openR;       /* opening past each end, or NO_OPENING */
+        u8  mat;
+        bool valid;
+    } run;
 
     /* Constructed rather than left as bss, and both fields it sets are
        load-bearing in a way that is invisible until it is not.
@@ -261,7 +299,27 @@ struct Lane {
        The scratch arrays stay untouched here on purpose: static storage is
        zeroed before any constructor runs, which is exactly what their epoch
        counters want. */
-    Lane() : rngOwn(0x9E3779B9u), rng(&rngOwn), stripe(-1), dirty(0) {}
+    /* Per column of this lane's stripe: the last row whose support was worked
+       out on this pass, and whether the liquid column from there down ends in
+       air. See World::liquidFalling. */
+    struct LiquidFall {
+        i32 y[STRIPE_W];
+        u8  falling[STRIPE_W];
+    } fall;
+
+    /* Per column, the row where a sinking powder last left the liquid it
+       displaced, on this pass. See the relay note in tryMove. Two columns of
+       margin either side, for a powder sliding in diagonally from next door. */
+    static const int DISPLACED_MARGIN = 2;
+    struct Displaced {
+        i32 y[STRIPE_W + 2 * DISPLACED_MARGIN];
+    } displaced;
+
+    Lane() : rngOwn(0x9E3779B9u), rng(&rngOwn), stripe(-1), dirty(0), writeEpoch(0) {
+        run.valid = false;
+        for (int i = 0; i < STRIPE_W; ++i) fall.y[i] = -1;
+        for (int i = 0; i < STRIPE_W + 2 * DISPLACED_MARGIN; ++i) displaced.y[i] = -1;
+    }
 };
 static Lane g_lane[MAX_LANE_THREADS];
 
@@ -276,6 +334,85 @@ Lane& simMainLane(void) { g_lane[0].rng = &g_rng; return g_lane[0]; }
    the main lane. Kept to the handful the rest of the game actually calls:
    a forwarder for every method would throw away what the Lane parameter is
    for, which is saying in the signature which code can run in a stripe. */
+
+
+/* The general case: a box that straddles chunk edges. Kept out of line on
+   purpose -- see dirtyArea below, whose whole speed depends on staying small
+   enough for the compiler to inline into its callers. */
+__attribute__((noinline))
+static void dirtyAreaSpan(Chunk* next, DirtyLog* log, int x0, int y0, int x1, int y1) {
+    const int cx0 = x0 >> CHUNK_SHIFT, cx1 = x1 >> CHUNK_SHIFT;
+    const int cy0 = y0 >> CHUNK_SHIFT, cy1 = y1 >> CHUNK_SHIFT;
+    for (int cy = cy0; cy <= cy1; ++cy) {
+        for (int cx = cx0; cx <= cx1; ++cx) {
+            const int idx = cy * CHUNKS_X + cx;
+            const int bx0 = cx << CHUNK_SHIFT, by0 = cy << CHUNK_SHIFT;
+            const int ax0 = imax(x0, bx0),             ay0 = imax(y0, by0);
+            const int ax1 = imin(x1, bx0 + CHUNK - 1), ay1 = imin(y1, by0 + CHUNK - 1);
+            Chunk& c = log ? log->rect[idx] : next[idx];
+            if (log && c.minX > c.maxX) log->touched[log->n++] = idx;
+            if (ax0 < c.minX) c.minX = ax0;
+            if (ay0 < c.minY) c.minY = ay0;
+            if (ax1 > c.maxX) c.maxX = ax1;
+            if (ay1 > c.maxY) c.maxY = ay1;
+        }
+    }
+}
+
+/* ------------------------------------------------------------------------
+   The hottest function in the engine, and it was not doing any simulating.
+
+   Sampled at -O3 on powderbench's water pour (tools/powderbench.cpp), this
+   was 31% of every sample in the program -- more than updateCell, and more
+   than drawing the frame. Not because it was slow per call but because it is
+   called about three times for every cell that takes a turn: tryMove wakes
+   both ends of a move, evaporation wakes an exposed surface, and a pour of
+   half a million water cells makes six hundred million calls a run.
+
+   Nearly all of them are dirtyPoint: a 3x3 box, which lands inside one chunk
+   30 times in 32 per axis. The old body ran the general two-level chunk loop
+   for that case anyway, which was too big to inline, so every one paid a real
+   call, the clamps, the loop setup and a branch per bound. Now the one-chunk
+   case is a handful of compares that inline into the caller, and the loop is
+   left for the boxes that actually straddle an edge.
+
+   The rectangles it produces are identical, cell for cell -- the fast path is
+   the loop body with its single iteration written out -- and powderbench's
+   world hash is unchanged at one thread, where scan order is fixed. */
+__attribute__((always_inline)) inline
+void World::dirtyArea(Lane& L, int x0, int y0, int x1, int y1) {
+    x0 -= 1; y0 -= 1; x1 += 1; y1 += 1;
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 > SIM_W - 1) x1 = SIM_W - 1;
+    if (y1 > SIM_H - 1) y1 = SIM_H - 1;
+
+    ++L.writeEpoch;   /* see Lane::run */
+
+    /* Fetched once rather than once per chunk: thread-local is a function
+       call on this toolchain. */
+    DirtyLog* const log = L.dirty;
+
+    if (((x0 ^ x1) | (y0 ^ y1)) >> CHUNK_SHIFT) {
+        dirtyAreaSpan(next, log, x0, y0, x1, y1);
+        return;
+    }
+    const int idx = (y0 >> CHUNK_SHIFT) * CHUNKS_X + (x0 >> CHUNK_SHIFT);
+    Chunk& c = log ? log->rect[idx] : next[idx];
+    if (log && c.minX > c.maxX) log->touched[log->n++] = idx;
+    if (x0 < c.minX) c.minX = x0;
+    if (y0 < c.minY) c.minY = y0;
+    if (x1 > c.maxX) c.maxX = x1;
+    if (y1 > c.maxY) c.maxY = y1;
+}
+
+/* Forced as well, and for the same reason: the compiler would not inline even
+   this one-liner into updateCell, and it is the form most of the calls take. */
+__attribute__((always_inline)) inline
+void World::dirtyPoint(Lane& L, int x, int y) { dirtyArea(L, x, y, x, y); }
+
+/* The lane-less entry points, for everything outside the scan. After the two
+   definitions above so that they inline here too. */
 void World::dirtyArea(int x0, int y0, int x1, int y1) {
     dirtyArea(simMainLane(), x0, y0, x1, y1);
 }
@@ -285,37 +422,6 @@ void World::swapMat(int x, int y, u8 mat) { swapMat(simMainLane(), x, y, mat); }
 void World::breakCell(int x, int y) { breakCell(simMainLane(), x, y); }
 bool World::liftColumn(int x, int y, int maxLift) {
     return liftColumn(simMainLane(), x, y, maxLift);
-}
-
-void World::dirtyArea(Lane& L, int x0, int y0, int x1, int y1) {
-    x0 -= 1; y0 -= 1; x1 += 1; y1 += 1;
-    if (x0 < 0) x0 = 0;
-    if (y0 < 0) y0 = 0;
-    if (x1 > SIM_W - 1) x1 = SIM_W - 1;
-    if (y1 > SIM_H - 1) y1 = SIM_H - 1;
-
-    int cx0 = x0 >> CHUNK_SHIFT, cx1 = x1 >> CHUNK_SHIFT;
-    int cy0 = y0 >> CHUNK_SHIFT, cy1 = y1 >> CHUNK_SHIFT;
-
-    /* Fetched once for the whole rectangle rather than once per chunk:
-       thread-local is a function call on this toolchain, and this is one of
-       the most-called functions in the engine. */
-    DirtyLog* const log = L.dirty;
-
-    for (int cy = cy0; cy <= cy1; ++cy) {
-        for (int cx = cx0; cx <= cx1; ++cx) {
-            const int idx = cy * CHUNKS_X + cx;
-            int bx0 = cx << CHUNK_SHIFT, by0 = cy << CHUNK_SHIFT;
-            int ax0 = imax(x0, bx0),               ay0 = imax(y0, by0);
-            int ax1 = imin(x1, bx0 + CHUNK - 1),   ay1 = imin(y1, by0 + CHUNK - 1);
-            Chunk& c = log ? log->rect[idx] : next[idx];
-            if (log && c.minX > c.maxX) log->touched[log->n++] = idx;
-            if (ax0 < c.minX) c.minX = ax0;
-            if (ay0 < c.minY) c.minY = ay0;
-            if (ax1 > c.maxX) c.maxX = ax1;
-            if (ay1 > c.maxY) c.maxY = ay1;
-        }
-    }
 }
 
 /* ======================================================================
@@ -455,6 +561,7 @@ void World::addLiveWindow(int x0, int y0, int x1, int y1) {
 
 void World::reset(bool rollTint) {
     clearBlockBoxes();
+    setEditBounds(PLAY_X0, PLAY_Y0, PLAY_X1, PLAY_Y1);
     /* setLiveWindow() compares the chunk-rounded core to decide whether old
        fingers remain valid, so establish a known sentinel before its first
        call.  World is also used as an uninitialised stack object by tests. */
@@ -475,6 +582,7 @@ void World::reset(bool rollTint) {
     felledCount = 0;
     memset(felledMark, 0, sizeof(felledMark));
     frame  = 0;
+    pass   = 0;
     activeChunks = 0;
     clearDirty(cur);
     clearDirty(next);
@@ -549,7 +657,7 @@ void World::setCell(Lane& L, int x, int y, u8 mat) {
     /* Stamped with the previous frame so a freshly painted cell is eligible on
        the very next step rather than sitting still for one, which would make
        the brush feel laggy. */
-    c.flags    = (u8)(((frame - 1) & STAMP_MASK) << STAMP_SHIFT);
+    c.flags    = (u8)(((pass - 1) & STAMP_MASK) << STAMP_SHIFT);
     const MatInfo& m = MATS[mat];
     temp[i] = m.spawnTemp ? m.spawnTemp : (u8)AMBIENT_TEMP;
     dirtyPoint(L, x, y);
@@ -626,8 +734,8 @@ void World::convert(Lane& L, int x, int y, u8 mat) {
 void World::paint(int cx, int cy, int r, u8 mat, bool replace) {
     Lane& L = simMainLane();
     int r2 = r * r;
-    int x0 = imax(cx - r, PLAY_X0), x1 = imin(cx + r, PLAY_X1);
-    int y0 = imax(cy - r, PLAY_Y0), y1 = imin(cy + r, PLAY_Y1);
+    int x0 = imax(cx - r, editLoX()), x1 = imin(cx + r, editHiX());
+    int y0 = imax(cy - r, editLoY()), y1 = imin(cy + r, editHiY());
     for (int y = y0; y <= y1; ++y) {
         int dy = y - cy;
         for (int x = x0; x <= x1; ++x) {
@@ -643,8 +751,8 @@ void World::paint(int cx, int cy, int r, u8 mat, bool replace) {
 
 void World::paintBg(int cx, int cy, int r, u8 mat) {
     const int r2 = r * r;
-    const int x0 = imax(cx - r, PLAY_X0), x1 = imin(cx + r, PLAY_X1);
-    const int y0 = imax(cy - r, PLAY_Y0), y1 = imin(cy + r, PLAY_Y1);
+    const int x0 = imax(cx - r, editLoX()), x1 = imin(cx + r, editHiX());
+    const int y0 = imax(cy - r, editLoY()), y1 = imin(cy + r, editHiY());
     for (int y = y0; y <= y1; ++y) for (int x = x0; x <= x1; ++x) {
         const int dx = x - cx, dy = y - cy;
         if (dx * dx + dy * dy <= r2) setBg(x, y, mat, true);
@@ -927,6 +1035,7 @@ bool World::tryMove(Lane& L, int sx, int sy, int tx, int ty,
     const int si = sy * SIM_W + sx, ti = ty * SIM_W + tx;
     Cell& s = cells[si];
     Cell& t = cells[ti];
+    bool displacedLiquid = false;   /* see the relay note below */
 
     /* Filters and reactive powders have one sparse occupant slot in moisture.
        A permitted fluid enters while the host remains the cell's material.
@@ -1099,6 +1208,33 @@ bool World::tryMove(Lane& L, int sx, int sy, int tx, int ty,
             }
             else {
                 if (sourceDensity <= targetDensity + DENSITY_SWAP_EPS_Q8) return false;
+                /* A powder sinking into liquid must not take the parcel a
+                   powder has ALREADY displaced this pass.
+
+                   The swap puts the liquid one cell up, where the powder was.
+                   The scan goes bottom to top, so the next grain up then finds
+                   that same parcel under it and swaps it again, and the next,
+                   and the liquid is relayed to the top of the whole falling
+                   column in one pass. Reported as wax "teleporting to the top
+                   of dirt that fell into it": measured, a 100-cell column of
+                   dirt dropped into a wax pool threw wax up 100 cells in one
+                   frame. Liquid sinking through liquid already refuses the
+                   same relay (see updateLiquid's leveling); powders never did.
+
+                   The movement stamp cannot say this -- every cell visited is
+                   stamped, including liquid that never moved, and refusing
+                   those would stop anything sinking at all -- so the lane keeps
+                   the row it left displaced liquid at, per column. A grain
+                   that finds it waits a pass; the column sinks through the
+                   pool as grains and parcels trading one cell at a time. */
+                if (sm.kind == KIND_POWDER && tm.kind == KIND_LIQUID) {
+                    if (L.stripe >= 0) {
+                        const int col = tx - L.stripeX0 + Lane::DISPLACED_MARGIN;
+                        if (col >= 0 && col < STRIPE_W + 2 * Lane::DISPLACED_MARGIN &&
+                            L.displaced.y[col] == ty) return false;
+                    }
+                    displacedLiquid = true;
+                }
                 /* A liquid does not directly swap with a gas: it advances only
                    when the gas can be conserved by shifting or compression.
                    The routed pressure wave is stamped as a unit, so no parcel
@@ -1112,6 +1248,10 @@ bool World::tryMove(Lane& L, int sx, int sy, int tx, int ty,
     Cell tmp = t;
     t = s;
     s = tmp;
+    if (displacedLiquid && L.stripe >= 0) {
+        const int col = sx - L.stripeX0 + Lane::DISPLACED_MARGIN;
+        if (col >= 0 && col < STRIPE_W + 2 * Lane::DISPLACED_MARGIN) L.displaced.y[col] = sy;
+    }
     /* Heat rides along with the material -- a hot particle carries its warmth
        rather than leaving it behind in the cell it vacated. */
     u8 tt = temp[ti]; temp[ti] = temp[si]; temp[si] = tt;
@@ -1386,6 +1526,9 @@ bool World::updateConvection(Lane& L, int x, int y) {
     const int i = y * SIM_W + x;
     const u8 mat = cells[i].mat;
     const u8 kind = MATS[mat].kind;
+    /* Not in a fluid pass: convection is heat moving, and heat runs at the
+       full pass's rate. Its row parity is on `frame` for the same reason. */
+    if (g_sf.fluidPass) return false;
     if ((kind != KIND_LIQUID && kind != KIND_GAS) ||
         (((u32)y ^ frame) & 1u) != 0u) return false;
 
@@ -1434,14 +1577,23 @@ void World::updateLiquid(Lane& L, int x, int y) {
     Cell& c = cells[i];
     const MatInfo& m = MATS[c.mat];
 
-    /* The interior of a large single-material pool has no possible gravity or
-       flow move, yet the ordinary path asks tryMove several times, scans for
-       hydrostatic reach, and may walk sideways through more of the same fluid
-       for every hot cell on every frame. Eight matching neighbours prove this
-       parcel is not on an interface. Convection still gets its full turn—this
-       optimization removes only movement attempts that cannot immediately
-       change the local arrangement. Boundary and mixed-fluid cells keep the
-       complete path below. */
+    /* A parcel with its own liquid on all eight sides cannot fall, cannot slide
+       diagonally, and is on no interface for the leveling rules to act on --
+       every one of those tests targets a neighbour, and every neighbour is the
+       same liquid, which they all refuse. So a packed parcel skips them.
+
+       It does NOT skip the sideways hop at the bottom, and it used to. That hop
+       looks THROUGH its own liquid for an opening up to `reach` cells away, so
+       a packed parcel can move: it is how a parcel inside a tall body gets out
+       to the edge, and so how a tall body levels at all. Skipping it left only
+       the literal surface cells free to flow, and powderbench showed what that
+       does -- a poured body standing as a 300-cell mesa with vertical walls,
+       stepped on the chunk grid, hundreds of frames after the pour stopped.
+
+       What is skipped is exactly what would have failed, and nothing in those
+       tests draws a random number, so this is the full path, only cheaper:
+       powderbench's world hash with the skip matches the hash with no skip at
+       all. */
     const u8 mat = c.mat;
     const bool packedSame = cells[i - SIM_W - 1].mat == mat &&
                             cells[i - SIM_W    ].mat == mat &&
@@ -1451,19 +1603,14 @@ void World::updateLiquid(Lane& L, int x, int y) {
                             cells[i + SIM_W - 1].mat == mat &&
                             cells[i + SIM_W    ].mat == mat &&
                             cells[i + SIM_W + 1].mat == mat;
-    if (packedSame) {
-        updateConvection(L, x, y);
-        return;
-    }
-
-    if (tryMove(L, x, y, x, y + 1)) return;
+    if (!packedSame && tryMove(L, x, y, x, y + 1)) return;
     /* A lone/exposed parcel may sink directly into a lighter liquid. Requiring
        no same-material parcel immediately above is the anti-relay ownership
        rule: the bottom cell of a Water column cannot repeatedly push one hot
        Wax parcel upward through the whole column. Thick layers are sorted from
        below by updateConvection instead. */
     const u8 belowMat = cells[i + SIM_W].mat;
-    if (belowMat != c.mat && MATS[belowMat].kind == KIND_LIQUID &&
+    if (!packedSame && belowMat != c.mat && MATS[belowMat].kind == KIND_LIQUID &&
         cells[i - SIM_W].mat != c.mat &&
         tryMove(L, x, y, x, y + 1, true)) return;
     if (updateConvection(L, x, y)) return;
@@ -1486,8 +1633,8 @@ void World::updateLiquid(Lane& L, int x, int y) {
        a time. A one-cell-deep layer has no source parcel above it, so it stops
        exactly flat rather than diffusing sideways forever. */
     const u8 aboveLevelMat = cells[i - SIM_W].mat;
-    const int sourceDensity = materialDensityQ8(mat, temp[i]);
-    if (aboveLevelMat != mat && MATS[aboveLevelMat].kind == KIND_LIQUID &&
+    const int sourceDensity = packedSame ? 0 : materialDensityQ8(mat, temp[i]);
+    if (!packedSame && aboveLevelMat != mat && MATS[aboveLevelMat].kind == KIND_LIQUID &&
         cells[i + SIM_W].mat == mat &&
         sourceDensity > materialDensityQ8(aboveLevelMat, temp[i - SIM_W]) +
                         DENSITY_SWAP_EPS_Q8) {
@@ -1548,7 +1695,7 @@ void World::updateLiquid(Lane& L, int x, int y) {
        one-cell-thick layer has no source parcel below it, so a pocket relaxes
        to flat and then stays there rather than smearing sideways forever. */
     const u8 belowLevelMat = cells[i + SIM_W].mat;
-    if (y - 1 >= PLAY_Y0 && belowLevelMat != mat &&
+    if (!packedSame && y - 1 >= PLAY_Y0 && belowLevelMat != mat &&
         MATS[belowLevelMat].kind == KIND_LIQUID &&
         cells[i - SIM_W].mat == mat &&
         sourceDensity + DENSITY_SWAP_EPS_Q8 <
@@ -1608,8 +1755,10 @@ void World::updateLiquid(Lane& L, int x, int y) {
         return;
     }
 
-    if (tryMove(L, x, y, x + dx, y + 1)) return;
-    if (tryMove(L, x, y, x - dx, y + 1)) return;
+    if (!packedSame) {
+        if (tryMove(L, x, y, x + dx, y + 1)) return;
+        if (tryMove(L, x, y, x - dx, y + 1)) return;
+    }
 
     /* Nothing below, so run sideways looking for somewhere to fall. Scanning
        ahead several cells in one frame is what makes a puddle flatten out
@@ -1627,13 +1776,97 @@ void World::updateLiquid(Lane& L, int x, int y) {
        slump into a dome. With a single reach for every cell, every row drains
        at the same rate and a poured pile keeps dead-vertical walls -- the
        flat-topped mesa that made liquids read as blocky. */
+    /* First, whether there is anything to hop to at all, looking as far as any
+       pressure could ever let this parcel reach. Inside a deep body there
+       almost never is, and finding that out costs a few reads along this row,
+       which share cache lines. Counting the pressure first, as this used to,
+       costs up to PRESSURE_MAX reads straight UP the column -- a fresh cache
+       line each -- and then the two scans below, all to conclude "boxed in".
+       Sampled on powderbench with the fluid pass on, that count and those
+       scans were 40% of every sample in the program.
+
+       Exactly equivalent: with no opening inside the widest reach there is
+       none inside any narrower one, both attempts below fail, their two flips
+       of F_DIR cancel, and nothing in between draws a random number. The world
+       hash is unchanged.
+
+       And then that check was itself a quarter of all samples once falling
+       went back to one cell a frame and more water spent its time resting --
+       up to eighty reads for every parcel inside a pool. It is answered from
+       one measurement per run of liquid now (Lane::run); same answer, hash
+       unchanged. */
+    {
+        const int reachMax = (int)m.dispersion + PRESSURE_MAX;
+        static const i32 NO_OPENING = -0x40000000;
+        Lane::LiquidRun& run = L.run;
+        if (!(run.valid && run.epoch == L.writeEpoch && run.y == y && run.mat == c.mat &&
+              x >= run.lo && x <= run.hi)) {
+            /* Measure the run this parcel sits in, once, for the neighbours
+               that follow it along the row.
+
+               That the answer is shared is not an approximation. The scan it
+               replaces walks through its own liquid and stops at the first
+               cell that is not, so for every parcel in one run the deciding
+               cell on each side is the same cell: the one just past the run's
+               end. Only the DISTANCE to it differs, and that is arithmetic.
+
+               How far to look, and it matters. The scan it replaces never read
+               further than reachMax past a cell of this stripe, and stripes of
+               one colour run at once on the promise that nothing does -- see
+               RULE_WRITE_REACH_X. So the walk is capped at the stripe's edge
+               plus reachMax as well as at a window round this parcel. Hitting a
+               cap means the run is longer than any parcel it serves can see
+               past, which is "no opening on that side" for all of them; the
+               window of parcels served, x +- WINDOW, is chosen so that holds. */
+            static const int WINDOW = 32;
+            const int stripeLo = L.stripe >= 0 ? L.stripeX0 : x;
+            const int stripeHi = L.stripe >= 0 ? L.stripeX1 : x;
+            const int capL = imax(imax(PLAY_X0, x - reachMax - WINDOW - 1), stripeLo - reachMax);
+            const int capR = imin(imin(PLAY_X1, x + reachMax + WINDOW + 1), stripeHi + reachMax);
+            const i32 row = y * SIM_W;
+            int a = x, b = x;
+            while (a > capL && cells[row + a - 1].mat == c.mat) --a;
+            while (b < capR && cells[row + b + 1].mat == c.mat) ++b;
+            i32 openL = NO_OPENING, openR = NO_OPENING;
+            if (a > capL) {
+                const u8 nm = cells[row + a - 1].mat;
+                if (nm == MAT_EMPTY || (MATS[nm].kind == KIND_GAS && MATS[nm].density < m.density))
+                    openL = a - 1;
+            }
+            if (b < capR) {
+                const u8 nm = cells[row + b + 1].mat;
+                if (nm == MAT_EMPTY || (MATS[nm].kind == KIND_GAS && MATS[nm].density < m.density))
+                    openR = b + 1;
+            }
+            run.valid = true;
+            run.epoch = L.writeEpoch;
+            run.y = y;
+            run.mat = c.mat;
+            run.lo = imax(a, x - WINDOW);
+            run.hi = imin(b, x + WINDOW);
+            run.openL = openL;
+            run.openR = openR;
+        }
+        const bool opening = (run.openL != NO_OPENING && x - run.openL <= reachMax) ||
+                             (run.openR != NO_OPENING && run.openR - x <= reachMax);
+        if (!opening) return;
+    }
+
     int pressure = 0;
     for (int k = 1; k <= PRESSURE_MAX; ++k) {
         if (y - k < PLAY_Y0 || cells[(y - k) * SIM_W + x].mat != c.mat) break;
         ++pressure;
     }
 
-    const int reach = (int)m.dispersion + pressure;
+    /* A thick liquid is not pushed as far by its own weight. Viscosity (the
+       `jitter` byte, for a liquid) used to gate only HOW OFTEN a parcel flows
+       sideways; every turn it did flow, the head of liquid above it threw it
+       just as far as the same depth of water. Measured, lava at viscosity 220
+       -- refusing six turns in seven -- still spread a 200-cell block across
+       560 cells in 300 frames against water's 592. Scaling the head by the
+       same number makes viscosity govern the distance too. Zero viscosity is
+       untouched, so water and every other runny liquid behave as before. */
+    const int reach = (int)m.dispersion + ((pressure * (256 - (int)m.jitter)) >> 8);
     for (int attempt = 0; attempt < 2; ++attempt) {
         int destX = x;
         for (int s = 1; s <= reach; ++s) {
@@ -2921,7 +3154,89 @@ void World::updateGrass(Lane& L, int x, int y) {
     if (moreToDo) dirtyPoint(L, x, y);
 }
 
+/* Is this liquid parcel falling -- is the column of the same liquid beneath
+   it standing on air (or gas) rather than on something?
+
+   The immediate cell below is not the question. Inside a falling blob every
+   parcel but the bottom row has water under it, and the first version asked
+   only that, so the blob's upper rows took their fluid-pass turn as if they
+   were lying in a pool: the sideways hop found open air either side of the
+   falling body and threw them out into it. A pour spread sideways in mid-air.
+
+   Walking the whole column for every parcel would be a scan down a deep pool
+   per cell per pass, so the answer is carried upward instead. The scan runs
+   bottom to top, so the parcel below was usually decided a moment ago in this
+   same column, and a parcel of the same liquid on top of it shares its fate.
+   Only where the chunk rectangle starts a column part-way down is there no
+   answer to carry, and then the column is walked, capped at FALL_SCAN: a body
+   of liquid deeper than that is treated as resting, which a pour that tall
+   never is in practice.
+
+   Deterministic at any thread count: the memo is per lane, per stripe, per
+   pass, and the scan order inside a stripe is fixed. */
+static const int FALL_SCAN = 256;
+bool World::liquidFalling(Lane& L, int x, int y, u8 mat) {
+    const u8 below = cells[(y + 1) * SIM_W + x].mat;
+    bool falling;
+    if (below == MAT_EMPTY || MATS[below].kind == KIND_GAS) {
+        falling = true;
+    } else if (below != mat) {
+        falling = false;
+    } else {
+        const int col = L.stripe >= 0 ? x - L.stripeX0 : -1;
+        if (col >= 0 && col < STRIPE_W && L.fall.y[col] == y + 1) {
+            falling = L.fall.falling[col] != 0;
+        } else {
+            falling = false;
+            for (int k = 2; k <= FALL_SCAN; ++k) {
+                if (y + k > PLAY_Y1) break;
+                const u8 m2 = cells[(y + k) * SIM_W + x].mat;
+                if (m2 == mat) continue;
+                falling = m2 == MAT_EMPTY || MATS[m2].kind == KIND_GAS;
+                break;
+            }
+        }
+    }
+    const int col = L.stripe >= 0 ? x - L.stripeX0 : -1;
+    if (col >= 0 && col < STRIPE_W) {
+        L.fall.y[col] = y;
+        L.fall.falling[col] = (u8)falling;
+    }
+    return falling;
+}
+
+/* A cell's turn in a fluid pass. See FLUID_SUBSTEPS: liquid movement, and
+   stored gas pressure, and nothing else -- anything that is neither returns
+   before it is stamped and keeps its full-pass turn. */
+void World::updateCellFluid(Lane& L, int x, int y) {
+    const int i = y * SIM_W + x;
+    Cell& c = cells[i];
+    const u8 kind = MATS[c.mat].kind;
+    if (kind == KIND_GAS) {
+        if (!(c.moisture & GAS_EXCESS_MASK)) return;
+    } else if (kind != KIND_LIQUID) {
+        return;
+    } else {
+        /* A liquid with open air or gas beneath it is FALLING, and falling
+           keeps the full pass's rate: one cell a frame, as it always was. Two
+           a frame was tried and read as too fast -- a pour dropped like a
+           stone. What the fluid pass is for is what a liquid does once it is
+           resting on something: sliding off a heap, spreading, levelling. So a
+           falling parcel sits this pass out, still scheduled, and the full
+           pass moves it. Diagonal slides are skipped with it on purpose, or a
+           parcel in free fall would take the diagonal and fall at double speed
+           anyway, just crooked. */
+        if (liquidFalling(L, x, y, c.mat)) return;
+    }
+    const u8 st = stamp();
+    if (((c.flags >> STAMP_SHIFT) & STAMP_MASK) == st) { dirtyPoint(L, x, y); return; }
+    c.flags = (u8)((c.flags & F_DIR) | (st << STAMP_SHIFT));
+    if (kind == KIND_LIQUID) updateLiquid(L, x, y);
+    else                     updateGasPressure(L, x, y);
+}
+
 void World::updateCell(Lane& L, int x, int y) {
+    if (g_sf.fluidPass) { updateCellFluid(L, x, y); return; }
     const int i = y * SIM_W + x;
 
     /* Heat first, and for every cell -- air and walls included -- so warmth
@@ -3502,16 +3817,7 @@ void World::updateCell(Lane& L, int x, int y) {
 }
 
 
-/* Everything a stripe needs to know about the frame it is in, and nothing
-   that changes while it runs. Written by step() before any lane starts and
-   read-only for the rest of the frame. */
-struct StripeFrame {
-    int  coreCX0, coreCX1, coreCY0, coreCY1;
-    int  liveCX0, liveCX1, liveCY0, liveCY1;
-    bool leftFirst;
-    u32  seedBase;
-};
-static StripeFrame g_sf;
+
 
 /* ======================================================================
    The lane pool
@@ -3543,7 +3849,11 @@ static const int g_workerCount = 0;
 #endif
 
 static World*  g_laneWorld = 0;
-static int     g_laneJob[STRIPE_COUNT];
+/* Set only while simParallel is running: the pool is then draining generic
+   jobs rather than stripes. Null means stripes, which is every step(). */
+static void  (*g_laneTask)(void*, int) = 0;
+static void*   g_laneTaskCtx = 0;
+static int     g_laneJob[STRIPE_SLOTS];
 static int     g_laneJobs = 0;
 #ifdef CINDERLIFT_LANE_POOL
 static volatile LONG g_laneNext = 0;
@@ -3570,7 +3880,8 @@ static void laneDrain(void) {
         const long i = g_laneNext++;
 #endif
         if (i >= g_laneJobs) return;
-        g_laneWorld->runStripe(g_laneJob[i]);
+        if (g_laneTask) g_laneTask(g_laneTaskCtx, (int)i);
+        else            g_laneWorld->runStripe(g_laneJob[i]);
     }
 }
 
@@ -3661,21 +3972,83 @@ static void laneRunPhase(World* w, const int* stripes, int count) {
 #endif
 }
 
+void simParallel(int count, void (*fn)(void* ctx, int job), void* ctx) {
+    if (count <= 0) return;
+    g_laneTask = fn;
+    g_laneTaskCtx = ctx;
+    g_laneJobs = count;
+#ifdef CINDERLIFT_LANE_POOL
+    InterlockedExchange(&g_laneNext, 0);
+    for (int i = 0; i < g_workerCount; ++i) SetEvent(g_laneGo[i]);
+#else
+    g_laneNext = 0;
+#endif
+    laneDrain();
+#ifdef CINDERLIFT_LANE_POOL
+    for (int i = 0; i < g_workerCount; ++i)
+        WaitForSingleObject(g_laneDone[i], INFINITE);
+#endif
+    g_laneTask = 0;
+    g_laneTaskCtx = 0;
+}
+
 void World::step() {
     dirtyLogInit();
+    for (int k = 1; k < FLUID_SUBSTEPS; ++k) scanPass(true);
+    scanPass(false);
+    ++frame;
+}
+
+/* ------------------------------------------------------------------------
+   Where the stripe grid sits on this pass: moved left by 0..STRIPE_W-1 cells.
+
+   A stripe is scanned whole before the next colour starts, so a stripe EDGE is
+   where two sweeps meet out of order, and that showed. Along an edge, a gap
+   opened in the middle of a falling or sliding column was always filled from
+   above within the one stripe's sweep, before the stripe on the other side
+   had its turn, so material could cross the edge only at the top of a moving
+   column. Sand piles grew a step wherever a flank crossed an edge -- 24 cells
+   tall on the old fixed grid, at every multiple of 32 -- and liquids moved as
+   a thin stream across the top. Alternating the colour order did not fix it;
+   the gap is made and filled inside one sweep either way. Widening the stripes
+   to 512 cells did, which is what said it was the edges.
+
+   So the edges do not stay anywhere. Every stripe is still STRIPE_W wide and
+   same-coloured stripes are still (STRIPE_COLOURS - 1) stripes apart, which is
+   all RULE_WRITE_REACH_X asks, so moving the grid changes nothing about
+   safety. A column now sits on an edge one pass in thirty-two instead of
+   every pass, and the step has nowhere to build.
+
+   A hash of the pass rather than a counter, so consecutive passes do not
+   sweep the edges steadily across the world in one direction -- that would be
+   a slow drift of its own. Deterministic, so a world still steps the same at
+   any thread count. */
+static int stripeShift(u32 pass) {
+    u32 h = pass * 0x9E3779B1u;
+    h ^= h >> 15;
+    return (int)(h & (u32)(STRIPE_W - 1));
+}
+
+void World::scanPass(bool fluidPass) {
     /* Pocket sharing is the only pressure operation that searches farther than
        its immediate material path. Bound it across the whole world, not per
        chunk, so a pathological mass-boil drains over several frames instead of
        turning one frame into an unbounded collection of 2,048-node walks. */
     /* Last frame's accumulated rects become this frame's work list. */
     memcpy(cur, next, sizeof(cur));
-    clearDirty(next);
+    /* A fluid pass leaves next[] holding the whole work list, so everything it
+       skips is still scheduled for the full pass that follows; what it moves
+       adds to that. The full pass consumes the list as a step always has. */
+    if (!fluidPass) clearDirty(next);
 
     /* Bottom-to-top so a falling cell lands in a row already dealt with and
        cannot fall twice in one frame. Left/right alternates each frame,
        otherwise piles visibly lean the way the scan runs. */
-    const bool leftFirst = (frame & 1) != 0;
-    activeChunks = 0;
+    /* The full pass alternates by frame exactly as before; a fluid pass scans
+       the opposite way to the full pass of its frame, so neither direction is
+       favoured across the two. */
+    const bool leftFirst = ((frame & 1) != 0) != fluidPass;
+    if (!fluidPass) activeChunks = 0;
 
     /* The live window in chunk coordinates, rounded outward so a partly
        visible chunk is fully simulated -- material must not behave differently
@@ -3706,7 +4079,10 @@ void World::step() {
     const bool need[4] = { needsTop, needsBottom, needsLeft, needsRight };
     const int cost[4] = { coreW, coreW, coreH, coreH };
     int want = -1;
-    for (int d = 0; d < 4; ++d) if (need[d] && (want < 0 || *fingers[d] < *fingers[want])) want = d;
+    /* The live window grows once per frame, on the full pass. */
+    if (!fluidPass)
+        for (int d = 0; d < 4; ++d)
+            if (need[d] && (want < 0 || *fingers[d] < *fingers[want])) want = d;
     int used = coreW * (fingerTop + fingerBottom) + coreH * (fingerLeft + fingerRight);
     if (want >= 0) {
         bool edge = (want == 0) ? coreCY0 - fingerTop > 0 : (want == 1) ? coreCY1 + fingerBottom < CHUNKS_Y - 1 : (want == 2) ? coreCX0 - fingerLeft > 0 : coreCX1 + fingerRight < CHUNKS_X - 1;
@@ -3736,6 +4112,8 @@ void World::step() {
        than captured, because a Win32 thread entry point takes one pointer
        and this is one struct instead of a closure. */
     g_sf.leftFirst = leftFirst;
+    g_sf.fluidPass = fluidPass;
+    g_sf.shift = stripeShift(pass);
     g_sf.coreCX0 = coreCX0; g_sf.coreCX1 = coreCX1;
     g_sf.coreCY0 = coreCY0; g_sf.coreCY1 = coreCY1;
     g_sf.liveCX0 = liveCX0; g_sf.liveCX1 = liveCX1;
@@ -3747,11 +4125,75 @@ void World::step() {
 
     memset(g_stripeSproutN, 0, sizeof(g_stripeSproutN));
     memset(g_stripeFelledN, 0, sizeof(g_stripeFelledN));
-    memset(g_stripeActive,  0, sizeof(g_stripeActive));
 
-    for (int phase = 0; phase < STRIPE_COLOURS; ++phase) {
-        int list[STRIPE_COUNT], n = 0;
-        for (int st = phase; st < STRIPE_COUNT; st += STRIPE_COLOURS) list[n++] = st;
+    /* Which chunks run this pass. This used to be decided inside the stripe
+       loop, chunk by chunk as each stripe reached it, which was fine while a
+       chunk belonged to exactly one stripe. With the grid shifted a chunk can
+       belong to two, and the decision SPENDS something -- a lingering chunk's
+       grace -- so it is made here, once, before any stripe runs. It is the same
+       visit of every chunk the stripes made between them, serial rather than
+       spread across them, and it skips settled chunks on one compare. */
+    for (int cy = 0; cy < CHUNKS_Y; ++cy) {
+        for (int cx = 0; cx < CHUNKS_X; ++cx) {
+            const int idx = cy * CHUNKS_X + cx;
+            const Chunk& ch = cur[idx];
+            if (ch.minX > ch.maxX) { g_chunkSim[idx] = 0; continue; }
+
+            /* A plus-shaped live set: the core, plus four independent fingers.
+               Corners are intentionally not paid for, preserving the 2x cap. */
+            const bool inLiveWindow = liveCoreMask[idx]
+                                   || (cx >= coreCX0 && cx <= coreCX1 && cy >= liveCY0 && cy <= liveCY1)
+                                   || (cy >= coreCY0 && cy <= coreCY1 && cx >= liveCX0 && cx <= liveCX1);
+            /* Grace is counted in frames, so only the full pass spends it. */
+            if (inLiveWindow && !fluidPass) liveGrace[idx] = LIVE_GRACE_STEPS;
+            const bool lingering = !inLiveWindow && liveGrace[idx] > 0;
+            if (lingering && !fluidPass) --liveGrace[idx];
+
+            if (!inLiveWindow && !lingering && !keepAlive[idx]) {
+                /* Outside the window: FROZEN, not forgotten.
+
+                   The pending work has to be carried into next[], because cur
+                   is overwritten by next at the top of every step. Simply
+                   skipping would silently drop the rect, and the chunk would
+                   come back settled -- sand caught mid-fall would hang in the
+                   air forever, and the only clue would be that it happened to
+                   be off-screen at the time. Merged rather than assigned,
+                   since a simulated neighbour may already have dirtied across
+                   the boundary this frame. */
+                Chunk& n = next[idx];
+                if (n.minX > n.maxX) { n = ch; }
+                else {
+                    if (ch.minX < n.minX) n.minX = ch.minX;
+                    if (ch.minY < n.minY) n.minY = ch.minY;
+                    if (ch.maxX > n.maxX) n.maxX = ch.maxX;
+                    if (ch.maxY > n.maxY) n.maxY = ch.maxY;
+                }
+                g_chunkSim[idx] = 0;
+                continue;
+            }
+            g_chunkSim[idx] = 1;
+            if (!fluidPass) ++activeChunks;
+        }
+    }
+
+    /* The colours run forward on one frame and backward on the next, for the
+       same reason leftFirst alternates inside a stripe.
+
+       A stripe is scanned whole, bottom to top, before the next colour starts.
+       So across any stripe edge one side always moved first, and saw the other
+       side's grains still sitting where they were about to leave: flow from
+       the early side into the late one met cells that were occupied only
+       because their turn had not come yet. In a fixed order that is the same
+       side every frame, and it added up. A sand pile left a step on the chunk
+       grid -- 24 cells tall -- wherever its flank crossed an edge, and the same
+       stripes widened to 512 cells made a clean cone. Alternating gives every
+       edge each order half the time. Any order of whole colours is as safe as
+       any other; only the stripes WITHIN a colour run at once. */
+    const bool reversePhases = ((frame & 1) != 0) != fluidPass;
+    for (int k = 0; k < STRIPE_COLOURS; ++k) {
+        const int phase = reversePhases ? STRIPE_COLOURS - 1 - k : k;
+        int list[STRIPE_SLOTS], n = 0;
+        for (int st = phase; st < STRIPE_SLOTS; st += STRIPE_COLOURS) list[n++] = st;
         laneRunPhase(this, list, n);
     }
 
@@ -3775,8 +4217,7 @@ void World::step() {
 
     /* Merge, in stripe order, so the world is the same whichever thread got
        to which stripe first. */
-    for (int st = 0; st < STRIPE_COUNT; ++st) {
-        activeChunks += g_stripeActive[st];
+    for (int st = 0; st < STRIPE_SLOTS; ++st) {
         for (int i = 0; i < g_stripeSproutN[st] && sproutCount < MAX_SPROUTS; ++i)
             sprout[sproutCount++] = g_stripeSprout[st][i];
         for (int i = 0; i < g_stripeFelledN[st]; ++i) {
@@ -3786,26 +4227,28 @@ void World::step() {
             felled[felledCount++] = ch;
         }
     }
-    ++frame;
+    g_sf.fluidPass = false;
+    ++pass;
 }
 
-/* One stripe: every chunk in a band STRIPE_CHUNKS wide, whole world tall.
-
-   This is verbatim the loop step() used to run over the entire chunk grid,
-   with the x range narrowed and the things that used to be world-wide
-   counters made lane-local. */
+/* One stripe: a band STRIPE_W cells wide, whole world tall, at this pass's
+   shift (see stripeShift). Which chunks run was decided in scanPass before any
+   stripe started; this only walks the cells of the ones that do. */
 void World::runStripe(int stripe) {
     const bool leftFirst = g_sf.leftFirst;
-    const int coreCX0 = g_sf.coreCX0, coreCX1 = g_sf.coreCX1;
-    const int coreCY0 = g_sf.coreCY0, coreCY1 = g_sf.coreCY1;
-    const int liveCX0 = g_sf.liveCX0, liveCX1 = g_sf.liveCX1;
-    const int liveCY0 = g_sf.liveCY0, liveCY1 = g_sf.liveCY1;
-    const int cxLo = stripe * STRIPE_CHUNKS;
-    const int cxHi = imin(CHUNKS_X - 1, cxLo + STRIPE_CHUNKS - 1);
-    if (cxLo > cxHi) return;
+    /* This stripe's cells: STRIPE_W wide, the whole grid moved left by this
+       pass's shift. See stripeShift. */
+    const int x0 = imax(0, stripe * STRIPE_W - g_sf.shift);
+    const int x1 = imin(SIM_W - 1, stripe * STRIPE_W - g_sf.shift + STRIPE_W - 1);
+    if (x0 > x1) return;
 
     Lane& L = g_lane[laneOf(stripe)];
     L.stripe = stripe;
+    L.stripeX0 = x0;
+    L.stripeX1 = x1;
+    L.run.valid = false;   /* other lanes have written since this one last ran */
+    for (int i = 0; i < STRIPE_W; ++i) L.fall.y[i] = -1;
+    for (int i = 0; i < STRIPE_W + 2 * Lane::DISPLACED_MARGIN; ++i) L.displaced.y[i] = -1;
     /* Stream per stripe, not per thread. Mixed rather than added so that
        neighbouring stripes on the same frame are not neighbouring streams --
        an xorshift seeded with n and n+1 correlates visibly for a few draws,
@@ -3828,56 +4271,37 @@ void World::runStripe(int stripe) {
        worst case on paper and nothing at all in practice. */
     L.scratch.pressureRoutes = GAS_PRESSURE_POCKET_BUDGET;
     L.scratch.bfsSearches    = GAS_PRESSURE_BFS_BUDGET;
-    int active = 0;
-
+    /* At most two chunks per row: the stripe straddles a chunk edge unless the
+       shift is zero. Their rows are walked TOGETHER, bottom to top, rather
+       than one chunk and then the other -- walking them one after the other is
+       exactly the seam the shift exists to remove, rebuilt inside the stripe. */
+    const int cxA = x0 >> CHUNK_SHIFT, cxB = x1 >> CHUNK_SHIFT;
     for (int cy = CHUNKS_Y - 1; cy >= 0; --cy) {
-        for (int ci = cxLo; ci <= cxHi; ++ci) {
-            int cx = leftFirst ? ci : (cxHi - (ci - cxLo));
+        int rx0[2], rx1[2], ry0[2], ry1[2], parts = 0;
+        for (int cx = cxA; cx <= cxB; ++cx) {
             const int idx = cy * CHUNKS_X + cx;
+            if (!g_chunkSim[idx]) continue;
             const Chunk& ch = cur[idx];
-            if (ch.minX > ch.maxX) continue;   /* settled: skipped entirely */
-
-            /* A plus-shaped live set: the core, plus four independent fingers.
-               Corners are intentionally not paid for, preserving the 2x cap. */
-            const bool inLiveWindow = liveCoreMask[idx]
-                                   || (cx >= coreCX0 && cx <= coreCX1 && cy >= liveCY0 && cy <= liveCY1)
-                                   || (cy >= coreCY0 && cy <= coreCY1 && cx >= liveCX0 && cx <= liveCX1);
-            if (inLiveWindow) liveGrace[idx] = LIVE_GRACE_STEPS;
-            const bool lingering = !inLiveWindow && liveGrace[idx] > 0;
-            if (lingering) --liveGrace[idx];
-
-            if (!inLiveWindow && !lingering && !keepAlive[idx]) {
-                /* Outside the window: FROZEN, not forgotten.
-
-                   The pending work has to be carried into next[], because cur
-                   is overwritten by next at the top of every step. Simply
-                   skipping would silently drop the rect, and the chunk would
-                   come back settled -- sand caught mid-fall would hang in the
-                   air forever, and the only clue would be that it happened to
-                   be off-screen at the time. Merged rather than assigned,
-                   since a simulated neighbour may already have dirtied across
-                   the boundary this frame. */
-                Chunk& n = next[idx];
-                if (n.minX > n.maxX) { n = ch; }
-                else {
-                    if (ch.minX < n.minX) n.minX = ch.minX;
-                    if (ch.minY < n.minY) n.minY = ch.minY;
-                    if (ch.maxX > n.maxX) n.maxX = ch.maxX;
-                    if (ch.maxY > n.maxY) n.maxY = ch.maxY;
-                }
-                continue;
-            }
-            ++active;
-
-            for (int y = ch.maxY; y >= ch.minY; --y) {
+            const int lo = imax(ch.minX, x0), hi = imin(ch.maxX, x1);
+            if (lo > hi) continue;
+            rx0[parts] = lo; rx1[parts] = hi;
+            ry0[parts] = ch.minY; ry1[parts] = ch.maxY;
+            ++parts;
+        }
+        if (!parts) continue;
+        int yTop = ry0[0], yBottom = ry1[0];
+        if (parts == 2) { yTop = imin(yTop, ry0[1]); yBottom = imax(yBottom, ry1[1]); }
+        for (int y = yBottom; y >= yTop; --y) {
+            for (int k = 0; k < parts; ++k) {
+                const int p = leftFirst ? k : parts - 1 - k;
+                if (y < ry0[p] || y > ry1[p]) continue;
                 if (leftFirst) {
-                    for (int x = ch.minX; x <= ch.maxX; ++x) updateCell(L, x, y);
+                    for (int x = rx0[p]; x <= rx1[p]; ++x) updateCell(L, x, y);
                 } else {
-                    for (int x = ch.maxX; x >= ch.minX; --x) updateCell(L, x, y);
+                    for (int x = rx1[p]; x >= rx0[p]; --x) updateCell(L, x, y);
                 }
             }
         }
     }
-    g_stripeActive[stripe] = active;
     L.stripe = -1;
 }

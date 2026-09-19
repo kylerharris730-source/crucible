@@ -1,6 +1,10 @@
 #include "render.h"
 #include "light.h"
 
+/* Enough bands for the tallest view anyone draws (powderlike's Quarter, 1536
+   rows) at sixteen rows each. */
+static const int RENDER_MAX_BANDS = 96;
+
 /* Anything outside the world. Should never be visible once the camera is
    clamped, but rendering it as a flat colour rather than reading out of bounds
    means a clamping bug shows up as an obvious black band instead of as garbage
@@ -77,26 +81,36 @@ static inline u32 backdrop(const World& w, int wx, int wy, int i, u32 sky, bool*
     return lut[bgSpeckle(wx, wy)];
 }
 
+/* Everything one band of rows needs, shared read-only by every band. */
+struct RenderJob {
+    const World* w;
+    u32* out;
+    int view, camX, camY, cellsW, cellsH;
+    bool lit;
+    int daylight;
+    int bandRows;
+    int count[RENDER_MAX_BANDS];
+};
+
 /* One linear pass per visible row. The material colour is a single lookup into
    the precomputed palette -- no arithmetic beyond shifts. */
-int renderView(const World& w, u32* out, int view, int camX, int camY, bool lit) {
+static int renderRows(const RenderJob& j, int vy0, int vy1) {
+    const World& w = *j.w;
+    u32* const out = j.out;
+    const int view = j.view, camX = j.camX, camY = j.camY, cellsW = j.cellsW;
+    const bool lit = j.lit;
+    const int daylight = j.daylight;
     const Cell* cells = w.cells;
     const u8*   temp  = w.temp;
     int count = 0;
-    /* Constant for the entire frame. backdrop() used to call dayLight() for
-       every empty visible cell, then repeat the identical sky blend across all
-       512 cells of a row. A large excavated cavern made that nearly 200,000
-       floating-point daylight calculations per frame even though the result
-       only varies with Y. */
-    const int daylight = dayLight();
 
-    for (int vy = 0; vy < VIEW_CELLS_H; ++vy) {
+    for (int vy = vy0; vy < vy1; ++vy) {
         const int wy = camY + vy;
-        u32* row = out + vy * VIEW_CELLS_W;
+        u32* row = out + vy * cellsW;
         const u8* lrow = lit ? lightRow(vy) : 0;
 
         if (wy < 0 || wy >= SIM_H) {
-            for (int vx = 0; vx < VIEW_CELLS_W; ++vx) row[vx] = VOID_COLOUR;
+            for (int vx = 0; vx < cellsW; ++vx) row[vx] = VOID_COLOUR;
             continue;
         }
 
@@ -109,14 +123,14 @@ int renderView(const World& w, u32* out, int view, int camX, int camY, bool lit)
 
         /* The horizontal span that is actually inside the world, so the inner
            loops carry no bounds test at all. */
-        int vx0 = 0, vx1 = VIEW_CELLS_W;
+        int vx0 = 0, vx1 = cellsW;
         if (camX < 0)                   vx0 = -camX;
         if (camX + vx1 > SIM_W)         vx1 = SIM_W - camX;
-        if (vx0 > VIEW_CELLS_W) vx0 = VIEW_CELLS_W;
+        if (vx0 > cellsW) vx0 = cellsW;
         if (vx1 < vx0)          vx1 = vx0;
 
         for (int vx = 0; vx < vx0; ++vx)               row[vx] = VOID_COLOUR;
-        for (int vx = vx1; vx < VIEW_CELLS_W; ++vx)    row[vx] = VOID_COLOUR;
+        for (int vx = vx1; vx < cellsW; ++vx)          row[vx] = VOID_COLOUR;
 
         const int base = wy * SIM_W + camX;
 
@@ -196,5 +210,50 @@ int renderView(const World& w, u32* out, int view, int camX, int camY, bool lit)
             count += (c.mat != MAT_EMPTY && c.mat != MAT_WALL);
         }
     }
+    return count;
+}
+
+static void renderBand(void* ctx, int band) {
+    RenderJob& j = *(RenderJob*)ctx;
+    const int vy0 = band * j.bandRows;
+    const int vy1 = imin(j.cellsH, vy0 + j.bandRows);
+    j.count[band] = vy0 < vy1 ? renderRows(j, vy0, vy1) : 0;
+}
+
+/* ------------------------------------------------------------------------
+   Drawn on the sim's thread pool, in bands of rows.
+
+   The pool is idle for every millisecond of the frame that is not step(), and
+   the renderer was the largest single thing left on the main thread: sampled
+   on powderbench's water pour it was a quarter of all the program's time, and
+   2.7 ms a frame at powderlike's Half scale -- as much as the whole eight-
+   thread simulation. It is also the easiest thing in the program to split:
+   every output row depends only on the world, which nothing writes while this
+   runs, and writes only its own row of `out`. So the picture is bit-for-bit
+   what one thread drew, and there is nothing to merge but the cell count.
+
+   Sixteen rows a band: small enough that the last band to finish is not a
+   long tail, large enough that the handoff is noise against the row work. */
+int renderView(const World& w, u32* out, int view, int camX, int camY, bool lit,
+               int cellsW, int cellsH) {
+    /* The light field's geometry is fixed to the game's window (see the header).
+       Shading an oversized view would read past the end of it, so the oversized
+       view simply is not shaded. */
+    if (cellsW != VIEW_CELLS_W || cellsH != VIEW_CELLS_H) lit = false;
+
+    static RenderJob j;
+    j.w = &w; j.out = out; j.view = view; j.camX = camX; j.camY = camY;
+    j.cellsW = cellsW; j.cellsH = cellsH; j.lit = lit;
+    /* Constant for the entire frame. backdrop() used to call dayLight() for
+       every empty visible cell, then repeat the identical sky blend across all
+       512 cells of a row. A large excavated cavern made that nearly 200,000
+       floating-point daylight calculations per frame even though the result
+       only varies with Y. */
+    j.daylight = dayLight();
+    j.bandRows = imax(16, (cellsH + RENDER_MAX_BANDS - 1) / RENDER_MAX_BANDS);
+    const int bands = (cellsH + j.bandRows - 1) / j.bandRows;
+    simParallel(bands, renderBand, &j);
+    int count = 0;
+    for (int b = 0; b < bands; ++b) count += j.count[b];
     return count;
 }

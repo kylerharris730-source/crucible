@@ -435,8 +435,24 @@ MatInfo MATS[MAT_COUNT] = {
      work is done by the thermal mass of 3 (holds 8x the heat): it keeps a drawn
      puddle glowing for ~10s instead of ~1s while still conducting at full rate,
      so lava melts, lights and boils things exactly as before. Freezing at 100
-     also guarantees any lava is hot enough to boil water. */
-  { "Lava",  KIND_LIQUID, 200,   0,    0,   3,   0,   0,  0,  120,  3,   0, degC(215), degC(100), MAT_STONE, 0, MAT_EMPTY, 0, MAT_EMPTY,  0,  0xF0641E, 0x9A2408, 0xF0641E, 0x9A2408, 0 },
+     also guarantees any lava is hot enough to boil water.
+
+     Viscosity 180: it refuses about seven sideways turns in ten, and -- since
+     viscosity also shortens how far a liquid's own weight throws it (see the
+     reach in updateLiquid) -- flows a shorter way when it does go. It was 0,
+     which made lava exactly as runny as water once liquids got their second
+     turn a frame. Measured on a 200 x 150 block let go on a floor, 300 frames
+     later:
+
+         viscosity   height   footprint
+           water       55       592      a puddle
+             0         65       592      the same puddle, orange
+           120         97       592      syrup
+           180        126       480      a mound that keeps slumping
+           220        150       352      barely moves
+
+     180 is the one that reads as lava rather than as a hot liquid. */
+  { "Lava",  KIND_LIQUID, 200,   0,    0,   3, 180,   0,  0,  120,  3,   0, degC(215), degC(100), MAT_STONE, 0, MAT_EMPTY, 0, MAT_EMPTY,  0,  0xF0641E, 0x9A2408, 0xF0641E, 0x9A2408, 0 },
   /* Burns to an EMBER rather than to flame. See MAT_WOOD_EMBER for the whole
      argument; the short version is that flame is a gas and leaves, so a plank
      lit at the top used to put its own fire out from below. */
