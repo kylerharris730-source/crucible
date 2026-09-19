@@ -236,6 +236,10 @@ static const int GAS_PRESSURE_POCKET_NODES   = 2048;
 static const int GAS_PRESSURE_POCKET_BUDGET  = 32;
 static const int GAS_PRESSURE_BFS_BUDGET     = 32;
 static const int GAS_PRESSURE_EXPANSION_BURST = 5;
+/* How far beside a lifted liquid column its spilled parcels may land. The
+   burst is at most five, so four either side is room for all of it on a
+   flat surface. */
+static const int GAS_PRESSURE_SPILL_REACH = 4;
 
 /* Every scratch buffer the gas rules use, in one thread-local object.
 
@@ -2018,14 +2022,53 @@ bool World::updateGasPressure(Lane& L, int x, int y) {
         if (MATS[mat].kind != KIND_LIQUID) break;
     }
     if (outletY >= 0 && !blocksCell(x, outletY)) {
-        int burst = 0;
         const int wanted = imin((int)excess, GAS_PRESSURE_EXPANSION_BURST);
-        for (; burst < wanted; ++burst) {
-            const int ey = outletY - burst;
+        int room = 0;
+        for (; room < wanted; ++room) {
+            const int ey = outletY - room;
             if (ey < PLAY_Y0 || cells[ey * SIM_W + x].mat != MAT_EMPTY ||
                 blocksCell(x, ey)) break;
         }
-        for (int sy = outletY + 1; sy < y; ++sy) {
+        /* Where the lifted parcels go. Pushed straight up out of an open
+           surface, every one of them stood in the air as a one-cell spike --
+           a pool boiling from the floor grew a picket of them. The lift stamps
+           the whole column, so its top never got a turn to slide off before
+           the next bubble lifted it again, and since the fluid pass that is
+           twice a frame, so the picket only grew.
+
+           So a parcel stacks on the column only on a row where something
+           that is not gas stands beside it: in a dip in the surface, or up a
+           pipe, where rising as a column is the right answer. The rest are
+           laid on the outlet row beside the column, nearest first, into open
+           cells with something under them -- the surface bulges instead of
+           sprouting. What fits in neither waits in the parcel for a later
+           turn, or for the routes further down. */
+        const auto sideHeld = [&](int nx, int ny) {
+            if (nx < PLAY_X0 || nx > PLAY_X1) return true;
+            const u8 m = cells[ny * SIM_W + nx].mat;
+            return m != MAT_EMPTY && MATS[m].kind != KIND_GAS;
+        };
+        int stack = 0;
+        while (stack < room && (sideHeld(x - 1, outletY - stack) ||
+                                sideHeld(x + 1, outletY - stack))) ++stack;
+        int slot[GAS_PRESSURE_EXPANSION_BURST], nSlots = 0;
+        {
+            bool open[2] = { true, true };   /* toward dir, then away */
+            for (int d = 1; d <= GAS_PRESSURE_SPILL_REACH && stack + nSlots < room; ++d)
+                for (int side = 0; side < 2 && stack + nSlots < room; ++side) {
+                    if (!open[side]) continue;
+                    const int nx = x + (side ? -dir : dir) * d;
+                    const int ni = outletY * SIM_W + nx;
+                    if (nx < PLAY_X0 || nx > PLAY_X1 || cells[ni].mat != MAT_EMPTY ||
+                        blocksCell(nx, outletY) || cells[ni + SIM_W].mat == MAT_EMPTY) {
+                        open[side] = false;
+                        continue;
+                    }
+                    slot[nSlots++] = ni;
+                }
+        }
+        const int burst = stack + nSlots;
+        for (int sy = outletY + 1; burst && sy < y; ++sy) {
             const int my = sy - burst;
             const int dst = my * SIM_W + x;
             const int src = sy * SIM_W + x;
@@ -2033,6 +2076,20 @@ bool World::updateGasPressure(Lane& L, int x, int y) {
             temp[dst] = temp[src];
             cells[dst].flags = (u8)((cells[dst].flags & F_DIR) | pressureStamp);
         }
+        /* The top nSlots parcels of the lifted column go out to the slots. */
+        for (int k = 0; k < nSlots; ++k) {
+            const int from = (outletY + 1 - burst + k) * SIM_W + x;
+            cells[slot[k]] = cells[from];
+            temp[slot[k]] = temp[from];
+            cells[from].mat = MAT_EMPTY;
+            cells[from].moisture = 0;
+            cells[from].tint = 0;
+            cells[from].flags = 0;
+            temp[from] = AMBIENT_TEMP;
+        }
+        if (nSlots)
+            dirtyArea(L, x - GAS_PRESSURE_SPILL_REACH, outletY,
+                      x + GAS_PRESSURE_SPILL_REACH, outletY);
         for (int gy = y - burst; gy < y; ++gy) {
             const int gi = gy * SIM_W + x;
             Cell& g = cells[gi];
@@ -3204,23 +3261,32 @@ void World::updateGrass(Lane& L, int x, int y) {
    pass, and the scan order inside a stripe is fixed. */
 static const int FALL_SCAN = 256;
 bool World::liquidFalling(Lane& L, int x, int y, u8 mat) {
+    /* Only AIR beneath the run is carried up it. A gas cell directly beneath
+       makes this one parcel falling -- it is about to swap down into the
+       bubble -- but it does not make the column above it falling. It used to:
+       a pool boiling from the floor has steam under nearly every column, so
+       the whole pool over the boil was "falling", sat out every fluid pass,
+       and could not level. Every column that steam pressure shoved up out of
+       the surface stood there as a one-cell spike while the next bubble
+       shoved it higher. A pour through a steam cloud is the case this gives
+       up, and it is the rare one. */
     const u8 below = cells[(y + 1) * SIM_W + x].mat;
-    bool falling;
-    if (below == MAT_EMPTY || MATS[below].kind == KIND_GAS) {
-        falling = true;
+    bool overAir;
+    if (below == MAT_EMPTY) {
+        overAir = true;
     } else if (below != mat) {
-        falling = false;
+        overAir = false;
     } else {
         const int col = L.stripe >= 0 ? x - L.stripeX0 : -1;
         if (col >= 0 && col < STRIPE_W && L.fall.y[col] == y + 1) {
-            falling = L.fall.falling[col] != 0;
+            overAir = L.fall.falling[col] != 0;
         } else {
-            falling = false;
+            overAir = false;
             for (int k = 2; k <= FALL_SCAN; ++k) {
                 if (y + k > PLAY_Y1) break;
                 const u8 m2 = cells[(y + k) * SIM_W + x].mat;
                 if (m2 == mat) continue;
-                falling = m2 == MAT_EMPTY || MATS[m2].kind == KIND_GAS;
+                overAir = m2 == MAT_EMPTY;
                 break;
             }
         }
@@ -3228,9 +3294,9 @@ bool World::liquidFalling(Lane& L, int x, int y, u8 mat) {
     const int col = L.stripe >= 0 ? x - L.stripeX0 : -1;
     if (col >= 0 && col < STRIPE_W) {
         L.fall.y[col] = y;
-        L.fall.falling[col] = (u8)falling;
+        L.fall.falling[col] = (u8)overAir;
     }
-    return falling;
+    return overAir || MATS[below].kind == KIND_GAS;
 }
 
 /* A cell's turn in a fluid pass. See FLUID_SUBSTEPS: liquid movement, and

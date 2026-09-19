@@ -82,6 +82,7 @@ static const int CHUNK_COUNT = CHUNKS_X * CHUNKS_Y;
      liquid sideways hop    40   dispersion (max 8, Glowfluid) + PRESSURE_MAX
      gas powder shove        8 + 1
      gas expansion burst     3
+     gas column spill        4   GAS_PRESSURE_SPILL_REACH, on the outlet row
      fluid convection        3
 
    The top two were 64 apiece, and bringing them to 40 is what let the
