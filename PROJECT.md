@@ -328,6 +328,9 @@ build_powderlike.bat           # sandbox     -> build\powderlike.exe
 | tool | answers |
 |---|---|
 | `tools/profile.cpp` | where a frame goes, per phase, across scenes |
+| `tools/steamprof.cpp` | lava into water, as a distribution; `layer`, `drain`, a sampling profiler |
+| `tools/powderbench.cpp` | powderlike's water pour, with a world hash and a sampling profiler |
+| `scripts/lagbench.sh` | `make lagbench`: fails if lava into water misses 60 fps on >1% of frames |
 | `tools/lightmargin.cpp` | cost and correctness of the light margin |
 | `tools/pulsecheck.cpp` | block-allocated pulse planes vs a reference map |
 | `tools/wirecheck.cpp` | circuit behaviour signature, diffable across builds |

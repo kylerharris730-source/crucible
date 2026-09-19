@@ -110,4 +110,9 @@ T ?=
 test:
 	@bash scripts/run_tests.sh $(T)
 
-.PHONY: all run clean test powderlike
+# Lava dropped into water, timed. A benchmark rather than a test -- see the
+# header of scripts/lagbench.sh for why it is kept out of `test`.
+lagbench:
+	@bash scripts/lagbench.sh $(THREADS)
+
+.PHONY: all run clean test powderlike lagbench

@@ -60,6 +60,31 @@ static int g_stripeFelledN[STRIPE_SLOTS];
    there first. */
 static u8  g_chunkSim[CHUNK_COUNT];
 
+/* ------------------------------------------------------------------------
+   Pressure searches that failed, and how many passes a chunk waits before its
+   stored steam searches again. One count for the pocket flood, one for the
+   liquid path.
+
+   Measured on steamprof's lava sheet: about sixteen thousand steam turns a
+   frame held stored pressure, every one of them wanted a search, the budget
+   let a few hundred through -- and 94% of the pocket floods and 98% of the
+   liquid searches found nothing, visiting some three hundred thousand cells a
+   frame between them to find it. Steam boiled at the bottom of a deep basin
+   is sealed in by the water above it; it will be sealed next pass too. And
+   because the scan runs bottom to top, the same buried cells took the whole
+   budget on every pass, while steam nearer the surface -- which could have
+   let go -- mostly never got a search at all.
+
+   So a chunk whose search found nothing sits out a few passes. Its steam keeps
+   its pressure and stays awake; it only stops asking, for a moment, a
+   question whose answer has not changed, and the budget goes to steam that
+   has not been asked. Counted down in scanPass's serial chunk sweep, so the
+   world still steps the same at any thread count. Written only by the stripe
+   whose cell searched, and two stripes that share a chunk never run at once. */
+static const u8 PRESSURE_SEARCH_WAIT = 8;
+static u8  g_pocketWait[CHUNK_COUNT];
+static u8  g_liquidPathWait[CHUNK_COUNT];
+
 
 /* ======================================================================
    Dirty rectangle bookkeeping
@@ -2140,7 +2165,8 @@ bool World::updateGasPressure(Lane& L, int x, int y) {
         return false;
     };
 
-    if (!hasPressureRelief(x, y) && L.scratch.pressureRoutes > 0) {
+    const int waitIdx = (y >> CHUNK_SHIFT) * CHUNKS_X + (x >> CHUNK_SHIFT);
+    if (!hasPressureRelief(x, y) && L.scratch.pressureRoutes > 0 && !g_pocketWait[waitIdx]) {
         --L.scratch.pressureRoutes;
         int receiver = -1, receiverDistance = 1000000, receiverExcess = 256;
         for (int k = 0; k < 4; ++k) {
@@ -2208,6 +2234,7 @@ bool World::updateGasPressure(Lane& L, int x, int y) {
             }
         }
 
+        if (receiver < 0) g_pocketWait[waitIdx] = PRESSURE_SEARCH_WAIT;
         if (receiver >= 0) {
             Cell& r = cells[receiver];
             const int room = GAS_EXCESS_MASK - receiverExcess;
@@ -2255,7 +2282,7 @@ bool World::updateGasPressure(Lane& L, int x, int y) {
         if (MATS[cells[ny * SIM_W + nx].mat].kind == KIND_LIQUID) anyLiquidFace = true;
     }
 
-    if (anyLiquidFace && L.scratch.bfsSearches > 0) {
+    if (anyLiquidFace && L.scratch.bfsSearches > 0 && !g_liquidPathWait[waitIdx]) {
         --L.scratch.bfsSearches;
         /* parent[] is STAMPED rather than cleared, exactly as the pocket flood
            above stamps its `seen`. Clearing it was 1,089 stores on every call
@@ -2316,6 +2343,7 @@ bool World::updateGasPressure(Lane& L, int x, int y) {
             }
         }
 
+        if (goal < 0) g_liquidPathWait[waitIdx] = PRESSURE_SEARCH_WAIT;
         if (goal >= 0) {
             int dst = outletSearchY * SIM_W + outletX;
             int path = goal;
@@ -4137,6 +4165,8 @@ void World::scanPass(bool fluidPass) {
         for (int cx = 0; cx < CHUNKS_X; ++cx) {
             const int idx = cy * CHUNKS_X + cx;
             const Chunk& ch = cur[idx];
+            if (g_pocketWait[idx]) --g_pocketWait[idx];
+            if (g_liquidPathWait[idx]) --g_liquidPathWait[idx];
             if (ch.minX > ch.maxX) { g_chunkSim[idx] = 0; continue; }
 
             /* A plus-shaped live set: the core, plus four independent fingers.

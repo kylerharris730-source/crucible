@@ -20,13 +20,26 @@
    6,597 times a frame at 4.28 ms, of which 1.70 ms was clearing an array
    before deciding it had nothing to search. See world.cpp.
 
+   And, with the "layer" scene: pressure searches that could not succeed. Steam
+   boiled under a sheet of lava was sealed in by the basin above it, 94-98% of
+   its searches found nothing, visiting ~300,000 cells a frame to find it, and
+   the same buried cells took the whole budget every pass. A failed search now
+   makes its chunk wait PRESSURE_SEARCH_WAIT passes: sim 10.1 -> 6.5 ms at 8
+   threads on a 15-cell sheet, 1.6% of frames over budget -> none, and the
+   "drain" census ends where it did. scripts/lagbench.sh runs these scenes.
+
    Build like the other harnesses, all of src except main.cpp:
 
      g++ -std=c++11 -O3 -Isrc tools/steamprof.cpp <src/(*).cpp except main> \
          -o artifacts/steamprof.exe -lgdi32 -luser32 -lwinmm -lmsimg32 -lws2_32
 
    Pass "unlit" to take the light solver out of the measurement, and a number
-   to set the thread count (default 1).
+   to set the thread count (default 1). "drain" runs on after the census and
+   repeats it every 300 frames. "layer" (with "thick=N", default 6) drops a sheet of lava
+   across the whole basin instead of a blob into the middle of it -- the case
+   reported as lagging: every cell of the surface boils at once. Set
+   STEAMPROF_SAMPLES=file to sample the main thread's instruction pointer
+   every millisecond (use 1 thread, and addr2line on a -g build).
    ========================================================================== */
 #include "world.h"
 #include "materials.h"
@@ -67,6 +80,29 @@ static const int SETTLE_FRAMES   = 400;
 static const int MEASURE_FRAMES  = 900;
 
 struct Sample { double sim, aux, light, render; int chunks; };
+
+/* --- a sampling profiler, the one in tools/powderbench.cpp -----------------
+   gprof's mcount in every function IS the profile for code this hot; sampling
+   costs the program nothing it would not otherwise spend. */
+static HANDLE g_mainThread;
+static volatile LONG g_sampling = 0;
+static unsigned g_samples[1 << 20];
+static volatile LONG g_nSamples = 0;
+static DWORD WINAPI samplerMain(LPVOID) {
+    while (g_sampling) {
+        Sleep(1);
+        if (SuspendThread(g_mainThread) == (DWORD)-1) continue;
+        CONTEXT ctx; ctx.ContextFlags = CONTEXT_CONTROL;
+        if (GetThreadContext(g_mainThread, &ctx) && g_nSamples < (1 << 20))
+#ifdef _WIN64
+            g_samples[g_nSamples++] = (unsigned)ctx.Rip;
+#else
+            g_samples[g_nSamples++] = (unsigned)ctx.Eip;
+#endif
+        ResumeThread(g_mainThread);
+    }
+    return 0;
+}
 static Sample g_s[MEASURE_FRAMES];
 
 /* One frame, phases timed separately, in the order serverTick runs them. */
@@ -167,10 +203,14 @@ int main(int argc, char** argv) {
        stripe on this thread. The stripe decomposition is used either way, so
        the numbers across thread counts are comparable and the worlds they
        produce are identical; see simSetWorkers in world.h. */
-    bool lit = true;
+    bool lit = true, layer = false, drain = false;
+    int layerThick = 6;
     int threads = 1;
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "unlit") == 0) lit = false;
+        else if (strcmp(argv[i], "layer") == 0) layer = true;
+        else if (strcmp(argv[i], "drain") == 0) drain = true;
+        else if (strncmp(argv[i], "thick=", 6) == 0) layerThick = atoi(argv[i] + 6);
         else threads = atoi(argv[i]);
     }
     simSetWorkers(threads);
@@ -196,15 +236,62 @@ int main(int argc, char** argv) {
     for (int i = 0; i < 300; ++i) runFrame(camX, camY, lit, &g_s[i]);
     report("water settled", g_s, 300);
 
-    /* The case itself. */
-    pourLava(bx, by - 100, 60, 30);
+    /* The case itself. A 121 x 31 blob into the middle, or a sheet the width
+       of the basin and six cells thick -- about half the lava, spread over
+       every cell of the surface. */
+    if (layer) pourLava(bx, by - 100, BASIN_HALF_W, layerThick - 1);
+    else       pourLava(bx, by - 100, 60, 30);
+    const char* sampleOut = getenv("STEAMPROF_SAMPLES");
+    if (sampleOut) {
+        DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(),
+                        &g_mainThread, 0, FALSE, DUPLICATE_SAME_ACCESS);
+        timeBeginPeriod(1);
+        g_sampling = 1;
+        CreateThread(NULL, 0, samplerMain, NULL, 0, NULL);
+    }
     for (int i = 0; i < MEASURE_FRAMES; ++i) runFrame(camX, camY, lit, &g_s[i]);
+    if (sampleOut) {
+        g_sampling = 0; Sleep(20);
+        FILE* sf = fopen(sampleOut, "w");
+        if (sf) {
+            for (LONG i = 0; i < g_nSamples; ++i) fprintf(sf, "0x%x\n", g_samples[i]);
+            fclose(sf);
+        }
+    }
 
-    printf("\n=== lava into water ===\n");
+    printf("\n=== lava into water (%s) ===\n", layer ? "a sheet across the basin" : "a blob");
     report("whole transient", g_s, MEASURE_FRAMES);
     report("first 150 frames", g_s, 150);
 
+    /* The frames that are felt, by phase: a mean that looks fine can be a
+       handful of frames that do not. */
+    {
+        int idx[MEASURE_FRAMES];
+        for (int i = 0; i < MEASURE_FRAMES; ++i) idx[i] = i;
+        for (int a = 0; a < 6; ++a)
+            for (int b = a + 1; b < MEASURE_FRAMES; ++b) {
+                const Sample& x = g_s[idx[a]]; const Sample& y = g_s[idx[b]];
+                if (y.sim + y.aux + y.light + y.render > x.sim + x.aux + x.light + x.render) {
+                    const int t = idx[a]; idx[a] = idx[b]; idx[b] = t;
+                }
+            }
+        printf("  worst frames:\n");
+        for (int a = 0; a < 6; ++a) {
+            const Sample& q = g_s[idx[a]];
+            printf("    frame %3d   sim %6.2f  light %5.2f  render %5.2f   chunks %d\n",
+                   idx[a], q.sim, q.light, q.render, q.chunks);
+        }
+    }
+
     census(bx, by);
+    /* "drain": keep going and census every 300 frames, so stored steam that is
+       merely late can be told from stored steam that is stuck -- the snapshot
+       at 900 frames cannot tell those apart. */
+    if (drain)
+        for (int k = 0; k < 6; ++k) {
+            for (int i = 0; i < 300; ++i) runFrame(camX, camY, lit, NULL);
+            census(bx, by);
+        }
     printf("\ndone\n");
     return 0;
 }
