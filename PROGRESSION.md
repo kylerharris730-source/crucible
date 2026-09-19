@@ -351,7 +351,7 @@ nobody could feel: drop over a distance is quadratic in flight time, so one
 gravity produces a nearly flat line for something fast and a pronounced lob for
 something slow, with no per-weapon fudge. Measured:
 
-| | speed | drop @15 | @30 | @56 (full reach) |
+| | speed | drop @15 | @30 | @56 |
 |---|---|---|---|---|
 | Bolt Caster | 6.0 | 1.1 | 2.7 | 9.9 |
 | Blast Module, default | 3.5 | 2.7 | 8.1 | 24.5 |

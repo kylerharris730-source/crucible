@@ -626,9 +626,10 @@ void initItems() {
     ITEMS[ITEM_SICKLE].minePower      = STR_HARD;
     ITEMS[ITEM_SICKLE].sprite         = SPR_MINE1;
 
-    /* Reach extenders. Two tiers so the ladder is visible; the numbers are
-       relative to a base reach of 56, so the lens is "half again as far" and
-       the relay is "twice as far". Both take a whole inventory slot to carry,
+    /* Reach extenders. Two tiers so the ladder is visible. They were sized
+       against a base reach of 56 -- the lens "half again as far", the relay
+       "twice as far" -- and the base is 84 now (PLAYER_REACH), so they are a
+       third and two-thirds again. Both take a whole inventory slot to carry,
        which is the entire cost and is meant to bite once the pack is full of
        ore. */
     ITEMS[ITEM_LENS].name       = "Focusing Lens";
@@ -1457,7 +1458,7 @@ void initItems() {
        From the previous pass, swords are about 15% longer and spears about 70%
        longer, rounded to whole simulation cells. Swords now run 32--44 cells
        and keep their broad sweep; spears run 39--56 and keep their narrow
-       single-target thrust. The player's build reach is 56 for
+       single-target thrust. The player's build reach is 84 for
        comparison, and is a completely separate number -- see ItemDef::meleeReach. */
     struct MeleeTier {
         ItemId sword, spear;

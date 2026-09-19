@@ -148,14 +148,16 @@ static inline int playerRowInset(int rowFromTop) {
    what a hunch buys in reality too. */
 static const int CROUCH_H = 24;
 
-/* How far from the character the tool can reach, in cells. Roughly three and a
-   half body heights, which is far enough to dig a tunnel comfortably and short
-   enough that you have to walk somewhere to work on it.
+/* How far from the character the tool can reach, in cells. About two and
+   three-quarter body heights (was 56, under two; raised by half so the tool
+   works a room without shuffling along it), which is far enough to dig a
+   tunnel comfortably and short enough that you have to walk somewhere to work
+   on it.
 
    This will become a stat on the multitool rather than a constant -- reach is
    an obvious thing for a module to extend -- so anything that reads it should
    be happy taking it as a parameter later. */
-static const int PLAYER_REACH = 56;
+static const int PLAYER_REACH = 84;
 
 struct PlayerInput {
     bool left, right, jump;

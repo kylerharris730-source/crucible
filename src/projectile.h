@@ -29,7 +29,7 @@
    That is also how it works in reality, and it makes shot speed a stat that
    MEANS something instead of a number nobody could feel:
 
-       weapon            speed   drop at 30 cells   at full reach (56)
+       weapon            speed   drop at 30 cells   at 56 cells
        Bolt Caster        6.0        2.3 cells          7.8 cells
        Blast Module       3.5        6.6               23.0
        Spitter glob       1.7       28.0               96.4
