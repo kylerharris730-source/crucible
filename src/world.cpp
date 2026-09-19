@@ -1824,6 +1824,21 @@ void World::updateLiquid(Lane& L, int x, int y) {
        up to eighty reads for every parcel inside a pool. It is answered from
        one measurement per run of liquid now (Lane::run); same answer, hash
        unchanged. */
+    /* Where a sideways hop may land: open air, or a gas lighter than this
+       liquid that is NOT a bubble inside the body. A gas cell with liquid
+       straight above it is a bubble, and landing on one is a swap -- the
+       bubble goes to where this parcel was, as far as the hop reached, which
+       in a deep pool is forty cells. Every parcel in reach of a rising bubble
+       was throwing it sideways, twice a frame with the fluid pass: a single
+       bubble crossed 133 cells sideways on its way up 150 rows, and a plume
+       from one point was three times as wide at the source as it had been. A
+       bubble rises on its own turn; to the water around it, it is a wall. */
+    const auto hopTarget = [&](int nx) {
+        const u8 nm = cells[y * SIM_W + nx].mat;
+        if (nm == MAT_EMPTY) return true;
+        if (MATS[nm].kind != KIND_GAS || MATS[nm].density >= m.density) return false;
+        return MATS[cells[(y - 1) * SIM_W + nx].mat].kind != KIND_LIQUID;
+    };
     {
         const int reachMax = (int)m.dispersion + PRESSURE_MAX;
         static const i32 NO_OPENING = -0x40000000;
@@ -1857,16 +1872,8 @@ void World::updateLiquid(Lane& L, int x, int y) {
             while (a > capL && cells[row + a - 1].mat == c.mat) --a;
             while (b < capR && cells[row + b + 1].mat == c.mat) ++b;
             i32 openL = NO_OPENING, openR = NO_OPENING;
-            if (a > capL) {
-                const u8 nm = cells[row + a - 1].mat;
-                if (nm == MAT_EMPTY || (MATS[nm].kind == KIND_GAS && MATS[nm].density < m.density))
-                    openL = a - 1;
-            }
-            if (b < capR) {
-                const u8 nm = cells[row + b + 1].mat;
-                if (nm == MAT_EMPTY || (MATS[nm].kind == KIND_GAS && MATS[nm].density < m.density))
-                    openR = b + 1;
-            }
+            if (a > capL && hopTarget(a - 1)) openL = a - 1;
+            if (b < capR && hopTarget(b + 1)) openR = b + 1;
             run.valid = true;
             run.epoch = L.writeEpoch;
             run.y = y;
@@ -1901,13 +1908,9 @@ void World::updateLiquid(Lane& L, int x, int y) {
         for (int s = 1; s <= reach; ++s) {
             int nx = x + dx * s;
             if (nx < PLAY_X0 || nx > PLAY_X1) break;
-            const Cell& n = cells[y * SIM_W + nx];
-            if (n.mat != MAT_EMPTY) {
-                /* Same liquid: see through it, but it is not a destination. */
-                if (n.mat == c.mat) continue;
-                const MatInfo& nm = MATS[n.mat];
-                if (nm.kind != KIND_GAS || nm.density >= m.density) break;
-            }
+            /* Same liquid: see through it, but it is not a destination. */
+            if (cells[y * SIM_W + nx].mat == c.mat) continue;
+            if (!hopTarget(nx)) break;
             destX = nx;
             if (cells[(y + 1) * SIM_W + nx].mat == MAT_EMPTY) break;  /* found a hole */
         }
@@ -2510,8 +2513,13 @@ void World::updateGas(Lane& L, int x, int y) {
        during an in-place scan. Here lateral travel is bounded by vertical
        travel -- after rising N cells a bubble can be at most N cells sideways. */
     const u8 aboveKind = MATS[cells[(y - 1) * SIM_W + x].mat].kind;
+    /* The wobble is a QUARTER of the material's jitter. Jitter is set high
+       for gases so they fill a room (Steam's 230 is nine turns in ten), and
+       used at full strength here it made nearly every step of a bubble's
+       climb a diagonal one: a single bubble moved 133 cells sideways on its
+       way up 150 rows. Real bubbles wobble; they do not zigzag. */
     if (aboveKind == KIND_LIQUID) {
-        if (m.jitter && lchance(L, m.jitter)) {
+        if (m.jitter && lchance(L, (u8)(m.jitter >> 2))) {
             const int jd = (lrand(L) & 1u) ? 1 : -1;
             if (tryMove(L, x, y, x + jd, y - 1)) return;
             if (tryMove(L, x, y, x - jd, y - 1)) return;
@@ -2555,8 +2563,18 @@ void World::updateGas(Lane& L, int x, int y) {
 
        Downward draws are excluded while SUBMERGED. A bubble under water that
        wandered downward would be a bubble sinking, which is both wrong and
-       exactly the thing the branch above this exists to get right. */
-    if (m.jitter && lchance(L, m.jitter)) {
+       exactly the thing the branch above this exists to get right.
+
+       And a bubble held under another bubble -- gas above it, water beside
+       it -- does not diffuse at all. It is not in a room of gas, it is in a
+       queue in a column of water, and the random walk sent it sideways out
+       of the queue nine turns in ten: a stream of bubbles from one point on
+       a pool floor spread twice as wide at the source as it should. It waits
+       for the bubble above to move, or rises diagonally below. */
+    const bool queued = aboveKind == KIND_GAS &&
+        (MATS[cells[y * SIM_W + x - 1].mat].kind == KIND_LIQUID ||
+         MATS[cells[y * SIM_W + x + 1].mat].kind == KIND_LIQUID);
+    if (!queued && m.jitter && lchance(L, m.jitter)) {
         static const i8 DIFFUSE_DX[19] = {  0,  0,  0, -1, -1,  1,  1,
                                            -1, -1, -1,  1,  1,  1,
                                            -1, -1,  0,  0,  1,  1 };
