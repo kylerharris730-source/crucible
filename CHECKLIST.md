@@ -5,7 +5,7 @@ chat, which meant it was re-derived from memory every session and quietly lost
 things. `HANDOFF.md` is **not** this file: it is gitignored scratch, is usually
 stale, and should not be trusted for release state.
 
-Released: **v0.6.6** (2026-09-15). `main` is level with it.
+Released: **v0.6.7** (2026-09-22). `main` is level with it.
 
 ---
 
@@ -25,6 +25,33 @@ Released: **v0.6.6** (2026-09-15). `main` is level with it.
       unset, so nothing renders.
 
 ## Ship it
+
+- [x] **Cut v0.6.7.** Tagged 2026-09-22, nine commits past v0.6.6. Fluids,
+      frame time, and reach.
+
+      **Liquids level instead of standing in blocks**, and water no longer
+      boils into one-wide spikes: lifted parcels only stack where something
+      beside them holds them, and spill onto the surface otherwise. Steam
+      drives a slug of water up a pipe instead of stalling once gas gets in
+      between the parcels, and bubbles rise through water instead of being
+      carried sideways by it.
+
+      **The sim and the renderer got faster.** A failed gas-pressure search
+      makes its chunk wait before looking again (10.1 -> 6.5 ms on the
+      lava-into-water bench at 8 threads, and no frames over 16.6 ms); light
+      sampling and view drawing run on the sim's thread pool; `dirtyArea` has a
+      one-chunk fast path. The browser build's frame scheduling and pixel
+      path too.
+
+      **Base tool reach is half again as far**, 56 cells to 84. The reach
+      accessories keep their bonuses.
+
+      **powderlike**, a second front-end over the same simulation, is the
+      tuning bench for all of that. Not a release artefact.
+
+      **The wiki says where materials come from** -- every material page reads
+      the reaction and phase tables backwards, so Steel finally says how steel
+      is made.
 
 - [x] **Cut v0.6.6.** Tagged 2026-09-15, one commit past v0.6.5.
 
