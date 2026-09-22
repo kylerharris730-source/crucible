@@ -2,9 +2,9 @@
    window.cpp -- the platform half of the Win32 shim: window, message pump,
    input and time, backed by SDL2.
 
-   main.cpp keeps its Win32 frame loop verbatim -- PeekMessage, DispatchMessage,
-   QueryPerformanceCounter, Sleep -- and this file makes those mean something in
-   a browser tab. SDL events are TRANSLATED INTO WM_ MESSAGES rather than
+   main.cpp runs the shared game tick from requestAnimationFrame in the browser.
+   This file supplies its message pump and timing. SDL events are TRANSLATED
+   INTO WM_ MESSAGES rather than
    handled here, so the game's existing wndProc stays the only place input is
    interpreted. That is what keeps a new key binding from needing a second
    implementation on this side.
@@ -411,17 +411,11 @@ extern "C" BOOL QueryPerformanceCounter(LARGE_INTEGER* v) {
     return TRUE;
 }
 
+#ifndef __EMSCRIPTEN__
 extern "C" void Sleep(DWORD ms) {
-#ifdef __EMSCRIPTEN__
-    /* This is the yield that lets the page breathe. The game's frame loop
-       blocks here between frames, and ASYNCIFY turns that block into a return
-       to the browser event loop -- which is the only reason a Win32-shaped
-       while(running) loop can run in a tab at all. */
-    emscripten_sleep(ms);
-#else
     SDL_Delay(ms);
-#endif
 }
+#endif
 
 extern "C" DWORD timeBeginPeriod(UINT) { return 0; }
 extern "C" DWORD timeEndPeriod(UINT)   { return 0; }

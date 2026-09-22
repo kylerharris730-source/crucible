@@ -23,6 +23,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <vector>
 
 /* --- objects -------------------------------------------------------------
    `stock` marks the handles GetStockObject hands out. Those are owned by the
@@ -544,25 +545,83 @@ static void blitScaled(WDC* dst, int dx, int dy, int dw, int dh,
                        const uint32_t* src, int srcStride, int srcW, int srcH,
                        int sx, int sy, int sw, int sh,
                        bool keyed, uint32_t key) {
-    if (dw <= 0 || dh <= 0 || sw <= 0 || sh <= 0) return;
-    for (int y = 0; y < dh; ++y) {
-        const int ty = dy + y;
-        if (ty < 0 || ty >= dst->h) continue;
+    if (!dst->px || !src || srcW <= 0 || srcH <= 0 ||
+        dw <= 0 || dh <= 0 || sw <= 0 || sh <= 0) return;
+
+    /* Clip once, retaining coordinates relative to the ORIGINAL destination
+       rectangle: clipping must not change the nearest-neighbour sampling. */
+    const long long left = dx < 0 ? -(long long)dx : 0;
+    const long long top = dy < 0 ? -(long long)dy : 0;
+    const long long right = (long long)dst->w - dx < dw ? (long long)dst->w - dx : dw;
+    const long long bottom = (long long)dst->h - dy < dh ? (long long)dst->h - dy : dh;
+    if (left >= right || top >= bottom) return;
+    const int x0 = (int)left, x1 = (int)right;
+    const int y0 = (int)top, y1 = (int)bottom;
+    const int width = x1 - x0;
+    key &= 0x00FFFFFF;
+
+    /* Self-blits historically read and write in top-to-bottom, left-to-right
+       order. Keep that behaviour, even for overlapping views of one buffer;
+       memcpy and reusing an expanded row are only safe for separate storage. */
+    const uintptr_t srcBegin = (uintptr_t)src;
+    const uintptr_t srcEnd = srcBegin + (size_t)srcStride * srcH * sizeof(uint32_t);
+    const uintptr_t dstBegin = (uintptr_t)dst->px;
+    const uintptr_t dstEnd = dstBegin + (size_t)dst->w * dst->h * sizeof(uint32_t);
+    const bool overlaps = srcBegin < dstEnd && dstBegin < srcEnd;
+
+    /* The final frame BitBlt is normally an unscaled copy. In this case the
+       original inner loop did a 64-bit divide and bounds checks for EVERY
+       pixel. In-bounds rows can instead use the runtime's bulk copy. */
+    const bool directRows = !overlaps && dw == sw &&
+                            (long long)sx + x0 >= 0 && (long long)sx + x1 <= srcW;
+
+    /* The shim runs on the browser's main thread. Keep this scratch map across
+       calls so arbitrary scaling needs only one divide per output COLUMN,
+       without allocating a vector for every frame or icon. */
+    static std::vector<int> sourceColumns;
+    if (!overlaps && !directRows) {
+        sourceColumns.resize((size_t)width);
+        for (int x = x0; x < x1; ++x)
+            sourceColumns[x - x0] = iclamp(sx + (int)((long long)x * sw / dw), 0, srcW - 1);
+    }
+
+    int previousSrcY = -1;
+    const uint32_t* previousRow = 0;
+    for (int y = y0; y < y1; ++y) {
         int srcY = sy + (int)((long long)y * sh / dh);
-        if (srcY < 0) srcY = 0;
-        if (srcY >= srcH) srcY = srcH - 1;
+        srcY = iclamp(srcY, 0, srcH - 1);
         const uint32_t* srow = src + (size_t)srcY * srcStride;
-        uint32_t* drow = dst->px + (size_t)ty * dst->w;
-        for (int x = 0; x < dw; ++x) {
-            const int tx = dx + x;
-            if (tx < 0 || tx >= dst->w) continue;
-            int srcX = sx + (int)((long long)x * sw / dw);
-            if (srcX < 0) srcX = 0;
-            if (srcX >= srcW) srcX = srcW - 1;
-            const uint32_t c = srow[srcX];
-            if (keyed && (c & 0x00FFFFFF) == (key & 0x00FFFFFF)) continue;
-            drow[tx] = c;
+        uint32_t* drow = dst->px + (size_t)(dy + y) * dst->w + (dx + x0);
+        if (!overlaps && !keyed && srcY == previousSrcY) {
+            /* Integer upscaling repeats source rows. Expand the first once,
+               then copy it; transparent rows must retain their own backdrop. */
+            memcpy(drow, previousRow, (size_t)width * sizeof(uint32_t));
+        } else if (directRows) {
+            srow += sx + x0;
+            if (!keyed) {
+                memcpy(drow, srow, (size_t)width * sizeof(uint32_t));
+            } else {
+                for (int x = 0; x < width; ++x) {
+                    const uint32_t c = srow[x];
+                    if ((c & 0x00FFFFFF) != key) drow[x] = c;
+                }
+            }
+        } else if (overlaps) {
+            for (int x = x0; x < x1; ++x) {
+                const int srcX = iclamp(sx + (int)((long long)x * sw / dw), 0, srcW - 1);
+                const uint32_t c = srow[srcX];
+                if (!keyed || (c & 0x00FFFFFF) != key) drow[x - x0] = c;
+            }
+        } else if (keyed) {
+            for (int x = 0; x < width; ++x) {
+                const uint32_t c = srow[sourceColumns[x]];
+                if ((c & 0x00FFFFFF) != key) drow[x] = c;
+            }
+        } else {
+            for (int x = 0; x < width; ++x) drow[x] = srow[sourceColumns[x]];
         }
+        previousSrcY = srcY;
+        previousRow = drow;
     }
 }
 

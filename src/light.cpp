@@ -133,7 +133,7 @@ const u8* lightRow(int vy) {
     return row;
 }
 
-void lightRowInto(int vy, u8* row) {
+void lightRowInto(int vy, u8* row, int cellsW) {
     const int fy = lightBiasedY(vy);
     int sy = fy >> (LIGHT_SHIFT + 1);
     const int ty = fy - (sy << (LIGHT_SHIFT + 1));
@@ -142,7 +142,7 @@ void lightRowInto(int vy, u8* row) {
     const u8* dn = up + LIGHT_W;
     const int full = LIGHT_CELL * 2;
 
-    for (int vx = 0; vx < VIEW_CELLS_W; ++vx) {
+    for (int vx = 0; vx < cellsW; ++vx) {
         const int fx = lightBiasedX(vx);
         int sx = fx >> (LIGHT_SHIFT + 1);
         const int tx = fx - (sx << (LIGHT_SHIFT + 1));

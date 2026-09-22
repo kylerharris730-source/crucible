@@ -85,7 +85,7 @@ static inline u32 backdrop(const World& w, int wx, int wy, int i, u32 sky, bool*
 struct RenderJob {
     const World* w;
     u32* out;
-    int view, camX, camY, cellsW, cellsH;
+    int view, camX, camY, cellsW, cellsH, outputStride;
     bool lit;
     int daylight;
     int bandRows;
@@ -106,12 +106,12 @@ static int renderRows(const RenderJob& j, int vy0, int vy1) {
 
     for (int vy = vy0; vy < vy1; ++vy) {
         const int wy = camY + vy;
-        u32* row = out + vy * cellsW;
+        u32* row = out + vy * j.outputStride;
         /* Into this band's own buffer: lightRow's is shared, and bands run
            at once on the pool -- see lightRowInto. */
         u8 lrowBuf[VIEW_CELLS_W];
         const u8* lrow = 0;
-        if (lit) { lightRowInto(vy, lrowBuf); lrow = lrowBuf; }
+        if (lit) { lightRowInto(vy, lrowBuf, cellsW); lrow = lrowBuf; }
 
         if (wy < 0 || wy >= SIM_H) {
             for (int vx = 0; vx < cellsW; ++vx) row[vx] = VOID_COLOUR;
@@ -239,15 +239,17 @@ static void renderBand(void* ctx, int band) {
    Sixteen rows a band: small enough that the last band to finish is not a
    long tail, large enough that the handoff is noise against the row work. */
 int renderView(const World& w, u32* out, int view, int camX, int camY, bool lit,
-               int cellsW, int cellsH) {
+               int cellsW, int cellsH, int outputStride) {
+    if (outputStride == 0) outputStride = cellsW;
+    if (cellsW <= 0 || cellsH <= 0 || outputStride < cellsW) return 0;
     /* The light field's geometry is fixed to the game's window (see the header).
        Shading an oversized view would read past the end of it, so the oversized
        view simply is not shaded. */
-    if (cellsW != VIEW_CELLS_W || cellsH != VIEW_CELLS_H) lit = false;
+    if (cellsW > VIEW_CELLS_W || cellsH > VIEW_CELLS_H) lit = false;
 
     static RenderJob j;
     j.w = &w; j.out = out; j.view = view; j.camX = camX; j.camY = camY;
-    j.cellsW = cellsW; j.cellsH = cellsH; j.lit = lit;
+    j.cellsW = cellsW; j.cellsH = cellsH; j.outputStride = outputStride; j.lit = lit;
     /* Constant for the entire frame. backdrop() used to call dayLight() for
        every empty visible cell, then repeat the identical sky blend across all
        512 cells of a row. A large excavated cavern made that nearly 200,000

@@ -5,12 +5,13 @@
 #else
 /* The browser build. web/win32.h reimplements the exact slice of Win32 this
    file uses against a pixel buffer, so everything below this line -- the
-   panels, the wndProc, the frame loop -- is compiled unchanged for both
-   targets. This include is the ONLY concession in main.cpp to there being a
-   second platform, and it needs to stay that way: the moment UI code starts
-   branching on the target, there are two interfaces to maintain instead of
-   one, and the web build begins drifting away from the game. */
+   panels and wndProc -- is shared by both targets. Only frame scheduling is
+   platform-specific: a browser frame must return to its event loop. */
 #include "web/win32.h"
+#endif
+#ifdef __EMSCRIPTEN__
+#include <emscripten/html5.h>
+#include "frame_pacing.h"
 #endif
 #include <stdio.h>
 #include <stdlib.h>
@@ -1983,8 +1984,10 @@ static void drawButton(HDC hdc, const RECT& r, const char* label,
    HUD. That is the right frame to keep. The panel is the same in every save and
    would waste two thirds of a small picture saying so. */
 static void captureThumbnail(u8* rgb) {
-    const int bx = VIEW_CELLS_W / SAVE_THUMB_W;   /* 512/128 = 4 */
-    const int by = VIEW_CELLS_H / SAVE_THUMB_H;   /* 384/96  = 4 */
+    // Only the zoomed view has been rendered. All zoom factors divide the
+    // thumbnail dimensions exactly, down to one sample at 4x zoom.
+    const int bx = viewCellsW() / SAVE_THUMB_W;
+    const int by = viewCellsH() / SAVE_THUMB_H;
     for (int ty = 0; ty < SAVE_THUMB_H; ++ty) {
         for (int tx = 0; tx < SAVE_THUMB_W; ++tx) {
             u32 r = 0, g = 0, b = 0;
@@ -9188,7 +9191,9 @@ static void clientRender(HWND hwnd) {
        is why this sits here and not up beside the sim step. */
     registerDynamicLights();
     if (g_lightOn) lightUpdate(g_world, g_camX, g_camY);
-    g_cellCount = renderView(g_world, g_pixels, g_view, g_camX, g_camY, g_lightOn);
+    g_cellCount = renderView(g_world, g_pixels, g_view, g_camX, g_camY, g_lightOn,
+                            g_mapOpen ? VIEW_CELLS_W : viewCellsW(),
+                            g_mapOpen ? VIEW_CELLS_H : viewCellsH(), VIEW_CELLS_W);
     drawCelestials(g_pixels);
     /* Reveal AFTER rendering, so the map records the frame you actually
        saw rather than the one before it, and only while the world is
@@ -10082,6 +10087,78 @@ static int runLocalCommandSmoke() {
     return 0;
 }
 
+/* Both frontends run exactly one game tick here. Browser scheduling must
+   return between calls, including when the work took longer than 16.7 ms. */
+static bool gameFrame(const LARGE_INTEGER& freq) {
+    MSG msg;
+    while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
+        if (msg.message == WM_QUIT) g_running = false;
+        TranslateMessage(&msg);
+        DispatchMessage(&msg);
+    }
+    if (!g_running) return false;
+
+    LARGE_INTEGER begin, end;
+    QueryPerformanceCounter(&begin);
+    clientInputTick();
+    serverTick(freq);
+    syncClientDeviceUi();
+    clientCameraTick();
+    clientRender(g_hwnd);
+    QueryPerformanceCounter(&end);
+    const double work = 1000.0 * (double)(end.QuadPart - begin.QuadPart) /
+                        (double)freq.QuadPart;
+    g_frameMs = g_frameMs > 0.0 ? g_frameMs * 0.9 + work * 0.1 : work;
+    return true;
+}
+
+static void recordFrameRate(const LARGE_INTEGER& freq, const LARGE_INTEGER& now,
+                            LARGE_INTEGER& base, int& frames) {
+    ++frames;
+    const double since = (double)(now.QuadPart - base.QuadPart) / (double)freq.QuadPart;
+    if (since >= 0.25) {
+        g_fps = frames / since;
+        frames = 0;
+        base = now;
+    }
+}
+
+static void finishGame() {
+    /* After the loop, while the world is still whole. Quitting without saving
+       is the likeliest way to lose an evening's work. */
+    autosaveOnQuit();
+
+    timeEndPeriod(1);
+    SelectObject(g_backDC, g_backOldBmp);
+    DeleteObject(g_backBmp);
+    DeleteDC(g_backDC);
+    DeleteObject(g_panelBg);
+    DeleteObject(g_btnBg);
+    DeleteObject(g_btnBgHot);
+    DeleteObject(g_btnBgSel);
+    DeleteObject(g_borderBrush);
+    DeleteObject(g_accentBrush);
+    for (int i = 0; i < N_BRUSH; ++i) DeleteObject(g_swatchBrush[i]);
+    for (int s = 1; s < SPR_COUNT; ++s) if (g_iconBmp[s]) DeleteObject(g_iconBmp[s]);
+    if (g_iconDC) DeleteDC(g_iconDC);
+    DeleteObject(g_font);
+}
+
+#ifdef __EMSCRIPTEN__
+static BrowserFramePacer g_browserPacer;
+static LARGE_INTEGER g_browserFrequency, g_browserFpsBase;
+static int g_browserFpsFrames = 0;
+
+static bool browserFrame(double timestampMs, void*) {
+    if (!g_browserPacer.due(timestampMs)) return true;
+    if (!gameFrame(g_browserFrequency)) { finishGame(); return false; }
+    LARGE_INTEGER now;
+    QueryPerformanceCounter(&now);
+    recordFrameRate(g_browserFrequency, now, g_browserFpsBase, g_browserFpsFrames);
+    return true;
+}
+#endif
+
 int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR commandLine, int) {
     uiSettingsLoad();
     /* After uiSettingsLoad, so a config that pins sim_threads wins over the
@@ -10229,6 +10306,12 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR commandLine, int) {
 
     timeBeginPeriod(1);   /* otherwise Sleep granularity is ~15 ms */
 
+#ifdef __EMSCRIPTEN__
+    QueryPerformanceFrequency(&g_browserFrequency);
+    QueryPerformanceCounter(&g_browserFpsBase);
+    emscripten_request_animation_frame_loop(browserFrame, NULL);
+    return 0;   // EXIT_RUNTIME=0 keeps the game alive after registering RAF.
+#else
     LARGE_INTEGER freq, tPrev, tFpsBase;
     QueryPerformanceFrequency(&freq);
     QueryPerformanceCounter(&tPrev);
@@ -10236,35 +10319,9 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR commandLine, int) {
     int fpsFrames = 0;
 
     while (g_running) {
-        MSG msg;
-        while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
-            if (msg.message == WM_QUIT) g_running = false;
-            TranslateMessage(&msg);
-            DispatchMessage(&msg);
-        }
-        if (!g_running) break;
-
-        LARGE_INTEGER tWorkBegin;
-        QueryPerformanceCounter(&tWorkBegin);
-
-        clientInputTick();
-        serverTick(freq);
-        syncClientDeviceUi();
-        clientCameraTick();
-
-        clientRender(hwnd);
-
-        /* Pace to 60 Hz. */
-        ++fpsFrames;
+        if (!gameFrame(freq)) break;
         LARGE_INTEGER tNow;
         QueryPerformanceCounter(&tNow);
-        {
-            const double work = 1000.0 * (double)(tNow.QuadPart - tWorkBegin.QuadPart) /
-                                (double)freq.QuadPart;
-            /* Smoothed, because a single frame that happened to include a light
-               recut or a chunk save says nothing about the steady state. */
-            g_frameMs = g_frameMs > 0.0 ? g_frameMs * 0.9 + work * 0.1 : work;
-        }
         double elapsed = (double)(tNow.QuadPart - tPrev.QuadPart) / (double)freq.QuadPart;
         if (elapsed < FRAME_SECONDS) {
             int ms = (int)((FRAME_SECONDS - elapsed) * 1000.0);
@@ -10276,31 +10333,10 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR commandLine, int) {
         }
         tPrev = tNow;
 
-        double since = (double)(tNow.QuadPart - tFpsBase.QuadPart) / (double)freq.QuadPart;
-        if (since >= 0.25) {
-            g_fps = fpsFrames / since;
-            fpsFrames = 0;
-            tFpsBase = tNow;
-        }
+        recordFrameRate(freq, tNow, tFpsBase, fpsFrames);
     }
 
-    /* After the loop, while the world is still whole. Quitting without saving
-       is the likeliest way to lose an evening's work. */
-    autosaveOnQuit();
-
-    timeEndPeriod(1);
-    SelectObject(g_backDC, g_backOldBmp);
-    DeleteObject(g_backBmp);
-    DeleteDC(g_backDC);
-    DeleteObject(g_panelBg);
-    DeleteObject(g_btnBg);
-    DeleteObject(g_btnBgHot);
-    DeleteObject(g_btnBgSel);
-    DeleteObject(g_borderBrush);
-    DeleteObject(g_accentBrush);
-    for (int i = 0; i < N_BRUSH; ++i) DeleteObject(g_swatchBrush[i]);
-    for (int s = 1; s < SPR_COUNT; ++s) if (g_iconBmp[s]) DeleteObject(g_iconBmp[s]);
-    if (g_iconDC) DeleteDC(g_iconDC);
-    DeleteObject(g_font);
+    finishGame();
     return 0;
+#endif
 }

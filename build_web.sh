@@ -74,13 +74,9 @@ CL_VERSION=$(bash scripts/version.sh 2>/dev/null || echo unknown)
 mkdir -p web
 
 # --- why these flags ---------------------------------------------------------
-# ASYNCIFY is the one that makes this port possible at all. main.cpp keeps its
-# Win32 `while (g_running)` frame loop, which never returns -- and a function
-# that never returns is a hung tab. ASYNCIFY rewrites the call graph so the
-# Sleep() inside that loop can yield to the browser and resume where it left
-# off, which is what lets the loop stay exactly as Windows has it. It costs
-# code size and some speed; the alternative was restructuring the game's frame
-# loop and maintaining two of them.
+# The browser schedules the shared game tick through requestAnimationFrame.
+# Every frame returns, including overloaded frames, so there is no blocking
+# Sleep and no need for ASYNCIFY's call-graph instrumentation.
 #
 #
 # -l idbfs.js and the save-path defines are what make saving mean anything
@@ -111,8 +107,6 @@ mkdir -p web
     -s USE_SDL=2 \
     -l idbfs.js \
     -s EXPORTED_RUNTIME_METHODS=FS,IDBFS,addRunDependency,removeRunDependency,stringToUTF8,UTF8ToString,ccall,cwrap \
-    -s ASYNCIFY=1 \
-    -s ASYNCIFY_STACK_SIZE=65536 \
     -s INITIAL_MEMORY=671088640 \
     -s ALLOW_MEMORY_GROWTH=1 \
     -s MAXIMUM_MEMORY=2147483648 \

@@ -19,7 +19,7 @@ enum ViewMode {
 static const int VIEW_CELLS_W = 512;
 static const int VIEW_CELLS_H = 384;
 
-/* Fills `out` (VIEW_CELLS_W * VIEW_CELLS_H pixels, 0x00RRGGBB) with the region
+/* Fills `out` (0x00RRGGBB pixels) with the region
    of the world whose top-left cell is (camX, camY), and returns the number of
    non-wall, non-empty cells IN VIEW.
 
@@ -34,15 +34,16 @@ static const int VIEW_CELLS_H = 384;
    passing one that does not line up. Defaults off, so every headless harness
    that renders the world keeps seeing material colours rather than a dark
    rectangle. */
-/* `cellsW`/`cellsH` override how much world is drawn, and `out`'s row stride
-   with it. They exist for the powderlike front-end, whose whole point is a
-   view that is not 512x384: at half-size pixels it draws 1024x768 cells into
-   the same window and at quarter-size 2048x1536. Defaulted, so every existing
-   caller -- the game, the harnesses, the benchmarks -- is untouched and still
-   gets the fixed window geometry the light buffer is tied to.
+/* `cellsW`/`cellsH` override how much world is drawn. `outputStride` is the
+   distance between output rows in pixels; zero means tightly packed cellsW.
+   A larger stride lets the zoomed game draw only the visible top-left region
+   while retaining the full-width buffer expected by its sprite overlays.
+   Pixels outside that region are left untouched. Non-positive dimensions or
+   a stride smaller than cellsW draw nothing and return zero.
 
-   `lit` is only valid at the default size, for that reason: lightRow() indexes
-   a buffer built for VIEW_CELLS_W/H. Asking for both is a caller error and
-   renders unlit rather than reading past the end of the light field. */
+   Smaller views use the matching top-left region of the fixed light field.
+   Oversized views (used by powderlike) render unlit rather than reading past
+   its VIEW_CELLS_W/H geometry. */
 int renderView(const World& w, u32* out, int view, int camX, int camY, bool lit = false,
-               int cellsW = VIEW_CELLS_W, int cellsH = VIEW_CELLS_H);
+               int cellsW = VIEW_CELLS_W, int cellsH = VIEW_CELLS_H,
+               int outputStride = 0);
