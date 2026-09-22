@@ -4,10 +4,15 @@
 
 - Four players in cooperative survival: one host and up to three joined peers.
 - One player's game is the authoritative host and owns the save.
-- Another computer joins by entering the host's IPv4 address. Port 27841 is
-  fixed for this first version.
-- LAN/direct IP is the baseline. Discovery, NAT traversal, matchmaking,
-  dedicated servers, host migration, and cross-version play are later work.
+- Two ways in. **LAN**: another computer joins by entering the host's IPv4
+  address; port 27841 is fixed. **Online**: the host gets a five-character
+  room code and friends anywhere type it; the connection is direct,
+  peer-to-peer WebRTC, with NAT traversal by STUN.
+- Online rooms are the browser build's rooms. The Windows build speaks the
+  same WebRTC transport and the same connection codes, so a desktop and a
+  browser can host and join each other.
+- Discovery, a TURN relay, dedicated servers, host migration, and
+  cross-version play are later work.
 - Every peer must run the exact same build and protocol.
 
 On an ordinary home LAN, the host's private address is sufficient. The host
@@ -149,6 +154,46 @@ private network.
 The command-line equivalents, mainly for repeatable testing, are
 `cinderlift.exe --host` and `cinderlift.exe --join 192.168.x.x`.
 
+### Online, by room code
+
+On the host, click **Host online**. The button turns into **Room ABCDE --
+click to copy** once the room is open, and the code is also in the window
+title, so it can be read off the taskbar. On the other computer, type or paste
+(Ctrl+V) the code into the same box an address goes in and click **Join**:
+the box takes either, and tells them apart by the dots. Command-line
+equivalents: `--host-online` and `--join-room ABCDE`.
+
+How it works, and where each piece lives:
+
+- **Transport**: WebRTC data channels, via libdatachannel
+  (`src/rtc/rtcnet.cpp`), a native port of `web/webrtc.js`. One ordered,
+  reliable channel per guest -- TCP's contract, so the protocol above it did
+  not change. In `network.cpp` each `Peer` is either a socket or a data
+  channel (`Peer::rtc`); the transport functions branch on that and nothing
+  else does.
+- **Codes**: the same `CLZ`/`CLR` format as the browser. The Windows build
+  writes `CLR` and reads both, carrying its own small gzip inflater for the
+  browser's `CLZ` (`src/rtc/codes.cpp`, tested by `tests/rtc_codes.cpp`).
+- **Rooms**: the same broker, `signal/worker.js`, over WinHTTP
+  (`src/rtc/room.cpp`), on a background thread. It carries about two
+  kilobytes per join and never sees game traffic. The host re-offers a seat
+  whose player dropped, and a guest whose link drops walks back into the same
+  seat by itself -- both as `web/multiplayer.js` does.
+- **Building**: only `build.bat` builds online play (`CINDERLIFT_RTC`).
+  `scripts/build_deps.bat` fetches and builds libdatachannel and mbedTLS at
+  pinned tags into `third_party/` (ignored by git) the first time. It needs
+  GCC 7+ but **not GCC 16**, which miscompiles libdatachannel into crashes on
+  join and leave -- see `scripts/toolchain.bat`. The Makefile, the test suite
+  and powderlike build without it and keep LAN only.
+- **Debugging a connection**: set `CINDERLIFT_RTC_LOG=1` (or a file path)
+  before launching; libdatachannel's log and the game's own connection events
+  go to `build/rtc.log`.
+
+With STUN only and no relay, some pairs of networks cannot connect directly:
+carrier-grade NAT, some mobile hotspots, strict corporate or school networks.
+The browser build has always had the same limit. A TURN relay would fix it at
+the cost of carrying game traffic, and paying for it.
+
 For iteration on one computer, run `multiplayer_test.bat`, optionally with a
 client count: `multiplayer_test.bat 3` launches a full four-window session.
 It runs the same built executable over loopback, labels the windows LOCAL HOST
@@ -178,10 +223,8 @@ sustained established session.
 
 ## Remaining extensions
 
-- Optional LAN discovery, NAT traversal/relay, dedicated server, and host
-  migration.
-- Replace ABI blocks with portable field-wise overlay encoding before
-  non-identical compilers or platforms are supported.
+- Optional LAN discovery, a TURN relay for networks STUN cannot get
+  through, dedicated server, and host migration.
 - Add latency/loss simulation and longer soak tests for prediction and backlog
   tuning.
 

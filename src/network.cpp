@@ -7,6 +7,15 @@
    protocol below is untouched by the difference. */
 #include "web/netshim.h"
 #endif
+#ifdef CINDERLIFT_RTC
+/* Online play for the Windows build: the browser's WebRTC transport, done
+   natively. See src/rtc/rtcnet.h. Built only by build.bat -- the test suite
+   and powderlike compile without it and keep LAN-only networking. */
+#include "rtc/rtcnet.h"
+#define NET_TRACE(what, a, b) rtcNetTrace(what, a, b)
+#else
+#define NET_TRACE(what, a, b) ((void)0)
+#endif
 #include "network.h"
 #include "save.h"
 #include "entity.h"
@@ -114,7 +123,14 @@ struct Peer {
     u32 chunkHash[CHUNK_COUNT];
     u8 urgentChunk[CHUNK_COUNT];
 
-    Peer() { sock = INVALID_SOCKET; clear(); }
+    /* Carried by a WebRTC data channel rather than a socket; `sock` then
+       holds the link number, and `rtcGeneration` the build of that link this
+       peer adopted -- see rtcNetClose for why that matters. Windows only;
+       in a browser every peer is a data channel and the shim knows it. */
+    bool rtc;
+    u32 rtcGeneration;
+
+    Peer() { sock = INVALID_SOCKET; rtc = false; rtcGeneration = 0; clear(); }
     void clear() {
         identity[0] = 0;
         recv.clear(); send.clear(); sendAt = 0;
@@ -136,6 +152,8 @@ static NetRole g_role = NET_OFF;
 static SOCKET g_listen = INVALID_SOCKET;
 static bool g_wsa = false;
 static char g_status[192] = "Offline";
+/* Hosting or joining through a room code rather than an address. */
+static bool g_online = false;
 static char g_localAddress[64] = "127.0.0.1";
 /* Client-side only. The host's equivalents live on each Peer. */
 static PlayerId g_assigned = PLAYER_NONE;
@@ -292,6 +310,18 @@ static void closeSocket(SOCKET& s) {
 }
 #endif
 
+/* Whatever carries this peer, let go of it. */
+static void closePeer(Peer& peer) {
+#ifdef CINDERLIFT_RTC
+    if (peer.rtc) {
+        if (peer.sock != INVALID_SOCKET) rtcNetClose((int)peer.sock, peer.rtcGeneration);
+        peer.sock = INVALID_SOCKET; peer.rtc = false;
+        return;
+    }
+#endif
+    closeSocket(peer.sock);
+}
+
 /* ==========================================================================
    The transport seam
    ==========================================================================
@@ -354,13 +384,40 @@ static bool txConnectPoll(Peer& peer, bool* failed) {
     *failed = webNetFailed(peer.sock);
     return webNetOpen(peer.sock) || *failed;
 }
+/* Always readable. txRecv is where a vanished link is noticed -- it returns
+   nothing waiting, or -1 once the channel is gone -- so gating the read on
+   the channel being open meant a dropped channel was never read, and the
+   peer on it was never let go: the ghost txLinkLost was written to catch,
+   still counted, because the check never ran. */
 static bool txReady(Peer& peer, bool* readable, bool* writable) {
-    *readable = webNetOpen(peer.sock);
+    *readable = true;
     *writable = webNetOpen(peer.sock) && peer.sendAt < peer.send.size();
     return true;
 }
 #else
+#ifdef CINDERLIFT_RTC
+/* The browser's versions above, over rtcnet instead of the page. */
+static bool rtcLinkLost(const Peer& peer) {
+    return !peer.connecting && !rtcNetOpen((int)peer.sock);
+}
+static int rtcRecv(Peer& peer, u8* buf, int cap) {
+    const int n = rtcNetRecv((int)peer.sock, buf, cap);
+    if (n > 0) return n;
+    if (rtcLinkLost(peer)) return -1;
+    return rtcNetFailed((int)peer.sock) ? -1 : 0;
+}
+static int rtcSend(Peer& peer, const u8* buf, int n) {
+    const int sent = rtcNetSend((int)peer.sock, buf, n);
+    if (sent > 0) return sent;
+    if (rtcLinkLost(peer)) return -1;
+    return rtcNetFailed((int)peer.sock) ? -1 : 0;
+}
+#endif
+
 static int txRecv(Peer& peer, u8* buf, int cap) {
+#ifdef CINDERLIFT_RTC
+    if (peer.rtc) return rtcRecv(peer, buf, cap);
+#endif
     const int n = recv(peer.sock, (char*)buf, cap, 0);
     if (n > 0) return n;
     if (n == 0) return -1;
@@ -369,6 +426,9 @@ static int txRecv(Peer& peer, u8* buf, int cap) {
 
 /* >0 bytes taken, 0 if the transport is full for now, -1 on failure. */
 static int txSend(Peer& peer, const u8* buf, int n) {
+#ifdef CINDERLIFT_RTC
+    if (peer.rtc) return rtcSend(peer, buf, n);
+#endif
     const int sent = send(peer.sock, (const char*)buf, n, 0);
     if (sent > 0) return sent;
     return WSAGetLastError() == WSAEWOULDBLOCK ? 0 : -1;
@@ -377,6 +437,12 @@ static int txSend(Peer& peer, const u8* buf, int n) {
 /* Has an in-progress connection resolved? Sets *failed when it resolved
    badly. Returning false means still waiting. */
 static bool txConnectPoll(Peer& peer, bool* failed) {
+#ifdef CINDERLIFT_RTC
+    if (peer.rtc) {
+        *failed = rtcNetFailed((int)peer.sock);
+        return rtcNetOpen((int)peer.sock) || *failed;
+    }
+#endif
     *failed = false;
     fd_set writeSet, errSet; FD_ZERO(&writeSet); FD_ZERO(&errSet);
     FD_SET(peer.sock, &writeSet); FD_SET(peer.sock, &errSet); timeval tv = { 0, 0 };
@@ -391,6 +457,13 @@ static bool txConnectPoll(Peer& peer, bool* failed) {
    sending first is what lets a just-connected client deliver HELLO before
    either side waits on the other. */
 static bool txReady(Peer& peer, bool* readable, bool* writable) {
+#ifdef CINDERLIFT_RTC
+    if (peer.rtc) {
+        *readable = true;                 /* see the browser's txReady */
+        *writable = rtcNetOpen((int)peer.sock) && peer.sendAt < peer.send.size();
+        return true;
+    }
+#endif
     fd_set readSet, writeSet;
     FD_ZERO(&readSet); FD_ZERO(&writeSet);
     FD_SET(peer.sock, &readSet);
@@ -413,7 +486,8 @@ static int connectedPeerCount() {
    released so a later joiner can reuse it; the generation counter in that slot
    is what stops this peer's in-flight packets acting on its replacement. */
 static void disconnectPeer(Peer& peer, const char* reason) {
-    closeSocket(peer.sock);
+    NET_TRACE("game: disconnectPeer (peer, rtc)", (int)(&peer - g_peers), peer.rtc);
+    closePeer(peer);
     if (g_role == NET_HOST && peer.assigned != PLAYER_NONE) {
         const PlayerId gone = peer.assigned;
         /* Before the close, which is what frees their tools. The roster
@@ -443,8 +517,12 @@ static void disconnectPeer(Peer& peer, const char* reason) {
 
 void netStop() {
     const bool wasClient = g_role == NET_CLIENT;
-    for (int i = 0; i < MAX_PEERS; ++i) { closeSocket(g_peers[i].sock); g_peers[i].clear(); }
+    for (int i = 0; i < MAX_PEERS; ++i) { closePeer(g_peers[i]); g_peers[i].clear(); }
     closeSocket(g_listen);
+#ifdef CINDERLIFT_RTC
+    if (g_online) { rtcRoomStop(); rtcNetCloseAll(); }
+    g_online = false;
+#endif
     g_assigned = PLAYER_NONE; g_clientReady = false;
     for (int i = 0; i < MAX_PLAYERS; ++i) g_haveRemoteCommand[i] = false;
     g_remoteActions.clear();
@@ -529,6 +607,54 @@ bool netJoin(const char* ipv4, u16 port) {
     sprintf(g_status, "Connecting to %s:%u", ipv4, (unsigned)port);
     return true;
 }
+#endif
+
+#ifdef CINDERLIFT_RTC
+/* Online hosting has no port and nothing to bind, exactly as in a tab: the
+   room thread builds three offers and opens a room with them, and a peer
+   slot fills in when its channel opens -- see netPoll. Nobody can reach an
+   online host by address, so it does not listen for LAN joins as well. */
+bool netHostOnline() {
+    netStop(); if (!startup()) return false;
+    g_role = NET_HOST; g_online = true;
+    rtcRoomHost();
+    statusf("Opening a room -- a moment");
+    return true;
+}
+
+bool netJoinOnline(const char* room) {
+    netStop(); if (!startup()) return false;
+    if (!room || !*room) { statusf("Type the host's room code first"); return false; }
+    Peer& peer = g_peers[0];
+    peer.clear();
+    peer.sock = (SOCKET)1; peer.rtc = true; peer.rtcGeneration = 0;
+    peer.connecting = true;
+    g_role = NET_CLIENT; g_online = true;
+    rtcRoomJoin(room);
+    statusf("Looking for that game...");
+    return true;
+}
+
+bool netOnline() { return g_online; }
+const char* netRoomCode() {
+    static char code[16];
+    const std::string c = g_online && g_role == NET_HOST ? rtcRoomCode() : std::string();
+    snprintf(code, sizeof(code), "%s", c.c_str());
+    return code;
+}
+#else
+/* A tab does have online play -- it is all online play -- but it is driven
+   from the page's Multiplayer panel, which has the text boxes a code needs.
+   Anything else here is a Windows build made without build.bat. */
+#ifndef _WIN32
+static const char* NO_ONLINE = "Use Multiplayer, under the game";
+#else
+static const char* NO_ONLINE = "No online play in this build -- build with build.bat";
+#endif
+bool netHostOnline() { statusf(NO_ONLINE); return false; }
+bool netJoinOnline(const char*) { statusf(NO_ONLINE); return false; }
+bool netOnline() { return false; }
+const char* netRoomCode() { return ""; }
 #endif
 
 static void queuePacket(Peer& peer, u8 type, const std::vector<u8>& payload) {
@@ -990,13 +1116,17 @@ static void handlePacket(Peer& peer, u8 type, const u8* data, size_t len, World&
                tool instances before overwriting anything. */
             rosterRestore(peer.identity, g_playerSessions[peer.assigned]);
         }
-        if (peer.assigned == PLAYER_NONE) { Writer reject; reject.string("Game is full"); queuePacket(peer, PK_REJECT, reject.b); return; }
+        if (peer.assigned == PLAYER_NONE) { NET_TRACE("game: reject full (peer, 0)", (int)(&peer - g_peers), 0); Writer reject; reject.string("Game is full"); queuePacket(peer, PK_REJECT, reject.b); return; }
+        /* No extra tools here. This used to add a Bolt Caster and a Flint
+           Striker to every joiner -- written before inventoryStartingKit
+           existed, and never taken out once it did -- so a new player had
+           two of each, and a returning one gained another pair every time
+           they reconnected, on top of the pack rosterRestore gave back. */
         PlayerSession& joined = g_playerSessions[peer.assigned];
-        joined.inventory.add(ITEM_BOLTER, 1); joined.inventory.add(ITEM_FLINT, 1);
         Writer welcome; welcome.u8v(peer.assigned); welcome.u16v(joined.generation);
         queuePacket(peer, PK_WELCOME, welcome.b); sendSnapshot(peer, world);
     } else if (type == PK_REJECT && g_role == NET_CLIENT) {
-        char reason[128]; r.string(reason, sizeof(reason)); statusf("Join rejected: %s", reason); closeSocket(peer.sock);
+        char reason[128]; r.string(reason, sizeof(reason)); statusf("Join rejected: %s", reason); NET_TRACE("game: rejected by host", 0, 0); closePeer(peer);
     } else if (type == PK_WELCOME && g_role == NET_CLIENT) {
         g_assigned = r.u8v(); (void)r.u16v(); statusf("Accepted -- receiving world");
     } else if (type == PK_WORLD_SNAPSHOT && g_role == NET_CLIENT) {
@@ -1137,8 +1267,25 @@ static void pollPeer(Peer& peer, World& world) {
     if (g_role == NET_CLIENT && peer.connecting) {
         bool failed = false;
         if (txConnectPoll(peer, &failed)) {
-            if (failed) { statusf("Connection failed"); closeSocket(peer.sock); }
-            else { peer.connecting = false; queueHello(peer); }
+            if (failed) {
+                statusf("Connection failed");
+#ifdef CINDERLIFT_RTC
+                if (peer.rtc) {
+                    const std::string why = rtcNetFault();
+                    if (!why.empty()) statusf("%s", why.c_str());
+                }
+#endif
+                closePeer(peer);
+            }
+            else {
+                peer.connecting = false;
+#ifdef CINDERLIFT_RTC
+                /* Taken now rather than at netJoinOnline: the room thread
+                   builds the link after that, and building bumps it. */
+                if (peer.rtc) peer.rtcGeneration = rtcNetGeneration((int)peer.sock - 1);
+#endif
+                queueHello(peer);
+            }
         }
         return;
     }
@@ -1164,6 +1311,37 @@ void netPoll(World& world) {
             sprintf(g_status, "Player connecting -- %d connected", connectedPeerCount());
         }
 #else
+#ifdef CINDERLIFT_RTC
+    /* The browser's rule, for the same reason: a peer is adopted when its
+       channel opens, so a live peer is always one that can carry bytes.
+       Seat N is peer N is link N+1 -- the room keeps a returning player in
+       their seat, and this keeps them in their peer. */
+    if (g_online && g_role == NET_HOST) for (int i = 0; i < MAX_PEERS && i < RTC_MAX_LINKS; ++i)
+        if (!g_peers[i].live() && rtcNetOpen(i + 1)) {
+            g_peers[i].clear();
+            g_peers[i].sock = (SOCKET)(i + 1); g_peers[i].rtc = true;
+            g_peers[i].rtcGeneration = rtcNetGeneration(i);
+            NET_TRACE("game: adopted link (peer, generation)", i, (int)g_peers[i].rtcGeneration);
+            sprintf(g_status, "Player connecting -- %d connected", connectedPeerCount());
+        }
+    /* A guest whose link dropped is put back by the room thread, which
+       re-takes the same seat with a fresh link. When that link opens, start
+       over exactly as a first join does -- the browser gets the same by
+       calling netJoin again -- and the host sends a fresh world. */
+    if (g_online && g_role == NET_CLIENT && !g_peers[0].live() && rtcNetOpen(1)) {
+        g_clientReady = false; g_assigned = PLAYER_NONE;
+        g_acknowledgedCommand = g_acknowledgedAction = 0; g_stateSerial = 0;
+        memset(g_clientAuthorityHash, 0, sizeof(g_clientAuthorityHash));
+        memset(g_clientPredictedChunkCommand, 0, sizeof(g_clientPredictedChunkCommand));
+        playerSessionsReturnToOffline();
+        Peer& peer = g_peers[0];
+        peer.clear();
+        peer.sock = (SOCKET)1; peer.rtc = true; peer.rtcGeneration = rtcNetGeneration(0);
+        peer.connecting = false;
+        queueHello(peer);
+        statusf("Rejoined -- receiving world");
+    }
+#endif
     if (g_role == NET_HOST && g_listen != INVALID_SOCKET) {
         /* Accept in a loop: several people can click Join within one frame,
            and an unaccepted backlog entry would otherwise wait a whole frame
@@ -1336,5 +1514,25 @@ bool netReady() {
 }
 bool netClientReady() { return g_role != NET_CLIENT || g_clientReady; }
 PlayerId netAssignedPlayer() { return g_assigned; }
-const char* netStatus() { return g_status; }
+const char* netStatus() {
+#ifdef CINDERLIFT_RTC
+    /* An online session has a second voice: the room thread, which knows
+       things the protocol cannot -- that the code was mistyped, that the
+       broker is down, that a rejoin is under way. Its word wins while it has
+       something to say. */
+    if (g_online) {
+        static char line[192];
+        const std::string fault = rtcNetFault();
+        if (g_role == NET_HOST) {
+            const std::string code = rtcRoomCode();
+            if (code.empty()) return fault.empty() ? g_status : (snprintf(line, sizeof(line), "%s", fault.c_str()), line);
+            snprintf(line, sizeof(line), "Room %s -- %d/3 connected", code.c_str(), connectedPeerCount());
+            return line;
+        }
+        const std::string room = rtcRoomStatus();
+        if (!room.empty()) { snprintf(line, sizeof(line), "%s", room.c_str()); return line; }
+    }
+#endif
+    return g_status;
+}
 const char* netLocalAddress() { startup(); return g_localAddress; }

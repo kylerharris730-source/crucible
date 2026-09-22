@@ -1,0 +1,15 @@
+diff --git a/src/impl/sctptransport.cpp b/src/impl/sctptransport.cpp
+index 552ee94..9a3ae6f 100644
+--- a/src/impl/sctptransport.cpp
++++ b/src/impl/sctptransport.cpp
+@@ -332,6 +332,10 @@ SctpTransport::~SctpTransport() {
+ }
+ 
+ void SctpTransport::onBufferedAmount(amount_callback callback) {
++	// The callback is invoked with mSendMutex held (see updateBufferedAmount), so it must be
++	// replaced under the same lock: PeerConnection::closeTransports() clears it while a flush
++	// queued by close() may be calling it on another thread.
++	std::lock_guard lock(mSendMutex);
+ 	mBufferedAmountCallback = std::move(callback);
+ }
+ 

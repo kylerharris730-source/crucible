@@ -17,6 +17,33 @@ REM Discovered, adding a file to src\ IS adding it to the build, and the two
 REM cannot drift apart again.
 set SRC=
 for %%f in (src\*.cpp) do set SRC=!SRC! %%f
+REM Online play's own sources, kept in their own folder so the test suite and
+REM powderlike -- which glob src\*.cpp and do not link the WebRTC libraries --
+REM never pick them up.
+for %%f in (src\rtc\*.cpp) do set SRC=!SRC! %%f
+
+REM --- the compiler ------------------------------------------------------------
+REM GCC 7 or newer, for online play -- see scripts\toolchain.bat.
+call scripts\toolchain.bat
+if errorlevel 1 (
+    echo BUILD FAILED -- build\cinderlift.exe left as it was
+    exit /b 1
+)
+
+REM --- online-play libraries ---------------------------------------------------
+REM Built once, into third_party\ -- see scripts\build_deps.bat.
+if not exist third_party\install\lib\libdatachannel-static.a (
+    echo Building the online-play libraries -- first build only, a few minutes
+    call scripts\build_deps.bat
+    if errorlevel 1 (
+        echo.
+        echo BUILD FAILED -- build\cinderlift.exe left as it was
+        exit /b 1
+    )
+)
+set RTC_FLAGS=-DCINDERLIFT_RTC -Ithird_party/install/include
+REM Order matters to a static link: each library before the ones it uses.
+set RTC_LIBS=-Lthird_party/install/lib -ldatachannel-static -ljuice-static -lusrsctp -lmbedtls -lmbedx509 -lmbedcrypto -leverest -lp256m -lwinhttp -liphlpapi -lbcrypt
 
 REM Direct-IP peers reject different source revisions before exchanging a
 REM world. Embedding HEAD makes that check automatic for normal builds; an
@@ -105,9 +132,9 @@ REM runtime dynamic produced executables that worked on the runner and failed
 REM on clean Windows installs with "libwinpthread-1.dll was not found".
 REM -O3 rather than -O2, and kept in step with the Makefile and build_web.sh.
 REM See the note in the Makefile for what it measured and why -march stays put.
-g++ -std=c++11 -O3 -Wall -Wextra -mwindows -static -static-libgcc -static-libstdc++ -DCINDERLIFT_BUILD_ID=\"!BUILD_ID!\" -DCINDERLIFT_VERSION=\"!CL_VERSION!\" !SRC! build/obj/version_game.o ^
+g++ -std=c++11 -O3 -Wall -Wextra -mwindows -static -static-libgcc -static-libstdc++ -DCINDERLIFT_BUILD_ID=\"!BUILD_ID!\" -DCINDERLIFT_VERSION=\"!CL_VERSION!\" !RTC_FLAGS! !SRC! build/obj/version_game.o ^
     -o build\cinderlift.new.exe ^
-    -lgdi32 -luser32 -lwinmm -lmsimg32 -lws2_32
+    !RTC_LIBS! -lgdi32 -luser32 -lwinmm -lmsimg32 -lws2_32
 
 if errorlevel 1 (
     del /q build\cinderlift.new.exe 2>nul

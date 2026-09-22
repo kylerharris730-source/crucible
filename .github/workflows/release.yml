@@ -25,7 +25,10 @@ jobs:
       - name: Install MinGW
         shell: powershell
         run: |
-          choco install mingw --no-progress -y
+          # Pinned. GCC 16.1 miscompiles libdatachannel, which online play
+          # links, into a game that crashes when a player joins or leaves --
+          # see scripts\toolchain.bat, which refuses it for the same reason.
+          choco install mingw --version 14.2.0 --no-progress -y
           $roots = @('C:\ProgramData\mingw64', 'C:\tools\mingw64', 'C:\mingw64')
           $compiler = Get-ChildItem $roots -Filter g++.exe -Recurse -ErrorAction SilentlyContinue |
             Select-Object -First 1

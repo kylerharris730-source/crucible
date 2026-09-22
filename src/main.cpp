@@ -1109,6 +1109,7 @@ static bool g_bgLayer = false;
 static const int HOTBAR_SLOT = 60;   /* room for a 38px icon plus its count */
 static RECT g_hotRect[HOTBAR_SLOTS];
 static RECT g_menuResume, g_menuHost, g_menuJoin, g_menuIp, g_menuStop, g_menuQuit, g_menuPanel;
+static RECT g_menuHostOnline;
 static RECT g_menuSave, g_menuLoad;
 static RECT g_menuUiMinus, g_menuUiValue, g_menuUiPlus;
 
@@ -2280,21 +2281,26 @@ static void layoutMenu() {
        once a session. */
     const int keyPitch = uiScaled(15);
     const int savePitch = uiScaled(15);
-    const int w = 380, h = 300 + 120 + N_KEY_HINTS * keyPitch + 22
+    const int w = 380, h = 340 + 120 + N_KEY_HINTS * keyPitch + 22
                     + (saveTotalBytes() > 0 ? 26 + 8 * savePitch : 0);
     const int cx = PANEL_W + VIEW_W / 2, cy = VIEW_H / 2;
-    SetRect(&g_menuPanel, cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2);
+    /* Centred, unless that would push the top off the window: the buttons
+       and the title are up there, and what overflows at the bottom instead
+       is the save-size breakdown, the one part nobody opens the menu for. */
+    const int panelTop = cy - h / 2 < 8 ? 8 : cy - h / 2;
+    SetRect(&g_menuPanel, cx - w / 2, panelTop, cx + w / 2, panelTop + h);
     const int bw = w - 120, bx = cx - bw / 2;
     const int top = g_menuPanel.top;
     SetRect(&g_menuResume, bx, top + 42, bx + bw, top + 74);
     SetRect(&g_menuSave,   bx, top + 82, bx + bw, top + 114);
     SetRect(&g_menuLoad,   bx, top + 122, bx + bw, top + 154);
     SetRect(&g_menuHost,   bx, top + 162, bx + bw, top + 194);
-    SetRect(&g_menuIp,     bx, top + 202, bx + bw - 88, top + 234);
-    SetRect(&g_menuJoin,   bx + bw - 80, top + 202, bx + bw, top + 234);
-    SetRect(&g_menuStop,   bx, top + 242, bx + bw, top + 274);
-    SetRect(&g_menuQuit,   bx, top + 282, bx + bw, top + 314);
-    const int uy = top + 322;
+    SetRect(&g_menuHostOnline, bx, top + 202, bx + bw, top + 234);
+    SetRect(&g_menuIp,     bx, top + 242, bx + bw - 88, top + 274);
+    SetRect(&g_menuJoin,   bx + bw - 80, top + 242, bx + bw, top + 274);
+    SetRect(&g_menuStop,   bx, top + 282, bx + bw, top + 314);
+    SetRect(&g_menuQuit,   bx, top + 322, bx + bw, top + 354);
+    const int uy = top + 362;
     SetRect(&g_menuUiMinus, bx, uy, bx + 42, uy + 30);
     SetRect(&g_menuUiValue, bx + 50, uy, bx + bw - 50, uy + 30);
     SetRect(&g_menuUiPlus,  bx + bw - 42, uy, bx + bw, uy + 30);
@@ -3206,6 +3212,58 @@ static void makeWorld() {
     roomsClear(g_world);
 }
 
+/* --- the join box -----------------------------------------------------------
+   One box for both ways in. An address has dots and a room code never does,
+   so which one was typed is not a thing the player has to say. Letters are
+   upper-cased as they arrive because room codes are. */
+static void joinFieldType(char ch) {
+    int n = (int)strlen(g_joinIp);
+    if (ch == '\b') { if (n > 0) g_joinIp[n - 1] = 0; return; }
+    if (ch >= 'a' && ch <= 'z') ch = (char)(ch - 32);
+    const bool ok = ch == '.' || (ch >= '0' && ch <= '9') || (ch >= 'A' && ch <= 'Z');
+    if (ok && n < (int)sizeof(g_joinIp) - 1) { g_joinIp[n] = ch; g_joinIp[n + 1] = 0; }
+}
+
+/* Replaces rather than appends: what is in the box is usually the old
+   address, and a pasted code tacked onto the end of 127.0.0.1 helps nobody. */
+/* The clipboard is Windows-only here. The browser build's win32 shim has no
+   clipboard -- a canvas cannot have one -- and a tab joins through the page's
+   own panel, which has real text boxes, so these do nothing there. */
+static void joinFieldPaste() {
+#ifdef _WIN32
+    if (!OpenClipboard(g_hwnd)) return;
+    HANDLE h = GetClipboardData(CF_TEXT);
+    const char* text = h ? (const char*)GlobalLock(h) : 0;
+    if (text) {
+        g_joinIp[0] = 0;
+        for (const char* p = text; *p; ++p) joinFieldType(*p);
+        GlobalUnlock(h);
+    }
+    CloseClipboard();
+#endif
+}
+
+static void copyToClipboard(const char* text) {
+#ifdef _WIN32
+    if (!OpenClipboard(g_hwnd)) return;
+    EmptyClipboard();
+    const size_t n = strlen(text) + 1;
+    HGLOBAL mem = GlobalAlloc(GMEM_MOVEABLE, n);
+    if (mem) {
+        memcpy(GlobalLock(mem), text, n); GlobalUnlock(mem);
+        if (!SetClipboardData(CF_TEXT, mem)) GlobalFree(mem);
+    }
+    CloseClipboard();
+#else
+    (void)text;
+#endif
+}
+
+static void joinTyped() {
+    if (strchr(g_joinIp, '.')) netJoin(g_joinIp);
+    else netJoinOnline(g_joinIp);
+}
+
 /* Returns true if the click was consumed by a panel control. */
 static bool handlePanelClick(int mx, int my) {
     /* While the menu is up it takes every click, including ones over the
@@ -3226,10 +3284,23 @@ static bool handlePanelClick(int mx, int my) {
         if (inRect(g_menuLoad, mx, my)) {
             g_saveScreen = SAVESCREEN_LOAD; saveSlotsRefresh(); return true;
         }
+        if (inRect(g_menuHostOnline, mx, my)) {
+            /* Pressed again while a room is open, it copies the code rather
+               than throwing the room away -- the code is the thing you want
+               next, and closing a room with friends in it by accident would
+               be a poor reward for clicking the button that shows it. */
+            if (netOnline() && netRole() == NET_HOST) {
+                if (*netRoomCode()) copyToClipboard(netRoomCode());
+            } else {
+                g_survival = true; g_playerOn = true;
+                netHostOnline();
+            }
+            g_joinIpFocus = false; return true;
+        }
         if (inRect(g_menuIp, mx, my)) { g_joinIpFocus = true; return true; }
         if (inRect(g_menuJoin, mx, my)) {
             g_survival = true; g_playerOn = true;
-            netJoin(g_joinIp); g_joinIpFocus = false; return true;
+            joinTyped(); g_joinIpFocus = false; return true;
         }
         if (inRect(g_menuStop, mx, my)) { netStop(); g_joinIpFocus = false; return true; }
         if (inRect(g_menuUiMinus, mx, my)) { changeUiScale(-1); return true; }
@@ -3412,14 +3483,12 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         }
         if (g_menuOpen && g_joinIpFocus) {
-            const char ch = (char)wp; int n = (int)strlen(g_joinIp);
-            if (ch == '\b' && n > 0) g_joinIp[n - 1] = 0;
-            else if ((ch == '.' || (ch >= '0' && ch <= '9')) && n < (int)sizeof(g_joinIp) - 1) {
-                g_joinIp[n] = ch; g_joinIp[n + 1] = 0;
-            } else if (ch == '\r') {
+            const char ch = (char)wp;
+            if (ch == 22) joinFieldPaste();                       /* ctrl+V */
+            else if (ch == '\r') {
                 g_survival = true; g_playerOn = true;
-                netJoin(g_joinIp); g_joinIpFocus = false;
-            }
+                joinTyped(); g_joinIpFocus = false;
+            } else joinFieldType(ch);
             return 0;
         }
         if (g_creativeOpen && g_creSearchFocus) {
@@ -8527,8 +8596,17 @@ static void drawMenu(HDC hdc) {
     drawButton(hdc, g_menuResume, "Resume", NULL, false, inRect(g_menuResume, g_mx, g_my));
     char hostLabel[96];
     sprintf(hostLabel, "Host LAN  (%s:%u)", netLocalAddress(), (unsigned)NET_DEFAULT_PORT);
-    drawButton(hdc, g_menuHost, hostLabel, NULL, netRole() == NET_HOST,
+    drawButton(hdc, g_menuHost, hostLabel, NULL, netRole() == NET_HOST && !netOnline(),
                inRect(g_menuHost, g_mx, g_my));
+    {
+        const bool hostingOnline = netOnline() && netRole() == NET_HOST;
+        char onlineLabel[96];
+        if (!hostingOnline) strcpy(onlineLabel, "Host online  (room code)");
+        else if (*netRoomCode()) sprintf(onlineLabel, "Room %s  -- click to copy", netRoomCode());
+        else strcpy(onlineLabel, "Opening a room...");
+        drawButton(hdc, g_menuHostOnline, onlineLabel, NULL, hostingOnline,
+                   inRect(g_menuHostOnline, g_mx, g_my));
+    }
     {
         RECT ip = g_menuIp;
         FillRect(hdc, &ip, inRect(ip, g_mx, g_my) ? g_btnBgHot : g_btnBg);
@@ -8878,9 +8956,28 @@ static void drawPanel(HDC hdc) {
    live in one process. Offline play feeds commands and actions into the local
    loopback queues; hosting consumes those plus a remote peer; joining never
    enters serverTick at all. */
+/* The room code in the title bar while hosting online, so it can be read off
+   the taskbar with the game full screen or the menu shut -- and by a script
+   driving a two-process test. Restored when the room goes away. */
+static void updateRoomTitle() {
+#ifdef _WIN32
+    static char shown[16] = "";
+    const char* code = netOnline() && netRole() == NET_HOST ? netRoomCode() : "";
+    if (!g_hwnd || strcmp(code, shown) == 0) return;
+    static char original[96] = "";
+    if (!original[0]) GetWindowTextA(g_hwnd, original, sizeof(original));
+    char title[128];
+    if (*code) snprintf(title, sizeof(title), "%s - room %s", original, code);
+    else snprintf(title, sizeof(title), "%s", original);
+    SetWindowTextA(g_hwnd, title);
+    snprintf(shown, sizeof(shown), "%s", code);
+#endif
+}
+
 static void clientInputTick() {
     releaseMouseIfUnfocused();
     netPoll(g_world);
+    updateRoomTitle();
     const bool authoritative = netRole() != NET_CLIENT;
     if (netRole() == NET_CLIENT && netClientReady()) {
         predictionReconcile();
@@ -10175,11 +10272,12 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR commandLine, int) {
     const char* joinSwitch = commandLine ? strstr(commandLine, "--join ") : 0;
     const bool emptyTestHost = commandLine && strstr(commandLine, "--host-empty");
     const bool savedTestHost = commandLine && strstr(commandLine, "--host-save");
+    const bool anyJoin = joinSwitch || (commandLine && strstr(commandLine, "--join-room "));
     /* A joining process is about to replace every world cell with the host's
        compressed snapshot. Generating a full throwaway world first made a CLI
        join look hung for more than a minute and doubled startup CPU/memory.
        Normal/menu launches still build their local world exactly as before. */
-    if (!joinSwitch && !emptyTestHost && !savedTestHost) {
+    if (!anyJoin && !emptyTestHost && !savedTestHost) {
         /* Start near the top middle. The world is four screens wide and eight
            deep, so the old middle-of-world spawn was several screens underground. */
         makeWorld();
@@ -10204,7 +10302,18 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR commandLine, int) {
     }
     /* Useful both for repeatable two-process testing and for a host that wants
        a shortcut. The menu remains the normal player-facing route. */
-    if (commandLine && strstr(commandLine, "--host")) {
+    /* Online counterparts, for testing two machines through a real room
+       without clicking through the menu on both. */
+    const char* roomSwitch = commandLine ? strstr(commandLine, "--join-room") : 0;
+    if (commandLine && strstr(commandLine, "--host-online")) {
+        g_survival = true; g_playerOn = true; netHostOnline();
+    } else if (roomSwitch) {
+        char room[16]; int n = 0; const char* p = roomSwitch + 11;
+        while (*p == ' ') ++p;
+        while (*p && *p != ' ' && n < (int)sizeof(room) - 1) room[n++] = *p++;
+        room[n] = 0;
+        if (n) { g_survival = true; g_playerOn = true; netJoinOnline(room); }
+    } else if (commandLine && strstr(commandLine, "--host")) {
         g_survival = true; g_playerOn = true; netHost();
     } else if (joinSwitch) {
         const char* join = joinSwitch;
@@ -10234,7 +10343,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR commandLine, int) {
        four-window loopback session impossible to tell apart on screen. */
     char windowTitle[64];
     strcpy(windowTitle, (savedTestHost || emptyTestHost) ? "Cinderlift - LOCAL HOST" :
-                        joinSwitch ? "Cinderlift - LOCAL CLIENT" : "Cinderlift");
+                        anyJoin ? "Cinderlift - LOCAL CLIENT" : "Cinderlift");
     const char* labelSwitch = commandLine ? strstr(commandLine, "--label ") : 0;
     if (labelSwitch) sprintf(windowTitle + strlen(windowTitle), " %d", atoi(labelSwitch + 8));
     HWND hwnd = CreateWindowA("CinderliftWnd", windowTitle, style,

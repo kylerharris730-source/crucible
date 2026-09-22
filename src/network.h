@@ -135,6 +135,15 @@ static const u16 NET_DEFAULT_PORT = 27841;
    firewall at all. Real hosting still binds everything. */
 bool netHost(u16 port = NET_DEFAULT_PORT, bool loopbackOnly = false);
 bool netJoin(const char* ipv4, u16 port = NET_DEFAULT_PORT);
+/* Online play through a five-character room code, over WebRTC -- the same
+   rooms and the same transport as the browser build, so either can join the
+   other. Only a build.bat build has it (CINDERLIFT_RTC); anything else
+   reports that it is missing and returns false. */
+bool netHostOnline();
+bool netJoinOnline(const char* room);
+bool netOnline();
+/* The room an online host is holding open, or empty. */
+const char* netRoomCode();
 void netStop();
 void netPoll(World& world);
 void netHostFrame(World& world);
