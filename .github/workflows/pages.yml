@@ -1,18 +1,26 @@
 name: Publish web build to Pages
 
-# The page and the Windows release are deliberately NOT coupled. index.html
-# links to /releases/latest/download/, which GitHub resolves to whichever
-# release is newest at the moment someone clicks it -- so cutting a release
-# never requires touching this workflow, and republishing the page never
-# requires uploading another executable.
+# The page plays the latest RELEASE, not the latest commit on main.
+#
+# It used to rebuild on every push to main, so the browser game ran whatever
+# was committed that minute -- half-finished work included -- while the
+# Download button beside it handed out the last release. Two different games
+# under one version heading. Worse, since online play they have to be the
+# SAME game: the network handshake refuses a peer with a different build id,
+# so a browser running main could never join a desktop running the release.
+# Built from the release tag, both carry that tag's commit as their id and
+# cross-play simply works.
+#
+# So this runs when "Publish Windows release" finishes successfully, and
+# builds the tag that release was made from. A release that failed to publish
+# never reaches the page. Run it by hand to republish the newest release --
+# never main. The page, the wiki and the game therefore all change together,
+# at release time; a fix to the wiki waits for the next release like any
+# other change.
 on:
-  push:
-    branches: [main]
-    paths:
-      - "src/**"
-      - "web/**"
-      - "build_web.sh"
-      - ".github/workflows/pages.yml"
+  workflow_run:
+    workflows: ["Publish Windows release"]
+    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -29,10 +37,33 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # A failed or cancelled release run also fires workflow_run; only a
+    # successful one means there is a release to show.
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     steps:
-      - name: Check out source
+      - name: Find the release to publish
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # For a run triggered by a tag push, head_branch is the tag's name.
+          RUN_TAG: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            tag="$RUN_TAG"
+          else
+            tag=$(gh release view --repo "${{ github.repository }}" --json tagName --jq .tagName)
+          fi
+          case "$tag" in
+            v*) ;;
+            *) echo "not a release tag: '$tag'" >&2; exit 1 ;;
+          esac
+          echo "Publishing $tag"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Check out the release
         uses: actions/checkout@v4
         with:
+          ref: ${{ steps.release.outputs.tag }}
           # Tags, and enough history to count commits since one. The
           # default checkout is shallow with no tags at all, which makes
           # scripts/version.sh print "unknown" and the page show no

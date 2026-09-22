@@ -23,6 +23,46 @@ Released: **v0.6.7** (2026-09-22). `main` is level with it.
       against.
 - [ ] **Decide the donation link.** `DONATE_URL` in `web/index.html` is still
       unset, so nothing renders.
+- [ ] **Play online with somebody on another network.** Online play (below)
+      was tested only on one machine: desktop to desktop, and desktop to a
+      local browser build in both directions. Real NAT between two houses is
+      what it is for and has not been tried. If it will not connect, run
+      both with `CINDERLIFT_RTC_LOG=1` and look in `build/rtc.log`.
+
+## Ready, not released
+
+- [ ] **Online play for the Windows build.** Host online, get a
+      five-character room code, and friends anywhere type it -- the same
+      rooms, transport and codes as the browser build, so desktop and browser
+      players can join each other. LAN by address is unchanged. See
+      MULTIPLAYER.md, "Online, by room code". Built on libdatachannel and
+      mbedTLS, fetched and built into `third_party/` by `build.bat` on first
+      run; the release workflow does the same.
+
+      **The toolchain changed.** Online play needs GCC 7+, and GCC 16.1
+      miscompiles libdatachannel into crashes on join and leave -- isolated
+      with a standalone test, 90/90 clean on GCC 14.2. Local builds now use
+      WinLibs GCC 14.2 (winget, installed alongside `C:\MinGW`, which the
+      test suite still uses); the release workflow pins Chocolatey's MinGW to
+      14.2.0; `scripts/toolchain.bat` refuses 16.
+
+      **Two fixes found along the way, both in shared code.** A host never let
+      go of a guest whose data channel closed -- the read that notices a dead
+      link was gated on the link being open. Seen on desktop; the browser
+      build's copy had the identical gate, so it should have been counting
+      ghosts too since the reconnect work. Fixed for both builds. And
+      every joiner got an extra Bolt Caster and Flint Striker on top of the
+      starting kit, and another pair on every rejoin; removed.
+
+      **The web page now follows releases, not main.** Pages rebuilds after
+      the Windows release workflow succeeds, from that tag -- so the browser
+      and the download are the same build, which cross-play requires (the
+      handshake refuses a different build id). Nothing on the page, the wiki
+      included, changes between releases any more.
+
+      Known: a browser tab hosting from the background stops its game loop
+      (browsers pause hidden tabs), so its guests stall until it is looked at.
+      Not new, and not fixable from the page.
 
 ## Ship it
 
