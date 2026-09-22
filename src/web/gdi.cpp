@@ -19,6 +19,7 @@
    ========================================================================== */
 #include "win32.h"
 #include "font8x8.h"
+#include <emscripten.h>
 
 #include <stdlib.h>
 #include <string.h>
@@ -386,6 +387,35 @@ static int fontHeight(WDC* dc)  { return dc->font ? dc->font->height : 14; }
 static int fontAdvance(int h)   { const int a = (h * 55 + 50) / 100; return a < 6 ? 6 : a; }
 static int fontScale(int h)     { const int s = h / 10; return s < 1 ? 1 : s; }
 
+/* --- thicker strokes when the canvas is being shrunk --------------------
+
+   FONT8X8 draws with one-pixel strokes. That is right at 1:1 and it falls
+   apart below it: the page only asks for `image-rendering: pixelated` when
+   a game pixel covers at least one device pixel, so on a laptop that has
+   to REDUCE the canvas the browser resamples instead, and a one-pixel
+   stroke lands on a fraction of a pixel and comes out as grey haze. The
+   world survives that treatment. Five-by-seven letters do not.
+
+   The page already knows when it is happening -- it is the same test that
+   decides `crisp` -- so it says so, and the glyph is drawn a second time
+   one pixel to the right. Two-pixel strokes still lose something on the
+   way down, but they survive as letters rather than as smudges.
+
+   HORIZONTAL only. Smearing vertically as well closes the counters -- the
+   holes in a, e and o -- at five by seven, and a filled-in `e` is less
+   readable than a thin one, not more.
+
+   Note this is NOT what the automatic UI scale does. That makes the text
+   bigger, and bigger is not thicker: fontScale is height/10, so it stays
+   at 1 until about 143%, and every size below that is a one-pixel stroke
+   in a larger cell. Size and weight are different problems and the page
+   was only solving the first one. */
+static int g_textBold = 0;
+
+extern "C" EMSCRIPTEN_KEEPALIVE void webSetTextBold(int on) {
+    g_textBold = on ? 1 : 0;
+}
+
 static void drawGlyphRun(WDC* dc, int x, int y, const char* s, int n,
                          uint32_t px, const RECT* clip) {
     const int h  = fontHeight(dc);
@@ -406,8 +436,13 @@ static void drawGlyphRun(WDC* dc, int x, int y, const char* s, int n,
             for (int col = 0; col < FONT_COLS; ++col) {
                 /* Glyph columns live in bits 6..2, most significant leftmost. */
                 if (!(bits & (0x40 >> col))) continue;
+                /* The extra column is the emboldening. It stays inside the
+                   advance: the glyph is centred with a bearing on each side,
+                   so there is always at least one spare column to its right
+                   before the next character begins. */
+                const int wide = sc + g_textBold;
                 for (int sy = 0; sy < sc; ++sy)
-                    for (int sx = 0; sx < sc; ++sx) {
+                    for (int sx = 0; sx < wide; ++sx) {
                         const int qx = ox + col * sc + sx, qy = gy + row * sc + sy;
                         if (clip && (qx < clip->left || qx >= clip->right ||
                                      qy < clip->top  || qy >= clip->bottom)) continue;

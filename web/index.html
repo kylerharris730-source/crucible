@@ -1053,7 +1053,17 @@
     // here at 1200px wide while the request had been 1288.
     const shown = canvas.getBoundingClientRect().width;
     const actual = shown * dpr / canvas.width;
-    canvas.classList.toggle('crisp', actual >= 0.999);
+    const crisp = actual >= 0.999;
+    canvas.classList.toggle('crisp', crisp);
+
+    // One measurement, two consequences, so they can never disagree: if the
+    // canvas is being reduced then nearest-neighbour is wrong for the world
+    // AND one-pixel strokes are too thin for the text. See webSetTextBold in
+    // src/web/gdi.cpp for what the second one does about it.
+    if (window.Module && Module.ccall) {
+      try { Module.ccall('webSetTextBold', null, ['number'], [crisp ? 0 : 1]); }
+      catch (e) { /* module not far enough along yet; the next fit will do it */ }
+    }
   }
 
   /* Coalesced to one fit per frame. A drag-resize fires continuously, and
