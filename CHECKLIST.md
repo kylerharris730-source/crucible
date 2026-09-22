@@ -5,7 +5,7 @@ chat, which meant it was re-derived from memory every session and quietly lost
 things. `HANDOFF.md` is **not** this file: it is gitignored scratch, is usually
 stale, and should not be trusted for release state.
 
-Released: **v0.6.7** (2026-09-22). `main` is level with it.
+Released: **v0.6.8** (2026-09-22). `main` is level with it.
 
 ---
 
@@ -23,15 +23,22 @@ Released: **v0.6.7** (2026-09-22). `main` is level with it.
       against.
 - [ ] **Decide the donation link.** `DONATE_URL` in `web/index.html` is still
       unset, so nothing renders.
-- [ ] **Play online with somebody on another network.** Online play (below)
+- [ ] **Play online with somebody on another network.** Online play (v0.6.8)
       was tested only on one machine: desktop to desktop, and desktop to a
       local browser build in both directions. Real NAT between two houses is
       what it is for and has not been tried. If it will not connect, run
       both with `CINDERLIFT_RTC_LOG=1` and look in `build/rtc.log`.
 
-## Ready, not released
+## Ship it
 
-- [ ] **Online play for the Windows build.** Host online, get a
+- [x] **Cut v0.6.8.** Tagged 2026-09-22, four commits past v0.6.7. Online
+      play for the Windows build. The first release built on GCC 14.2 and
+      the first whose web page was built from the release tag rather than
+      main -- both came out of CI on the first try (game and page are build
+      `d7d0eca2137e`). Also carries the thicker browser text from just after
+      v0.6.7.
+
+      **Online play for the Windows build.** Host online, get a
       five-character room code, and friends anywhere type it -- the same
       rooms, transport and codes as the browser build, so desktop and browser
       players can join each other. LAN by address is unchanged. See
@@ -63,8 +70,6 @@ Released: **v0.6.7** (2026-09-22). `main` is level with it.
       Known: a browser tab hosting from the background stops its game loop
       (browsers pause hidden tabs), so its guests stall until it is looked at.
       Not new, and not fixable from the page.
-
-## Ship it
 
 - [x] **Cut v0.6.7.** Tagged 2026-09-22, nine commits past v0.6.6. Fluids,
       frame time, and reach.
