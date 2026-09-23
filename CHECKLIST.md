@@ -5,7 +5,7 @@ chat, which meant it was re-derived from memory every session and quietly lost
 things. `HANDOFF.md` is **not** this file: it is gitignored scratch, is usually
 stale, and should not be trusted for release state.
 
-Released: **v0.6.8** (2026-09-22). `main` is level with it.
+Released: **v0.6.9** (2026-09-23). `main` is level with it.
 
 ---
 
@@ -30,6 +30,29 @@ Released: **v0.6.8** (2026-09-22). `main` is level with it.
       both with `CINDERLIFT_RTC_LOG=1` and look in `build/rtc.log`.
 
 ## Ship it
+
+- [x] **Cut v0.6.9.** Tagged 2026-09-23, three commits past v0.6.8. Feel.
+
+      **Walking down a slope no longer eats your jump.** Terrain is a grid, so
+      a slope is a staircase and a descent is airborne 40-48% of frames; the
+      walk cycle and the crouch had a grace for that and the jump did not.
+      Measured in `tests/slope_jump.cpp`: 12 of 24 presses taken on a 1-in-4
+      slope before, 24 of 24 after, and the same grace buys eight frames of
+      ordinary coyote time off a ledge.
+
+      **Four trinkets retuned**, from play. Carapace Charm 2 -> 5 armour. The
+      Emberwing Feather drops 1 in 25 rather than 1 in 10 ("its filling my
+      inventory"). The Slime Magnet is the **Slime Gland**: it poisons what you
+      hit -- a point every half second for three seconds, refreshed rather than
+      stacked -- instead of being a pickup magnet, which was the one charm that
+      never changed a fight. The Culverin Loader is a flat 30% chance of a
+      doubled shot instead of a rhythm to keep.
+
+      **Poison is a new mechanic** and only the Gland uses it: one transient
+      int on Entity, applied through the ordinary damage path so a creature
+      that dies of it drops its loot as if it had been shot. A second charm
+      wanting it needs no wiring. `tests/poison_charm.cpp`, including that a
+      real bolt from a wearer carries it.
 
 - [x] **Cut v0.6.8.** Tagged 2026-09-22, four commits past v0.6.7. Online
       play for the Windows build. The first release built on GCC 14.2 and
