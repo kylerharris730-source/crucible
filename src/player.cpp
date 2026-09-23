@@ -699,7 +699,35 @@ void Player::update(const World& w, const PlayerInput& in) {
            thing everybody expects diving into water NOT to do. */
         fallFromY = y;
     } else {
-        if (in.jump && onGround) { vy = -JUMP_VEL; onGround = false; }
+        /* --- the jump, and the coyote time on it --------------------------
+           `runningOnGround()` rather than `onGround`, which is the same grace
+           the walk cycle and the crouch already read and for the same reason:
+           terrain is a grid, a slope is a staircase, and walking down one
+           leaves the ground on 40-48% of frames. Asking `onGround` fresh meant
+           a press during a descent was answered about half the time and which
+           half was invisible -- measured in tests/slope_jump.cpp at 12 of 24
+           presses on a 1-in-4 slope and 7 of 24 on a 1-in-2. Reported as
+           "going down slopes ... eat your jump".
+
+           The grace is bounded by both a clock and a SPEED (AIR_GRACE frames,
+           GRACE_FALL_V cells a frame), and under this gravity those expire
+           together at about eight frames. So it also buys the ordinary coyote
+           time walking off a ledge, which is the same mechanic and worth
+           having, and it refuses a real fall, which is what keeps it from
+           being a second jump.
+
+           Rising is never graced -- see runningOnGround -- so a jump already
+           in progress cannot re-fire this, and the air-jump charm below stays
+           the only thing that answers a press off the ground. */
+        if (in.jump && runningOnGround()) {
+            vy = -JUMP_VEL;
+            onGround = false;
+            /* Spend the grace as the jump takes it. Without this the rest of
+               the frame -- and anything that reads the player before the next
+               update -- still sees a character that counts as grounded, on the
+               frame it demonstrably is not. */
+            airFrames = AIR_GRACE + 1;
+        }
         /* --- and the jumps you get in the air -----------------------------
            The Emberwing Feather, and it is EDGE TRIGGERED: a midair jump has
            to be a fresh press, or holding the key through a fall would spend
