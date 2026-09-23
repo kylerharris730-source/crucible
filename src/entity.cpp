@@ -307,8 +307,14 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
        it is to let it commit and then not be there.
 
        Fragile to match: two hits from the starting shot. A bat you had to chase
-       AND could not kill would be a tax rather than an encounter. */
-    { "Bat",       9,  7, 12,   7,  26, 1.35f, 0.055f, true, 1,  true,    0, 0, 0.0f, 0.0f, false, (ItemId)MAT_CHITIN, 1, 1, ITEM_EMBERWING_FEATHER, 10, SPR_BAT, 0x6A4C68, ITEM_EGG_BAT,       false, false, 0 },
+       AND could not kill would be a tax rather than an encounter.
+
+       Its feather drops one kill in 25, not the 50 every other creature uses.
+       Bats are everywhere and die in two hits, so at the common rate it was the
+       charm you got first and most; reported as "its filling my inventory" when
+       it was 1 in 10. Still the most generous drop in the game, because an
+       extra jump is the one charm worth having early. */
+    { "Bat",       9,  7, 12,   7,  26, 1.35f, 0.055f, true, 1,  true,    0, 0, 0.0f, 0.0f, false, (ItemId)MAT_CHITIN, 1, 1, ITEM_EMBERWING_FEATHER, 25, SPR_BAT, 0x6A4C68, ITEM_EGG_BAT,       false, false, 0 },
 
     /* --- spitter ------------------------------------------------------------
        The one that makes standing still wrong. It holds its distance and shoots,
@@ -1134,7 +1140,14 @@ void entApplyDamage(Entity& e, int damage) {
     e.hurtFlash = 6;
 }
 
-bool entDamageAt(int x, int y, int damage, bool sparingTame) {
+/* Refreshed rather than stacked: a second hit restarts the clock and does not
+   add a second helping. Stacking would make a fast weapon carry a poison that
+   outlived the fight that applied it. */
+void entPoison(Entity& e, int frames) {
+    if (frames > e.poison) e.poison = frames;
+}
+
+bool entDamageAt(int x, int y, int damage, bool sparingTame, int poisonFrames) {
     for (int i = 0; i < MAX_ENTITIES; ++i) {
         Entity& e = g_entities[i];
         if (!e.alive()) continue;
@@ -1144,6 +1157,7 @@ bool entDamageAt(int x, int y, int damage, bool sparingTame) {
         if (sparingTame && ENT_DEFS[e.type].tame) continue;
         if (x < e.left() || x > e.right() || y < e.top() || y > e.bottom()) continue;
         entApplyDamage(e, damage);
+        entPoison(e, poisonFrames);
         return true;
     }
     return false;
@@ -3803,6 +3817,15 @@ static void entTickMode(World& w, Player& fallbackPlayer, Inventory& fallbackInv
         if (e.hurtFlash > 0) --e.hurtFlash;
         if (e.touchTimer > 0) --e.touchTimer;
 
+        /* Poison. A point every ENT_POISON_TICK frames, through entApplyDamage
+           so a creature that dies of it dies the same way as one that is shot:
+           the death check at the top of this loop drops its loot and counts it
+           next frame. */
+        if (e.poison > 0) {
+            --e.poison;
+            if (e.poison % ENT_POISON_TICK == 0) entApplyDamage(e, 1);
+        }
+
         switch (e.type) {
         case ENT_MITE:    miteTick(e, p);       break;
         case ENT_MOTH:    mothTick(w, e, p);    break;
@@ -3956,7 +3979,7 @@ static_assert(sizeof(((PlayerSession*)0)->swingHit) * 8 >= MAX_ENTITIES,
 
 int entHitSegment(float x0, float y0, float x1, float y1,
                   float fromX, float fromY,
-                  int damage, float knockback, u8* hitMask) {
+                  int damage, float knockback, u8* hitMask, int poisonFrames) {
     int struck = 0;
     for (int i = 0; i < MAX_ENTITIES; ++i) {
         Entity& e = g_entities[i];
@@ -3987,6 +4010,7 @@ int entHitSegment(float x0, float y0, float x1, float y1,
         if (nx < cx - hw || nx > cx + hw || ny < cy - hh || ny > cy + hh) continue;
 
         entApplyDamage(e, damage);
+        entPoison(e, poisonFrames);
         if (knockback > 0.0f) {
             float kx = cx - fromX, ky = cy - fromY;
             const float kd = sqrtf(kx * kx + ky * ky);

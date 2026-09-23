@@ -16,6 +16,17 @@ void accessoryReset() {
     }
 }
 
+/* Three seconds, a point every half second: six damage from one hit if it runs
+   out, and it does not stack -- see entPoison. Against layer 1 that is a third
+   of a mite; against a boss it is a slow extra two damage a second for as long
+   as you keep hitting. Deliberately worth about as much as the flat charms
+   over a fight rather than obviously more, because it is a layer 1 drop. */
+static const int   POISON_FRAMES        = 180;
+
+int accessoryPoisonFrames(const Inventory& inv) {
+    return inv.hasEquipped(ITEM_SLIME_MAGNET) ? POISON_FRAMES : 0;
+}
+
 int accessoryShotDelay(const Inventory& inv, int baseDelay) {
     /* Two things shorten a delay and they do NOT compound. Whichever is kinder
        wins, and then that is the answer.
@@ -45,11 +56,16 @@ static const int   MOMENTUM_FULL_FRAMES = 150;  /* two and a half seconds */
 static const int   MOMENTUM_MAX_PCT     = 40;
 static const int   SPRINT_FULL_FRAMES   = 180;  /* three seconds one way */
 static const int   SPRINT_MAX_PCT       = 35;
-/* The Loader, in two stages -- see accessoryBurstBolts. 36 frames is a beat:
-   about the gap you leave stepping sideways between shots, which is the whole
-   point of putting the first stage there. 90 is a deliberate pause. */
-static const int   LOADER_ONE_FRAMES    = 36;
-static const int   LOADER_TWO_FRAMES    = 90;
+/* The Loader is a COIN now, not a clock. It was a ramp paid for holding fire,
+   and before that a two-second gate; asked for as "some set percent chance of
+   a doubled shot, lets say 30%", so that is what it is. Nothing to time and
+   nothing to arm -- just three pulls in ten that come out twice.
+
+   It keeps its slot in the ramp family's neighbourhood because it still reads
+   off the firing site, but it no longer touches idleFrames: a charm that asks
+   you to stop shooting in the middle of a fight is a charm you play around
+   rather than with. */
+static const int   LOADER_DOUBLE_PCT    = 30;
 
 int accessoryMomentumPct(int playerSlot, const Inventory& inv) {
     if (playerSlot < 0 || playerSlot >= MAX_PLAYERS) return 0;
@@ -67,23 +83,15 @@ int accessorySprintPct(int playerSlot, const Inventory& inv) {
     return SPRINT_MAX_PCT * frames / SPRINT_FULL_FRAMES;
 }
 
-int accessoryBurstBolts(int playerSlot, const Inventory& inv) {
-    if (playerSlot < 0 || playerSlot >= MAX_PLAYERS) return 0;
+/* Rolled ONCE per trigger pull, at the firing site, because a second caller
+   asking the same question would roll its own answer and the two would
+   disagree about the shot that is already in the air. */
+int accessoryBurstBolts(const Inventory& inv) {
     if (!inv.hasEquipped(ITEM_CULVERIN_LOADER)) return 0;
-    const int held = g_playerSessions[playerSlot].idleFrames;
-    if (held >= LOADER_TWO_FRAMES) return 2;
-    if (held >= LOADER_ONE_FRAMES) return 1;
-    return 0;
+    return (int)(rngNext() % 100u) < LOADER_DOUBLE_PCT ? 1 : 0;
 }
 
-bool accessoryBurstReady(int playerSlot, const Inventory& inv) {
-    return accessoryBurstBolts(playerSlot, inv) > 0;
-}
-
-void accessoryNoteShot(int playerSlot) {
-    if (playerSlot < 0 || playerSlot >= MAX_PLAYERS) return;
-    g_playerSessions[playerSlot].idleFrames = 0;
-}
+int accessoryLoaderPct() { return LOADER_DOUBLE_PCT; }
 
 int accessoryShotDamage(const Inventory& inv, int baseDamage) {
     const int pct = inv.damagePct();

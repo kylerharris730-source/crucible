@@ -1638,12 +1638,18 @@ void initItems() {
 
     /* Mite. Armour, and the one charm that SUMS with worn armour rather than
        taking the largest -- see the note on ItemDef::regenPer for why that is
-       the rule holding rather than an exception to it. */
+       the rule holding rather than an exception to it.
+
+       Five, raised from two on request. That is a titanium helmet's worth in a
+       trinket slot, and it is deliberately the armour charm rather than a
+       modest one: it comes off the first creature in the game, it competes
+       with every other trinket for the same slots, and at two it was a
+       rounding error next to any worn piece. */
     ITEMS[ITEM_CARAPACE_CHARM].name      = "Carapace Charm";
     ITEMS[ITEM_CARAPACE_CHARM].kind      = ITEMK_ACCESSORY;
     ITEMS[ITEM_CARAPACE_CHARM].equipSlot = EQ_TRINKET_A;
     ITEMS[ITEM_CARAPACE_CHARM].maxStack  = 1;
-    ITEMS[ITEM_CARAPACE_CHARM].armour    = 2;
+    ITEMS[ITEM_CARAPACE_CHARM].armour    = 5;
     ITEMS[ITEM_CARAPACE_CHARM].colour    = 0xB07848;
     ITEMS[ITEM_CARAPACE_CHARM].sprite    = SPR_ACC_CARAPACE;
 
@@ -1658,16 +1664,25 @@ void initItems() {
     ITEMS[ITEM_MOTH_LANTERN].colour    = 0xFFC24A;
     ITEMS[ITEM_MOTH_LANTERN].sprite    = SPR_ACC_LANTERN;
 
-    /* Slime. 34 extra cells on a bare radius of 20 is nearly three times the
-       reach, which sounds enormous and is the correct size for this effect:
-       below roughly double, a magnet is indistinguishable from walking over
-       things, so a timid version of this charm would be a charm nobody could
-       tell they were wearing. */
-    ITEMS[ITEM_SLIME_MAGNET].name         = "Slime Magnet";
+    /* Slime. It was a pickup magnet -- 34 cells against a bare 20 -- and is
+       now the poison charm, on request. The creature it comes off leaves acid
+       where it walks, so handing the player a venom is the charm agreeing with
+       its source; a magnet was the one trinket that was pure convenience and
+       never changed a fight.
+
+       The id keeps its name in the code (ITEM_SLIME_MAGNET) because item ids
+       are serialized straight into saves: renaming the enum would be a rename
+       of a number that already exists in people's worlds. The displayed name
+       is the gland.
+
+       Nothing else in the game grants pickupRadius, so the magnet is gone
+       rather than moved -- everyone collects from PICKUP_BASE_RADIUS now. The
+       field and Inventory::pickupRadius stay, because the next charm that
+       wants it needs no wiring, only a line here. */
+    ITEMS[ITEM_SLIME_MAGNET].name         = "Slime Gland";
     ITEMS[ITEM_SLIME_MAGNET].kind         = ITEMK_ACCESSORY;
     ITEMS[ITEM_SLIME_MAGNET].equipSlot    = EQ_TRINKET_A;
     ITEMS[ITEM_SLIME_MAGNET].maxStack     = 1;
-    ITEMS[ITEM_SLIME_MAGNET].pickupRadius = 34;
     ITEMS[ITEM_SLIME_MAGNET].colour       = 0x8FC85A;
     ITEMS[ITEM_SLIME_MAGNET].sprite       = SPR_ACC_MAGNET;
 
@@ -1736,8 +1751,8 @@ void initItems() {
     ITEMS[ITEM_THRESHING_SPURS].sprite    = SPR_ACC_SPURS;
 
     /* Culverin. Three quick shots and a long reload, which is the creature's
-       own rhythm handed to the player: hold fire for a moment and the next
-       trigger pull is a burst. See accessoryBurstReady. */
+       own rhythm handed to the player -- loosely, since it is a flat chance
+       rather than a rhythm now. See accessoryBurstBolts. */
     ITEMS[ITEM_CULVERIN_LOADER].name      = "Culverin Loader";
     ITEMS[ITEM_CULVERIN_LOADER].kind      = ITEMK_ACCESSORY;
     ITEMS[ITEM_CULVERIN_LOADER].equipSlot = EQ_TRINKET_A;
@@ -2318,8 +2333,8 @@ void initItems() {
     ITEMS[ITEM_THRESHING_SPURS].description =
         "Your shots hit harder the longer you keep moving.";
     ITEMS[ITEM_CULVERIN_LOADER].description =
-        "Pause between shots and the next one carries extra bolts: one for a "
-        "beat, two for a longer wait. Ticks over your crosshair show how many.";
+        "Three shots in ten come out doubled. No rhythm to keep and nothing to "
+        "charge.";
     ITEMS[ITEM_WISP_PRISM].description =
         "Your shots punch through two more cells before they are spent.";
     ITEMS[ITEM_STOOPER_TALON].description =
@@ -2371,7 +2386,10 @@ void initItems() {
     ITEMS[ITEM_TWIN_ACCESSORY].description = "Fires a second, slightly offset projectile with each weapon shot.";
     ITEMS[ITEM_CARAPACE_CHARM].description = "A hardened trinket that adds flat armour.";
     ITEMS[ITEM_MOTH_LANTERN].description = "Makes the wearer emit a soft light.";
-    ITEMS[ITEM_SLIME_MAGNET].description = "Pulls loose items toward you from farther away.";
+    ITEMS[ITEM_SLIME_MAGNET].description =
+        "Your hits poison what they land on: a point of damage every half "
+        "second for three seconds. Hitting again restarts it rather than "
+        "stacking.";
     ITEMS[ITEM_HUSK_HEART].description = "Slowly restores health while you are injured.";
     ITEMS[ITEM_SWIFT_CHARM].description = "Increases movement speed while equipped.";
     ITEMS[ITEM_SPITTER_BRACER].description = "Increases projectile speed and reduces long-range drop.";

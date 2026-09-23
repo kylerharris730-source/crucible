@@ -4,7 +4,23 @@
 #include "render.h"   /* VIEW_CELLS_W/H */
 #include "light.h"
 #include "multiplayer.h"
+#include "accessory.h"   /* the Slime Gland: a shot poisons if its owner wears one */
 #include <math.h>
+
+/* --- a shot's poison ---------------------------------------------------------
+   Read from the SHOOTER at the moment of impact rather than stamped onto the
+   projectile when it was fired. Either would do and this one costs no byte on
+   a struct there are hundreds of; the difference only shows if a player takes
+   the charm off mid-flight, which is not a case worth a field.
+
+   Only a player's own shots: `owner` is PLAYER_NONE for a creature's and for a
+   drone's, and a drone carrying its pilot's charms is a different decision from
+   this one -- the drone chips are resolved in drone.cpp and deliberately cannot
+   reach accessory.cpp. */
+static int projPoisonFrames(const Projectile& p) {
+    if (p.hostile || p.owner >= MAX_PLAYERS) return 0;
+    return accessoryPoisonFrames(g_playerSessions[p.owner].inventory);
+}
 
 Projectile g_proj[MAX_PROJ];
 
@@ -762,7 +778,8 @@ int projUpdate(World& w) {
                        fire should not eat the bolt meant for what you were
                        aiming at. A creature's OWN shots still hit bees, which
                        is how a mite gets to be a threat to a hive. */
-                    if (entDamageAt(cx, cy, p.damage, !p.hostile)) {
+                    if (entDamageAt(cx, cy, p.damage, !p.hostile,
+                                    projPoisonFrames(p))) {
                         p.alive = false; blocked = true;
                         dropX = px_; dropY = py_;
                         break;

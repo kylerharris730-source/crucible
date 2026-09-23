@@ -338,6 +338,12 @@ struct EntityDef {
     u8    heatTolerance;
 };
 
+/* One point of poison damage every this many frames, for as long as a
+   creature's `poison` runs. Half a second, so the damage is visible as a
+   rhythm of flinches rather than as a number quietly draining -- a status you
+   cannot see is a status the player has to take on trust. */
+static const int ENT_POISON_TICK = 30;
+
 extern const EntityDef ENT_DEFS[ENT_COUNT];
 
 struct Entity {
@@ -348,6 +354,15 @@ struct Entity {
     int   facing;      /* +1 right, -1 left */
     bool  onGround;
     int   touchTimer;  /* frames until it can hurt the player again */
+    /* --- poison ----------------------------------------------------------
+       Frames of poison left on this creature. Set by a hit from someone
+       wearing the Slime Gland (see accessoryPoisonFrames) and counted down in
+       the tick, which takes a point off every ENT_POISON_TICK frames.
+
+       Transient, like everything else on an Entity: creatures are not saved
+       and a client rebuilds its copies from the host's state, so nothing has
+       to carry this anywhere. The host owns the damage, as it owns all of it. */
+    int   poison;
     int   hurtFlash;   /* frames of white; damage you cannot see teaches nothing */
     int   actTimer;    /* per-type: chew progress, acid drip, wingbeat */
     int   shotTimer;   /* frames until it can shoot again */
@@ -496,7 +511,12 @@ void entTickPlayers(World& w);
 /* Hurt whatever creature covers this cell, if any. Returns true if something
    was hit, so a projectile can spend itself on a body rather than sailing
    through it. */
-bool entDamageAt(int x, int y, int damage, bool sparingTame = false);
+/* `poisonFrames` is the Slime Gland, and it is a parameter rather than
+   something read off the wearer here because the damage functions do not know
+   who fired: the caller does, and it is the caller that can see an inventory.
+   Zero for everything else, which is almost everything. */
+bool entDamageAt(int x, int y, int damage, bool sparingTame = false,
+                 int poisonFrames = 0);
 
 /* Area damage, for explosions. Returns how many creatures were hit. */
 /* --- sparingTame ------------------------------------------------------------
@@ -542,7 +562,7 @@ int  entDamageKnockbackDisc(int cx, int cy, int radius, int damage,
    connecting swing from a whiff. */
 int  entHitSegment(float x0, float y0, float x1, float y1,
                    float fromX, float fromY,
-                   int damage, float knockback, u8* hitMask);
+                   int damage, float knockback, u8* hitMask, int poisonFrames = 0);
 
 /* How many are alive right now, for the spawner's cap and for the HUD. */
 int  entAliveCount();

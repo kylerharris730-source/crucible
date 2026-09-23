@@ -147,53 +147,47 @@ int main() {
     }
     {
         /* --- the Loader ---------------------------------------------------
-           It arms by NOT firing, spends on a shot, and pays in two stages.
+           A flat chance now: "some set percent chance of a doubled shot, lets
+           say 30%". Two earlier versions were about TIMING -- a two-second
+           gate that paid on 0% of pulls at any real firing rate, then a ramp
+           that paid for a beat's pause -- and both asked the player to watch a
+           clock mid-fight.
 
-           Reported from play as "very inconsistent", and it was: the payout
-           sat behind a flat two-second gate, which meant it fired on 0% of
-           pulls at every rate anybody fights at -- five shots a second down to
-           one every 1.5 seconds, all zero. It only worked while firing slower
-           than once every two seconds, which is not a fight.
-
-           So what is measured here is the RATE it pays at, at the cadences a
-           person shoots at, rather than the threshold restating itself. The
-           middle row is the one that matters: a beat's pause between shots has
-           to be worth something, or the charm is invisible again. */
+           What is measured is the RATE over a lot of pulls, and that it does
+           not depend on cadence, which is the whole point of the change: the
+           old one paid nothing at 15-frame gaps and everything at 120. */
         accessoryReset();
         inv.clear();
         inv.equip[EQ_TRINKET_A].item = ITEM_CULVERIN_LOADER;
         inv.equip[EQ_TRINKET_A].count = 1;
-        body.vx = 0.0f;
         static const int GAPS[3] = { 15, 45, 120 };
-        int paid[3] = { 0, 0, 0 }, pulls[3] = { 0, 0, 0 }, bolts[3] = { 0, 0, 0 };
+        static const int PULLS = 4000;
+        int worst = 100, best = 0;
         for (int g = 0; g < 3; ++g) {
             accessoryReset();
-            for (int f = 0; f < 900; ++f) {
+            int doubled = 0;
+            for (int f = 0; f < PULLS * GAPS[g]; ++f) {
                 accessoryTickFor(0, body, inv);
                 if (f % GAPS[g]) continue;
-                const int extra = accessoryBurstBolts(0, inv);
-                if (extra) ++paid[g];
-                bolts[g] += extra;
-                accessoryNoteShot(0);
-                ++pulls[g];
+                doubled += accessoryBurstBolts(inv);
             }
-            printf("Culverin Loader: a pull every %3d frames -> %d of %d "
-                   "carried extra bolts (%d bolts)\n",
-                   GAPS[g], paid[g], pulls[g], bolts[g]);
+            const int pct = doubled * 100 / PULLS;
+            printf("Culverin Loader: a pull every %3d frames -> %d%% doubled\n",
+                   GAPS[g], pct);
+            if (pct < worst) worst = pct;
+            if (pct > best)  best  = pct;
         }
-        check(paid[0] == 0, "firing flat out never earns a volley");
-        check(paid[1] > pulls[1] / 2,
-              "a beat between shots does, which is the whole fix");
-        check(bolts[2] >= paid[2] * 2,
-              "and a long wait is worth two bolts rather than one");
-        /* And it still spends. A charm that stayed armed through a volley
-           would be a fire-rate bonus wearing a rhythm's clothes. */
-        accessoryReset();
-        for (int f = 0; f < 130; ++f) accessoryTickFor(0, body, inv);
-        const bool armed = accessoryBurstReady(0, inv);
-        accessoryNoteShot(0);
-        const bool spent = accessoryBurstReady(0, inv);
-        check(armed && !spent, "the Loader arms by holding fire and spends on a shot");
+        const int want = accessoryLoaderPct();
+        check(worst >= want - 3 && best <= want + 3,
+              "the Loader doubles about 30% of pulls");
+        check(best - worst <= 4,
+              "and the rate does not depend on how fast you fire");
+
+        /* Worn or not is still the whole switch. */
+        inv.clear();
+        int without = 0;
+        for (int k = 0; k < 500; ++k) without += accessoryBurstBolts(inv);
+        check(without == 0, "and nothing doubles without the charm");
     }
     {
         /* --- the Cinderling Ash --------------------------------------------

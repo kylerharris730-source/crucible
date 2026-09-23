@@ -24,29 +24,27 @@ bool accessoryTwinShot(const Inventory& inv);
 
    accessoryMomentumPct -- Threshing Spurs: extra shot damage, 0 while still
    accessorySprintPct   -- Ashhound Collar: extra move speed, 0 from a standstill
-   accessoryBurstBolts  -- Culverin Loader: extra bolts the next pull adds */
+
+   The Culverin Loader used to be the third of these and is no longer a clock
+   at all -- see accessoryBurstBolts. */
 int  accessoryMomentumPct(int playerSlot, const Inventory& inv);
 int  accessorySprintPct(int playerSlot, const Inventory& inv);
 
-/* --- the Loader, which is a ramp now ----------------------------------------
-   It was a switch: two full seconds of held fire bought three bolts instead of
-   one, and nothing at all below that. Reported as "very inconsistent", and
-   measured, which is the useful half -- at every rate a person actually fights
-   at, from five shots a second down to one every 1.5 seconds, it fired the
-   volley on 0% of pulls. It only ever worked if you were firing slower than
-   once every two seconds, which is not a fight, it is target practice.
+/* --- the Loader, which is a chance now ---------------------------------------
+   Two earlier versions were about TIMING. A flat two-second gate fired on 0% of
+   pulls at every rate anybody fights at; the ramp that replaced it paid for a
+   beat's pause between shots, which worked but asked the player to keep an eye
+   on a clock in the middle of a fight.
 
-   So it pays out in stages, and the first stage is inside the rhythm of a real
-   exchange: a beat's pause is worth one extra bolt, a longer one is worth two.
-   That turns it from a mode you are almost never in into a thing you can play
-   toward -- fire, step, fire -- which is what the tooltip claimed all along.
+   Asked for instead: "some set percent chance of a doubled shot, lets say
+   30%". So it is a coin, it needs no rhythm and no tooltip about one, and the
+   thing it rewards is simply shooting.
 
-   Returns 0, 1 or 2. The firing site loops that many times, so there is one
-   number here and no second copy of the thresholds anywhere. */
-int  accessoryBurstBolts(int playerSlot, const Inventory& inv);
-/* Kept for the reticle and for anything that only wants the yes/no. */
-bool accessoryBurstReady(int playerSlot, const Inventory& inv);
-void accessoryNoteShot(int playerSlot);
+   Returns 0 or 1 -- an extra bolt on this pull -- and ROLLS as it answers, so
+   it must be called exactly once per trigger pull. accessoryLoaderPct is the
+   number, for the tooltip and the tests. */
+int  accessoryBurstBolts(const Inventory& inv);
+int  accessoryLoaderPct();
 
 /* The Cinderling Ash: embers dropped behind a running player. It takes the World
    because it WRITES to it, which is why it is not folded into accessoryTickFor
@@ -63,6 +61,17 @@ void accessoryAshTrail(int playerSlot, const Player& player,
    number it is about to use and nothing has to remember to apply them. */
 int   accessoryShotDamage(const Inventory& inv, int baseDamage);
 float accessoryShotSpeed(const Inventory& inv, float baseSpeed);
+
+/* --- the Slime Gland ---------------------------------------------------------
+   Frames of poison a hit from this wearer leaves on a creature, or 0 with no
+   gland worn. Asked for as "slime magnet should be a poison damage apply": the
+   charm was a pickup magnet, and the slime it comes off leaves acid where it
+   walks, so its charm now hands that over rather than being the one charm that
+   is purely a convenience.
+
+   Read by the places that resolve a player's damage and passed down to
+   entDamageAt / entHitSegment, which know nothing about equipment. */
+int  accessoryPoisonFrames(const Inventory& inv);
 
 /* Cells a loose drop is collected from, and the radius it starts being drawn in
    from. The bare figure plus whatever is worn -- see ITEM_SLIME_MAGNET. */

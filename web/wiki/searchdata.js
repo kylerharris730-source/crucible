@@ -182,7 +182,7 @@ window.WIKI_PAGES = [
 ["Twin Accessory","items/twin-accessory.html","items"],
 ["Carapace Charm","items/carapace-charm.html","items"],
 ["Moth Lantern","items/moth-lantern.html","items"],
-["Slime Magnet","items/slime-magnet.html","items"],
+["Slime Gland","items/slime-gland.html","items"],
 ["Husk Heart","items/husk-heart.html","items"],
 ["Swift Charm","items/swift-charm.html","items"],
 ["Spitter Bracer","items/spitter-bracer.html","items"],

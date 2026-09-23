@@ -4408,7 +4408,8 @@ static void meleeTickFor(PlayerSession& session) {
     if (netRole() != NET_CLIENT)
         entHitSegment(hx, hy, tx, ty, session.body.centreX(), session.body.centreY(),
                       meleeDamageFor(session.inventory, ITEMS[held.item].damage),
-                      def.meleeKnock, session.swingHit);
+                      def.meleeKnock, session.swingHit,
+                      accessoryPoisonFrames(session.inventory));
 
     --session.swingFrame;
 }
@@ -5640,28 +5641,23 @@ static void fireToolFor(Player& player, Inventory& inventory, const Aim& aim) {
     }
 
     /* --- the Culverin Loader ---------------------------------------------
-       Extra shots, fanned, for having held the trigger: one for a beat, two
-       for a real pause. Spawned before the delay is committed and before the
-       clock is noted, so the volley is one trigger pull rather than three --
-       and they cost no payload for the same reason the twin charm's second
-       shot does not: a modifier duplicates the SHOT, never the ammunition.
+       Three pulls in ten come out twice. Spawned before the delay is committed
+       so the pair is one trigger pull, and it costs no payload for the same
+       reason the twin charm's second shot does not: a modifier duplicates the
+       SHOT, never the ammunition.
 
-       How many is accessoryBurstBolts' business and not this function's. It
-       used to be a flat two behind a two-second gate, which measured out at
-       zero volleys per hundred shots at every rate anybody actually fights
-       at -- see the note there.
+       Rolled here and nowhere else -- accessoryBurstBolts rolls as it answers,
+       so asking twice about one pull would get two different answers.
 
        Deliberately the plain shot rather than the full companion treatment.
-       This is a burst, and three bolts arriving together should read as one
-       loud answer to holding fire, not as a light show. */
+       Two bolts arriving together should read as one loud answer, not as a
+       light show. */
     {
-        const int extra = accessoryBurstBolts(shooter, inventory);
+        const int extra = accessoryBurstBolts(inventory);
         for (int k = 0; k < extra; ++k) {
-            /* One bolt fans left, two fan both ways. With a single extra shot
-               a symmetric pair would be the wrong picture -- the volley should
-               read as "and one more", not as a narrower spread. */
-            const float fan = (extra == 1 ? 1.0f : (k == 0 ? -1.0f : 1.0f))
-                            * VOLLEY_FAN * 1.5f;
+            /* Fanned to one side: a symmetric pair would read as a spread
+               weapon rather than as "and one more". */
+            const float fan = VOLLEY_FAN * 1.5f;
             const float fanX = -dy * fan, fanY = dx * fan;
             projSpawn(pcx + dx * MUZZLE - fanX * 2.0f,
                       pcy + dy * MUZZLE - fanY * 2.0f,
@@ -5670,7 +5666,6 @@ static void fireToolFor(Player& player, Inventory& inventory, const Aim& aim) {
                       s.gravity, s.effect, s.bounces, s.homing, owner);
         }
     }
-    accessoryNoteShot(shooter);
 
     toolCommitShot(h, s, accessoryShotDelay(inventory, s.delay));
     if (paidPayload && --ti.payload.count == 0) {
@@ -7549,27 +7544,10 @@ static void drawCursor(HDC hdc) {
     else if (g_digFilterOn) drawFilterReticle(hdc, gx, gy);
     else                    drawCross(hdc, gx, gy, RGB(236, 240, 248), 3, 5);
 
-    /* --- the Culverin Loader, on the reticle -------------------------------
-       One tick per bolt the next pull will add, drawn as short marks above the
-       crosshair.
-
-       Without this the charm is a rule with no surface: how long you have held
-       fire is a number the game knows and the player is asked to feel, and
-       "very inconsistent" is what a hidden threshold feels like even when it
-       is working exactly as written. Here rather than on the hotbar because it
-       is a fact about the NEXT SHOT, and the next shot is where you are
-       looking.
-
-       Only in survival with a character, like everything else that belongs to
-       a player rather than to the sandbox. */
-    if (g_survival && g_playerOn && !g_wireMode && !g_circuitWireMode) {
-        const int bolts = accessoryBurstBolts(0, g_inv);
-        for (int i = 0; i < bolts; ++i) {
-            const int bx = gx - 4 + i * 8;
-            RECT tick = { bx, gy - 14, bx + 3, gy - 8 };
-            FillRect(hdc, &tick, g_accentBrush);
-        }
-    }
+    /* The Culverin Loader used to draw ticks here, one per bolt the next pull
+       would add, because it was a threshold the player had to feel. It is a
+       flat 30% chance now, so there is nothing to show ahead of the shot --
+       the surface is the second bolt itself. */
 
     /* The line preview. Solid rather than dotted, and drawn on top of the
        tether, because the tether means "you cannot reach that" and this means
