@@ -5,7 +5,7 @@ chat, which meant it was re-derived from memory every session and quietly lost
 things. `HANDOFF.md` is **not** this file: it is gitignored scratch, is usually
 stale, and should not be trusted for release state.
 
-Released: **v0.6.10** (2026-09-23). `main` is level with it.
+Released: **v0.6.11** (2026-09-23). `main` is level with it.
 
 ---
 
@@ -30,6 +30,11 @@ Released: **v0.6.10** (2026-09-23). `main` is level with it.
       both with `CINDERLIFT_RTC_LOG=1` and look in `build/rtc.log`.
 
 ## Ship it
+
+- [x] **Cut v0.6.11.** Sound mix refinements. Fire and embers can be heard
+      farther away with a gradual fade, including fuel and brimstone flames.
+      Jumping is quieter. The mining scrape is softer and noisier, has a
+      rounded hit, and varies slightly in pitch on each playback.
 
 - [x] **Cut v0.6.10.** Creature spawning and the first complete sound pass.
 

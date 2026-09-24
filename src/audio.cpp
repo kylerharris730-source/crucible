@@ -38,6 +38,7 @@ static DWORD lastPlay[SFX_COUNT];
 static bool played[SFX_COUNT];
 static bool ready;
 static float listenerX, listenerY;
+static uint32_t miningPitchState = 0xC2A65u;
 #define SOUND_PATH(id, path, cooldown) path,
 static const char* paths[SFX_COUNT] = { SOUND_CUES(SOUND_PATH) };
 #undef SOUND_PATH
@@ -94,6 +95,10 @@ static bool loadFile(const char* name, Sample& sample) {
 
 void audioInit() {
     if (ready) return;
+    LARGE_INTEGER clock;
+    if (QueryPerformanceCounter(&clock))
+        miningPitchState ^= (uint32_t)clock.QuadPart ^ (uint32_t)(clock.QuadPart >> 32);
+    if (!miningPitchState) miningPitchState = 0xC2A65u;
     for (int i = 0; i < SFX_COUNT; ++i) {
         if (!loadFile(paths[i], samples[i]) && i < EMBEDDED_SFX_COUNT)
             decodeWav(EMBEDDED_SFX[i].data, EMBEDDED_SFX[i].size, samples[i]);
@@ -126,6 +131,13 @@ static int priority(SoundId id) {
     return 1;
 }
 
+static float miningPlaybackPitch() {
+    miningPitchState ^= miningPitchState << 13;
+    miningPitchState ^= miningPitchState >> 17;
+    miningPitchState ^= miningPitchState << 5;
+    return 0.94f + 0.12f * (float)(miningPitchState & 0xffffu) / 65535.0f;
+}
+
 static void play(SoundId id, float gain, float pan) {
     if (muted || !ready || id < 0 || id >= SFX_COUNT || samples[id].pcm.empty()) return;
     const DWORD now = timeGetTime();
@@ -151,12 +163,21 @@ static void play(SoundId id, float gain, float pan) {
     if (gain < 0.0f) gain = 0.0f;
     if (gain > 1.0f) gain = 1.0f;
     const std::vector<int16_t>& src = samples[id].pcm;
-    v->pcm.resize(src.size() * 2);
+    /* Vary only the ordinary mining scrape; the hard-material ding stays
+       recognizable. Resampling keeps the output device at a fixed 22050 Hz. */
+    const double pitch = id == SFX_MINE ? miningPlaybackPitch() : 1.0;
+    const size_t frames = (size_t)ceil((double)src.size() / pitch);
+    v->pcm.resize(frames * 2);
     const float left = pan > 0.0f ? 1.0f - pan : 1.0f;
     const float right = pan < 0.0f ? 1.0f + pan : 1.0f;
-    for (size_t i = 0; i < src.size(); ++i) {
-        v->pcm[i * 2] = (int16_t)(src[i] * gain * left);
-        v->pcm[i * 2 + 1] = (int16_t)(src[i] * gain * right);
+    for (size_t i = 0; i < frames; ++i) {
+        const double position = (double)i * pitch;
+        const size_t at = (size_t)position < src.size() ? (size_t)position : src.size() - 1;
+        float sample = (float)src[at];
+        if (at + 1 < src.size())
+            sample += (float)((src[at + 1] - sample) * (position - at));
+        v->pcm[i * 2] = (int16_t)(sample * gain * left);
+        v->pcm[i * 2 + 1] = (int16_t)(sample * gain * right);
     }
     WAVEFORMATEX format = {};
     format.wFormatTag = WAVE_FORMAT_PCM;

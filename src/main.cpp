@@ -4770,7 +4770,7 @@ static void applyPlayerUses(PlayerSession& session, const PlayerCommand& command
                     const SoundId cue = aimedDevice ? SFX_DEVICE_PICKUP
                         : tool.plantsOnly ? SFX_HARVEST
                         : aimedMat == MAT_ICE ? SFX_ICE_CRACK : SFX_MINE;
-                    audioPlay(cue, cue == SFX_MINE ? 0.80f : 1.0f);
+                    audioPlay(cue, cue == SFX_MINE ? 0.64f : 1.0f);
                 }
                 else if (!tool.plantsOnly && !command.digFilterOn &&
                          !devAt(aim.x, aim.y) && torchAt(aim.x, aim.y) < 0 &&
@@ -6017,7 +6017,7 @@ static void applyBrush() {
                 const SoundId cue = aimedDevice ? SFX_DEVICE_PICKUP
                     : d.plantsOnly ? SFX_HARVEST
                     : aimedMat == MAT_ICE ? SFX_ICE_CRACK : SFX_MINE;
-                audioPlay(cue, cue == SFX_MINE ? 0.80f : 1.0f);
+                audioPlay(cue, cue == SFX_MINE ? 0.64f : 1.0f);
             }
             else if (!d.plantsOnly && !g_digFilterOn &&
                      !devAt(aim.x, aim.y) && torchAt(aim.x, aim.y) < 0 &&
@@ -10308,7 +10308,7 @@ static bool gameFrame(const LARGE_INTEGER& freq) {
         if (inLiquid && !g_audioInLiquid) audioPlay(SFX_WATER_SPLASH, 0.45f);
         g_audioInLiquid = inLiquid;
         if (groundedBeforeTick && !g_player.onGround && g_player.vy < -0.5f)
-            audioPlay(SFX_PLAYER_JUMP, 0.55f);
+            audioPlay(SFX_PLAYER_JUMP, 0.42f);
         if (!groundedBeforeTick && g_player.onGround && airBeforeTick > 4)
             audioPlay(g_player.lastFall > 55.0f ? SFX_PLAYER_FALL_HURT : SFX_PLAYER_LAND,
                       g_player.lastFall > 55.0f ? 0.65f : 0.30f);
@@ -10329,32 +10329,39 @@ static bool gameFrame(const LARGE_INTEGER& freq) {
         if (g_player.hurtingCold()) audioPlay(SFX_PLAYER_FREEZE, 0.38f);
         if (++g_audioFireFrames >= 12) {
             g_audioFireFrames = 0;
-            int flames = 0, embers = 0, nearest = 2 * 24 * 24 + 1;
+            const int fireRadius = 80;
+            int flames = 0, embers = 0, nearest = fireRadius * fireRadius + 1;
             int fireX = playerCellX, fireY = playerCellY;
-            for (int dy = -24; dy <= 24; ++dy)
-                for (int dx = -24; dx <= 24; ++dx) {
+            for (int dy = -fireRadius; dy <= fireRadius; ++dy)
+                for (int dx = -fireRadius; dx <= fireRadius; ++dx) {
+                    const int distance = dx * dx + dy * dy;
+                    if (distance > fireRadius * fireRadius) continue;
                     const int x = playerCellX + dx, y = playerCellY + dy;
                     if (x < PLAY_X0 || x > PLAY_X1 || y < PLAY_Y0 || y > PLAY_Y1) continue;
                     const u8 m = g_world.at(x, y).mat;
-                    if (m == MAT_FIRE) ++flames;
+                    if (m == MAT_FIRE || m == MAT_FUELFIRE || m == MAT_BRIMFIRE) ++flames;
                     else if (m == MAT_EMBER || m == MAT_WOOD_EMBER ||
                              m == MAT_COKE_EMBER || m == MAT_WAX_EMBER ||
                              m == MAT_CINDERLING_EMBER) ++embers;
                     else continue;
-                    const int distance = dx * dx + dy * dy;
                     if (distance < nearest) {
                         nearest = distance;
                         fireX = x; fireY = y;
                     }
                 }
+            /* Preserve the close fire mix, then let distant burning fade out
+               instead of cutting off abruptly at the edge of the scan. */
+            const float fireDistance = sqrtf((float)nearest);
+            const float fireFade = fireDistance <= 24.0f ? 1.0f
+                : (float)(fireRadius - fireDistance) / (float)(fireRadius - 24);
             if (flames > 0) {
                 g_audioEmberPulse = 0;
                 audioPlayAt(SFX_FIRE_CRACKLE, (float)fireX, (float)fireY,
-                            0.14f + 0.008f * (float)imin(flames, 14));
+                            fireFade * (0.14f + 0.008f * (float)imin(flames, 14)));
             } else if (embers > 0) {
                 if (g_audioEmberPulse++ % 3 == 0)
                     audioPlayAt(SFX_FIRE_CRACKLE, (float)fireX, (float)fireY,
-                                0.07f + 0.003f * (float)imin(embers, 14));
+                                fireFade * (0.07f + 0.003f * (float)imin(embers, 14)));
             } else g_audioEmberPulse = 0;
         }
         if (++g_audioAmbientFrames >= 480) {

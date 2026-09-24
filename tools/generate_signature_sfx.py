@@ -63,28 +63,24 @@ def too_hard_to_mine() -> list[float]:
 
 
 def mining() -> list[float]:
-    """A deep pick bite and a few dry, crumbling fragments; no metal ring."""
+    """Two soft, sandy scrapes with a rounded low hit at the start."""
     rng = random.Random(0xC2A65)
-    held = [0.0]
     out = []
-    phase = low_phase = rough = 0.0
-    for i in range(round(0.27 * SAMPLE_RATE)):
+    smooth = rumble_phase = 0.0
+    for i in range(round(0.30 * SAMPLE_RATE)):
         t = i / SAMPLE_RATE
-        phase += (102.0 + 152.0 * decay(t, 0.045)) / SAMPLE_RATE
-        low_phase += (58.0 + 24.0 * decay(t, 0.040)) / SAMPLE_RATE
-
-        grain = noise_clock(rng, held, i, 9)
-        rough += 0.16 * (grain - rough)
-        crumble = (0.15 * grain + 0.85 * rough) * decay(t, 0.064)
-        if t >= 0.046:
-            crumble += 0.13 * rough * decay(t - 0.046, 0.018)
-        if t >= 0.091:
-            crumble += 0.09 * rough * decay(t - 0.091, 0.016)
-
-        bite = (0.16 * pulse(phase, 0.40)
-                + 0.15 * math.sin(TAU * phase)) * decay(t, 0.052)
-        body = 0.17 * math.sin(TAU * low_phase) * decay(t, 0.046)
-        out.append(bite + body + crumble)
+        white = rng.uniform(-1.0, 1.0)
+        smooth += 0.22 * (white - smooth)
+        hiss = 0.24 * white + 0.76 * smooth
+        first = max(0.0, math.sin(math.pi * t / 0.135)) ** 1.6 if t < 0.135 else 0.0
+        second_t = t - 0.115
+        second = (max(0.0, math.sin(math.pi * second_t / 0.155)) ** 1.6
+                  if 0.0 < second_t < 0.155 else 0.0)
+        rumble_phase += 74.0 / SAMPLE_RATE
+        body = 0.035 * math.sin(TAU * rumble_phase) * (first + 0.7 * second)
+        hit = (0.13 * math.sin(TAU * 105.0 * t)
+               * (1.0 - math.exp(-t / 0.004)) * decay(t, 0.030))
+        out.append(hiss * (0.25 * first + 0.20 * second) + body + hit)
     return out
 
 
@@ -166,7 +162,7 @@ def write_wav(name: str, samples: list[float], gain: float = 1.0) -> None:
 if __name__ == "__main__":
     for name, synth, gain in (
         ("mining_too_hard.wav", too_hard_to_mine, 1.0),
-        ("mining_signature.wav", mining, 0.74),
+        ("mining_signature.wav", mining, 0.48),
         ("damage_signature.wav", damage, 1.0),
         ("machine_signature.wav", machine, 0.60),
     ):
