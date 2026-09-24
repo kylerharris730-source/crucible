@@ -6,6 +6,7 @@
     X(SFX_MINE, "mining_signature.wav", 200) \
     X(SFX_MINE_TOO_HARD, "mining_too_hard.wav", 220) \
     X(SFX_PLAYER_DAMAGE, "damage_signature.wav", 180) \
+    X(SFX_PLAYER_DAMAGE_SMALL, "player_damage_small.wav", 300) \
     X(SFX_MACHINE, "machine_signature.wav", 420) \
     X(SFX_UI_SELECT, "ui_select.wav", 70) \
     X(SFX_UI_BACK, "ui_back.wav", 70) \

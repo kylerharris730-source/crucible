@@ -247,7 +247,7 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
        matriarch. That is the Terraria shape: the summon is assembled out of
        what the place is already made of, so deciding to fight the boss is a
        decision you make gradually while doing something else. */
-    { "Rock Mite",12,  9, 18,   6,  36, 0.34f, 0.05f, false, 1,  true,    0, 0, 0.0f, 0.0f, false, (ItemId)MAT_CHITIN, 1, 2, ITEM_CARAPACE_CHARM, 50, SPR_MITE,  0x8E7758, ITEM_EGG_MITE,      false, false, 0 },
+    { "Rock Mite",12,  9, 18,   9,  36, 0.34f, 0.05f, false, 1,  true,    0, 0, 0.0f, 0.0f, false, (ItemId)MAT_CHITIN, 1, 2, ITEM_CARAPACE_CHARM, 50, SPR_MITE,  0x8E7758, ITEM_EGG_MITE,      false, false, 0 },
 
     /* --- cinder moth -------------------------------------------------------
        Navigates to the hottest cell it can sense, which means it navigates to
@@ -271,7 +271,7 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
        rather than stockpiled. See the note in PROGRESSION about what this costs:
        glass is back to being gated on that one beach, and the honest fix is for
        sand to generate somewhere underground too. */
-    { "Cinder Moth",9,  7, 10,   4,  30, 0.52f, 0.09f, true,  1,  true,    0, 0, 0.0f, 0.0f, false, (ItemId)MAT_COAL,   1, 2, ITEM_MOTH_LANTERN,   50, SPR_MOTH,  0xE0561C, ITEM_EGG_MOTH,      false, false, 0 },
+    { "Cinder Moth",9,  7, 10,   8,  30, 0.52f, 0.09f, true,  1,  true,    0, 0, 0.0f, 0.0f, false, (ItemId)MAT_COAL,   1, 2, ITEM_MOTH_LANTERN,   50, SPR_MOTH,  0xE0561C, ITEM_EGG_MOTH,      false, false, 0 },
 
     /* --- drip slime --------------------------------------------------------
        The corroder, and the slowest thing in the game: it is not a chase, it is
@@ -282,7 +282,7 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
        Introduces acid a whole layer above where acid pockets generate, so the
        material is familiar before the terrain is full of it. Drops it too,
        which is the only way to get any in layer 1. */
-    { "Drip Slime",11,  8, 24,   5,  40, 0.20f, 0.04f, false, 1,  false,   0, 0, 0.0f, 0.0f, false, (ItemId)MAT_ACID,   1, 3, ITEM_SLIME_MAGNET,   50, SPR_SLIME, 0x6FA23C, ITEM_EGG_SLIME,     false, false, 0 },
+    { "Drip Slime",11,  8, 24,   8,  40, 0.20f, 0.04f, false, 1,  false,   0, 0, 0.0f, 0.0f, false, (ItemId)MAT_ACID,   1, 3, ITEM_SLIME_MAGNET,   50, SPR_SLIME, 0x6FA23C, ITEM_EGG_SLIME,     false, false, 0 },
 
     /* --- husk ---------------------------------------------------------------
        The zombie, and deliberately the dullest thing in the game: it walks at
@@ -315,7 +315,7 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
        charm you got first and most; reported as "its filling my inventory" when
        it was 1 in 10. Still the most generous drop in the game, because an
        extra jump is the one charm worth having early. */
-    { "Bat",       9,  7, 12,   7,  26, 1.35f, 0.055f, true, 1,  true,    0, 0, 0.0f, 0.0f, false, (ItemId)MAT_CHITIN, 1, 1, ITEM_EMBERWING_FEATHER, 25, SPR_BAT, 0x6A4C68, ITEM_EGG_BAT,       false, false, 0 },
+    { "Bat",       9,  7, 12,   9,  26, 1.35f, 0.055f, true, 1,  true,    0, 0, 0.0f, 0.0f, false, (ItemId)MAT_CHITIN, 1, 1, ITEM_EMBERWING_FEATHER, 25, SPR_BAT, 0x6A4C68, ITEM_EGG_BAT,       false, false, 0 },
 
     /* --- spitter ------------------------------------------------------------
        The one that makes standing still wrong. It holds its distance and shoots,

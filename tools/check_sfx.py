@@ -7,7 +7,7 @@ import wave
 root = Path(__file__).resolve().parents[1]
 registry = (root / "src" / "audio.h").read_text(encoding="utf-8")
 filenames = re.findall(r'X\(SFX_[A-Z_]+,\s*"([^"]+\.wav)"', registry)
-assert len(filenames) == 106 and len(set(filenames)) == len(filenames)
+assert len(filenames) == 107 and len(set(filenames)) == len(filenames)
 actual = {p.name for p in (root / "res" / "sfx").glob("*.wav")}
 assert actual == set(filenames), f"missing={set(filenames)-actual}, extra={actual-set(filenames)}"
 

@@ -3295,7 +3295,7 @@ int placeFrom(World& w, Inventory& inv, int cx, int cy, int r, int maxCells) {
             const SoundId cue = MATS[mat].kind == KIND_LIQUID ? SFX_PLACE_LIQUID
                 : g_matConducts[mat] ? SFX_PLACE_METAL
                 : MATS[mat].kind == KIND_POWDER ? SFX_PLACE_EARTH : SFX_PLACE_STONE;
-            audioPlayAt(cue, (float)x, (float)y, 0.50f);
+            audioPlayAt(cue, (float)x, (float)y, 0.43f);
         }
         ++put;
     }
@@ -3325,7 +3325,7 @@ int overwriteFrom(World& w, Inventory& inv, int cx, int cy, int r, int maxCells,
         const ItemId want = h.item;
         if (inv.take(want, 1) != 1) break;
         w.setCell(x, y, (u8)want);
-        if (put == 0) audioPlayAt(SFX_PLACE_STONE, (float)x, (float)y, 0.45f);
+        if (put == 0) audioPlayAt(SFX_PLACE_STONE, (float)x, (float)y, 0.38f);
         ++put;
     }
     return put;
@@ -3358,7 +3358,7 @@ int placeBg(World& w, Inventory& inv, int cx, int cy, int r, int maxCells) {
         const ItemId want = h.item;
         if (inv.take(want, 1) != 1) return put;
         w.setBg(x, y, (u8)want, true);
-        if (put == 0) audioPlayAt(SFX_PLACE_STONE, (float)x, (float)y, 0.30f);
+        if (put == 0) audioPlayAt(SFX_PLACE_STONE, (float)x, (float)y, 0.25f);
         ++put;
     }
     return put;

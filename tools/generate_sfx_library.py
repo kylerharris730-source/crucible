@@ -129,6 +129,17 @@ def build(name: str) -> tuple[Synth, float]:
         s.grit(0, 0.10, 0.15, 10, 6, lowpass=0.14)
         return s, 0.35
 
+    if name == "PLAYER_DAMAGE_SMALL":
+        s = Synth(name, 0.19)
+        # One falling hit and a short scrape, without the full damage cue's
+        # sustained alarm or its second chip tone.
+        s.tone(0, 0.15, 315, 195, 0.30, "triangle", decay=3.4)
+        s.tone(0, 0.08, 125, 70, 0.15, "sine", decay=5.0)
+        s.grit(0, 0.050, 0.16, 4, 5.5, lowpass=0.20)
+        for i in range(min(len(s.data), round(0.004 * RATE))):
+            s.data[i] *= i / (0.004 * RATE)
+        return s, 0.43
+
     if name.startswith("PLAYER_") or name in {"EQUIP", "THROW"}:
         duration = 0.55 if name in {"PLAYER_DEATH", "PLAYER_RESPAWN"} else 0.26
         s = Synth(name, duration)
@@ -159,7 +170,22 @@ def build(name: str) -> tuple[Synth, float]:
             s.tone(0.03, 0.17, 210, 370, 0.20, "triangle")
         return s, 0.55
 
-    if name.startswith("PLACE_") or name.startswith("DOOR_") or name.startswith("CHEST_"):
+    if name.startswith("PLACE_"):
+        s = Synth(name, 0.18)
+        grain = {"PLACE_EARTH": 10, "PLACE_STONE": 7,
+                 "PLACE_METAL": 8, "PLACE_LIQUID": 13}[name]
+        s.grit(0, 0.10, 0.20, grain, 4.2, lowpass=0.12)
+        s.tone(0, 0.12, 170 * pitch, 90 * pitch, 0.19, "triangle", decay=3.8)
+        if name == "PLACE_METAL":
+            s.tone(0.020, 0.09, 430, 320, 0.065, "sine", decay=4.0)
+        if name == "PLACE_LIQUID":
+            s.grit(0.025, 0.09, 0.07, 15, 3.5, lowpass=0.10)
+        # Ease in the contact so a brush stroke reads as placement, not a hit.
+        for i in range(min(len(s.data), round(0.010 * RATE))):
+            s.data[i] *= i / (0.010 * RATE)
+        return s, 0.39
+
+    if name.startswith("DOOR_") or name.startswith("CHEST_"):
         s = Synth(name, 0.20)
         s.grit(0, 0.11, 0.34, 12 if name == "PLACE_LIQUID" else 5, 5)
         s.tone(0, 0.11, 200 * pitch, 75 * pitch, 0.23, "triangle")

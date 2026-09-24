@@ -2,8 +2,8 @@
 
 This is the baseline for the first complete SFX pass. `src/audio.h` is the cue
 registry and gives every row below a stable `SFX_...` name and a matching
-`res/sfx/*.wav` filename. All 106 cue files now exist. The four **prototype**
-cues were hand-tuned with player feedback; the other 102 are generated first
+`res/sfx/*.wav` filename. All 107 cue files now exist. The four **prototype**
+cues were hand-tuned with player feedback; the other 103 are generated first
 passes awaiting an in-game listening pass. A cue slot is not a promise to make
 noise every time its underlying simulation changes.
 
@@ -12,8 +12,9 @@ noise every time its underlying simulation changes.
 Think gritty 8-bit hardware operating inside a cave. Use short pitched pulses,
 filtered noise, tiny metallic resonances, and deliberate gaps. The pitch can be
 musical, but ordinary machines should communicate a physical action rather than
-play a tune. Mining has a low crunchy bite; an unmineable surface gets the
-existing higher metal ding. Damage cuts through both. Boss and rocket cues may
+play a tune. Mining has a soft sandy scrape with a low hit; an unmineable surface
+gets the existing higher metal ding. Big damage cuts through both, while small
+damage stays subtle. Boss and rocket cues may
 be longer and more tonal so they feel like events, not routine work.
 
 Author mono 16-bit PCM WAV at 22,050 Hz for now; the current playback layer
@@ -60,7 +61,8 @@ for each of the hundreds of cell/material states.
 | --- | --- |
 | `MINE` **prototype** (`mining_signature.wav`) | A successful foreground bite; low crunchy feedback. |
 | `MINE_TOO_HARD` **prototype** (`mining_too_hard.wav`) | Aimed solid exceeds tool strength; bright metallic refusal. |
-| `PLAYER_DAMAGE` **prototype** (`damage_signature.wav`) | Local HP actually falls, grouped across rapid damage ticks. |
+| `PLAYER_DAMAGE` **prototype** (`damage_signature.wav`) | Local HP falls by at least 10 in one tick; the full damage cue. |
+| `PLAYER_DAMAGE_SMALL` (`player_damage_small.wav`) | Local HP falls by 1–9 in one tick; a short, quieter falling hit with light grit. |
 | `MACHINE` **prototype** (`machine_signature.wav`) | Successful device placement for now; later reuse only if a machine action suits it. |
 
 The normal mining cue uses a 200 ms repeat floor. The fastest miner previously
@@ -83,7 +85,7 @@ that audible rate; single deliberate bites still sound immediately.
 | --- | --- |
 | `STEP_EARTH`, `STEP_STONE`, `STEP_METAL`, `STEP_WET` | Grounded distance-based footsteps by surface family; no airborne spam. |
 | `PLAYER_JUMP`, `PLAYER_LAND`, `PLAYER_FALL_HURT` | Real takeoff, landing, and damaging fall. |
-| `PLAYER_HEAL`, `PLAYER_DEATH`, `PLAYER_RESPAWN` | Health restored, death once, and body returns. |
+| `PLAYER_HEAL`, `PLAYER_DEATH`, `PLAYER_RESPAWN` | At least 10 HP restored in one tick, death once, and body returns. Slow regeneration stays silent. |
 | `PLAYER_BREATH_LOW`, `PLAYER_BURN`, `PLAYER_FREEZE` | Sparse survival warnings, not one sound per damage tick. |
 | `EQUIP`, `THROW` | Tool/armor switch and a successfully released throwable. |
 
@@ -163,7 +165,7 @@ can speak through `SENSOR_TRIP`, `CLOCK_PULSE`, `CIRCUIT_SWITCH`, and `SPARK`.
 ## Implementation path
 
 The native Windows player loads `res/sfx/<filename>` and falls back to an
-embedded copy of **all 106** sounds, so the standalone executable is audible.
+embedded copy of **all 107** sounds, so the standalone executable is audible.
 It overlaps up to 12 cues. Gameplay hooks now cover local movement and health,
 mining, placement, interaction, crafting, nearby enemy calls and combat,
 machines, ambience, bosses, and rocket launch. Some specialized cues are

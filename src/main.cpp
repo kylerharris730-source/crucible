@@ -4770,7 +4770,7 @@ static void applyPlayerUses(PlayerSession& session, const PlayerCommand& command
                     const SoundId cue = aimedDevice ? SFX_DEVICE_PICKUP
                         : tool.plantsOnly ? SFX_HARVEST
                         : aimedMat == MAT_ICE ? SFX_ICE_CRACK : SFX_MINE;
-                    audioPlay(cue, cue == SFX_MINE ? 0.64f : 1.0f);
+                    audioPlay(cue, cue == SFX_MINE ? 0.54f : 1.0f);
                 }
                 else if (!tool.plantsOnly && !command.digFilterOn &&
                          !devAt(aim.x, aim.y) && torchAt(aim.x, aim.y) < 0 &&
@@ -6017,7 +6017,7 @@ static void applyBrush() {
                 const SoundId cue = aimedDevice ? SFX_DEVICE_PICKUP
                     : d.plantsOnly ? SFX_HARVEST
                     : aimedMat == MAT_ICE ? SFX_ICE_CRACK : SFX_MINE;
-                audioPlay(cue, cue == SFX_MINE ? 0.64f : 1.0f);
+                audioPlay(cue, cue == SFX_MINE ? 0.54f : 1.0f);
             }
             else if (!d.plantsOnly && !g_digFilterOn &&
                      !devAt(aim.x, aim.y) && torchAt(aim.x, aim.y) < 0 &&
@@ -10295,10 +10295,12 @@ static bool gameFrame(const LARGE_INTEGER& freq) {
     clientInputTick();
     serverTick(freq);
     if (aliveBeforeTick && !g_player.alive) audioPlay(SFX_PLAYER_DEATH);
-    else if (g_player.hp < hpBeforeTick)
-        audioPlay(SFX_PLAYER_DAMAGE,
-                  hpBeforeTick - g_player.hp < 10 ? 0.30f : 1.0f);
-    else if (g_player.hp > hpBeforeTick) audioPlay(SFX_PLAYER_HEAL);
+    else if (g_player.hp < hpBeforeTick) {
+        const int damage = hpBeforeTick - g_player.hp;
+        audioPlay(damage < 10 ? SFX_PLAYER_DAMAGE_SMALL : SFX_PLAYER_DAMAGE,
+                  damage < 10 ? 0.72f : 1.0f);
+    }
+    else if (g_player.hp - hpBeforeTick >= 10) audioPlay(SFX_PLAYER_HEAL);
     if (!aliveBeforeTick && g_player.alive) audioPlay(SFX_PLAYER_RESPAWN);
     if (g_player.alive && g_playerOn && g_survival) {
         const int playerCellX = (int)g_player.centreX();
@@ -10308,7 +10310,7 @@ static bool gameFrame(const LARGE_INTEGER& freq) {
         if (inLiquid && !g_audioInLiquid) audioPlay(SFX_WATER_SPLASH, 0.45f);
         g_audioInLiquid = inLiquid;
         if (groundedBeforeTick && !g_player.onGround && g_player.vy < -0.5f)
-            audioPlay(SFX_PLAYER_JUMP, 0.42f);
+            audioPlay(SFX_PLAYER_JUMP, 0.30f);
         if (!groundedBeforeTick && g_player.onGround && airBeforeTick > 4)
             audioPlay(g_player.lastFall > 55.0f ? SFX_PLAYER_FALL_HURT : SFX_PLAYER_LAND,
                       g_player.lastFall > 55.0f ? 0.65f : 0.30f);
