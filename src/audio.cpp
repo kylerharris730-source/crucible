@@ -24,16 +24,49 @@ bool audioMuted() { return muted; }
    override them during development. */
 #include "audio_embedded.h"
 
+/* ============================================================================
+   One device, mixed in software.
+
+   Every sound used to open a waveOut device of its own and close it when it
+   finished. Those two calls go through the whole Windows audio stack and the
+   sound card's driver, and they are slow: measured on the development
+   machine, opening took 16.5 ms on average and up to 53 ms, closing about
+   10 ms -- a whole frame or more each, on the game's own thread. Nothing
+   else stood out, because on that machine it was one dropped frame at a
+   time. On another machine with a slower audio driver (a USB or Bluetooth
+   headset, a vendor "enhancement" layer, a device that must resample 22 kHz)
+   it was reported as the game stuttering every few seconds in single player:
+   the ambient wind or drip plays every eight seconds standing still, and
+   hitched once when it started and again when it ended.
+
+   So the device is opened ONCE, at audioInit, and fed by a thread of its own
+   that mixes every playing voice into a small ring of buffers. Playing a
+   sound on the game's thread is now a copy into a voice slot under a lock.
+   No driver call happens on the game's thread after startup.
+
+   Win32 threads and a critical section rather than std::thread: the test
+   suite still builds this file with a GCC whose C++11 threading is missing,
+   like the lane pool in world.cpp.
+   ========================================================================== */
+
 struct Sample { std::vector<int16_t> pcm; };
 struct Voice {
-    HWAVEOUT out;
-    WAVEHDR header;
-    std::vector<int16_t> pcm;
+    std::vector<int16_t> pcm;      /* stereo, interleaved, gain and pan applied */
+    size_t at;                     /* next frame to mix                         */
     SoundId id;
     bool active;
 };
+
+static const int OUT_RATE = 22050;
+static const int VOICES = 12;
+/* Four buffers of 368 frames (~16.7 ms each): about 67 ms queued ahead. Short
+   enough that a hit is heard with its flash, long enough that the mixer
+   thread can be late by three buffers before anything is audible. */
+static const int MIX_BUFFERS = 4;
+static const int MIX_FRAMES = 368;
+
 static Sample samples[SFX_COUNT];
-static Voice voices[12];
+static Voice voices[VOICES];
 static DWORD lastPlay[SFX_COUNT];
 static bool played[SFX_COUNT];
 static bool ready;
@@ -45,6 +78,15 @@ static const char* paths[SFX_COUNT] = { SOUND_CUES(SOUND_PATH) };
 #define SOUND_COOLDOWN(id, path, cooldown) cooldown,
 static const DWORD cooldownMs[SFX_COUNT] = { SOUND_CUES(SOUND_COOLDOWN) };
 #undef SOUND_COOLDOWN
+
+/* The device and its mixer. `g_voiceLock` guards voices[]: the game thread
+   starts and steals voices, the mixer thread advances and retires them. */
+static HWAVEOUT g_out = 0;
+static WAVEHDR g_hdr[MIX_BUFFERS];
+static int16_t g_buf[MIX_BUFFERS][MIX_FRAMES * 2];
+static HANDLE g_mixEvent = 0, g_mixThread = 0;
+static volatile LONG g_mixStop = 0;
+static CRITICAL_SECTION g_voiceLock;
 
 static uint16_t u16(const unsigned char* p) { return (uint16_t)(p[0] | (p[1] << 8)); }
 static uint32_t u32(const unsigned char* p) {
@@ -93,6 +135,82 @@ static bool loadFile(const char* name, Sample& sample) {
     return false;
 }
 
+/* Sum every active voice into one buffer. Clamped rather than scaled: the
+   old one-device-per-voice design let Windows sum them the same way, so the
+   mix sounds as it did. */
+static void mixInto(int16_t* out) {
+    static int32_t acc[MIX_FRAMES * 2];
+    memset(acc, 0, sizeof(acc));
+    EnterCriticalSection(&g_voiceLock);
+    for (int i = 0; i < VOICES; ++i) {
+        Voice& v = voices[i];
+        if (!v.active) continue;
+        const size_t frames = v.pcm.size() / 2;
+        size_t n = frames - v.at;
+        if (n > (size_t)MIX_FRAMES) n = MIX_FRAMES;
+        const int16_t* src = &v.pcm[v.at * 2];
+        for (size_t k = 0; k < n * 2; ++k) acc[k] += src[k];
+        v.at += n;
+        if (v.at >= frames) v.active = false;   /* pcm kept: reused by the next sound */
+    }
+    LeaveCriticalSection(&g_voiceLock);
+    for (int k = 0; k < MIX_FRAMES * 2; ++k)
+        out[k] = (int16_t)(acc[k] > 32767 ? 32767 : acc[k] < -32768 ? -32768 : acc[k]);
+}
+
+static DWORD WINAPI mixerMain(LPVOID) {
+    /* Above the sim's lane threads, which can have every core busy: a mixer
+       that misses its turn is a click, where a late frame is only a frame. */
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
+    while (!g_mixStop) {
+        for (int b = 0; b < MIX_BUFFERS; ++b) {
+            if (!(g_hdr[b].dwFlags & WHDR_DONE)) continue;
+            mixInto(g_buf[b]);
+            g_hdr[b].dwFlags &= ~WHDR_DONE;
+            waveOutWrite(g_out, &g_hdr[b], sizeof(g_hdr[b]));
+        }
+        /* The device signals the event as each buffer finishes; the timeout
+           only matters if a signal is ever missed. */
+        WaitForSingleObject(g_mixEvent, 50);
+    }
+    return 0;
+}
+
+static bool openDevice() {
+    WAVEFORMATEX format = {};
+    format.wFormatTag = WAVE_FORMAT_PCM;
+    format.nChannels = 2;
+    format.nSamplesPerSec = OUT_RATE;
+    format.wBitsPerSample = 16;
+    format.nBlockAlign = 4;
+    format.nAvgBytesPerSec = OUT_RATE * 4;
+    g_mixEvent = CreateEventA(0, FALSE, FALSE, 0);
+    if (!g_mixEvent) return false;
+    if (waveOutOpen(&g_out, WAVE_MAPPER, &format, (DWORD_PTR)g_mixEvent, 0,
+                    CALLBACK_EVENT) != MMSYSERR_NOERROR) {
+        CloseHandle(g_mixEvent); g_mixEvent = 0; g_out = 0;
+        return false;
+    }
+    for (int b = 0; b < MIX_BUFFERS; ++b) {
+        memset(&g_hdr[b], 0, sizeof(g_hdr[b]));
+        memset(g_buf[b], 0, sizeof(g_buf[b]));
+        g_hdr[b].lpData = (LPSTR)g_buf[b];
+        g_hdr[b].dwBufferLength = sizeof(g_buf[b]);
+        waveOutPrepareHeader(g_out, &g_hdr[b], sizeof(g_hdr[b]));
+        /* Marked done so the mixer's first pass fills and queues all four. */
+        g_hdr[b].dwFlags |= WHDR_DONE;
+    }
+    g_mixStop = 0;
+    g_mixThread = CreateThread(0, 0, mixerMain, 0, 0, 0);
+    if (!g_mixThread) {
+        for (int b = 0; b < MIX_BUFFERS; ++b) waveOutUnprepareHeader(g_out, &g_hdr[b], sizeof(g_hdr[b]));
+        waveOutClose(g_out); g_out = 0;
+        CloseHandle(g_mixEvent); g_mixEvent = 0;
+        return false;
+    }
+    return true;
+}
+
 void audioInit() {
     if (ready) return;
     LARGE_INTEGER clock;
@@ -103,20 +221,16 @@ void audioInit() {
         if (!loadFile(paths[i], samples[i]) && i < EMBEDDED_SFX_COUNT)
             decodeWav(EMBEDDED_SFX[i].data, EMBEDDED_SFX[i].size, samples[i]);
     }
-    ready = true;
+    InitializeCriticalSection(&g_voiceLock);
+    /* No device -- none installed, or it is busy -- means a silent game, not
+       a broken one: every play() below checks `ready`. */
+    ready = openDevice();
+    if (!ready) DeleteCriticalSection(&g_voiceLock);
 }
 
-void audioUpdate() {
-    for (int i = 0; i < 12; ++i) {
-        Voice& v = voices[i];
-        if (!v.active || !(v.header.dwFlags & WHDR_DONE)) continue;
-        waveOutUnprepareHeader(v.out, &v.header, sizeof(v.header));
-        waveOutClose(v.out);
-        v.out = 0;
-        v.pcm.clear();
-        v.active = false;
-    }
-}
+/* Nothing to do per frame any more: finished voices are retired by the mixer.
+   Kept so the game loop's call stays valid. */
+void audioUpdate() {}
 
 static int priority(SoundId id) {
     if (id == SFX_PLAYER_DAMAGE || id == SFX_PLAYER_DEATH ||
@@ -142,32 +256,17 @@ static void play(SoundId id, float gain, float pan) {
     if (muted || !ready || id < 0 || id >= SFX_COUNT || samples[id].pcm.empty()) return;
     const DWORD now = timeGetTime();
     if (played[id] && now - lastPlay[id] < cooldownMs[id]) return;
-    audioUpdate();
-    Voice* v = 0;
-    for (int i = 0; i < 12; ++i) if (!voices[i].active) { v = &voices[i]; break; }
-    if (!v) {
-        int weakest = -1;
-        for (int i = 0; i < 12; ++i)
-            if (priority(id) > priority(voices[i].id) &&
-                (weakest < 0 || priority(voices[i].id) < priority(voices[weakest].id)))
-                weakest = i;
-        if (weakest >= 0) {
-            v = &voices[weakest];
-            waveOutReset(v->out);
-            waveOutUnprepareHeader(v->out, &v->header, sizeof(v->header));
-            waveOutClose(v->out);
-            v->pcm.clear(); v->active = false;
-        }
-    }
-    if (!v) return;
     if (gain < 0.0f) gain = 0.0f;
     if (gain > 1.0f) gain = 1.0f;
+
+    /* Rendered outside the lock -- resampling a long cue is the only real
+       work here, and the mixer should never wait on it. */
     const std::vector<int16_t>& src = samples[id].pcm;
     /* Vary only the ordinary mining scrape; the hard-material ding stays
        recognizable. Resampling keeps the output device at a fixed 22050 Hz. */
     const double pitch = id == SFX_MINE ? miningPlaybackPitch() : 1.0;
     const size_t frames = (size_t)ceil((double)src.size() / pitch);
-    v->pcm.resize(frames * 2);
+    std::vector<int16_t> pcm(frames * 2);
     const float left = pan > 0.0f ? 1.0f - pan : 1.0f;
     const float right = pan < 0.0f ? 1.0f + pan : 1.0f;
     for (size_t i = 0; i < frames; ++i) {
@@ -176,31 +275,31 @@ static void play(SoundId id, float gain, float pan) {
         float sample = (float)src[at];
         if (at + 1 < src.size())
             sample += (float)((src[at + 1] - sample) * (position - at));
-        v->pcm[i * 2] = (int16_t)(sample * gain * left);
-        v->pcm[i * 2 + 1] = (int16_t)(sample * gain * right);
+        pcm[i * 2] = (int16_t)(sample * gain * left);
+        pcm[i * 2 + 1] = (int16_t)(sample * gain * right);
     }
-    WAVEFORMATEX format = {};
-    format.wFormatTag = WAVE_FORMAT_PCM;
-    format.nChannels = 2;
-    format.nSamplesPerSec = 22050;
-    format.wBitsPerSample = 16;
-    format.nBlockAlign = 4;
-    format.nAvgBytesPerSec = 22050 * 4;
-    if (waveOutOpen(&v->out, WAVE_MAPPER, &format, 0, 0, CALLBACK_NULL) != MMSYSERR_NOERROR) {
-        v->pcm.clear(); return;
+
+    EnterCriticalSection(&g_voiceLock);
+    Voice* v = 0;
+    for (int i = 0; i < VOICES; ++i) if (!voices[i].active) { v = &voices[i]; break; }
+    if (!v) {
+        /* All twelve busy: steal the least important, if this one outranks
+           it. Same rule as before; stealing is now free. */
+        int weakest = -1;
+        for (int i = 0; i < VOICES; ++i)
+            if (priority(id) > priority(voices[i].id) &&
+                (weakest < 0 || priority(voices[i].id) < priority(voices[weakest].id)))
+                weakest = i;
+        if (weakest >= 0) v = &voices[weakest];
     }
-    memset(&v->header, 0, sizeof(v->header));
-    v->header.lpData = (LPSTR)&v->pcm[0];
-    v->header.dwBufferLength = (DWORD)(v->pcm.size() * sizeof(int16_t));
-    if (waveOutPrepareHeader(v->out, &v->header, sizeof(v->header)) != MMSYSERR_NOERROR) {
-        waveOutClose(v->out); v->pcm.clear(); return;
+    if (v) {
+        v->pcm.swap(pcm);
+        v->at = 0;
+        v->id = id;
+        v->active = true;
     }
-    v->active = true;
-    v->id = id;
-    if (waveOutWrite(v->out, &v->header, sizeof(v->header)) != MMSYSERR_NOERROR) {
-        waveOutUnprepareHeader(v->out, &v->header, sizeof(v->header));
-        waveOutClose(v->out); v->pcm.clear(); v->active = false; return;
-    }
+    LeaveCriticalSection(&g_voiceLock);
+    if (!v) return;
     lastPlay[id] = now;
     played[id] = true;
 }
@@ -222,31 +321,27 @@ void audioPlayAt(SoundId id, float x, float y, float gain) {
 
 void audioShutdown() {
     if (!ready) return;
-    for (int i = 0; i < 12; ++i) {
-        Voice& v = voices[i];
-        if (!v.active) continue;
-        waveOutReset(v.out);
-        waveOutUnprepareHeader(v.out, &v.header, sizeof(v.header));
-        waveOutClose(v.out);
-        v.pcm.clear(); v.active = false;
-    }
     ready = false;
+    InterlockedExchange(&g_mixStop, 1);
+    SetEvent(g_mixEvent);
+    WaitForSingleObject(g_mixThread, 1000);
+    CloseHandle(g_mixThread); g_mixThread = 0;
+    waveOutReset(g_out);
+    for (int b = 0; b < MIX_BUFFERS; ++b) waveOutUnprepareHeader(g_out, &g_hdr[b], sizeof(g_hdr[b]));
+    waveOutClose(g_out); g_out = 0;
+    CloseHandle(g_mixEvent); g_mixEvent = 0;
+    DeleteCriticalSection(&g_voiceLock);
 }
 
+/* Called from the saved settings before audioInit, too -- which is why
+   silencing the voices waits for `ready`. */
 void audioSetMuted(bool value) {
     if (muted == value) return;
     muted = value;
     if (!muted || !ready) return;
-    for (int i = 0; i < 12; ++i) {
-        Voice& v = voices[i];
-        if (!v.active) continue;
-        waveOutReset(v.out);
-        waveOutUnprepareHeader(v.out, &v.header, sizeof(v.header));
-        waveOutClose(v.out);
-        v.out = 0;
-        v.pcm.clear();
-        v.active = false;
-    }
+    EnterCriticalSection(&g_voiceLock);
+    for (int i = 0; i < VOICES; ++i) voices[i].active = false;
+    LeaveCriticalSection(&g_voiceLock);
 }
 
 #else

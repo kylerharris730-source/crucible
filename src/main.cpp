@@ -10273,6 +10273,44 @@ static int runLocalCommandSmoke() {
     return 0;
 }
 
+/* --- the hitch log ----------------------------------------------------------
+   The frame time on the panel is a running average, which is the right thing
+   to show and exactly the wrong thing for finding a stutter: one 60 ms frame
+   every few seconds barely moves it. Set CINDERLIFT_FRAMELOG=1 (or a file
+   path) before launching and every frame whose work took longer than 20 ms
+   is written to build/frames.log, with a summary every ten seconds -- frames,
+   the slowest one, and how many went over. Made to find the audio stutter
+   (see audio.cpp) on a machine that is not this one, and kept for the next. */
+static void frameLog(double workMs, const LARGE_INTEGER& freq, const LARGE_INTEGER& now) {
+    static int state = 0;              /* 0 unchecked, 1 off, 2 on */
+    static FILE* f = 0;
+    static LARGE_INTEGER start, windowStart;
+    static int frames = 0, slow = 0;
+    static double worst = 0.0;
+    if (state == 0) {
+        const char* want = getenv("CINDERLIFT_FRAMELOG");
+        state = 1;
+        if (want && *want && strcmp(want, "0") != 0) {
+            f = fopen(strcmp(want, "1") == 0 ? "build/frames.log" : want, "w");
+            if (f) { state = 2; start = windowStart = now; }
+        }
+    }
+    if (state != 2) return;
+    const double t = (double)(now.QuadPart - start.QuadPart) / (double)freq.QuadPart;
+    ++frames;
+    if (workMs > worst) worst = workMs;
+    if (workMs > 20.0) {
+        ++slow;
+        fprintf(f, "%9.2fs  slow frame %6.1f ms\n", t, workMs);
+    }
+    if ((double)(now.QuadPart - windowStart.QuadPart) / (double)freq.QuadPart >= 10.0) {
+        fprintf(f, "%9.2fs  -- %d frames, worst %.1f ms, %d over 20 ms, average %.2f ms\n",
+                t, frames, worst, slow, g_frameMs);
+        fflush(f);
+        windowStart = now; frames = slow = 0; worst = 0.0;
+    }
+}
+
 /* Both frontends run exactly one game tick here. Browser scheduling must
    return between calls, including when the work took longer than 16.7 ms. */
 static bool gameFrame(const LARGE_INTEGER& freq) {
@@ -10397,6 +10435,7 @@ static bool gameFrame(const LARGE_INTEGER& freq) {
     const double work = 1000.0 * (double)(end.QuadPart - begin.QuadPart) /
                         (double)freq.QuadPart;
     g_frameMs = g_frameMs > 0.0 ? g_frameMs * 0.9 + work * 0.1 : work;
+    frameLog(work, freq, end);
     return true;
 }
 
