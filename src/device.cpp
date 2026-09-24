@@ -1,4 +1,5 @@
 #include "device.h"
+#include "audio.h"
 #include "door.h"
 #include "sprite.h"
 #include "item.h"      /* ITEMS[], for what a pedestal is holding */
@@ -605,10 +606,13 @@ bool rocketBeginLaunch(const World& w, Device& d, int slot) {
     if (rocketFault(w, d) != ROCKET_READY) return false;
     d.reading = ROCKET_COUNTING;
     d.phase   = ROCKET_COUNTDOWN_FRAMES;
+    audioPlayAt(SFX_ROCKET_READY, d.x + ROCKET_W * 0.5f, (float)d.y, 0.8f);
     return true;
 }
 
 void rocketCancel(Device& d) {
+    if (rocketStage(d) == ROCKET_COUNTING)
+        audioPlayAt(SFX_ROCKET_ABORT, d.x + ROCKET_W * 0.5f, (float)d.y, 0.75f);
     d.reading = ROCKET_IDLE;
     d.phase   = 0;
 }
@@ -666,7 +670,12 @@ static void rocketTick(World& w, Device& d) {
            a decision: somebody dies, a wall is built overhead, the pad is
            mined, a crewmate wanders off. */
         if (rocketFault(w, d) != ROCKET_READY) { rocketCancel(d); return; }
-        if (--d.phase > 0) return;
+        if (--d.phase > 0) {
+            if (d.phase % 60 == 0)
+                audioPlayAt(SFX_ROCKET_COUNTDOWN, d.x + ROCKET_W * 0.5f,
+                            (float)d.y, 0.7f);
+            return;
+        }
 
         /* --- ignition -----------------------------------------------------
            The cargo is spent, the hull leaves the grid, and `received` stops
@@ -687,12 +696,16 @@ static void rocketTick(World& w, Device& d) {
                 if (w.at(x, y).mat == DEVS[d.type].cellMat) w.setCell(x, y, MAT_EMPTY);
         d.reading = ROCKET_LIT;
         d.phase   = 0;
+        audioPlayAt(SFX_ROCKET_IGNITE, d.x + ROCKET_W * 0.5f, (float)d.y, 1.0f);
         return;
     }
     if (stage != ROCKET_LIT) return;
 
     /* --- the climb -------------------------------------------------------- */
     ++d.phase;
+    if (d.phase == 90)
+        audioPlayAt(SFX_ROCKET_ASCENT, d.x + ROCKET_W * 0.5f,
+                    (float)d.y, 0.82f);
     const int rise = rocketRise(d);
     /* The crew ride it up, pinned to the hull. Their own physics ran earlier
        this frame -- see the order in serverTick -- so this is the last word on
@@ -720,6 +733,7 @@ static void rocketTick(World& w, Device& d) {
     }
     if (d.phase >= ROCKET_ASCENT_FRAMES) {
         d.reading = ROCKET_GONE;
+        audioPlay(SFX_VICTORY, 0.9f);
         d.phase   = 0;
         rocketReturnCrew(d);
         rocketSetVictory(true);
@@ -1155,7 +1169,9 @@ bool shedPlace(int x, int y) {
     /* A placed mote has no wire-end momentum. Its existing random sideways
        drift and gravity take over immediately, exactly as for a naturally shed
        one after the initial kick has gone. */
-    return shedAdd(x, y, 0, 0);
+    const bool placed = shedAdd(x, y, 0, 0);
+    if (placed) audioPlayAt(SFX_SPARK, (float)x, (float)y, 0.45f);
+    return placed;
 }
 
 bool shedTakeNear(int x, int y, int radius) {
@@ -1718,6 +1734,9 @@ static void pipeTick(const World& w) {
             if (src.count == 0) src.mat = MAT_EMPTY;
             if ((left -= n) == 0 || src.count == 0) break;
         }
+        if (left < PIPE_RATE)
+            audioPlayAt(SFX_PIPE_TRANSFER, src.x + DEV_W * 0.5f,
+                        src.y + DEV_H * 0.5f, 0.24f);
     }
 }
 
@@ -2161,6 +2180,7 @@ static void devHive(World& w, Device& d, int index) {
             const bool coal = hiveSoured(d) || hiveCoalIndoors(d) > 0;
             const int slot = entSpawn(w, coal ? ENT_COAL_BEE : ENT_BEE, bx, by);
             if (slot >= 0) {
+                audioPlayAt(SFX_HIVE_RELEASE, bx, by, 0.35f);
                 if (coal) --d.mat2;
                 g_entities[slot].home = (i16)index;
                 g_entities[slot].phase = 0;
@@ -2445,6 +2465,7 @@ void devTick(World& w) {
 
         d.firing = false;
         if (d.type == DEV_ROCKET) { rocketTick(w, d); continue; }
+        const int audioCountBefore = d.count;
         if ((d.type == DEV_DRAIN || d.type == DEV_SPOUT) && d.poked)
             d.enabled = !d.enabled;
         switch (d.type) {
@@ -2554,6 +2575,22 @@ void devTick(World& w) {
         case DEV_CROSSOVER:
             d.reading = d.count + d.count2; break;
         default: break;
+        }
+
+        const float audioX = d.x + devTypeW(d.type) * 0.5f;
+        const float audioY = d.y + devTypeH(d.type) * 0.5f;
+        if (d.firing) {
+            const SoundId cue = d.type == DEV_CLOCK ? SFX_CLOCK_PULSE
+                : d.type == DEV_THERMOCOUPLE || d.type == DEV_BLOCK_WATCHER
+                    ? SFX_SENSOR_TRIP : SFX_CIRCUIT_SWITCH;
+            audioPlayAt(cue, audioX, audioY, 0.32f);
+        }
+        if (d.count != audioCountBefore) {
+            const SoundId cue = d.type == DEV_PLACER ? SFX_PLACER_CYCLE
+                : d.type == DEV_MINER ? SFX_MINER_CYCLE
+                : d.type == DEV_DRAIN ? SFX_DRAIN_CYCLE
+                : d.type == DEV_SPOUT ? SFX_SPOUT_CYCLE : SFX_COUNT;
+            if (cue != SFX_COUNT) audioPlayAt(cue, audioX, audioY, 0.28f);
         }
 
         /* Inventory-bearing machines publish exactly what they are holding.

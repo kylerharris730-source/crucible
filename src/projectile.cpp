@@ -1,4 +1,5 @@
 #include "projectile.h"
+#include "audio.h"
 #include "entity.h"
 #include "item.h"     /* the nearest-first disc table, for explosions */
 #include "render.h"   /* VIEW_CELLS_W/H */
@@ -294,6 +295,7 @@ static void glowMotesTick() {
    from each other. Handing the explosion a temperature makes it interact with
    every one of those rules for free. */
 void explodeAt(World& w, int cx, int cy, int radius, int power) {
+    audioPlayAt(SFX_EXPLOSION, (float)cx, (float)cy, 0.70f);
     if (radius < 1) radius = 1;
     if (radius > DISC_MAX_R) radius = DISC_MAX_R;
 
@@ -386,6 +388,7 @@ bool projSpawn(float x, float y, float vx, float vy,
         p.link = -1; p.linkKind = MODK_NONE;
         p.seekPoint = seekPoint; p.seekX = seekX; p.seekY = seekY;
         g_lastSpawned = i;
+        if (hostile) audioPlayAt(SFX_ENEMY_SHOT, x, y, 0.38f);
         return true;
     }
     /* Full: drop it. Silently, because the alternative -- replacing the oldest
@@ -778,8 +781,11 @@ int projUpdate(World& w) {
                        fire should not eat the bolt meant for what you were
                        aiming at. A creature's OWN shots still hit bees, which
                        is how a mite gets to be a threat to a hive. */
+                    int damageDealt = 0;
                     if (entDamageAt(cx, cy, p.damage, !p.hostile,
-                                    projPoisonFrames(p))) {
+                                    projPoisonFrames(p), &damageDealt)) {
+                        audioPlayAt(SFX_PROJECTILE_FLESH, (float)cx, (float)cy,
+                                    damageDealt < 10 ? 0.13f : 0.29f);
                         p.alive = false; blocked = true;
                         dropX = px_; dropY = py_;
                         break;
@@ -795,6 +801,8 @@ int projUpdate(World& w) {
                            gear never protects the host by accident. */
                         const int dmg = imax(1, p.damage - session.inventory.armour());
                         player.damage((float)dmg); player.hurtFlash = 10;
+                        audioPlayAt(SFX_PROJECTILE_FLESH, (float)cx, (float)cy,
+                                    dmg < 10 ? 0.13f : 0.29f);
                         p.alive = false; blocked = true;
                         dropX = px_; dropY = py_;
                         break;
@@ -830,6 +838,7 @@ int projUpdate(World& w) {
             if (strength == STR_NOTHING) continue;   /* gases: fly straight through */
 
             if (strength > p.power) {
+                audioPlayAt(SFX_PROJECTILE_WALL, (float)cx, (float)cy, 0.27f);
                 if (p.bounces > 0) {
                     p.x = (float)px_ + 0.5f; p.y = (float)py_ + 0.5f;
                     float nx, ny;
@@ -856,7 +865,10 @@ int projUpdate(World& w) {
             /* Broke THIS cell, so it is empty now -- the payload belongs
                here, at the point of impact, not one short of it. */
             dropX = cx; dropY = cy;
-            if (--p.pierce <= 0) { p.alive = false; blocked = true; break; }
+            if (--p.pierce <= 0) {
+                audioPlayAt(SFX_PROJECTILE_WALL, (float)cx, (float)cy, 0.25f);
+                p.alive = false; blocked = true; break;
+            }
         }
 
         if (ricochet) continue;
@@ -873,6 +885,7 @@ int projUpdate(World& w) {
            shot's own blast wipes out the thing it just delivered. Detonate,
            then drop into the crater. */
         if (!p.alive && p.blast > 0) {
+            audioPlayAt(SFX_PROJECTILE_BURST, p.x, p.y, 0.75f);
             explodeAt(w, (int)p.x, (int)p.y, p.blast, p.power);
             /* Everything in the crater, not only whatever the shot happened to
                touch on its way in. An explosion that damaged one creature

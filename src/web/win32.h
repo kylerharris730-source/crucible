@@ -201,6 +201,9 @@ typedef struct { BITMAPINFOHEADER bmiHeader; DWORD bmiColors[1]; } BITMAPINFO;
 #define VK_ADD      0x6B
 #define VK_SUBTRACT 0x6D
 #define VK_F5       0x74
+#define VK_F6       0x75
+#define VK_F7       0x76
+#define VK_F8       0x77
 #define VK_F9       0x78
 #define VK_F11      0x7A
 #define VK_OEM_1      0xBA

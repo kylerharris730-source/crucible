@@ -94,6 +94,9 @@ static int vkFromSdl(SDL_Keycode k) {
     case SDLK_UP:                         return VK_UP;
     case SDLK_DOWN:                       return VK_DOWN;
     case SDLK_F5:                         return VK_F5;
+    case SDLK_F6:                         return VK_F6;
+    case SDLK_F7:                         return VK_F7;
+    case SDLK_F8:                         return VK_F8;
     case SDLK_F9:                         return VK_F9;
     case SDLK_F11:                        return VK_F11;
     case SDLK_KP_PLUS:                    return VK_ADD;

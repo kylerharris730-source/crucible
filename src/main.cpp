@@ -43,6 +43,7 @@
 #include "multiplayer.h"
 #include "version.h"
 #include "network.h"
+#include "audio.h"
 /* The material picker's table. Shared with the powderlike front-end rather
    than kept here -- see the note in the header. */
 #include "brushes.h"
@@ -141,8 +142,13 @@ static void uiSettingsLoad() {
     while (fgets(line, sizeof(line), f)) {
         int pct = 0;
         int threads = 0;
+        int soundMuted = 0;
         if (sscanf(line, "sim_threads=%d", &threads) == 1) {
             g_simThreads = imax(0, imin(32, threads));
+            continue;
+        }
+        if (sscanf(line, "sound_muted=%d", &soundMuted) == 1) {
+            audioSetMuted(soundMuted != 0);
             continue;
         }
         if (sscanf(line, "ui_scale=%d", &pct) != 1) continue;
@@ -159,6 +165,7 @@ static void uiSettingsSave() {
     if (!f) return;
     fprintf(f, "ui_scale=%d\n", uiScalePct());
     fprintf(f, "sim_threads=%d\n", g_simThreads);
+    fprintf(f, "sound_muted=%d\n", audioMuted() ? 1 : 0);
     fclose(f);
 }
 
@@ -717,6 +724,12 @@ static bool g_useLatch = false;
    to read and short enough not to become furniture. */
 static char g_saveMsg[256] = "";
 static int  g_saveMsgFrames = 0;
+static int  g_sfxPreview = -1;
+static float g_audioStepDistance = 0.0f;
+static int g_audioAmbientFrames = 0;
+static int g_audioFireFrames = 0;
+static int g_audioEmberPulse = 0;
+static bool g_audioInLiquid = false;
 
 /* --- one-stroke terrain undo ---------------------------------------------
    A stroke remembers the cells as they were BEFORE its first touch. A set
@@ -1112,6 +1125,7 @@ static RECT g_menuResume, g_menuHost, g_menuJoin, g_menuIp, g_menuStop, g_menuQu
 static RECT g_menuHostOnline;
 static RECT g_menuSave, g_menuLoad;
 static RECT g_menuUiMinus, g_menuUiValue, g_menuUiPlus;
+static RECT g_menuMute;
 
 /* --- the save screen --------------------------------------------------------
    Ten slots, each showing a picture of where you were when you wrote it.
@@ -2025,6 +2039,7 @@ static void saveToSlot(int slot) {
     const bool wrote = saveWrite(path, g_world, g_thumbLatest);
     g_inv.selected = temporarySelection;
     if (wrote) {
+        if (slot != AUTOSAVE_SLOT) audioPlay(SFX_UI_SAVE, 0.62f);
         /* The bytes are in the filesystem; on the web that is not yet the
            same as being kept. See savePersist(). */
         savePersist();
@@ -2033,6 +2048,7 @@ static void saveToSlot(int slot) {
         if (slot == AUTOSAVE_SLOT) sprintf(g_saveMsg, "Autosaved -- %.2f MB", mb);
         else                       sprintf(g_saveMsg, "Saved slot %d -- %.2f MB", slot + 1, mb);
     } else {
+        audioPlay(SFX_UI_ERROR, 0.55f);
         sprintf(g_saveMsg, "SAVE FAILED: %s", saveError());
     }
     g_saveMsgFrames = 240;
@@ -2048,6 +2064,7 @@ static void loadFromSlot(int slot) {
     undoClearAll();
     const char* path = saveSlotPath(slot);
     if (saveRead(path, g_world)) {
+        audioPlay(SFX_UI_LOAD, 0.62f);
         /* Saves contain the durable hotbar selection only. Older or malformed
            files are clamped here before `held()` can index the pack. */
         selectHotbar(g_inv.selected);
@@ -2062,6 +2079,7 @@ static void loadFromSlot(int slot) {
         droneReset();
         accessoryReset();
     } else {
+        audioPlay(SFX_UI_ERROR, 0.55f);
         /* A failed load leaves the world half-written, so it is not somewhere
            to carry on from -- the same recovery F9 has always made. */
         sprintf(g_saveMsg, "LOAD FAILED: %s", saveError());
@@ -2301,9 +2319,11 @@ static void layoutMenu() {
     SetRect(&g_menuStop,   bx, top + 282, bx + bw, top + 314);
     SetRect(&g_menuQuit,   bx, top + 322, bx + bw, top + 354);
     const int uy = top + 362;
-    SetRect(&g_menuUiMinus, bx, uy, bx + 42, uy + 30);
-    SetRect(&g_menuUiValue, bx + 50, uy, bx + bw - 50, uy + 30);
-    SetRect(&g_menuUiPlus,  bx + bw - 42, uy, bx + bw, uy + 30);
+    const int settingsX = g_menuPanel.left + 16;
+    SetRect(&g_menuUiMinus, settingsX, uy, settingsX + 32, uy + 30);
+    SetRect(&g_menuUiValue, settingsX + 38, uy, settingsX + 168, uy + 30);
+    SetRect(&g_menuUiPlus, settingsX + 174, uy, settingsX + 206, uy + 30);
+    SetRect(&g_menuMute, settingsX + 216, uy, g_menuPanel.right - 16, uy + 30);
 }
 
 /* Laid out fresh on open, like the pause menu, and for the same reason: it is
@@ -3305,6 +3325,12 @@ static bool handlePanelClick(int mx, int my) {
         if (inRect(g_menuStop, mx, my)) { netStop(); g_joinIpFocus = false; return true; }
         if (inRect(g_menuUiMinus, mx, my)) { changeUiScale(-1); return true; }
         if (inRect(g_menuUiPlus,  mx, my)) { changeUiScale(+1); return true; }
+        if (inRect(g_menuMute, mx, my)) {
+            audioSetMuted(!audioMuted());
+            uiSettingsSave();
+            audioPlay(SFX_UI_SELECT, 0.30f);
+            return true;
+        }
         if (inRect(g_menuQuit,   mx, my)) { g_running = false; PostQuitMessage(0); return true; }
         return true;
     }
@@ -3506,6 +3532,8 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_LBUTTONDOWN:
         updateMouseFromLParam(lp);
         if (g_mx < 0 || g_my < 0) return 0; /* letterbox, not game space */
+        {
+        const bool heldBefore = !g_drag.empty();
         if (g_chestOpen >= 0) { handleChestClick(g_mx, g_my, false); g_uiCapture = true; }
         else if (g_creativeOpen) { handleCreativeClick(g_mx, g_my, false); g_uiCapture = true; }
         /* The device panel floats over the world, so it has to swallow the click
@@ -3520,6 +3548,13 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         } else {
             g_lmb = true;
             if (g_wireMode) startWire(); else startLine();
+        }
+        if (g_uiCapture) {
+            const bool heldAfter = !g_drag.empty();
+            audioPlay(heldBefore != heldAfter
+                          ? heldAfter ? SFX_UI_INVENTORY_PICKUP : SFX_UI_INVENTORY_DROP
+                          : SFX_UI_SELECT, 0.30f);
+        }
         }
         SetCapture(hwnd);
         return 0;
@@ -3740,6 +3775,7 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
            to a mistyped craft key would be unforgivable. */
         case 'C':
             g_craftOpen = !g_craftOpen;
+            audioPlay(SFX_UI_TAB, 0.38f);
             if (g_craftOpen) {
                 g_craftSearchFocus = false;
                 screenExclusive(SCREEN_CRAFT);
@@ -3777,6 +3813,20 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             loadFromSlot(0);
             break;
         }
+        /* Temporary in-game audition keys for the sound pass. They work in a
+           normal build, so every cue can be heard before its event is wired. */
+        case VK_F6: case VK_F7: case VK_F8: {
+            if (lp & (1L << 30)) break;
+            if (wp == VK_F6) g_sfxPreview = (g_sfxPreview + 1) % SFX_COUNT;
+            else if (wp == VK_F8) g_sfxPreview = (g_sfxPreview + SFX_COUNT - 1) % SFX_COUNT;
+            else if (g_sfxPreview < 0) g_sfxPreview = 0;
+            const SoundId cue = (SoundId)g_sfxPreview;
+            audioPlay(cue);
+            sprintf(g_saveMsg, "Sound %d/%d: %s", g_sfxPreview + 1, SFX_COUNT,
+                    audioCueName(cue));
+            g_saveMsgFrames = 180;
+            break;
+        }
         /* R held is the line tool and a quick tap is the temporary teleport.
            Auto-repeat means this arrives many times while held, so the flag is
            set rather than toggled. */
@@ -3795,7 +3845,7 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
            space-to-pause is the obvious binding; the moment there is a
            character to control it is the obvious binding for something else,
            and every player will try it. The panel button still pauses too. */
-        case 'P': if (netRole() != NET_CLIENT) g_paused = !g_paused; break;
+        case 'P': if (netRole() != NET_CLIENT) { g_paused = !g_paused; audioPlay(SFX_UI_PAUSE, 0.45f); } break;
         /* T for the full map, Z for the corner one.
 
            Q first, and Q was wrong: it is already held for brush resize and the
@@ -3812,6 +3862,7 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
            find yourself on every time is a map you stop opening. */
         case 'T':
             g_mapOpen = !g_mapOpen;
+            audioPlay(SFX_UI_TAB, 0.38f);
             if (g_mapOpen) { screenExclusive(SCREEN_MAP); g_mapPanned = false; }
             break;
         case 'Z': g_miniOn = !g_miniOn; break;
@@ -3822,6 +3873,7 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case VK_OEM_6: changeSize(+1); break;  /* ] */
         case VK_TAB:
             g_creativeOpen = !g_creativeOpen;
+            audioPlay(SFX_UI_TAB, 0.38f);
             if (g_creativeOpen) {
                 screenExclusive(SCREEN_CREATIVE);
                 g_creSearchFocus = true; layoutCreative(); g_lmb = g_rmb = false;
@@ -3832,6 +3884,7 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
            menu -- one key that always means "close the thing in front of me" is
            worth more than a second binding to remember. */
         case VK_ESCAPE:
+            audioPlay(SFX_UI_BACK, 0.38f);
             if (g_saveScreen != SAVESCREEN_OFF) g_saveScreen = SAVESCREEN_OFF;
             else if (g_mapOpen)      g_mapOpen = false;
             else if (g_chestOpen >= 0) closeChest();
@@ -4236,16 +4289,22 @@ static void interactFor(PlayerSession& session, const Aim& aim) {
             }
         } else if (d->type == DEV_PULSE_BUTTON) {
             d->poked = true;
+            audioPlayAt(SFX_CIRCUIT_SWITCH, (float)aim.x, (float)aim.y, 0.5f);
         } else if (d->type == DEV_PEDESTAL) {
             pedestalUse(*d, session.inventory);
         } else if (d->type == DEV_CHEST) {
             session.openDevice = session.openDevice == idx ? -1 : idx;
+            audioPlayAt(session.openDevice == idx ? SFX_CHEST_OPEN : SFX_CHEST_CLOSE,
+                        (float)aim.x, (float)aim.y, 0.60f);
         } else {
             session.openDevice = session.openDevice == idx ? -1 : idx;
         }
         return;
     }
     if (doorToggle(g_world, aim.x, aim.y)) {
+        audioPlayAt(g_world.at(aim.x, aim.y).mat == MAT_DOOR_OPEN
+                        ? SFX_DOOR_OPEN : SFX_DOOR_CLOSE,
+                    (float)aim.x, (float)aim.y, 0.58f);
         roomsNotifyEdit(g_world, aim.x, aim.y);
         /* A painted door may span several chunks. The ordinary hash scan will
            eventually find all of them, but interaction should arrive as one
@@ -4369,6 +4428,7 @@ static bool meleeStart(PlayerSession& session, const ItemDef& def, const Aim& ai
     session.swingFrame = meleeFramesFor(session.inventory, def);
     session.swingCool  = imax(meleeCooldownFor(session.inventory, def),
                               session.swingFrame);
+    audioPlayAt(SFX_MELEE_SWING, cx, cy, 0.50f);
     memset(session.swingHit, 0, sizeof(session.swingHit));
     return true;
 }
@@ -4656,6 +4716,8 @@ static void applyPlayerUses(PlayerSession& session, const PlayerCommand& command
         if (pressed & PCMD_USE_LEFT) playerConsumeHealing(session, held.item);
     } else if (left && !right && !command.background && !held.empty() &&
                ITEMS[held.item].kind == ITEMK_IGNITE) {
+        if (pressed & PCMD_USE_LEFT)
+            audioPlayAt(SFX_FIRE_IGNITE, (float)aim.x, (float)aim.y, 0.55f);
         g_world.ignite(aim.x, aim.y, IGNITE_RADIUS);
     } else if (left && !right && !command.background && !held.empty() &&
                ITEMS[held.item].kind == ITEMK_SPARK) {
@@ -4698,8 +4760,23 @@ static void applyPlayerUses(PlayerSession& session, const PlayerCommand& command
             undoCaptureDisc(undoSlot, aim.x, aim.y, imin(radius, tool.maxRadius));
         }
         if (session.digCooldown <= 0) {
-            digInto(g_world, inv, aim.x, aim.y, imin(radius, tool.maxRadius), tool.cellsPerBite,
-                    tool.plantsOnly, tool.power, command.digFilterOn ? digFilter : 0);
+            const bool aimedDevice = devAt(aim.x, aim.y) || torchAt(aim.x, aim.y) >= 0;
+            const u8 aimedMat = g_world.at(aim.x, aim.y).mat;
+            const int dug = digInto(g_world, inv, aim.x, aim.y,
+                                    imin(radius, tool.maxRadius), tool.cellsPerBite,
+                                    tool.plantsOnly, tool.power, command.digFilterOn ? digFilter : 0);
+            if (undoSlot == LOCAL_PLAYER_ID) {
+                if (dug > 0) {
+                    const SoundId cue = aimedDevice ? SFX_DEVICE_PICKUP
+                        : tool.plantsOnly ? SFX_HARVEST
+                        : aimedMat == MAT_ICE ? SFX_ICE_CRACK : SFX_MINE;
+                    audioPlay(cue, cue == SFX_MINE ? 0.80f : 1.0f);
+                }
+                else if (!tool.plantsOnly && !command.digFilterOn &&
+                         !devAt(aim.x, aim.y) && torchAt(aim.x, aim.y) < 0 &&
+                         (int)g_matStrength[g_world.at(aim.x, aim.y).mat] > tool.power)
+                    audioPlay(SFX_MINE_TOO_HARD);
+            }
             session.digCooldown = tool.cooldown;
         }
         roomsNotifyEdit(g_world, aim.x, aim.y);
@@ -4869,6 +4946,7 @@ static void shiftClickPack(PlayerSession& session, int index) {
             worn = stack;
             stack = old;
         }
+        audioPlayAt(SFX_EQUIP, session.body.centreX(), session.body.centreY(), 0.45f);
         return;
     }
 
@@ -5188,7 +5266,14 @@ static void applyPlayerAction(const NetAction& action) {
     else if (action.type == NACT_CRAFT && action.a < N_RECIPES) {
         craftScanStations(g_world, session.body);
         const int count = imax(1, imin(50, (int)action.b));
-        for (int i = 0; i < count; ++i) if (!craftMake(session.inventory, action.a)) break;
+        bool crafted = false;
+        for (int i = 0; i < count; ++i) {
+            if (!craftMake(session.inventory, action.a)) break;
+            crafted = true;
+        }
+        if (crafted) audioPlayAt(RECIPES[action.a].station == STATION_HAND
+                                    ? SFX_UI_CRAFT : SFX_STATION_CRAFT,
+                                  session.body.centreX(), session.body.centreY(), 0.55f);
     } else if (action.type == NACT_CLOSE_DEVICE) {
         session.openDevice = -1;
     } else if (action.type == NACT_DEVICE) {
@@ -5605,6 +5690,9 @@ static void fireToolFor(Player& player, Inventory& inventory, const Aim& aim) {
                                  s.trail, s.seekMouse,
                                  (float)aim.x, (float)aim.y);
     if (!fired) return;
+    audioPlayAt(s.blast > 0 || shotDamage >= 10 ? SFX_TOOL_FIRE_HEAVY
+                                               : SFX_TOOL_FIRE_LIGHT,
+                pcx, pcy, h.item == ITEM_BOLTER ? 0.40f : 0.62f);
     const int firstIndex = projLastSpawnedIndex();
 
     /* --- the companion, when a modifier doubled the volley ----------------
@@ -5702,12 +5790,14 @@ static bool throwGlowflareFor(Player& player, Inventory& inventory, const Aim& a
 
     const float muzzle = PLAYER_H * 0.5f + 2.0f;
     const float speed = d.shotSpeed > 0.0f ? d.shotSpeed : SHOT_SPEED_DEFAULT;
-    return projSpawn(pcx + dx * muzzle, pcy + dy * muzzle,
-                     dx * speed, dy * speed,
-                     d.power, d.pierce, 90, d.shotColour, d.blast,
-                     MAT_GLOWFLUID, d.damage, false,
-                     d.shotBeam ? 0.0f : PROJ_GRAVITY,
-                     PROJ_EFFECT_GLOWFLARE);
+    const bool thrown = projSpawn(pcx + dx * muzzle, pcy + dy * muzzle,
+                                  dx * speed, dy * speed,
+                                  d.power, d.pierce, 90, d.shotColour, d.blast,
+                                  MAT_GLOWFLUID, d.damage, false,
+                                  d.shotBeam ? 0.0f : PROJ_GRAVITY,
+                                  PROJ_EFFECT_GLOWFLARE);
+    if (thrown) audioPlayAt(SFX_THROW, pcx, pcy, 0.55f);
+    return thrown;
 }
 
 static bool throwGlowflare(const Aim& aim) { return throwGlowflareFor(g_player, g_inv, aim); }
@@ -5737,6 +5827,7 @@ static void placeDeviceStrokeFor(Inventory& inventory, int& previousX, int& prev
                             imax(devTypeW(type), devTypeH(type)) * 2);
         }
         if (devPlace(g_world, type, x, y)) {
+            if (undoSlot == LOCAL_PLAYER_ID) audioPlay(SFX_MACHINE, 0.65f);
             if (undoSlot >= 0) {
                 UndoPlacedDevice placed; memset(&placed, 0, sizeof(placed));
                 placed.torch = type == DEV_TORCH; placed.type = type;
@@ -5858,6 +5949,10 @@ static void applyBrush() {
        not. See ITEM_FLINT. */
     if (g_survival && g_playerOn && g_lmb && !g_rmb && !g_bgLayer
         && !g_inv.held().empty() && ITEMS[g_inv.held().item].kind == ITEMK_IGNITE) {
+        if (!g_useLatch) {
+            audioPlayAt(SFX_FIRE_IGNITE, (float)aim.x, (float)aim.y, 0.55f);
+            g_useLatch = true;
+        }
         g_world.ignite(aim.x, aim.y, IGNITE_RADIUS);
         return;
     }
@@ -5913,9 +6008,21 @@ static void applyBrush() {
         }
         const ToolSpec d = digSpec();
         if (g_digCool <= 0) {
-            digInto(g_world, g_inv, aim.x, aim.y, digRadius(), d.cellsPerBite,
-                    d.plantsOnly, d.power,
-                    g_digFilterOn ? g_digFilterMat : 0);
+            const bool aimedDevice = devAt(aim.x, aim.y) || torchAt(aim.x, aim.y) >= 0;
+            const u8 aimedMat = g_world.at(aim.x, aim.y).mat;
+            const int dug = digInto(g_world, g_inv, aim.x, aim.y, digRadius(), d.cellsPerBite,
+                                    d.plantsOnly, d.power,
+                                    g_digFilterOn ? g_digFilterMat : 0);
+            if (dug > 0) {
+                const SoundId cue = aimedDevice ? SFX_DEVICE_PICKUP
+                    : d.plantsOnly ? SFX_HARVEST
+                    : aimedMat == MAT_ICE ? SFX_ICE_CRACK : SFX_MINE;
+                audioPlay(cue, cue == SFX_MINE ? 0.80f : 1.0f);
+            }
+            else if (!d.plantsOnly && !g_digFilterOn &&
+                     !devAt(aim.x, aim.y) && torchAt(aim.x, aim.y) < 0 &&
+                     (int)g_matStrength[g_world.at(aim.x, aim.y).mat] > d.power)
+                audioPlay(SFX_MINE_TOO_HARD);
             g_digCool = d.cooldown;
         }
         roomsNotifyEdit(g_world, aim.x, aim.y);
@@ -8608,6 +8715,8 @@ static void drawMenu(HDC hdc) {
     drawButton(hdc, g_menuUiValue, uiScaleLabel, NULL, false, false);
     drawButton(hdc, g_menuUiPlus, "+", NULL, g_uiScaleIndex == UI_SCALE_COUNT - 1,
                inRect(g_menuUiPlus, g_mx, g_my));
+    drawButton(hdc, g_menuMute, audioMuted() ? "Sound: muted" : "Sound: on",
+               NULL, audioMuted(), inRect(g_menuMute, g_mx, g_my));
 
     SetTextColor(hdc, netConnected() ? RGB(150, 210, 155) : RGB(176, 182, 194));
     RECT netLine = { g_menuPanel.left + 16, g_menuUiValue.bottom + 9,
@@ -9188,8 +9297,10 @@ static void serverTick(const LARGE_INTEGER& perfFrequency) {
                     PlayerSession& session = g_playerSessions[slot];
                     if (!playerPresent(session)) continue;
                     spawnTurn = (slot + 1) % MAX_PLAYERS;
-                    const int spawnCamX = (int)session.body.centreX() - viewCellsW() / 2;
-                    const int spawnCamY = (int)session.body.centreY() - viewCellsH() / 2;
+                    /* The spawner and light field use the full logical view.
+                       Center that same rectangle at every zoom level. */
+                    const int spawnCamX = (int)session.body.centreX() - VIEW_CELLS_W / 2;
+                    const int spawnCamY = (int)session.body.centreY() - VIEW_CELLS_H / 2;
                     /* Solve the light where the creature would actually appear.
 
                        This used to pass `slot == 0`, so only the host's own
@@ -9207,7 +9318,7 @@ static void serverTick(const LARGE_INTEGER& perfFrequency) {
                        Clobbering the field here is safe because rendering
                        recomputes it for the local camera further down this same
                        frame, and nothing between the two reads it. */
-                    const bool solveLight = entSpawnReady() &&
+                    const bool solveLight = entSpawnReady(g_world, spawnCamX, spawnCamY) &&
                                            solveSpawnLight(spawnCamX, spawnCamY);
                     entSpawnTick(g_world, session.body, spawnCamX, spawnCamY, solveLight);
                     break;
@@ -10175,8 +10286,101 @@ static bool gameFrame(const LARGE_INTEGER& freq) {
 
     LARGE_INTEGER begin, end;
     QueryPerformanceCounter(&begin);
+    const int hpBeforeTick = g_player.hp;
+    const bool aliveBeforeTick = g_player.alive;
+    const bool groundedBeforeTick = g_player.onGround;
+    const int airBeforeTick = g_player.airFrames;
+    const float playerXBeforeTick = g_player.centreX();
+    audioSetListener(g_player.centreX(), g_player.centreY());
     clientInputTick();
     serverTick(freq);
+    if (aliveBeforeTick && !g_player.alive) audioPlay(SFX_PLAYER_DEATH);
+    else if (g_player.hp < hpBeforeTick)
+        audioPlay(SFX_PLAYER_DAMAGE,
+                  hpBeforeTick - g_player.hp < 10 ? 0.30f : 1.0f);
+    else if (g_player.hp > hpBeforeTick) audioPlay(SFX_PLAYER_HEAL);
+    if (!aliveBeforeTick && g_player.alive) audioPlay(SFX_PLAYER_RESPAWN);
+    if (g_player.alive && g_playerOn && g_survival) {
+        const int playerCellX = (int)g_player.centreX();
+        const int playerCellY = (int)g_player.centreY();
+        const u8 bodyMat = g_world.at(playerCellX, playerCellY).mat;
+        const bool inLiquid = MATS[bodyMat].kind == KIND_LIQUID;
+        if (inLiquid && !g_audioInLiquid) audioPlay(SFX_WATER_SPLASH, 0.45f);
+        g_audioInLiquid = inLiquid;
+        if (groundedBeforeTick && !g_player.onGround && g_player.vy < -0.5f)
+            audioPlay(SFX_PLAYER_JUMP, 0.55f);
+        if (!groundedBeforeTick && g_player.onGround && airBeforeTick > 4)
+            audioPlay(g_player.lastFall > 55.0f ? SFX_PLAYER_FALL_HURT : SFX_PLAYER_LAND,
+                      g_player.lastFall > 55.0f ? 0.65f : 0.30f);
+        if (g_player.runningOnGround()) {
+            g_audioStepDistance += fabsf(g_player.centreX() - playerXBeforeTick);
+            if (g_audioStepDistance >= 20.0f) {
+                g_audioStepDistance -= 20.0f;
+                const u8 under = g_world.at((int)g_player.centreX(), g_player.bottom() + 1).mat;
+                const SoundId step = MATS[under].kind == KIND_LIQUID ? SFX_STEP_WET
+                    : g_matConducts[under] ? SFX_STEP_METAL
+                    : MATS[under].kind == KIND_POWDER ? SFX_STEP_EARTH : SFX_STEP_STONE;
+                audioPlay(step, 0.19f);
+            }
+        } else g_audioStepDistance = 0.0f;
+        if (g_player.breath > 0 && g_player.breath < 120)
+            audioPlay(SFX_PLAYER_BREATH_LOW, 0.55f);
+        if (g_player.hurtingHot()) audioPlay(SFX_PLAYER_BURN, 0.38f);
+        if (g_player.hurtingCold()) audioPlay(SFX_PLAYER_FREEZE, 0.38f);
+        if (++g_audioFireFrames >= 12) {
+            g_audioFireFrames = 0;
+            int flames = 0, embers = 0, nearest = 2 * 24 * 24 + 1;
+            int fireX = playerCellX, fireY = playerCellY;
+            for (int dy = -24; dy <= 24; ++dy)
+                for (int dx = -24; dx <= 24; ++dx) {
+                    const int x = playerCellX + dx, y = playerCellY + dy;
+                    if (x < PLAY_X0 || x > PLAY_X1 || y < PLAY_Y0 || y > PLAY_Y1) continue;
+                    const u8 m = g_world.at(x, y).mat;
+                    if (m == MAT_FIRE) ++flames;
+                    else if (m == MAT_EMBER || m == MAT_WOOD_EMBER ||
+                             m == MAT_COKE_EMBER || m == MAT_WAX_EMBER ||
+                             m == MAT_CINDERLING_EMBER) ++embers;
+                    else continue;
+                    const int distance = dx * dx + dy * dy;
+                    if (distance < nearest) {
+                        nearest = distance;
+                        fireX = x; fireY = y;
+                    }
+                }
+            if (flames > 0) {
+                g_audioEmberPulse = 0;
+                audioPlayAt(SFX_FIRE_CRACKLE, (float)fireX, (float)fireY,
+                            0.14f + 0.008f * (float)imin(flames, 14));
+            } else if (embers > 0) {
+                if (g_audioEmberPulse++ % 3 == 0)
+                    audioPlayAt(SFX_FIRE_CRACKLE, (float)fireX, (float)fireY,
+                                0.07f + 0.003f * (float)imin(embers, 14));
+            } else g_audioEmberPulse = 0;
+        }
+        if (++g_audioAmbientFrames >= 480) {
+            g_audioAmbientFrames = 0;
+            SoundId nearby = SFX_COUNT;
+            for (int dy = -16; dy <= 16 && nearby == SFX_COUNT; dy += 4)
+                for (int dx = -16; dx <= 16; dx += 4) {
+                    const int x = playerCellX + dx, y = playerCellY + dy;
+                    if (x < PLAY_X0 || x > PLAY_X1 || y < PLAY_Y0 || y > PLAY_Y1) continue;
+                    const u8 m = g_world.at(x, y).mat;
+                    if (m == MAT_LAVA) { nearby = SFX_LAVA_BUBBLE; break; }
+                    if (m == MAT_ACID) { nearby = SFX_ACID_HISS; break; }
+                }
+            if (nearby != SFX_COUNT) audioPlay(nearby, 0.20f);
+            else {
+                const bool surface = g_world.zoneAt(playerCellX, playerCellY) == ZONE_SKY;
+                audioPlay(surface ? SFX_SURFACE_WIND : SFX_CAVE_DRIP,
+                          surface && isNight() ? 0.22f : 0.13f);
+            }
+        }
+    } else {
+        g_audioInLiquid = false;
+        g_audioFireFrames = 0;
+        g_audioEmberPulse = 0;
+    }
+    audioUpdate();
     syncClientDeviceUi();
     clientCameraTick();
     clientRender(g_hwnd);
@@ -10202,6 +10406,7 @@ static void finishGame() {
     /* After the loop, while the world is still whole. Quitting without saving
        is the likeliest way to lose an evening's work. */
     autosaveOnQuit();
+    audioShutdown();
 
     timeEndPeriod(1);
     SelectObject(g_backDC, g_backOldBmp);
@@ -10332,6 +10537,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR commandLine, int) {
     g_hwnd = hwnd;   /* keyHeld() compares this against the foreground window */
     updatePresentRect(hwnd);
     ShowWindow(hwnd, SW_SHOW);
+    audioInit();
 
     rebuildUiFont();
 

@@ -5,7 +5,7 @@ chat, which meant it was re-derived from memory every session and quietly lost
 things. `HANDOFF.md` is **not** this file: it is gitignored scratch, is usually
 stale, and should not be trusted for release state.
 
-Released: **v0.6.9** (2026-09-23). `main` is level with it.
+Released: **v0.6.10** (2026-09-23). `main` is level with it.
 
 ---
 
@@ -30,6 +30,20 @@ Released: **v0.6.9** (2026-09-23). `main` is level with it.
       both with `CINDERLIFT_RTC_LOG=1` and look in `build/rtc.log`.
 
 ## Ship it
+
+- [x] **Cut v0.6.10.** Creature spawning and the first complete sound pass.
+
+      **Night surfaces and caves have separate spawn allowances.** Enemies
+      stranded below ground no longer fill the outdoor cap; surface walkers
+      arrive more reliably, flyers are limited, and cave pacing remains intact.
+      Husk and mite jumps now require an actual obstacle in front of them.
+      `tests/spawn_balance.cpp` checks arrivals and species mix across seeds.
+
+      **All 106 sound cues have generated WAVs and an embedded fallback.**
+      Mining, combat, footsteps, machines, fire, UI, bosses, and the rocket have
+      event hooks and a normal Windows playback backend. Fire and ember sounds
+      follow nearby burning material. The pause menu has a persistent mute
+      toggle, and `tools/check_sfx.py` validates the audio catalog.
 
 - [x] **Cut v0.6.9.** Tagged 2026-09-23, three commits past v0.6.8. Feel.
 

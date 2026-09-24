@@ -1,6 +1,7 @@
 #include "item.h"
 #include "entity.h"
 #include "material_icon.h"  /* the 21x21 generated art a dropped material is resampled from */
+#include "audio.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -3289,6 +3290,13 @@ int placeFrom(World& w, Inventory& inv, int cx, int cy, int r, int maxCells) {
         const ItemId want = h.item;
         if (inv.take(want, 1) != 1) return put;      /* ran out mid-disc */
         w.setCell(x, y, (u8)want);
+        if (put == 0) {
+            const u8 mat = (u8)want;
+            const SoundId cue = MATS[mat].kind == KIND_LIQUID ? SFX_PLACE_LIQUID
+                : g_matConducts[mat] ? SFX_PLACE_METAL
+                : MATS[mat].kind == KIND_POWDER ? SFX_PLACE_EARTH : SFX_PLACE_STONE;
+            audioPlayAt(cue, (float)x, (float)y, 0.50f);
+        }
         ++put;
     }
     return put;
@@ -3317,6 +3325,7 @@ int overwriteFrom(World& w, Inventory& inv, int cx, int cy, int r, int maxCells,
         const ItemId want = h.item;
         if (inv.take(want, 1) != 1) break;
         w.setCell(x, y, (u8)want);
+        if (put == 0) audioPlayAt(SFX_PLACE_STONE, (float)x, (float)y, 0.45f);
         ++put;
     }
     return put;
@@ -3349,6 +3358,7 @@ int placeBg(World& w, Inventory& inv, int cx, int cy, int r, int maxCells) {
         const ItemId want = h.item;
         if (inv.take(want, 1) != 1) return put;
         w.setBg(x, y, (u8)want, true);
+        if (put == 0) audioPlayAt(SFX_PLACE_STONE, (float)x, (float)y, 0.30f);
         ++put;
     }
     return put;
@@ -3376,6 +3386,7 @@ int digBg(World& w, Inventory& inv, int cx, int cy, int r, int maxCells) {
             if (inv.add((ItemId)b, 1) != 0) continue;   /* pack full: leave it */
         }
         w.clearBg(x, y);
+        if (dug == 0) audioPlayAt(SFX_MINE_BACKGROUND, (float)x, (float)y, 0.42f);
         ++dug;
     }
     return dug;

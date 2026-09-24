@@ -516,7 +516,7 @@ void entTickPlayers(World& w);
    who fired: the caller does, and it is the caller that can see an inventory.
    Zero for everything else, which is almost everything. */
 bool entDamageAt(int x, int y, int damage, bool sparingTame = false,
-                 int poisonFrames = 0);
+                 int poisonFrames = 0, int* damageDealt = 0);
 
 /* Area damage, for explosions. Returns how many creatures were hit. */
 /* --- sparingTame ------------------------------------------------------------
@@ -578,8 +578,9 @@ void entSpawnTick(World& w, const Player& p, int camX, int camY, bool lightField
 /* Whether the next entSpawnTick will actually try to place something rather
    than only tick its cooldown down. Asked so the caller can afford to solve a
    light field for the player being spawned around -- see the call site -- on
-   the one frame in eighty where the answer will be used. */
-bool entSpawnReady();
+   the frames where the answer will be used. Surface arrivals have a longer
+   cooldown than cave arrivals. */
+bool entSpawnReady(const World& w, int camX, int camY);
 
 /* Brightness at or below which a site counts as dark enough to spawn in.
    Torchlight is far above this, so a lit corridor is genuinely clear.
@@ -591,7 +592,9 @@ bool entSpawnReady();
    a second copy of 40 would be a second copy of the only fact that matters. */
 static const int SPAWN_DARK = 40;
 
-/* Creatures alive at once. Small on purpose: these are meant to be a hazard you
+/* Cave creatures alive at once per present player. Surface arrivals also obey
+   a smaller nearby cap and a flyer limit in entity.cpp.
+   Small on purpose: these are meant to be a hazard you
    meet in a tunnel, not a horde. Enough that a dark cavern feels occupied and
    few enough that the contact-damage rules never turn into an unavoidable
    grind.

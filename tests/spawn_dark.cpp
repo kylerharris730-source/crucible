@@ -183,7 +183,7 @@ int main() {
 
         int inside = 0, placed = 0;
         for (int f = 0; f < 40000; ++f) {
-            if (entSpawnReady()) { lightClearDynamic(); lightCompute(w, camX, camY); }
+            if (entSpawnReady(w, camX, camY)) { lightClearDynamic(); lightCompute(w, camX, camY); }
             entSpawnTick(w, p, camX, camY, true);
             for (int k = 0; k < MAX_ENTITIES; ++k) {
                 Entity& e = g_entities[k];

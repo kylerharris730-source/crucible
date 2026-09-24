@@ -32,7 +32,7 @@ VERSION=$(bash scripts/version.sh 2>/dev/null || echo unknown)
 # something the game does not do.
 FLAGS="-std=c++11 -O3 -Wall -Wextra -I src"
 FLAGS="$FLAGS -DCINDERLIFT_VERSION=\"$VERSION\""
-LIBS="-lws2_32"
+LIBS="-lws2_32 -lwinmm"
 
 # network.cpp is held out of the shared set: the mismatch test needs it
 # compiled twice with different build ids, and it is the ONLY file that reads

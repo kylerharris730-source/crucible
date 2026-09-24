@@ -1,4 +1,5 @@
 #include "entity.h"
+#include "audio.h"
 #include "rig.h"
 #include "multiplayer.h"
 #include "device.h"       /* hiveTarget and hiveDeliver, for the round trip */
@@ -783,6 +784,7 @@ u32 g_bossesBeaten = 0;
    beside the rest of the spawn tuning rather than up here. Declared at this
    point only because entReset has to clear it. */
 static int g_spawnCool = 0;
+static int g_surfaceSpawnCool = 0;
 
 void entReset() {
     navReset();
@@ -794,6 +796,7 @@ void entReset() {
        spawn after every Clear, and a test that ran a second scenario would
        measure the tail of the first. */
     g_spawnCool = 0;
+    g_surfaceSpawnCool = 0;
 }
 
 int entAliveCount() {
@@ -997,6 +1000,12 @@ int entSpawn(const World& w, int type, float cx, float cy) {
            A full interval rather than just the charge window, so the creature
            is something you notice before it is something you dodge. */
         if (d.shotEvery > 0) e.shotTimer = d.shotEvery;
+        if (d.isBoss) {
+            const SoundId call = type == ENT_BROOD ? SFX_BOSS_BROOD_CALL
+                : type == ENT_CENSER ? SFX_BOSS_CENSER_CALL
+                : type == ENT_EFFIGY ? SFX_BOSS_EFFIGY_CALL : SFX_BOSS_PHASE;
+            audioPlayAt(call, e.centreX(), e.centreY(), 0.85f);
+        }
         return i;
     }
     return -1;   /* pool full */
@@ -1014,6 +1023,8 @@ int entSpawn(const World& w, int type, float cx, float cy) {
    overwrites the world and never vanishes into a wall. */
 static void entDie(World& w, Entity& e) {
     const EntityDef& d = ENT_DEFS[e.type];
+    audioPlayAt(d.isBoss ? SFX_BOSS_DEFEAT : SFX_ENEMY_DEATH,
+                e.centreX(), e.centreY(), d.isBoss ? 0.95f : 0.50f);
     /* The one fact about a creature that outlives the session. Set BEFORE the
        drop, so a pack too full to hold the Forge Core still counts as having
        beaten her -- the loot is on the floor either way, and "you won but the
@@ -1138,6 +1149,8 @@ void entApplyDamage(Entity& e, int damage) {
     }
     e.hp -= damage;
     e.hurtFlash = 6;
+    audioPlayAt(SFX_ENEMY_HIT, e.centreX(), e.centreY(),
+                damage < 10 ? 0.10f : 0.26f);
 }
 
 /* Refreshed rather than stacked: a second hit restarts the clock and does not
@@ -1147,7 +1160,8 @@ void entPoison(Entity& e, int frames) {
     if (frames > e.poison) e.poison = frames;
 }
 
-bool entDamageAt(int x, int y, int damage, bool sparingTame, int poisonFrames) {
+bool entDamageAt(int x, int y, int damage, bool sparingTame, int poisonFrames,
+                 int* damageDealt) {
     for (int i = 0; i < MAX_ENTITIES; ++i) {
         Entity& e = g_entities[i];
         if (!e.alive()) continue;
@@ -1156,7 +1170,9 @@ bool entDamageAt(int x, int y, int damage, bool sparingTame, int poisonFrames) {
            a bee should not be cover for a mite. */
         if (sparingTame && ENT_DEFS[e.type].tame) continue;
         if (x < e.left() || x > e.right() || y < e.top() || y > e.bottom()) continue;
+        const int hpBefore = e.hp;
         entApplyDamage(e, damage);
+        if (damageDealt) *damageDealt = hpBefore - e.hp;
         entPoison(e, poisonFrames);
         return true;
     }
@@ -1221,7 +1237,47 @@ static float routedDir(Entity& e, const Player& p, bool* climb);
 static void groundChase(Entity& e, const Player& p, float speed, float accel,
                         float standOff, bool* climb);
 
-static void miteTick(Entity& e, const Player& p) {
+/* A route field points toward its next waypoint, which can be uphill long
+   before a walker reaches that rise. Only jump for a wall directly in the
+   walking direction that is too tall for moveAxis's ordinary step-up but low
+   enough for the jump to clear. */
+static const int WALKER_JUMP_COOLDOWN = 120;
+static const int WALKER_JUMP_CLEARANCE = 12;
+static void walkerJumpTick(const World& w, Entity& e, const Player& p,
+                           float impulse) {
+    if (e.actTimer > 0) --e.actTimer;
+    if (!e.onGround || e.actTimer > 0) return;
+
+    const float dx = p.centreX() - e.centreX();
+    if (dx > -0.01f && dx < 0.01f) return;
+    const int dir = dx > 0.0f ? 1 : -1;
+    const EntityDef& d = ENT_DEFS[e.type];
+    const int nextX = (int)(e.x + (float)dir);
+    const int bx = (int)e.x, by = (int)e.y;
+
+    if (!solidBox(w, nextX, by, d.w, d.h)) return;
+    /* moveAxis already steps walkers up by half their height. Let that handle
+       ordinary ledges; hopping there only makes a smooth chase look jittery. */
+    for (int up = 1; up <= d.h / 2; ++up)
+        if (!solidBox(w, nextX, by - up, d.w, d.h)) return;
+
+    /* Do not repeatedly jump at a wall that is too tall, or at an overhang
+       that leaves no room above the creature. */
+    bool canClear = false;
+    for (int up = d.h / 2 + 1; up <= WALKER_JUMP_CLEARANCE; ++up) {
+        if (!solidBox(w, bx, by - up, d.w, d.h) &&
+            !solidBox(w, nextX, by - up, d.w, d.h)) {
+            canClear = true;
+            break;
+        }
+    }
+    if (!canClear) return;
+
+    e.vy = impulse;
+    e.actTimer = WALKER_JUMP_COOLDOWN;
+}
+
+static void miteTick(const World& w, Entity& e, const Player& p) {
     /* It used to CHEW: any rock-strength cell it was pressed against went, a
        bite every fourteen frames, and it was deliberately left unrouted so it
        would keep pressing. Removed on request -- "those beetles chewing through
@@ -1236,21 +1292,8 @@ static void miteTick(Entity& e, const Player& p) {
        tried -- clears eleven, and the mite stood forever at the foot of steps
        the field had told it to climb. */
     const EntityDef& d = ENT_DEFS[e.type];
-    bool climb = false;
-    /* Read BEFORE the chase: moveAxis zeroes vx against a wall, and the chase
-       adds a frame of acceleration straight back onto it. */
-    const bool blocked = e.vx == 0.0f;
-    groundChase(e, p, d.speed, d.accel, 0.0f, &climb);
-    /* And it hops whenever it is simply blocked, whatever the field says --
-       the rule the Spitter already uses. A husk gets up a ten-cell step by
-       walking, because moveAxis lifts a body half its own height; a mite is
-       nine cells tall and is lifted four. The field does not always know such
-       a step is climbable (measured: it had no route up a ten-cell step from
-       the floor beside it, for either size class), so without this a mite
-       stood at the foot of one forever. Against a wall too tall to clear it
-       bounces, which reads as trying, and chewing was the alternative. */
-    if (e.onGround && (climb || blocked))
-        e.vy = -2.2f;
+    groundChase(e, p, d.speed, d.accel, 0.0f, 0);
+    walkerJumpTick(w, e, p, -2.2f);
 }
 
 bool stalkTick(Entity& e, const Player& p, const StalkSpec& spec) {
@@ -1696,18 +1739,10 @@ static void groundChase(Entity& e, const Player& p, float speed, float accel,
     if (e.vx < -speed) e.vx = -speed;
 }
 
-static void huskTick(Entity& e, const Player& p) {
+static void huskTick(const World& w, Entity& e, const Player& p) {
     const EntityDef& d = ENT_DEFS[e.type];
-    bool climb = false;
-    groundChase(e, p, d.speed, d.accel, 0.0f, &climb);
-    /* Hops when the route goes up, and still hops when it is simply stuck with
-       the player overhead. The second clause is the old rule and it stays,
-       because it is the one that covers everything the field cannot see: a
-       creature outside the window, or one wedged on a lip too small to be a
-       node. The whole creature is "it does not stop", and a zombie permanently
-       stuck on a one-cell lip is a zombie that stops. */
-    if (e.onGround && (climb || (e.vx == 0.0f && p.centreY() < e.centreY())))
-        e.vy = -2.2f;
+    groundChase(e, p, d.speed, d.accel, 0.0f, 0);
+    walkerJumpTick(w, e, p, -2.2f);
 }
 
 /* --- the Shambler: drag, lurch, recover -----------------------------------
@@ -2813,6 +2848,7 @@ static void widowTick(World& w, Entity& e, const Player& p) {
     // One visible phase transition, delayed until a committed leap has landed.
     if (wounded && e.aimHold!=1 && e.onGround && e.phase!=WIDOW_LEAP) {
         e.aimHold=1; enter(WIDOW_MOULT,60);
+        audioPlayAt(SFX_BOSS_PHASE, e.centreX(), e.centreY(), 0.8f);
     }
     e.telegraph=0;
     if (e.phase==WIDOW_RECOVER || e.phase==WIDOW_MOULT) {
@@ -2833,9 +2869,11 @@ static void widowTick(World& w, Entity& e, const Player& p) {
         e.telegraph=(web ? WIDOW_SPIT_WINDUP : WIDOW_POUNCE_WIND)-e.actTimer+1;
         if (--e.actTimer>0) return;
         if (web) {
+            audioPlayAt(SFX_BOSS_WIDOW_WEB, e.centreX(), e.centreY(), 0.8f);
             widowSpit(w,e,p);
             enter(WIDOW_RECOVER,wounded ? 42 : 54);
         } else {
+            audioPlayAt(SFX_BOSS_WIDOW_LEAP, e.centreX(), e.centreY(), 0.8f);
             const float air=2.0f*WIDOW_POUNCE_UP/ENT_GRAVITY;
             e.vx=fmaxf(-WIDOW_POUNCE_MAXVX,fminf(WIDOW_POUNCE_MAXVX,(e.aimX-e.centreX())/air));
             e.vy=-WIDOW_POUNCE_UP;
@@ -3714,6 +3752,8 @@ static void effigyCrownTick(World& w, Entity& e, const Player& p) {
 
 static void entTickMode(World& w, Player& fallbackPlayer, Inventory& fallbackInv,
                         bool multiplayer) {
+    static unsigned audioFrame = 0;
+    ++audioFrame;
     /* One search for the whole roster, before anybody moves. Seeded from every
        live player, so in multiplayer a creature routes to whichever of them the
        terrain actually lets it reach rather than to the nearest one as the crow
@@ -3752,6 +3792,36 @@ static void entTickMode(World& w, Player& fallbackPlayer, Inventory& fallbackInv
            it just never runs out. */
         if (ENT_DEFS[e.type].indestructible) e.hp = ENT_DEFS[e.type].hp;
         if (e.hp <= 0) { entDie(w, e); continue; }
+
+        /* One distant identity call per creature about every ten seconds,
+           staggered by slot. Nearby enemies speak; cave-caught ones do not
+           consume voices from across the world. */
+        if ((audioFrame + (unsigned)i * 71u) % 600u == 0u) {
+            SoundId cue = SFX_COUNT;
+            switch (e.type) {
+            case ENT_MITE: cue = SFX_ENEMY_MITE; break;
+            case ENT_MOTH: cue = SFX_ENEMY_MOTH; break;
+            case ENT_SLIME: cue = SFX_ENEMY_SLIME; break;
+            case ENT_HUSK: cue = SFX_ENEMY_HUSK; break;
+            case ENT_BAT: cue = SFX_ENEMY_BAT; break;
+            case ENT_SPITTER: cue = SFX_ENEMY_SPITTER; break;
+            case ENT_SHAMBLER: cue = SFX_ENEMY_SHAMBLER; break;
+            case ENT_THRESHER: cue = SFX_ENEMY_THRESHER; break;
+            case ENT_CULVERIN: cue = SFX_ENEMY_CULVERIN; break;
+            case ENT_WISP: cue = SFX_ENEMY_WISP; break;
+            case ENT_STOOPER: cue = SFX_ENEMY_STOOPER; break;
+            case ENT_SKIRMISHER: cue = SFX_ENEMY_SKIRMISHER; break;
+            case ENT_ASHHOUND: cue = SFX_ENEMY_ASHHOUND; break;
+            case ENT_EMBERWING: cue = SFX_ENEMY_EMBERWING; break;
+            case ENT_SLAGMAW: cue = SFX_ENEMY_SLAGMAW; break;
+            case ENT_CINDERLING: cue = SFX_ENEMY_CINDERLING; break;
+            case ENT_BEE: cue = SFX_BEE_BUZZ; break;
+            case ENT_COAL_BEE: cue = SFX_COAL_BEE_BUZZ; break;
+            default: break;
+            }
+            if (cue != SFX_COUNT)
+                audioPlayAt(cue, e.centreX(), e.centreY(), 0.38f);
+        }
 
         /* The gait advances by however far the creature actually got last
            frame -- see Entity::walkPhase. Read before this frame's movement
@@ -3827,10 +3897,10 @@ static void entTickMode(World& w, Player& fallbackPlayer, Inventory& fallbackInv
         }
 
         switch (e.type) {
-        case ENT_MITE:    miteTick(e, p);       break;
+        case ENT_MITE:    miteTick(w, e, p);    break;
         case ENT_MOTH:    mothTick(w, e, p);    break;
         case ENT_SLIME:   slimeTick(w, e, p);   break;
-        case ENT_HUSK:    huskTick(e, p);       break;
+        case ENT_HUSK:    huskTick(w, e, p);    break;
         case ENT_BAT:     batTick(w, e, p);     break;
         case ENT_SPITTER: spitterTick(w, e, p); break;
         case ENT_BROOD:   broodTick(w, e, p);   break;
@@ -4009,7 +4079,10 @@ int entHitSegment(float x0, float y0, float x1, float y1,
         const float hw = e.width() * 0.5f, hh = e.height() * 0.5f;
         if (nx < cx - hw || nx > cx + hw || ny < cy - hh || ny > cy + hh) continue;
 
+        const int hpBefore = e.hp;
         entApplyDamage(e, damage);
+        audioPlayAt(SFX_MELEE_HIT, cx, cy,
+                    hpBefore - e.hp < 10 ? 0.15f : 0.38f);
         entPoison(e, poisonFrames);
         if (knockback > 0.0f) {
             float kx = cx - fromX, ky = cy - fromY;
@@ -4089,17 +4162,17 @@ int entDamageKnockbackDisc(int cx, int cy, int radius, int damage,
    below, which is a clock. */
 static const int SPAWN_TRIES = 20;
 
-/* Frames between spawns, whatever the probes find. This is the whole of the
-   pacing: a cavern now reaches the cap in about five seconds instead of a sixth
-   of one, and creatures arrive one at a time, which is what "somewhere
-   gradually becoming occupied" has to mean if it means anything.
-
-   A single global clock rather than per-creature or per-site cooldowns, because
-   what wants limiting is the RATE THE PLAYER EXPERIENCES, and the player
-   experiences one world. Reset on a successful spawn only -- frames where every
-   probe was rejected cost nothing and should not bank credit toward a burst the
-   moment you step into somewhere dark. */
+/* Cave pacing stays at one arrival per 80 frames. Surface arrivals use a
+   shorter, separate timer so being outdoors cannot slow an underground player.
+   Both habitat caps scale with connected players, while the nearby surface
+   limits keep an open night from becoming a horde. */
 static const int SPAWN_COOL = 80;
+static const int SPAWN_SURFACE_COOL = 120;
+static const int SPAWN_SURFACE_MAX = 6;
+static const int SPAWN_SURFACE_FLYERS = 1;
+/* Cave creatures keep their seven-per-player cap. Give the night surface its
+   own allowance, so enemies stranded in nearby caves cannot use every slot. */
+static const int SPAWN_SURFACE_ALIVE = 7;
 /* Cells of clearance kept around the player, so nothing appears in your lap
    even if the camera happens to be looking elsewhere. Comfortably more than
    half the view's height. */
@@ -4118,13 +4191,18 @@ static const int SPAWN_DROP = 48;
 static const int SPAWN_LOCAL_R   = 220;
 static const int SPAWN_LOCAL_MAX = 3;
 
-static int crowdingNear(float x, float y) {
+static int crowdingNear(const World& w, float x, float y,
+                        int radius = SPAWN_LOCAL_R, bool flyersOnly = false,
+                        bool surfaceOnly = false) {
     int n = 0;
     for (int i = 0; i < MAX_ENTITIES; ++i) {
         const Entity& e = g_entities[i];
         if (!e.alive() || ENT_DEFS[e.type].isBoss || ENT_DEFS[e.type].tame) continue;
+        if (flyersOnly && !ENT_DEFS[e.type].flies) continue;
+        const u8 zone = w.zoneAt((int)e.centreX(), (int)e.centreY());
+        if (surfaceOnly && zone != ZONE_SKY) continue;
         const float dx = e.centreX() - x, dy = e.centreY() - y;
-        if (dx * dx + dy * dy <= (float)(SPAWN_LOCAL_R * SPAWN_LOCAL_R)) ++n;
+        if (dx * dx + dy * dy <= (float)(radius * radius)) ++n;
     }
     return n;
 }
@@ -4133,25 +4211,59 @@ static int crowdingNear(float x, float y) {
    because they are summoned rather than spawned and a boss in the room must not
    stop the cave around it from being occupied -- nor count toward a cap that
    would then let her suppress her own brood. */
-static int entSpawnedCount() {
+static int entSpawnedCount(const World& w, bool surface) {
     int n = 0;
     for (int i = 0; i < MAX_ENTITIES; ++i) {
         const Entity& e = g_entities[i];
-        if (e.alive() && !ENT_DEFS[e.type].isBoss && !ENT_DEFS[e.type].tame) ++n;
+        if (e.alive() && !ENT_DEFS[e.type].isBoss && !ENT_DEFS[e.type].tame &&
+            (w.zoneAt((int)e.centreX(), (int)e.centreY()) == ZONE_SKY) == surface) ++n;
     }
     return n;
 }
 
-bool entSpawnReady() { return g_spawnCool <= 0; }
+bool entSpawnReady(const World& w, int camX, int camY) {
+    /* entSpawnTick decrements the counters before testing candidates. A value
+       of one is ready on this very tick and needs a fresh light field. */
+    const bool caveReady = g_spawnCool <= 1;
+    const bool surfaceReady = isNight() && g_surfaceSpawnCool <= 1;
+    if (!caveReady && !surfaceReady) return false;
+    /* Lighting is solved only when a ready habitat occurs in the padded view.
+       Looking only at the player's own zone misses cave mouths at the edge. */
+    const int x0 = imax(PLAY_X0, camX - LIGHT_MARGIN_CELLS) >> CHUNK_SHIFT;
+    const int x1 = imin(PLAY_X1, camX + VIEW_CELLS_W + LIGHT_MARGIN_CELLS) >> CHUNK_SHIFT;
+    const int y0 = imax(PLAY_Y0, camY - LIGHT_MARGIN_CELLS) >> CHUNK_SHIFT;
+    const int y1 = imin(PLAY_Y1, camY + VIEW_CELLS_H + LIGHT_MARGIN_CELLS) >> CHUNK_SHIFT;
+    for (int cy = y0; cy <= y1; ++cy)
+        for (int cx = x0; cx <= x1; ++cx) {
+            const bool surface = w.zone[cy * CHUNKS_X + cx] == ZONE_SKY;
+            if (surface ? surfaceReady : caveReady) return true;
+        }
+    return false;
+}
 
 void entSpawnTick(World& w, const Player& p, int camX, int camY, bool lightFieldValid) {
-    if (g_spawnCool > 0) { --g_spawnCool; return; }
+    if (g_surfaceSpawnCool > 0) --g_surfaceSpawnCool;
+    if (g_spawnCool > 0) --g_spawnCool;
+    if (g_spawnCool > 0 && (g_surfaceSpawnCool > 0 || !isNight())) return;
     int connected = 0;
     for (int slot = 0; slot < MAX_PLAYERS; ++slot)
         if (playerPresent(g_playerSessions[slot])) ++connected;
     if (connected < 1) connected = 1;
-    if (entSpawnedCount() >= ENT_MAX_ALIVE * connected) return;
-
+    const int nearby = crowdingNear(w, p.centreX(), p.centreY(), ENT_DESPAWN_DIST,
+                                    false, true);
+    const int nearbyFlyers = crowdingNear(w, p.centreX(), p.centreY(), ENT_DESPAWN_DIST,
+                                          true, true);
+    /* lightCompute aligns its anchor to a light sample. An unaligned camera
+       leaves up to three fewer measured cells at the right/bottom edges. */
+    const int fieldX0 = lightFieldValid ? g_lightAnchorX : camX - LIGHT_MARGIN_CELLS;
+    const int fieldY0 = lightFieldValid ? g_lightAnchorY : camY - LIGHT_MARGIN_CELLS;
+    const int fieldX1 = fieldX0 + LIGHT_CELLS_W;
+    const int fieldY1 = fieldY0 + LIGHT_CELLS_H;
+    /* Keep the chosen species while searching for its site. Rerolling it for
+       every failed probe makes empty air vote for flyers twenty times while
+       a Husk only gets the few points within reach of a floor. Each zone has
+       its own choice so a camera crossing a cave layer still uses its roster. */
+    int chosen[ZONE_COUNT] = {};
     for (int attempt = 0; attempt < SPAWN_TRIES; ++attempt) {
         /* Drawn from the padded light rectangle, then rejected if it lands on
            screen -- rather than sampling the margin's four arms directly, which
@@ -4168,23 +4280,13 @@ void entSpawnTick(World& w, const Player& p, int camX, int camY, bool lightField
         const int x = camX + lx, y = camY + ly;
         if (x < PLAY_X0 + 2 || x > PLAY_X1 - 2 || y < PLAY_Y0 + 2 || y > PLAY_Y1 - 2) continue;
 
-        const float pdx = (float)x - p.centreX(), pdy = (float)y - p.centreY();
-        if (pdx * pdx + pdy * pdy < (float)(SPAWN_MIN_DIST * SPAWN_MIN_DIST)) continue;
-
-        /* Somewhere already busy is not where the next one should appear. */
-        if (crowdingNear((float)x, (float)y) >= SPAWN_LOCAL_MAX) continue;
-
-        /* --- dark? --------------------------------------------------------
-           The light buffer is only meaningful when lighting is actually being
-           computed; with it switched off the array holds whatever was last
-           written, possibly for a different camera position, and reading it
-           would be reading stale numbers as if they were a measurement. So when
-           it is off, fall back to the zone alone -- underground is dark, the
-           surface is dark at night -- which is the same answer the light field
-           gives everywhere except within a few dozen cells of a torch. */
+        /* Without a freshly solved light field, use the zone/night fallback.
+           The live game solves lighting even when its display is switched off. */
         const u8 zone = w.zoneAt(x, y);
         const bool surface = (zone == ZONE_SKY);
-        if (surface && !isNight()) continue;
+        if (zone >= ZONE_COUNT) continue;
+        if (surface ? (!isNight() || g_surfaceSpawnCool > 0)
+                    : g_spawnCool > 0) continue;
         /* The darkness and ownership tests USED to be here, on the probe
            point, and that was the bug behind "enemies still spawned in my lit
            house". A walker does not appear at the probe: it falls up to
@@ -4202,17 +4304,25 @@ void entSpawnTick(World& w, const Player& p, int camX, int camY, bool lightField
            occupy. See the note there. */
 
         /* --- which creature? ---------------------------------------------- */
-        const int layer = surface ? 0 : caveLayerOf(zone);
-        int pick[ENT_COUNT], np = 0;
-        for (int t = ENT_NONE + 1; t < ENT_COUNT; ++t) {
-            const EntityDef& d = ENT_DEFS[t];
-            if (d.isBoss) continue;   /* summoned, never found */
-            if (surface) { if (!d.surfaceAtNight) continue; }
-            else if (!(d.layerMask & (1 << layer))) continue;
-            pick[np++] = t;
+        if (!chosen[zone]) {
+            const int layer = caveLayerOf(zone);
+            int pick[ENT_COUNT * 2], np = 0;
+            for (int t = ENT_NONE + 1; t < ENT_COUNT; ++t) {
+                const EntityDef& candidate = ENT_DEFS[t];
+                if (candidate.isBoss || candidate.tame) continue;
+                if (surface) {
+                    if (!candidate.surfaceAtNight || nearby >= SPAWN_SURFACE_MAX) continue;
+                    if (candidate.flies && nearbyFlyers >= SPAWN_SURFACE_FLYERS) continue;
+                } else if (!(candidate.layerMask & (1 << layer))) continue;
+                pick[np++] = t;
+                /* Surface encounters should mostly approach along the ground.
+                   Equal odds between the two walkers; no special Husk quota. */
+                if (surface && !candidate.flies) pick[np++] = t;
+            }
+            chosen[zone] = np ? pick[rngNext() % (u32)np] : -1;
         }
-        if (!np) continue;
-        const int type = pick[rngNext() % (u32)np];
+        const int type = chosen[zone];
+        if (type < 0) continue;
         const EntityDef& d = ENT_DEFS[type];
 
         /* --- room to stand? -----------------------------------------------
@@ -4231,11 +4341,58 @@ void entSpawnTick(World& w, const Player& p, int camX, int camY, bool lightField
            That is the same intent -- do not spawn a walker in a chimney -- but
            it asks a question the world can usually answer. */
         if (!d.flies) {
+            /* Outdoors the sky can be hundreds of cells high. Search down to
+               the edge of the measured light field, stopping at the first
+               floor, rather than making ground enemies win a 48-cell lottery.
+               Caves keep their existing short drop search. */
+            const int maxDrop = surface
+                ? fieldY1 - (by + d.h)
+                : SPAWN_DROP;
             int drop = 0;
-            while (drop <= SPAWN_DROP &&
+            while (drop <= maxDrop &&
                    !solidBox(w, bx, by + d.h, d.w, 1, SOLID_FLOOR)) { ++by; ++drop; }
-            if (drop > SPAWN_DROP) continue;
+            if (drop > maxDrop) continue;
         }
+        /* All spatial rules apply to the finished box, after finding ground.
+           The old probe checks allowed a walker to drop into view or into a
+           crowd, and could read darkness beyond the light field's coverage. */
+        if (bx < PLAY_X0 || by < PLAY_Y0 || bx + d.w > PLAY_X1 || by + d.h > PLAY_Y1) continue;
+        if (bx < fieldX0 || by < fieldY0 ||
+            bx + d.w > fieldX1 || by + d.h > fieldY1) continue;
+        if (bx < camX + VIEW_CELLS_W && bx + d.w > camX &&
+            by < camY + VIEW_CELLS_H && by + d.h > camY) continue;
+        const float cx = (float)bx + d.w * 0.5f, cy = (float)by + d.h * 0.5f;
+        const float pdx = cx - p.centreX(), pdy = cy - p.centreY();
+        const float distSq = pdx * pdx + pdy * pdy;
+        if (distSq < (float)(SPAWN_MIN_DIST * SPAWN_MIN_DIST) ||
+            distSq > (float)(ENT_DESPAWN_DIST * ENT_DESPAWN_DIST)) continue;
+        /* A site off this player's screen may be right in front of a friend.
+           Use the full logical view for peers too, independent of local zoom. */
+        bool seenByPeer = false;
+        for (int slot = 0; slot < MAX_PLAYERS && !seenByPeer; ++slot) {
+            const PlayerSession& session = g_playerSessions[slot];
+            if (!playerPresent(session) || &session.body == &p) continue;
+            const Player& peer = session.body;
+            const float dx = cx - peer.centreX(), dy = cy - peer.centreY();
+            const int vx = (int)peer.centreX() - VIEW_CELLS_W / 2;
+            const int vy = (int)peer.centreY() - VIEW_CELLS_H / 2;
+            seenByPeer = dx * dx + dy * dy < (float)(SPAWN_MIN_DIST * SPAWN_MIN_DIST) ||
+                (bx < vx + VIEW_CELLS_W && bx + d.w > vx &&
+                 by < vy + VIEW_CELLS_H && by + d.h > vy);
+        }
+        if (seenByPeer) continue;
+        if (crowdingNear(w, cx, cy) >= SPAWN_LOCAL_MAX) continue;
+        const u8 finalZone = w.zoneAt((int)cx, (int)cy);
+        if (finalZone >= ZONE_COUNT) continue;
+        const bool finalSurface = finalZone == ZONE_SKY;
+        const int habitatCap = (finalSurface ? SPAWN_SURFACE_ALIVE : ENT_MAX_ALIVE) * connected;
+        if (entSpawnedCount(w, finalSurface) >= habitatCap) continue;
+        if (finalSurface) {
+            if (!isNight() || g_surfaceSpawnCool > 0 ||
+                !d.surfaceAtNight || nearby >= SPAWN_SURFACE_MAX) continue;
+            if (d.flies && nearbyFlyers >= SPAWN_SURFACE_FLYERS) continue;
+        } else if (g_spawnCool > 0 ||
+                   !(d.layerMask & (1 << caveLayerOf(finalZone)))) continue;
         if (solidBox(w, bx, by, d.w, d.h)) continue;
         if (liquidBox(w, bx, by, d.w, d.h)) continue;
         if (!d.flies && !solidBox(w, bx, by + d.h, d.w, 1, SOLID_FLOOR)) continue;
@@ -4284,8 +4441,9 @@ void entSpawnTick(World& w, const Player& p, int camX, int camY, bool lightField
             if (near) continue;
         }
 
-        if (entSpawn(w, type, (float)(bx + d.w / 2), (float)(by + d.h / 2)) >= 0) {
-            g_spawnCool = SPAWN_COOL;
+        if (entSpawn(w, type, cx, cy) >= 0) {
+            if (finalSurface) g_surfaceSpawnCool = SPAWN_SURFACE_COOL;
+            else g_spawnCool = SPAWN_COOL;
             return;                                   /* one a frame, at most */
         }
     }
