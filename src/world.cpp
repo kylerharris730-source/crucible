@@ -1,5 +1,6 @@
 #include "world.h"
 #include <string.h>
+#include <math.h>
 
 /* The lane pool is Win32, and the browser build has no threads to pool.
    web/win32.h shims the drawing slice of Win32 and nothing else, so this is
@@ -517,8 +518,19 @@ static const int GAS_RISE_RUN = 4;
 static const int COMBUSTION_RISE_RUN = 1;
 
 static inline int gasRiseRun(u8 mat) {
-    return (mat == MAT_FIRE || mat == MAT_PLASMA)
+    return (mat == MAT_FIRE || mat == MAT_PLASMA || mat == MAT_COKE_GAS)
          ? COMBUSTION_RISE_RUN : GAS_RISE_RUN;
+}
+
+/* Out of 255, how many of its turns in open air a light gas spends rising
+   at all; the rest it wanders unbiased, like a gas as dense as air. Every
+   gas takes every turn except coke gas, which is only a shade lighter than
+   air: asked for "slightly less dense than air so it does rise away
+   slowly". A lighter-than-air density alone would have bought it steam's
+   four-cell climb on every turn; a one-cell climb (above) on a quarter of
+   its turns measured at about 0.12 cells a frame, against steam's 0.44. */
+static inline u8 gasRiseChance(u8 mat) {
+    return mat == MAT_COKE_GAS ? 64 : 255;
 }
 static const int FLUID_CONVECTION_REACH       = 3;
 static const int WAX_CONVECTION_REACH         = 1;
@@ -615,6 +627,7 @@ void World::reset(bool rollTint) {
     activeChunks = 0;
     clearDirty(cur);
     clearDirty(next);
+    windReset();
 
     for (int x = 0; x < SIM_W; ++x) {
         cells[x].mat = MAT_WALL;
@@ -2501,10 +2514,435 @@ bool World::updateGasPressure(Lane& L, int x, int y) {
     return true;
 }
 
+/* ======================================================================
+   Wind
+
+   A coarse velocity field over the cell grid, one sample per WIND_CELL x
+   WIND_CELL block, that gases are carried along. It is not what makes a gas
+   rise -- updateGas still lifts anything in open air on its own, exactly as
+   before -- it is what a rising gas does to the air AROUND it: a plume drags
+   air up its middle, air has to come in underneath to replace it and go out
+   sideways at the top, and that returning flow is what curls the edge of a
+   plume over and pulls smoke in from the side. Without it every parcel does
+   its own independent random walk, and a cloud's outline is whatever the
+   diffusion table and the chunk grid make it, which is where the square look
+   came from.
+
+   Stable fluids on a collocated grid, the cheap version: buoyancy in,
+   semi-Lagrangian advection, a few Gauss-Seidel sweeps of pressure to take
+   the divergence out, and a little vorticity confinement to put back the
+   swirl a grid this coarse smears away. The field is advisory: gases read it
+   (windDrift), nothing else does, and it never moves a cell by itself.
+
+   Cost is bounded the way everything else here is. A chunk's wind runs only
+   while gas is being simulated in it and for WIND_LINGER frames after, plus
+   a one-chunk halo so a draught can reach past the edge of the smoke. A chunk
+   that falls asleep has its wind zeroed rather than frozen: still air is the
+   right thing to find when you come back, and it makes a sleeping chunk an
+   open, pressure-free boundary for its awake neighbours.
+
+   Serial and float, once per step before the scan. The scan only READS the
+   field, so every stripe sees the same wind and the world still steps the
+   same at any thread count.
+   ====================================================================== */
+/* Nominal density of air on the material scale. A gas lighter than this
+   lifts the air it sits in; a heavier one (mercury vapour) drags it down. */
+static const int   WIND_AIR_DENSITY   = 12;
+/* Lift per density unit of a gas parcel, and per degree above ambient of any
+   open cell, in cells/frame^2 on the block the sample landed in.
+
+   Tuned by eye on a steam vent in a box (plume shots at frames 200-600).
+   A tenth of this and the field was there but did nothing you could see --
+   the plume was the same rigid column as with no wind at all. Half again as
+   much and the updraft pinched the stem into a one-block jet. Here the plume
+   necks in at the vent and opens into a rounded head, which is the shape a
+   real one has. */
+static const float WIND_GAS_LIFT      = 0.020f;
+static const float WIND_HEAT_LIFT     = 0.0010f;
+/* How far each frame's row of samples pulls a block's smoothed sources
+   toward what it saw: about ten rows of memory, so a sparse plume's lift is
+   steady rather than flickering block to block. */
+static const float WIND_SAMPLE_BLEND  = 0.10f;
+static const float WIND_DAMP          = 0.96f;
+static const float WIND_MAX           = 2.0f;   /* cells per frame */
+/* Kept small on purpose. Confinement amplifies whatever curl there is, and at
+   0.25 that was mostly the sampling noise: neighbouring blocks pointed every
+   which way and the field read as static rather than flow. */
+static const float WIND_SWIRL         = 0.05f;
+static const float WIND_VISCOSITY     = 0.5f;
+static const int   WIND_PRESSURE_ITERS = 10;
+static const u8    WIND_LINGER        = 90;
+/* How closely a gas parcel follows the air it is in: 1 moves it at the
+   wind's own speed, on average. */
+static const float WIND_GAS_DRIFT     = 1.0f;
+
+/* Staggered by a cache line each, for the reason given at WIND_PITCH. */
+static float g_windTX[WIND_N + 16], g_windTY[WIND_N + 32], g_windDiv[WIND_N + 48];
+static int   g_windList[CHUNK_COUNT];
+/* Set by updateGas for the chunk a parcel is in. Written from the stripes,
+   but only ever to 1, and two stripes running at once never share a chunk. */
+static u8    g_windWant[CHUNK_COUNT];
+static int   g_windListN = 0;
+
+static inline u32 windHash(u32 a, u32 b, u32 c) {
+    u32 h = a * 0x8DA6B343u ^ b * 0xD8163841u ^ c * 0xCB1AB31Fu;
+    h ^= h >> 15; h *= 0x2C1B3C6Du;
+    h ^= h >> 12; h *= 0x297A2D39u;
+    h ^= h >> 15;
+    return h;
+}
+
+static inline int windClampX(int ax) { return ax < 0 ? 0 : (ax >= WIND_W ? WIND_W - 1 : ax); }
+static inline int windClampY(int ay) { return ay < 0 ? 0 : (ay >= WIND_H ? WIND_H - 1 : ay); }
+
+/* Every wind cell of the awake chunks g_windList[lo..hi), with its four
+   neighbours (clamped at the world edge) as l, r, u, d. */
+#define FOR_EACH_WIND_CELL(...)                                               \
+    for (int wl_ = lo; wl_ < hi; ++wl_) {                                     \
+        const int ci_ = g_windList[wl_];                                      \
+        const int ax0_ = (ci_ % CHUNKS_X) * WIND_PER_CHUNK;                   \
+        const int ay0_ = (ci_ / CHUNKS_X) * WIND_PER_CHUNK;                   \
+        for (int ay = ay0_; ay < ay0_ + WIND_PER_CHUNK; ++ay)                 \
+            for (int ax = ax0_; ax < ax0_ + WIND_PER_CHUNK; ++ax) {           \
+                const int w = ay * WIND_PITCH + ax;                           \
+                const int l = ay * WIND_PITCH + windClampX(ax - 1);           \
+                const int r = ay * WIND_PITCH + windClampX(ax + 1);           \
+                const int u = windClampY(ay - 1) * WIND_PITCH + ax;           \
+                const int d = windClampY(ay + 1) * WIND_PITCH + ax;           \
+                (void)l; (void)r; (void)u; (void)d;                           \
+                __VA_ARGS__                                                   \
+            }                                                                 \
+    }
+
+/* floor(), without a truncating cast. The game is a 32-bit x87 build, and
+   there (int)f has to switch the FPU's rounding mode to truncate and switch it
+   back -- two control-word loads that drain the pipeline. Measured, it was
+   85 ns a bilinear sample, three quarters of the whole wind update, and the
+   same again for every gas parcel reading the wind. lrintf rounds in the mode
+   the FPU is already in, and one compare turns that into a floor. */
+static inline int windFloor(float f) {
+    const int i = (int)lrintf(f);
+    return (float)i > f ? i - 1 : i;
+}
+
+/* Bilinear, in wind-cell coordinates, clamped at the edge of the world. */
+static inline float windSample(const float* f, float fx, float fy) {
+    if (fx < 0.0f) fx = 0.0f; else if (fx > (float)(WIND_W - 1)) fx = (float)(WIND_W - 1);
+    if (fy < 0.0f) fy = 0.0f; else if (fy > (float)(WIND_H - 1)) fy = (float)(WIND_H - 1);
+    int x0 = windFloor(fx), y0 = windFloor(fy);
+    if (x0 > WIND_W - 2) x0 = WIND_W - 2;
+    if (y0 > WIND_H - 2) y0 = WIND_H - 2;
+    const float tx = fx - (float)x0, ty = fy - (float)y0;
+    const float* r0 = f + y0 * WIND_PITCH + x0;
+    const float* r1 = r0 + WIND_PITCH;
+    const float a = r0[0] + (r0[1] - r0[0]) * tx;
+    const float b = r1[0] + (r1[1] - r1[0]) * tx;
+    return a + (b - a) * ty;
+}
+
+/* What one block contributes: how open it is, and how hard it lifts. One
+   row of the block a frame, blended in -- a row is eight adjacent cells, two
+   cache lines between cells and temp, where eight scattered cells were eight
+   misses and most of this function's time. The row is hashed, so a block is
+   read all over within a few frames without a sweep anyone could see. Or
+   every row, when its chunk wakes and there is nothing to blend with. */
+void World::windSources(int ax, int ay, bool full) {
+    const int bx = ax << WIND_SHIFT, by = ay << WIND_SHIFT;
+    const int row0 = full ? 0 : (int)(windHash((u32)ax, (u32)ay, frame) & (WIND_CELL - 1));
+    const int rows = full ? WIND_CELL : 1;
+    const int count = rows * WIND_CELL;
+    float lift = 0.0f;
+    int open = 0;
+    for (int ry = row0; ry < row0 + rows; ++ry) {
+        const int i0 = (by + ry) * SIM_W + bx;
+        for (int k = 0; k < WIND_CELL; ++k) {
+            const int i = i0 + k;
+            const MatInfo& m = MATS[cells[i].mat];
+            if (m.kind != KIND_EMPTY && m.kind != KIND_GAS) continue;
+            ++open;
+            lift += (float)((int)temp[i] - AMBIENT_TEMP) * WIND_HEAT_LIFT;
+            if (m.kind == KIND_GAS)
+                lift += (float)(WIND_AIR_DENSITY - (int)m.density) * WIND_GAS_LIFT;
+        }
+    }
+    const int w = ay * WIND_PITCH + ax;
+    const float o = (float)open / (float)count, l = lift / (float)count;
+    if (full) { windOpen[w] = o; windLift[w] = l; }
+    else {
+        windOpen[w] += (o - windOpen[w]) * WIND_SAMPLE_BLEND;
+        windLift[w] += (l - windLift[w]) * WIND_SAMPLE_BLEND;
+    }
+}
+
+void World::windChunkClear(int ci) {
+    const int ax0 = (ci % CHUNKS_X) * WIND_PER_CHUNK, ay0 = (ci / CHUNKS_X) * WIND_PER_CHUNK;
+    for (int ay = ay0; ay < ay0 + WIND_PER_CHUNK; ++ay)
+        for (int ax = ax0; ax < ax0 + WIND_PER_CHUNK; ++ax) {
+            const int w = ay * WIND_PITCH + ax;
+            windVX[w] = windVY[w] = windP[w] = windLift[w] = 0.0f;
+            windOpen[w] = 1.0f;
+            /* The curl pass reads its neighbours' scratch, awake or not. */
+            g_windTX[w] = g_windTY[w] = g_windDiv[w] = 0.0f;
+        }
+}
+
+void World::windWake(int ci) {
+    if (!windAwake[ci]) {
+        const int ax0 = (ci % CHUNKS_X) * WIND_PER_CHUNK, ay0 = (ci / CHUNKS_X) * WIND_PER_CHUNK;
+        for (int ay = ay0; ay < ay0 + WIND_PER_CHUNK; ++ay)
+            for (int ax = ax0; ax < ax0 + WIND_PER_CHUNK; ++ax) windSources(ax, ay, true);
+    }
+    /* +1 because updateWind counts every awake chunk down before it runs. */
+    windAwake[ci] = (u8)(WIND_LINGER + 1);
+}
+
+void World::windReset() {
+    memset(windVX, 0, sizeof(windVX));
+    memset(windVY, 0, sizeof(windVY));
+    memset(windP, 0, sizeof(windP));
+    memset(windLift, 0, sizeof(windLift));
+    for (int i = 0; i < WIND_N; ++i) windOpen[i] = 1.0f;
+    memset(windAwake, 0, sizeof(windAwake));
+    memset(g_windTX, 0, sizeof(g_windTX));
+    memset(g_windTY, 0, sizeof(g_windTY));
+    memset(g_windDiv, 0, sizeof(g_windDiv));
+    /* The last full pass's chunk list belongs to the world that was here. */
+    memset(g_chunkSim, 0, sizeof(g_chunkSim));
+    memset(g_windWant, 0, sizeof(g_windWant));
+    g_windListN = 0;
+    windChunks = 0;
+}
+
+/* Every gas parcel calls this every frame, so it is kept to integer maths.
+   Block centres sit between cells 8k+3 and 8k+4, so a cell's position
+   relative to the centres below it is (x - 4) >> 3 with a fraction that can
+   only be one of eight values; both components share the one set of weights.
+   Measured on a cloud of steam, the float version -- two clamped bilinear
+   samples with four float-to-int conversions -- cost more CPU than the whole
+   wind solve. */
+static const float WIND_FRAC[WIND_CELL] = {
+    0.0625f, 0.1875f, 0.3125f, 0.4375f, 0.5625f, 0.6875f, 0.8125f, 0.9375f };
+
+void World::windAt(int x, int y, float& vx, float& vy) const {
+    const int qx = x - WIND_CELL / 2, qy = y - WIND_CELL / 2;
+    int x0 = qx >> WIND_SHIFT, y0 = qy >> WIND_SHIFT;
+    float tx = WIND_FRAC[qx & (WIND_CELL - 1)], ty = WIND_FRAC[qy & (WIND_CELL - 1)];
+    if (x0 < 0) { x0 = 0; tx = 0.0f; } else if (x0 > WIND_W - 2) { x0 = WIND_W - 2; tx = 1.0f; }
+    if (y0 < 0) { y0 = 0; ty = 0.0f; } else if (y0 > WIND_H - 2) { y0 = WIND_H - 2; ty = 1.0f; }
+    const int i = y0 * WIND_PITCH + x0;
+    const float w00 = (1.0f - tx) * (1.0f - ty), w10 = tx * (1.0f - ty);
+    const float w01 = (1.0f - tx) * ty,          w11 = tx * ty;
+    vx = windVX[i] * w00 + windVX[i + 1] * w10 + windVX[i + WIND_PITCH] * w01 + windVX[i + WIND_PITCH + 1] * w11;
+    vy = windVY[i] * w00 + windVY[i + 1] * w10 + windVY[i + WIND_PITCH] * w01 + windVY[i + WIND_PITCH + 1] * w11;
+}
+
+void World::pushWind(int cx, int cy, int r, float vx, float vy) {
+    const int ax0 = windClampX((cx - r) >> WIND_SHIFT), ax1 = windClampX((cx + r) >> WIND_SHIFT);
+    const int ay0 = windClampY((cy - r) >> WIND_SHIFT), ay1 = windClampY((cy + r) >> WIND_SHIFT);
+    for (int ay = ay0; ay <= ay1; ++ay)
+        for (int ax = ax0; ax <= ax1; ++ax) {
+            windWake((ay / WIND_PER_CHUNK) * CHUNKS_X + ax / WIND_PER_CHUNK);
+            const int w = ay * WIND_PITCH + ax;
+            windVX[w] += vx * windOpen[w];
+            windVY[w] += vy * windOpen[w];
+        }
+}
+
+/* Below this many awake chunks per thread, the pool is not worth waking. */
+static const int WIND_CHUNKS_PER_JOB = 12;
+static volatile LONG g_windBarCount = 0, g_windBarGen = 0;
+struct WindJob { World* w; int jobs; };
+static void windJobEntry(void* ctx, int job) {
+    const WindJob* j = (const WindJob*)ctx;
+    j->w->windSolve(job, j->jobs);
+}
+
+void World::updateWind() {
+    /* --- which chunks have wind --------------------------------------------
+       Chunks where a gas parcel took a turn last frame (see g_windWant), each
+       with its eight neighbours; every awake chunk counts down, and is zeroed
+       at 0. It used to be every simulated chunk, and a poured pool of water
+       paid 0.7 ms a frame for a field nothing in it would ever read: only
+       gases follow the wind, so only gas needs one. */
+    for (int cy = 0; cy < CHUNKS_Y; ++cy)
+        for (int cx = 0; cx < CHUNKS_X; ++cx) {
+            u8& want = g_windWant[cy * CHUNKS_X + cx];
+            if (!want) continue;
+            want = 0;
+            for (int ny = imax(0, cy - 1); ny <= imin(CHUNKS_Y - 1, cy + 1); ++ny)
+                for (int nx = imax(0, cx - 1); nx <= imin(CHUNKS_X - 1, cx + 1); ++nx)
+                    windWake(ny * CHUNKS_X + nx);
+        }
+    g_windListN = 0;
+    for (int ci = 0; ci < CHUNK_COUNT; ++ci) {
+        if (!windAwake[ci]) continue;
+        if (--windAwake[ci] == 0) { windChunkClear(ci); continue; }
+        g_windList[g_windListN++] = ci;
+    }
+    windChunks = g_windListN;
+    if (!g_windListN) return;
+
+    /* One job per thread, or just this one when there is too little wind to
+       be worth waking the pool for. Every phase below writes only its own
+       blocks and the pressure sweep is red-black, so the field comes out the
+       same however the list is split -- and the world still steps the same
+       at any thread count. */
+    int jobs = simWorkers() + 1;
+    if (g_windListN < jobs * WIND_CHUNKS_PER_JOB) jobs = imax(1, g_windListN / WIND_CHUNKS_PER_JOB);
+    if (jobs <= 1) { windSolve(0, 1); return; }
+    WindJob job = { this, jobs };
+    g_windBarCount = 0;
+    simParallel(jobs, windJobEntry, &job);
+}
+
+/* A barrier between phases of one wind solve, spun rather than slept on.
+   A parallel dispatch costs about 22 us at 12 threads and the solve has two
+   dozen phases, so a dispatch per phase would have spent more than the
+   split saved; a spin across threads that are all already running costs a
+   microsecond or two. Safe only because simParallel is given exactly one job
+   per thread: every job is running before any can pass the first barrier,
+   so none is ever waiting on a thread that is itself stuck in a barrier. */
+static void windBarrier(int jobs) {
+    if (jobs <= 1) return;
+    const LONG gen = g_windBarGen;
+    if (InterlockedIncrement(&g_windBarCount) == jobs) {
+        g_windBarCount = 0;
+        InterlockedIncrement(&g_windBarGen);
+        return;
+    }
+    int spins = 0;
+    while (g_windBarGen == gen) {
+        if (++spins < 4000) {
+#if defined(__i386__) || defined(__x86_64__)
+            __asm__ __volatile__("rep; nop");   /* PAUSE; spelled out for old headers */
+#endif
+        }
+        else { SwitchToThread(); spins = 0; }
+    }
+}
+
+void World::windSolve(int job, int jobs) {
+    const int lo = g_windListN * job / jobs, hi = g_windListN * (job + 1) / jobs;
+
+    /* --- sources ----------------------------------------------------------- */
+    FOR_EACH_WIND_CELL(
+        windSources(ax, ay, false);
+        windVY[w] -= windLift[w];
+    )
+    windBarrier(jobs);
+
+    /* Vorticity confinement: find the curl, then push at right angles to the
+       direction from weak curl toward strong. It puts back the eddies the
+       coarse grid would otherwise damp to nothing. */
+    FOR_EACH_WIND_CELL(
+        g_windDiv[w] = 0.5f * ((windVY[r] - windVY[l]) - (windVX[d] - windVX[u]));
+    )
+    windBarrier(jobs);
+    FOR_EACH_WIND_CELL(
+        const float gx = 0.5f * (fabsf(g_windDiv[r]) - fabsf(g_windDiv[l]));
+        const float gy = 0.5f * (fabsf(g_windDiv[d]) - fabsf(g_windDiv[u]));
+        const float inv = 1.0f / (sqrtf(gx * gx + gy * gy) + 1e-5f);
+        const float c = g_windDiv[w] * WIND_SWIRL;
+        g_windTX[w] = windVX[w] + gy * inv * c;
+        g_windTY[w] = windVY[w] - gx * inv * c;
+    )
+    windBarrier(jobs);
+
+    /* --- advection: each block takes the velocity from upstream ------------
+       From the scratch into the field, and the viscosity pass goes back the
+       other way, so the two buffers ping-pong with no copy phase. */
+    FOR_EACH_WIND_CELL(
+        const float fx = (float)ax - g_windTX[w] * (1.0f / WIND_CELL);
+        const float fy = (float)ay - g_windTY[w] * (1.0f / WIND_CELL);
+        windVX[w] = windSample(g_windTX, fx, fy);
+        windVY[w] = windSample(g_windTY, fx, fy);
+    )
+    windBarrier(jobs);
+    /* Viscosity: each block moves a little toward its neighbours' average.
+       Without it the grid-scale noise from sampling one row a frame
+       survives, and neighbouring blocks point every which way instead of
+       flowing together. */
+    FOR_EACH_WIND_CELL(
+        const float k = WIND_DAMP * windOpen[w];
+        const float ax4 = 0.25f * (windVX[l] + windVX[r] + windVX[u] + windVX[d]);
+        const float ay4 = 0.25f * (windVY[l] + windVY[r] + windVY[u] + windVY[d]);
+        g_windTX[w] = (windVX[w] + (ax4 - windVX[w]) * WIND_VISCOSITY) * k;
+        g_windTY[w] = (windVY[w] + (ay4 - windVY[w]) * WIND_VISCOSITY) * k;
+    )
+    windBarrier(jobs);
+
+    /* --- projection: take the divergence out -------------------------------
+       Air neither piles up nor thins out, so what flows into a block has to
+       flow out of it, and that constraint is what turns a straight updraft
+       into a plume with inflow at its foot. A neighbour's openness is its
+       weight, which makes a wall the Neumann boundary: no flow through it and
+       no pressure from it. Pressure is kept between frames, so a steady plume
+       starts every solve already near its answer.
+
+       The velocity is in the scratch now and the field's own arrays are free
+       until the last phase, so windVX holds each block's inverse total weight
+       and the sweeps multiply rather than divide. */
+    FOR_EACH_WIND_CELL(
+        g_windDiv[w] = 0.5f * ((g_windTX[r] - g_windTX[l]) + (g_windTY[d] - g_windTY[u]));
+        const float ws = windOpen[l] + windOpen[r] + windOpen[u] + windOpen[d];
+        windVX[w] = ws > 0.01f ? 1.0f / ws : 0.0f;
+    )
+    windBarrier(jobs);
+    /* Red-black: a block's four neighbours are all the other colour, so one
+       colour's sweep reads only what the other wrote. That is what lets the
+       sweep split across threads with no order to depend on. */
+    for (int it = 0; it < WIND_PRESSURE_ITERS; ++it)
+        for (int colour = 0; colour < 2; ++colour) {
+            FOR_EACH_WIND_CELL(
+                if (((ax + ay) & 1) != colour) continue;
+                windP[w] = (windOpen[l] * windP[l] + windOpen[r] * windP[r] +
+                            windOpen[u] * windP[u] + windOpen[d] * windP[d] - g_windDiv[w]) * windVX[w];
+            )
+            windBarrier(jobs);
+        }
+    FOR_EACH_WIND_CELL(
+        float vx = (g_windTX[w] - 0.5f * (windP[r] - windP[l])) * windOpen[w];
+        float vy = (g_windTY[w] - 0.5f * (windP[d] - windP[u])) * windOpen[w];
+        const float s2 = vx * vx + vy * vy;
+        if (s2 > WIND_MAX * WIND_MAX) {
+            const float k = WIND_MAX / sqrtf(s2);
+            vx *= k; vy *= k;
+        }
+        windVX[w] = vx; windVY[w] = vy;
+    )
+}
+#undef FOR_EACH_WIND_CELL
+
+/* A gas parcel in open air takes a step along the wind, with a chance per
+   axis equal to the wind's speed on that axis -- so on average it moves at
+   the wind's velocity, and a gentle draught is an occasional nudge rather
+   than a conveyor. The field is bilinear between block centres, so two
+   neighbouring parcels feel almost the same wind and nothing lines up on the
+   8-cell grid. */
+bool World::windDrift(Lane& L, int x, int y) {
+    float vx, vy;
+    windAt(x, y, vx, vy);
+    vx *= WIND_GAS_DRIFT; vy *= WIND_GAS_DRIFT;
+    const float ax = fabsf(vx), ay = fabsf(vy);
+    if (ax < 0.02f && ay < 0.02f) return false;
+    const u32 rnd = lrand(L);
+    const int sx = ((float)(rnd & 0xFFFFu) < ax * 65536.0f) ? (vx > 0.0f ? 1 : -1) : 0;
+    const int sy = ((float)(rnd >> 16)     < ay * 65536.0f) ? (vy > 0.0f ? 1 : -1) : 0;
+    if (!sx && !sy) return false;
+    if (tryMove(L, x, y, x + sx, y + sy)) return true;
+    if (sx && sy) {
+        const bool xFirst = ax >= ay;
+        if (tryMove(L, x, y, xFirst ? x + sx : x, xFirst ? y : y + sy)) return true;
+        if (tryMove(L, x, y, xFirst ? x : x + sx, xFirst ? y + sy : y)) return true;
+    }
+    return false;
+}
+
 void World::updateGas(Lane& L, int x, int y) {
     Cell& c = cells[y * SIM_W + x];
     const MatInfo& m = MATS[c.mat];
 
+    g_windWant[(y >> CHUNK_SHIFT) * CHUNKS_X + (x >> CHUNK_SHIFT)] = 1;
     if (updateGasPressure(L, x, y)) return;
 
     /* A submerged bubble gets one upward step per turn, but that step may be
@@ -2526,6 +2964,10 @@ void World::updateGas(Lane& L, int x, int y) {
         }
         if (tryMove(L, x, y, x, y - 1)) return;
     }
+
+    /* Carried by the air it is in, before any of its own moves. See windDrift.
+       Not under liquid: a bubble is in water, not in the wind. */
+    if (aboveKind != KIND_LIQUID && windDrift(L, x, y)) return;
 
     /* --- diffusion --------------------------------------------------------
        Before trying to rise, a gas has a per-material chance of taking one step
@@ -2571,6 +3013,15 @@ void World::updateGas(Lane& L, int x, int y) {
        of the queue nine turns in ten: a stream of bubbles from one point on
        a pool floor spread twice as wide at the source as it should. It waits
        for the bubble above to move, or rises diagonally below. */
+    /* Only a gas LIGHTER than air rises by itself. One as dense as air (Coke
+       Gas) or denser (mercury vapour) has no climb of its own in open air: it
+       diffuses evenly, spreads sideways, and goes where the wind takes it --
+       and a denser one's negative lift makes that wind a downdraught. Under a
+       liquid every gas is still a bubble, since all of them are lighter than
+       water. */
+    const u8 riseChance = gasRiseChance(c.mat);
+    const bool buoyant = aboveKind == KIND_LIQUID ||
+        (m.density < WIND_AIR_DENSITY && (riseChance == 255 || lchance(L, riseChance)));
     const bool queued = aboveKind == KIND_GAS &&
         (MATS[cells[y * SIM_W + x - 1].mat].kind == KIND_LIQUID ||
          MATS[cells[y * SIM_W + x + 1].mat].kind == KIND_LIQUID);
@@ -2584,7 +3035,10 @@ void World::updateGas(Lane& L, int x, int y) {
         /* The first 13 are level or upward, so restricting a submerged bubble
            to that prefix is the whole guard -- no second table. */
         const int span = (aboveKind == KIND_LIQUID) ? 13 : 19;
-        const int k = (int)(lrand(L) % (u32)span);
+        /* Dropping the first entry leaves six up, six level, six down: the
+           same walk with no bias, for a gas that does not rise. */
+        const int k = buoyant ? (int)(lrand(L) % (u32)span)
+                              : 1 + (int)(lrand(L) % 18u);
         if (tryMove(L, x, y, x + DIFFUSE_DX[k], y + DIFFUSE_DY[k])) return;
     }
 
@@ -2594,7 +3048,7 @@ void World::updateGas(Lane& L, int x, int y) {
        still go one cell at a time through the tryMove below, which is what
        keeps the displacement rules that make a bubble behave in charge of a
        bubble. */
-    {
+    if (buoyant) {
         const int riseRun = gasRiseRun(c.mat);
         int top = y;
         for (int s = 1; s <= riseRun; ++s) {
@@ -2607,12 +3061,12 @@ void World::updateGas(Lane& L, int x, int y) {
     }
 
     /* A mirror of updateLiquid with the vertical sense flipped. */
-    if (tryMove(L, x, y, x, y - 1)) return;
+    if (buoyant && tryMove(L, x, y, x, y - 1)) return;
     if (updateConvection(L, x, y)) return;
 
     int dx = (c.flags & F_DIR) ? 1 : -1;
-    if (tryMove(L, x, y, x + dx, y - 1)) return;
-    if (tryMove(L, x, y, x - dx, y - 1)) return;
+    if (buoyant && tryMove(L, x, y, x + dx, y - 1)) return;
+    if (buoyant && tryMove(L, x, y, x - dx, y - 1)) return;
 
     for (int attempt = 0; attempt < 2; ++attempt) {
         int moveFromX = x, moveToX = x;
@@ -4158,6 +4612,7 @@ void simParallel(int count, void (*fn)(void* ctx, int job), void* ctx) {
 
 void World::step() {
     dirtyLogInit();
+    updateWind();
     for (int k = 1; k < FLUID_SUBSTEPS; ++k) scanPass(true);
     scanPass(false);
     ++frame;

@@ -691,6 +691,21 @@ struct Chunk {
     i32 minX, minY, maxX, maxY;   /* inclusive; empty when minX > maxX */
 };
 
+/* The wind grid: one velocity per WIND_CELL x WIND_CELL block of cells, four
+   blocks to a chunk side. See the Wind section of world.cpp. */
+static const int WIND_SHIFT     = 3;
+static const int WIND_CELL      = 1 << WIND_SHIFT;          /* 8 */
+static const int WIND_W         = SIM_W >> WIND_SHIFT;
+static const int WIND_H         = SIM_H >> WIND_SHIFT;
+/* Rows are padded, and the arrays in World are staggered by a cache line
+   each. Unpadded, a row was exactly 2 KB and every array exactly 576 pages,
+   so a block, the blocks above and below it, and the same block in all seven
+   arrays fell into the same few cache sets and evicted one another: the
+   solver ran at about 90 ns a block for maybe 30 of arithmetic. */
+static const int WIND_PITCH     = WIND_W + 8;
+static const int WIND_N         = WIND_PITCH * WIND_H;
+static const int WIND_PER_CHUNK = CHUNK >> WIND_SHIFT;
+
 struct World {
     Cell  cells[SIM_W * SIM_H];
     /* Temperature lives in its own array rather than inside Cell: it keeps
@@ -725,6 +740,23 @@ struct World {
        its turn in the full one. */
     u32   pass;
     int   activeChunks;           /* stat, for the HUD */
+
+    /* --- wind -------------------------------------------------------------
+       A coarse velocity field, in cells per frame, that gases drift along.
+       Not saved: it is a few seconds of air movement and rebuilds itself from
+       the heat and gas it is sampled from. See the Wind section of world.cpp. */
+    /* Indexed ay * WIND_PITCH + ax; the tails are the stagger. */
+    float windVX[WIND_N + 16], windVY[WIND_N + 32];
+    float windP[WIND_N + 48];     /* pressure, the solver's warm start */
+    float windLift[WIND_N + 64];  /* smoothed buoyancy, cells/frame^2 upward */
+    float windOpen[WIND_N + 80];  /* smoothed fraction of the block air can cross */
+    u8    windAwake[CHUNK_COUNT]; /* frames of wind left; 0 = still, and zeroed */
+    int   windChunks;             /* stat, for the HUD */
+    /* The wind at a cell, interpolated between block centres. */
+    void  windAt(int x, int y, float& vx, float& vy) const;
+    /* Add velocity to every block touching the square of radius r around a
+       cell, waking it. For explosions, fans, a brush. */
+    void  pushWind(int cx, int cy, int r, float vx, float vy);
 
     /* --- the live window -------------------------------------------------
        Chunks outside this rectangle are not simulated at all. Everything in
@@ -1116,6 +1148,17 @@ private:
     void updateLiquid(Lane& L, int x, int y);
     void updateGas(Lane& L, int x, int y);
     bool updateGasPressure(Lane& L, int x, int y);
+    bool windDrift(Lane& L, int x, int y);
+    void updateWind();
+public:
+    /* One thread's share of a wind solve. Public only because the pool's job
+       entry calls it; nothing else should. */
+    void windSolve(int job, int jobs);
+private:
+    void windSources(int ax, int ay, bool full);
+    void windWake(int ci);
+    void windChunkClear(int ci);
+    void windReset();
     bool displaceGasForLiquid(Lane& L, int sx, int sy, int tx, int ty);
     void updateFilterFluid(Lane& L, int x, int y);
     bool moveFilterFluid(Lane& L, int sx, int sy, int tx, int ty);

@@ -34,6 +34,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <math.h>
 
 #include "../common.h"
 #include "../materials.h"
@@ -198,6 +199,11 @@ static bool g_bgLayer  = false;
 
 static int  g_mx = 0, g_my = 0;
 static bool g_lmb = false, g_rmb = false;
+/* Middle-drag blows on the air: the drag's direction and speed are pushed
+   into the wind field under the brush. W draws the field over the world. */
+static bool g_mmb = false;
+static int  g_wmx = -1, g_wmy = -1;
+static bool g_showWind = false;
 static bool g_uiCapture = false;  /* the press landed on the panel */
 static int  g_pmx = -1, g_pmy = -1;   /* previous stroke point, in cells */
 
@@ -292,7 +298,12 @@ static RECT g_palArea, g_palTrack, g_palThumb;
 static RECT g_sizeTrack, g_sizeThumb;
 static RECT g_speedRect[N_SPEED];
 static RECT g_scaleRect[N_SCALE];
-static RECT g_viewRect[VIEW_COUNT];
+/* A fourth view beside the three the renderer knows: the world dimmed, with
+   the wind drawn over it. Local to this front-end -- the renderer's views are
+   shared with the game, and this one is a tuning instrument. */
+static const int VIEW_AIR = VIEW_COUNT;
+static const int PL_VIEW_COUNT = VIEW_COUNT + 1;
+static RECT g_viewRect[PL_VIEW_COUNT];
 static RECT g_bgRect, g_overwriteRect, g_pauseRect, g_stepRect, g_clearRect;
 static int  g_palScroll = 0, g_palMaxScroll = 0;
 static int  g_statsTop  = 0;
@@ -353,9 +364,9 @@ static void layoutPanel() {
         SetRect(&g_scaleRect[i], pad + segW * i / N_SCALE, y,
                 pad + segW * (i + 1) / N_SCALE - 3, y + h);
     y += pitch + 14;
-    for (int i = 0; i < VIEW_COUNT; ++i)
-        SetRect(&g_viewRect[i], pad + segW * i / VIEW_COUNT, y,
-                pad + segW * (i + 1) / VIEW_COUNT - 3, y + h);
+    for (int i = 0; i < PL_VIEW_COUNT; ++i)
+        SetRect(&g_viewRect[i], pad + segW * i / PL_VIEW_COUNT, y,
+                pad + segW * (i + 1) / PL_VIEW_COUNT - 3, y + h);
     y += pitch + 6;
 
     /* Two rows of paired buttons. */
@@ -454,9 +465,9 @@ static void drawPanel(HDC hdc) {
     for (int i = 0; i < N_SCALE; ++i)
         drawButton(hdc, g_scaleRect[i], SCALES[i].label, NULL, i == g_scaleIdx,
                    inRect(g_scaleRect[i], g_mx, g_my));
-    static const char* VIEW_LABEL[VIEW_COUNT] = { "Normal", "Material", "Heat" };
+    static const char* VIEW_LABEL[PL_VIEW_COUNT] = { "Normal", "Material", "Heat", "Air" };
     drawText(hdc, 10, g_viewRect[0].top - 15, RGB(178, 186, 198), "View");
-    for (int i = 0; i < VIEW_COUNT; ++i)
+    for (int i = 0; i < PL_VIEW_COUNT; ++i)
         drawButton(hdc, g_viewRect[i], VIEW_LABEL[i], NULL, i == g_view,
                    inRect(g_viewRect[i], g_mx, g_my));
 
@@ -498,6 +509,14 @@ static void drawStats(HDC hdc) {
         const char* name = (c.mat == MAT_EMPTY) ? "Air" : MATS[c.mat].name;
         sprintf(s, "%s  %+d C", name, t);
         drawText(hdc, 10, y, RGB(196, 204, 216), s);
+    }
+    y += 15;
+    {
+        float vx = 0.0f, vy = 0.0f;
+        if (aimCell(&ax, &ay)) g_world.windAt(ax, ay, vx, vy);
+        sprintf(s, "wind %+.2f %+.2f   %d chunks%s", vx, vy, g_world.windChunks,
+                (g_showWind || g_view == VIEW_AIR) ? "" : "   (W overlay)");
+        drawText(hdc, 10, y, RGB(150, 158, 170), s);
     }
     y += 15;
 
@@ -547,7 +566,7 @@ static bool handlePanelClick(int mx, int my) {
         if (inRect(g_speedRect[i], mx, my)) { g_speedIdx = i; return true; }
     for (int i = 0; i < N_SCALE; ++i)
         if (inRect(g_scaleRect[i], mx, my)) { setScale(i); return true; }
-    for (int i = 0; i < VIEW_COUNT; ++i)
+    for (int i = 0; i < PL_VIEW_COUNT; ++i)
         if (inRect(g_viewRect[i], mx, my)) { g_view = i; return true; }
     if (inRect(g_overwriteRect, mx, my)) { g_overwrite = !g_overwrite; return true; }
     if (inRect(g_bgRect, mx, my))        { g_bgLayer = !g_bgLayer; return true; }
@@ -581,6 +600,73 @@ static void applyBrush() {
     g_pmx = ax; g_pmy = ay;
 }
 
+/* A drag's own velocity, in cells a frame, becomes the wind under the brush.
+   Scaled down and capped so a flick is a gust rather than a hurricane; the
+   solver clamps anything faster anyway. */
+static void applyWind() {
+    int ax, ay;
+    if (!g_mmb || !aimCell(&ax, &ay)) { g_wmx = -1; return; }
+    if (g_wmx >= 0) {
+        const float k = 0.15f;
+        float dx = (float)(ax - g_wmx) * k, dy = (float)(ay - g_wmy) * k;
+        const float m = sqrtf(dx * dx + dy * dy);
+        if (m > 0.6f) { dx *= 0.6f / m; dy *= 0.6f / m; }
+        if (m > 0.0f) g_world.pushWind(ax, ay, g_brushRadius, dx, dy);
+    }
+    g_wmx = ax; g_wmy = ay;
+}
+
+/* Speed to colour for the Air view: deep blue for a breath, through cyan and
+   yellow, to white at half a cell a frame and up. Typical plume speeds are a
+   tenth to a third of a cell a frame, which is the middle of the ramp. */
+static u32 windColour(float sp) {
+    const float t = sp * 2.0f > 1.0f ? 1.0f : sp * 2.0f;
+    int r, g, b;
+    if (t < 0.33f)      { const float k = t / 0.33f;          r = 30;                    g = (int)(80 + 150 * k);  b = 255; }
+    else if (t < 0.66f) { const float k = (t - 0.33f) / 0.33f; r = (int)(30 + 225 * k);   g = 230;                  b = (int)(255 - 205 * k); }
+    else                { const float k = (t - 0.66f) / 0.34f; r = 255;                   g = (int)(230 + 25 * k);  b = (int)(50 + 205 * k); }
+    return 0xFF000000u | ((u32)r << 16) | ((u32)g << 8) | (u32)b;
+}
+
+/* The wind field as strokes from each block's centre, drawn into the cell
+   buffer so it scales with the view. As an overlay (W) the strokes are short
+   and only where there is wind. In the Air view they are longer, coloured by
+   speed with a bright head so direction reads at a glance, and every block
+   gets a dot, so still air is visibly still rather than just missing. */
+static void drawWind(u32* px, int w, int h, bool airView) {
+    const int ax0 = PLAY_ORIGIN_X >> WIND_SHIFT, ay0 = PLAY_ORIGIN_Y >> WIND_SHIFT;
+    const int ax1 = (PLAY_ORIGIN_X + w - 1) >> WIND_SHIFT, ay1 = (PLAY_ORIGIN_Y + h - 1) >> WIND_SHIFT;
+    for (int ay = ay0; ay <= ay1; ++ay)
+        for (int ax = ax0; ax <= ax1; ++ax) {
+            const int wi = ay * WIND_PITCH + ax;
+            const float vx = g_world.windVX[wi], vy = g_world.windVY[wi];
+            const float sp = sqrtf(vx * vx + vy * vy);
+            const int cx = (ax << WIND_SHIFT) + WIND_CELL / 2 - PLAY_ORIGIN_X;
+            const int cy = (ay << WIND_SHIFT) + WIND_CELL / 2 - PLAY_ORIGIN_Y;
+            if (cx < 0 || cy < 0 || cx >= w || cy >= h) continue;
+            if (airView) px[cy * w + cx] = 0xFF3A4254u;
+            if (sp < (airView ? 0.005f : 0.01f)) continue;
+            const int len = airView ? imin(14, 2 + (int)(sp * 24.0f))
+                                    : imax(1, imin(12, (int)(sp * 4.0f + 0.5f)));
+            u32 col;
+            if (airView) col = windColour(sp);
+            else {
+                const int g = imin(255, 120 + (int)(sp * 160.0f));
+                col = 0xFF000000u | ((u32)imin(255, (int)(sp * 200.0f)) << 16) | ((u32)g << 8) | 0xFFu;
+            }
+            const float ux = vx / sp, uy = vy / sp;
+            for (int t = 0; t <= len; ++t) {
+                const int x = cx + (int)(ux * (float)t + (ux < 0 ? -0.5f : 0.5f));
+                const int y = cy + (int)(uy * (float)t + (uy < 0 ? -0.5f : 0.5f));
+                if (x < 0 || y < 0 || x >= w || y >= h) break;
+                /* The tail at half brightness, the last two cells full: an
+                   arrowhead without the cost of drawing one. */
+                px[y * w + x] = (!airView || t >= len - 1) ? col
+                              : 0xFF000000u | ((col >> 1) & 0x7F7F7Fu);
+            }
+        }
+}
+
 static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
     case WM_DESTROY: g_running = false; return 0;
@@ -607,6 +693,16 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         g_palDragging = false;
         if (!g_rmb) { g_uiCapture = false; g_pmx = -1; ReleaseCapture(); }
         return 0;
+    case WM_MBUTTONDOWN:
+        g_mx = (short)LOWORD(lp); g_my = (short)HIWORD(lp);
+        g_mmb = true;
+        SetCapture(hwnd);
+        return 0;
+    case WM_MBUTTONUP:
+        g_mmb = false;
+        g_wmx = -1;
+        if (!g_lmb && !g_rmb) ReleaseCapture();
+        return 0;
     case WM_RBUTTONUP:
         g_rmb = false;
         if (!g_lmb) { g_uiCapture = false; g_pmx = -1; ReleaseCapture(); }
@@ -631,7 +727,8 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case VK_OEM_PERIOD: g_stepOnce = true; g_paused = true; break;
         case VK_OEM_4: changeBrushRadius(-2); break;   /* [ */
         case VK_OEM_6: changeBrushRadius(2);  break;   /* ] */
-        case 'V': g_view = (g_view + 1) % VIEW_COUNT; break;
+        case 'V': g_view = (g_view + 1) % PL_VIEW_COUNT; break;
+        case 'W': g_showWind = !g_showWind; break;
         case 'C': buildWorld(); setStatus("World cleared"); break;
         case '1': case '2': case '3':
             setScale((int)wp - '1');
@@ -695,8 +792,21 @@ static void present(HWND hwnd, const LARGE_INTEGER& freq) {
     LARGE_INTEGER drawBegin, drawEnd;
     QueryPerformanceCounter(&drawBegin);
     const ScaleDef& s = SCALES[g_scaleIdx];
-    g_cellCount = renderView(g_world, g_cells, g_view, PLAY_ORIGIN_X, PLAY_ORIGIN_Y, false,
+    g_cellCount = renderView(g_world, g_cells, g_view == VIEW_AIR ? (int)VIEW_MATERIAL : g_view,
+                             PLAY_ORIGIN_X, PLAY_ORIGIN_Y, false,
                              s.cellsW, s.cellsH);
+    if (g_view == VIEW_AIR) {
+        /* The world at a third, so the wind is what you see and the world is
+           only where it is. */
+        const int n = s.cellsW * s.cellsH;
+        for (int i = 0; i < n; ++i) {
+            const u32 c = g_cells[i];
+            g_cells[i] = 0xFF000000u | (((c >> 2) & 0x3F3F3Fu) + ((c >> 3) & 0x1F1F1Fu));
+        }
+        drawWind(g_cells, s.cellsW, s.cellsH, true);
+    } else if (g_showWind) {
+        drawWind(g_cells, s.cellsW, s.cellsH, false);
+    }
 
     const u32* src = g_cells;
     int srcW = s.cellsW, srcH = s.cellsH;
@@ -847,6 +957,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         QueryPerformanceCounter(&tWorkBegin);
 
         applyBrush();
+        applyWind();
 
         LARGE_INTEGER simBegin, simEnd;
         QueryPerformanceCounter(&simBegin);

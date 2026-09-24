@@ -74,6 +74,7 @@ void renderMaterialIcon(int m, u32* p) {
     case MAT_COKE: form=ROCK; base=0x637989; break;
     case MAT_COKE_EMBER: form=FLAME; break;
     case MAT_CINDERLING_EMBER: form=FLAME; break;
+    case MAT_COKE_GAS_EMBER: form=FLAME; break;
     case MAT_FUEL: form=PILE; base=0x475846; break;
     case MAT_CLAY: form=ROCK; base=0xAB806C; break;
     case MAT_WEB: form=WEB; break;

@@ -340,12 +340,21 @@ MatInfo MATS[MAT_COUNT] = {
      are the same substance and ought to look like it.) */
   { "Mercury",KIND_LIQUID,250,   0,    0,   5,   0,   0,  0,  240,  1,   0,   0, degC(-30), MAT_MERCURY_ICE, degC(150), MAT_MERCURY_GAS, 0, MAT_EMPTY, 0, 0xAAB3BC, 0xAAB3BC, 0xAAB3BC, 0xAAB3BC, 0 },
 
-  /* Mercury vapour condenses at 180 C, twenty degrees under mercury's boiling
+  /* Mercury vapour condenses at 100 C, fifty degrees under mercury's boiling
      point. That gap is hysteresis, the same trick stone/lava and water/ice
      use, and here it is doing the actual work of a still: a cell has to be
-     carried a clear twenty degrees away from the boiler before it commits to
-     the other phase, so vapour survives the trip to a cold surface instead of
-     flickering back the moment it leaves the heat.
+     carried well away from the boiler before it commits to the other phase,
+     so vapour survives the trip to a cold surface instead of flickering back
+     the moment it leaves the heat.
+
+     The gap has to clear LATENT_HEAT (30) first, because boiling takes that
+     off the new vapour: at 130 C, mercury boiled at 150 was born at 120 and
+     condensed on its next turn. Conductivity is Steam's 5 for the same
+     reason. At 20 the vapour handed its heat to the surrounding air four
+     times as fast as steam does; measured on a heated puddle, every vapour
+     cell was gone within 60 frames of the heat going off. At 5, about nine
+     in ten are still there 400 frames later. More thermal mass was tried
+     first and bought only a few dozen frames.
 
      Density 20 against steam's 8, so mercury vapour rides BELOW steam when
      both are present -- the two separate out on their own, which is the whole
@@ -354,7 +363,7 @@ MatInfo MATS[MAT_COUNT] = {
      spawnTemp has to sit above the condensation point or a hand-placed cell
      would turn straight back into a droplet on its first frame and the brush
      would look broken. Same reasoning as ice's cold spawn. */
-  { "HgVapour",KIND_GAS,   20,   0,    0,   5, 200,   0,  0,   20,  0,   0, degC(150), degC(130), MAT_MERCURY, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, 0xCED3DA, 0xA7ADB6, 0xCED3DA, 0xA7ADB6, 0 },
+  { "HgVapour",KIND_GAS,   20,   0,    0,   5, 200,   0,  0,    5,  0,   0, degC(150), degC(100), MAT_MERCURY, 0, MAT_EMPTY, 0, MAT_EMPTY, 0, 0xCED3DA, 0xA7ADB6, 0xCED3DA, 0xA7ADB6, 0 },
 
   /* Frozen mercury melts at -24 C, six degrees above the -30 C it freezes at
      -- hysteresis again, without which a cell sitting exactly at the boundary
@@ -1107,8 +1116,28 @@ MatInfo MATS[MAT_COUNT] = {
      recoverable gas that burns at ordinary fire heat (below titanium). */
   { "Coke", KIND_POWDER,190,100,50,0,0,0,0,70,2,0,0,0,MAT_EMPTY,0,MAT_EMPTY,degC(150),MAT_COKE_EMBER,0,0x63717D,0x303D49,0x63717D,0x303D49,0 },
   { "Coke Ember",KIND_STATIC,255,0,0,0,0,0,0,255,5,0,degC(215),degC(95),MAT_EMPTY,0,MAT_EMPTY,0,MAT_EMPTY,0,0xFFF2D0,0xFFC16A,0xFFF2D0,0xFFC16A,0 },
-  { "Coke Gas",KIND_GAS,8,0,0,4,150,0,0,25,0,0,0,0,MAT_EMPTY,0,MAT_EMPTY,degC(145),MAT_FIRE,0,0xABA38C,0x706C60,0xABA38C,0x706C60,0 },
+  /* Density 11, one under WIND_AIR_DENSITY (world.cpp): a shade lighter than
+     air, so it rises away from a retort slowly rather than sitting where it
+     was made. "Slowly" is gasRiseChance and gasRiseRun in world.cpp -- the
+     density only decides that it rises at all. */
+  { "Coke Gas",KIND_GAS,11,0,0,4,150,0,0,25,0,0,0,0,MAT_EMPTY,0,MAT_EMPTY,degC(145),MAT_COKE_GAS_EMBER,0,0xABA38C,0x706C60,0xABA38C,0x706C60,0 },
   {}, /* Cinderling Ember: derives from FuelFire in initMaterials(). */
+
+  /* Burning coke gas. Asked for: coke gas "doesn't spread flame and is hard
+     to ignite and clear away". It used to burn into ordinary Fire, and Fire
+     is the wrong shape for a gas fire: it is density 3, so it leaves at once,
+     and it dies below 100 C a second later. A cloud lit on one edge made a
+     flicker that rose off it, and the cells inside -- no air beside them, so
+     oxygen-starved and unable to light from heat -- never saw a flame.
+
+     So the burning state is a gas as dense as air. It stays among the cells
+     it is lighting, drifts with them on the wind (its own heat is what lifts
+     it, through the air), and lights them by contact -- see
+     initContactFire -- which is how the burn gets into the middle of a
+     cloud. It ends on a timer (g_matDecay) rather than by cooling, so it
+     cannot go out before it has passed the flame on, and coolTemp is 0 for
+     that reason. Water puts it out. Blue, because a gas flame is. */
+  { "Coke Gas Ember",KIND_GAS,12,0,0,3,120,0,0,200,1,0,degC(205),0,MAT_EMPTY,0,MAT_EMPTY,0,MAT_EMPTY,MAT_WATER,0xD8E6FF,0x3D5CFF,0xD8E6FF,0x3D5CFF,0 },
 };
 
 u32 g_colorLut[MAT_COUNT * 256];
@@ -1455,6 +1484,7 @@ static void initLight() {
     g_matLight[MAT_FUELFIRE]   = 105;
     g_matLight[MAT_CINDERLING_EMBER] = 105;
     g_matLight[MAT_COKE_EMBER] = 115;
+    g_matLight[MAT_COKE_GAS_EMBER] = 95;
     g_matLight[MAT_EMBER]      = 75;
     /* A shade under coal's, because it is a cooler fire and because a burning
        tree already carries flame above it that lights on its own account. */
@@ -2006,6 +2036,10 @@ static void initBurnLife() {
        enough that a burnt tree is gone rather than standing there glowing. */
     g_matDecay[MAT_WOOD_EMBER] = 3;
     g_matDecay[MAT_CINDERLING_EMBER] = 6; // half the previous average trail lifetime
+    /* About forty frames a cell: long enough to light every coke gas cell it
+       touches several times over (FIRE_SPREAD is a 34/255 chance a frame per
+       contact), short enough that a lit cloud is gone in seconds. */
+    g_matDecay[MAT_COKE_GAS_EMBER] = 6;
 
     /* Empty unless a material says otherwise, which preserves exactly what
        cold fire and the embers have always done. */
@@ -2044,6 +2078,7 @@ static void initContactFire() {
     g_matIgnitesOnContact[MAT_CINDERLING_EMBER] = 1;
     g_matIgnitesOnContact[MAT_FUELFIRE]   = 1;
     g_matIgnitesOnContact[MAT_COKE_EMBER] = 1;
+    g_matIgnitesOnContact[MAT_COKE_GAS_EMBER] = 1;
     g_matIgnitesOnContact[MAT_BRIMFIRE]   = 1;
 
     /* Fire spat into empty space. The fumarole is the original; the wood ember
@@ -2067,6 +2102,9 @@ static void initContactFire() {
        the 600 frames the plank was alight. */
     g_matVentsFire[MAT_WOOD_EMBER] = 20;
     g_matVentsFire[MAT_CINDERLING_EMBER] = 40;
+    /* Flame licking off a burning cloud's surface. Only cells with empty air
+       beside them vent at all, so this is the cloud's edge, not its body. */
+    g_matVentsFire[MAT_COKE_GAS_EMBER] = 12;
 }
 
 static void initDrive() {

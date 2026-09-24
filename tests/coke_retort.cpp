@@ -62,14 +62,14 @@ int main() {
     check(MATS[MAT_FUELFIRE].spawnTemp>MATS[MAT_TITANIUM].boilTemp,"and titanium metal's melting point");
     check(MATS[MAT_FUELFIRE].spawnTemp<MATS[MAT_TUNGSTEN_ORE].boilTemp,"fuel is below tungsten threshold");
     check(MATS[MAT_COKE_EMBER].spawnTemp>MATS[MAT_TUNGSTEN_ORE].boilTemp,"coke can reach both top ore thresholds");
-    check(MATS[MAT_FIRE].spawnTemp<MATS[MAT_TUNGSTEN_ORE].boilTemp,"recovered gas fire stays below tungsten smelting heat");
+    check(MATS[MATS[MAT_COKE_GAS].burnsTo].spawnTemp<MATS[MAT_TUNGSTEN_ORE].boilTemp,"recovered gas fire stays below tungsten smelting heat");
     retort(160,false);
     for(int f=0;f<1000;++f) { heatWalls(160); g_world.step(); }
     const int coke=count(MAT_COKE), gas=count(MAT_COKE_GAS), fuel=count(MAT_FUEL);
     printf("  sealed retort: %d coke, %d gas, %d fuel\n",coke,gas,fuel);
     check(coke>10 && gas==coke,"sealed hot fuel makes coke and gas in equal amounts");
     check(coke+gas+fuel==81,"retort conversion conserves cells");
-    check(count(MAT_FUELFIRE)+count(MAT_COKE_EMBER)+count(MAT_FIRE)==0,"sealed hot charge does not ignite");
+    check(count(MAT_FUELFIRE)+count(MAT_COKE_EMBER)+count(MAT_FIRE)+count(MAT_COKE_GAS_EMBER)==0,"sealed hot charge does not ignite");
     retort(100,false);
     for(int f=0;f<400;++f) { heatWalls(100); g_world.step(); }
     check(count(MAT_COKE)==0 && count(MAT_FUEL)==81,"cold retort does nothing");
@@ -105,7 +105,25 @@ int main() {
     check(g_world.at(X,Y).mat==MAT_FUELFIRE,"exposed hot fuel burns rather than coking");
     reset();
     g_world.setCell(X,Y,MAT_COKE_GAS); g_world.temp[Y*SIM_W+X]=degC(160); g_world.step();
-    check(count(MAT_FIRE)>0,"vented hot gas provides ordinary fire heat");
+    check(count(MAT_COKE_GAS_EMBER)>0,"vented hot gas burns");
+    check(MATS[MAT_COKE_GAS_EMBER].spawnTemp>=MATS[MAT_FIRE].spawnTemp,"and burns at least as hot as ordinary fire");
+    /* A cold cloud lit at one edge burns through. It used to burn into
+       ordinary Fire, which rose off the cloud and died; measured, a
+       3321-cell cloud lost three cells and went out. Now the burning gas
+       stays in the cloud and lights it by contact. */
+    {
+        g_world.reset(); g_world.setLiveWindow(X-100,Y-120,X+100,Y+40);
+        for(int y=Y-120;y<=Y+40;++y) for(int x=X-100;x<=X+100;++x)
+            if(x<X-97||x>X+97||y<Y-117||y>Y+37) g_world.setCell(x,y,MAT_WALL);
+        for(int y=Y-10;y<=Y+10;++y) for(int x=X-30;x<=X+30;++x) g_world.setCell(x,y,MAT_COKE_GAS);
+        int before=0, after=0;
+        for(int y=Y-120;y<=Y+40;++y) for(int x=X-100;x<=X+100;++x) before+=g_world.at(x,y).mat==MAT_COKE_GAS;
+        g_world.setCell(X-31,Y,MAT_FIRE); g_world.temp[Y*SIM_W+X-31]=degC(205);
+        for(int f=0;f<900;++f) g_world.step();
+        for(int y=Y-120;y<=Y+40;++y) for(int x=X-100;x<=X+100;++x) after+=g_world.at(x,y).mat==MAT_COKE_GAS;
+        printf("  lit cloud: %d coke gas cells -> %d\n",before,after);
+        check(after*5<before,"a cloud lit at one edge burns through and clears");
+    }
     reset();
     g_world.setCell(X,Y,MAT_COKE); g_world.setCell(X,Y+1,MAT_CERAMIC);
     g_world.temp[Y*SIM_W+X]=degC(160); g_world.step();

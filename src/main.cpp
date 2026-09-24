@@ -10344,7 +10344,7 @@ static bool gameFrame(const LARGE_INTEGER& freq) {
                     if (m == MAT_FIRE || m == MAT_FUELFIRE || m == MAT_BRIMFIRE) ++flames;
                     else if (m == MAT_EMBER || m == MAT_WOOD_EMBER ||
                              m == MAT_COKE_EMBER || m == MAT_WAX_EMBER ||
-                             m == MAT_CINDERLING_EMBER) ++embers;
+                             m == MAT_CINDERLING_EMBER || m == MAT_COKE_GAS_EMBER) ++embers;
                     else continue;
                     if (distance < nearest) {
                         nearest = distance;

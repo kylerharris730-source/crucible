@@ -507,6 +507,7 @@ enum MatId {
     MAT_COKE_EMBER,
     MAT_COKE_GAS,
     MAT_CINDERLING_EMBER, /* Cinderling Ash accessory's hotter flame trail */
+    MAT_COKE_GAS_EMBER,   /* burning coke gas: drifts with the gas it lights */
 
     MAT_COUNT
 };

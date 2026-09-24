@@ -1021,7 +1021,7 @@ the chance of drifting sideways instead of rising.
 | ColdFire | gas | 3 | 200 | 2 | 0 | -39 |
 | LiqN2 | liquid | 80 | 200 | 4 | 0 | -39 |
 | Mercury | liquid | 250 | 240 | 1 | 0 | — |
-| HgVapour | gas | 20 | 20 | 0 | 0 | +150 |
+| HgVapour | gas | 20 | 5 | 0 | 0 | +150 |
 | FrozenHg | solid | 255 | 240 | 1 | 0 | -35 |
 | Iron | solid | 220 | 255 | 0 | 2 | — |
 | MoltIron | liquid | 215 | 255 | 1 | 0 | +200 |
@@ -1051,7 +1051,7 @@ the chance of drifting sideways instead of rising.
 | ColdFire | — | — | +5 | Empty | — | — | — |
 | LiqN2 | — | — | -25 | ColdFire | — | — | — |
 | Mercury | -30 | FrozenHg | +150 | HgVapour | — | — | — |
-| HgVapour | +130 | Mercury | — | — | — | — | — |
+| HgVapour | +100 | Mercury | — | — | — | — | — |
 | FrozenHg | — | — | -24 | Mercury | — | — | — |
 | Iron | — | — | +200 | MoltIron | — | — | — |
 | MoltIron | +160 | Iron | — | — | — | — | — |
