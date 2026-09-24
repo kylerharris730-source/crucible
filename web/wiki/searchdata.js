@@ -115,6 +115,7 @@ window.WIKI_PAGES = [
 ["Coke Ember","materials/coke-ember.html","materials"],
 ["Coke Gas","materials/coke-gas.html","materials"],
 ["Cinderling Ember","materials/cinderling-ember.html","materials"],
+["Coke Gas Ember","materials/coke-gas-ember.html","materials"],
 ["Multitool Mk I","items/multitool-mk-i.html","items"],
 ["Multitool Mk II","items/multitool-mk-ii.html","items"],
 ["Shot Module","items/shot-module.html","items"],
