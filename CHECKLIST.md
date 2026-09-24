@@ -5,7 +5,7 @@ chat, which meant it was re-derived from memory every session and quietly lost
 things. `HANDOFF.md` is **not** this file: it is gitignored scratch, is usually
 stale, and should not be trusted for release state.
 
-Released: **v0.6.14** (2026-09-24). `main` is level with it.
+Released: **v0.6.15** (2026-09-24). `main` is level with it.
 
 ---
 
@@ -30,6 +30,21 @@ Released: **v0.6.14** (2026-09-24). `main` is level with it.
       both with `CINDERLIFT_RTC_LOG=1` and look in `build/rtc.log`.
 
 ## Ship it
+
+- [x] **Cut v0.6.15.** Tagged 2026-09-24, one commit past v0.6.14. Sound
+      no longer stutters the game. Reported from another computer: the
+      Windows build stuttered every few seconds, even in single player. Every
+      sound opened and closed a waveOut device of its own on the game's
+      thread -- 16.5 ms average, 53 ms worst, to open on this machine, 10 ms to
+      close -- and the ambient wind or drip alone plays every eight seconds.
+      Now one device is opened at startup and a mixer thread feeds it.
+      Measured over 75 s standing still: 5-7 frames over 20 ms in every 10 s
+      before, almost none after; audioPlay is 0.17 ms worst.
+      `CINDERLIFT_FRAMELOG=1` logs slow frames to build/frames.log, for the
+      next stutter on a machine that is not this one.
+
+      Needs you: confirm on the computer that stuttered. If it still does,
+      run it with CINDERLIFT_FRAMELOG=1 and send build/frames.log.
 
 - [x] **Cut v0.6.14.** Tagged 2026-09-24, one commit past v0.6.13. The
       browser build builds again. v0.6.12's parallel wind solve used Win32
