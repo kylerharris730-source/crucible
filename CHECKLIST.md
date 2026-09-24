@@ -5,7 +5,7 @@ chat, which meant it was re-derived from memory every session and quietly lost
 things. `HANDOFF.md` is **not** this file: it is gitignored scratch, is usually
 stale, and should not be trusted for release state.
 
-Released: **v0.6.11** (2026-09-23). `main` is level with it.
+Released: **v0.6.12** (2026-09-24). `main` is level with it.
 
 ---
 
@@ -30,6 +30,30 @@ Released: **v0.6.11** (2026-09-23). `main` is level with it.
       both with `CINDERLIFT_RTC_LOG=1` and look in `build/rtc.log`.
 
 ## Ship it
+
+- [x] **Cut v0.6.12.** An air system, burning gas, and a faster suite.
+
+      **Gases ride a wind field.** A coarse velocity field (one sample per 8x8
+      cells) is pushed by heat and light gas and solved so air flows in at the
+      foot of a plume and out at its head. Steam plumes neck in at the source
+      and open into a rounded head instead of rising as a straight column.
+      It runs only where gas moved recently and is split across the sim
+      threads: about 0.6 ms a frame for a screen full of steam at 12 threads,
+      about 0.05 ms with no gas. `tests/wind_field.cpp`.
+
+      **Only gases lighter than air rise by themselves.** Coke Gas climbs
+      slowly, at about a quarter of steam's rate. It burns into a new
+      **Coke Gas Ember** that stays in the cloud and lights it by contact, so
+      a cloud lit at one edge burns through (it used to lose three cells and
+      go out). Mercury vapour no longer condenses the moment it is made.
+
+      **Small hits have their own sound**, placement, mining and jumping are
+      quieter, and the layer-one creatures bite harder: Rock Mite 9, Cinder
+      Moth 8, Drip Slime 8, Bat 9.
+
+      **The test suite runs in parallel** (about two minutes, from about six)
+      and `make test-quick` skips the slow few (about one minute).
+      powderlike has an Air view and middle-drag to blow on the air.
 
 - [x] **Cut v0.6.11.** Sound mix refinements. Fire and embers can be heard
       farther away with a gradual fade, including fuel and brimstone flames.
