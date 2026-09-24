@@ -8,9 +8,15 @@
    people connect. Then it is finished. It never sees a byte of the game.
 
    The distinction from a relay is the entire point. A relay carries every byte
-   of every session and its bill grows with playtime. This grows with JOINS,
-   which for a game played by friends is a rounding error, and it stays inside
-   a free tier essentially forever.
+   of every session and its bill grows with playtime. This mostly grows with
+   JOINS -- with one exception worth being honest about: a host cannot be
+   pushed to, so it asks for answers, and it keeps asking for as long as it
+   hosts, because a player who drops has to be able to walk back in. Asked
+   once a second, that was a request per second per host, and it did grow
+   with playtime. Hosts now pace themselves (hostPace in web/multiplayer.js,
+   hostThread in src/rtc/room.cpp): fast only around joins and drops, every
+   ten seconds otherwise, once a minute when full. The real fix is a socket
+   the room can push down -- a Durable Object -- rather than any interval.
 
    --- why D1 and not KV -------------------------------------------------------
    KV is the obvious first reach and it is the wrong tool here. KV is

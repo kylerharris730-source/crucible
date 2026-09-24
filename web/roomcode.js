@@ -130,17 +130,28 @@
       if (!res.ok) throw new Error('could not re-open the seat');
     },
 
-    waitForAnswer: async function (code, cancelled) {
+    /* `pace`, when given, is asked before every check how long the gap
+       since the last one should be -- so the caller can slow down while
+       nothing is happening, and speed up the moment something does, without
+       waiting out a long gap it has already started. See hostPace in
+       multiplayer.js. Without it, once a second. */
+    waitForAnswer: async function (code, cancelled, pace) {
       var until = Date.now() + WAIT_MS;
       while (Date.now() < until) {
         if (cancelled && cancelled()) return null;
+        var asked = Date.now();
         var res = await ask('/room/' + encodeURIComponent(code) + '/answer', { method: 'GET' });
         if (res.status === 200) return await res.json();
         if (res.status === 404) throw new Error('that code expired');
         if (res.status === 409) throw new Error((await res.json()).error || 'room is busy');
         if (res.status !== 204) throw new Error('could not check that room');
-        /* 204: nobody has answered yet. */
-        await new Promise(function (r) { setTimeout(r, POLL_MS); });
+        /* 204: nobody has answered yet. Wait in short steps, re-reading the
+           pace each time, so a seat re-opening mid-wait is answered at the
+           fast rate straight away rather than after the slow gap. */
+        while (Date.now() - asked < (pace ? pace() : POLL_MS)) {
+          if (cancelled && cancelled()) return null;
+          await new Promise(function (r) { setTimeout(r, 250); });
+        }
       }
       return null;
     }

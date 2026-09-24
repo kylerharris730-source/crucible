@@ -175,22 +175,47 @@ void hostThread(unsigned session) {
        superviseHost in multiplayer.js for the drop that taught that. Two
        jobs on one loop: take answers as they arrive, and give a seat whose
        player dropped a fresh offer so they come back as the same number. */
+    /* Paced, not once a second for the whole session: fast for two minutes
+       after the room opens, after somebody joins and after a seat is
+       re-offered; every ten seconds otherwise; once a minute while all three
+       seats are full, which is only to keep the room alive. hostPace in
+       web/multiplayer.js has the reasoning -- this is the same policy, and
+       the two builds should keep agreeing on it. */
+    const DWORD BUSY_POLL_MS = 1000, IDLE_POLL_MS = 10000, FULL_POLL_MS = 60000;
+    const DWORD BUSY_FOR_MS = 2 * 60 * 1000;
+    DWORD busyUntil = GetTickCount() + BUSY_FOR_MS;
+    DWORD lastPoll = GetTickCount() - FULL_POLL_MS;   /* ask straight away */
+
     bool wasOpen[RTC_MAX_LINKS] = { false, false, false };
     int seatTick = 0;
     while (current(session)) {
-        const int got = request(L"GET", "/room/" + code + "/answer", std::string(), &reply);
-        if (!current(session)) return;
-        if (got == 200) {
-            std::string answer; int slot = -1;
-            if (rtcJsonString(reply, "answer", &answer) && rtcJsonInt(reply, "slot", &slot))
-                rtcNetBeginAccept(slot, answer.c_str());
-        } else if (got == 404) {
-            rtcNetSetFault("The room expired -- host again for a new code");
-            return;
+        /* The loop ticks every second either way: watching seats is local
+           and free. Only the question to the broker is paced. */
+        int open = 0;
+        for (int slot = 0; slot < RTC_MAX_LINKS; ++slot) if (rtcNetState(slot) == RTC_LINK_OPEN) ++open;
+        const DWORD now = GetTickCount();
+        const DWORD pace = open >= RTC_MAX_LINKS ? FULL_POLL_MS
+                         : (int)(busyUntil - now) > 0 ? BUSY_POLL_MS : IDLE_POLL_MS;
+        if (now - lastPoll >= pace) {
+            lastPoll = now;
+            rtcNetTrace("room: poll (open seats, pace ms)", open, (int)pace);
+            const int got = request(L"GET", "/room/" + code + "/answer", std::string(), &reply);
+            if (!current(session)) return;
+            if (got == 200) {
+                std::string answer; int slot = -1;
+                if (rtcJsonString(reply, "answer", &answer) && rtcJsonInt(reply, "slot", &slot)) {
+                    rtcNetBeginAccept(slot, answer.c_str());
+                    busyUntil = GetTickCount() + BUSY_FOR_MS;   /* friends arrive together */
+                }
+            } else if (got == 404) {
+                rtcNetSetFault("The room expired -- host again for a new code");
+                return;
+            }
+            /* 204 is "nobody yet"; a 409 is contention and resolves itself;
+               an unreachable broker is not a reason to stop a game that is
+               already running -- the players connected are connected
+               directly. */
         }
-        /* 204 is "nobody yet"; a 409 is contention and resolves itself; an
-           unreachable broker is not a reason to stop a game that is already
-           running -- the players connected are connected directly. */
 
         if (++seatTick >= 2) {
             seatTick = 0;
@@ -201,6 +226,8 @@ void hostThread(unsigned session) {
                    room; replacing it would break a code somebody is typing. */
                 if (!wasOpen[slot] || live(state)) continue;
                 wasOpen[slot] = false;
+                /* Somebody just dropped, and is about to try coming back. */
+                busyUntil = GetTickCount() + BUSY_FOR_MS;
                 rtcNetRehost(slot);
                 std::string offer;
                 if (!awaitHostCode(session, slot, &offer)) continue;

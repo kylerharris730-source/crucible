@@ -250,17 +250,52 @@
      soon as they have read the code, and a room that stopped healing at
      that moment would be a room that only works while somebody is
      watching it. */
+  /* How often a host asks the room for answers.
+
+     Asking once a second for the whole session cost one request per second
+     per host for as long as anybody played -- a two-hour game is 7,200
+     requests, and the free tier is 100,000 a day. But fast answers only
+     matter when somebody is actually joining, and the moments when that is
+     likely are known: just after the room opens, just after a seat is
+     re-offered because its player dropped, and just after somebody joined
+     (friends tend to arrive together). Those get the fast rate for a couple
+     of minutes; the rest of the time a late joiner waits up to ten seconds.
+
+     That is safe because the guest's side does not give up that soon: it
+     keeps trying to reach the host for 39.5 seconds (RFC 8863's patience
+     timer, in browsers and libdatachannel alike) before calling it failed.
+
+     A full room needs no answers at all, but it still asks, slowly: the
+     worker extends a room's life only when its host checks in, and a room
+     that expired while full could not re-offer the seat of the next player
+     to drop. Once a minute is well inside the five minutes it allows.
+
+     src/rtc/room.cpp paces the Windows build the same way. */
+  var BUSY_POLL_MS = 1000, IDLE_POLL_MS = 10000, FULL_POLL_MS = 60000;
+  var BUSY_FOR_MS = 2 * 60 * 1000;
+
+  function hostBusy() { if (hostSession) hostSession.busyUntil = Date.now() + BUSY_FOR_MS; }
+
+  function hostPace() {
+    var open = 0;
+    for (var slot = 0; slot < 3; slot++) if (CinderNet.state(slot) === 'open') open++;
+    if (open >= 3) return FULL_POLL_MS;
+    return hostSession && Date.now() < hostSession.busyUntil ? BUSY_POLL_MS : IDLE_POLL_MS;
+  }
+
   function superviseHost() {
     var wasOpen = [false, false, false];
+    hostBusy();
 
     (async function acceptLoop() {
       while (hostSession && hostSession.active) {
         try {
           var reply = await CinderSignal.waitForAnswer(
-            hostSession.code, function () { return !hostSession || !hostSession.active; });
+            hostSession.code, function () { return !hostSession || !hostSession.active; }, hostPace);
           if (!hostSession || !hostSession.active) return;
           if (reply) {
             CinderNet.beginAccept(reply.slot, reply.answer);
+            hostBusy();
             refreshHostStatus();
           }
           /* A null reply is the poll timing out with nobody there, which is
@@ -298,6 +333,8 @@
   }
 
   async function reopen(slot) {
+    /* Somebody just dropped, and is about to try coming back. */
+    hostBusy();
     try {
       var offer = await CinderNet.host(slot);
       if (!hostSession || !hostSession.active) return;
