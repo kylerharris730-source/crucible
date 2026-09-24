@@ -100,6 +100,7 @@ clean:
 # reported 37 failures that were really one mistyped script name.
 #
 #     mingw32-make test                 all of them
+#     mingw32-make test-quick           all but the slow few
 #     mingw32-make test T=melee_test    just one
 #
 # The work lives in scripts/run_tests.sh rather than in pattern rules here,
@@ -110,9 +111,14 @@ T ?=
 test:
 	@bash scripts/run_tests.sh $(T)
 
+# The edit-loop version: skips the few slow tests named in run_tests.sh's
+# QUICK_SKIP. Run `test` before committing.
+test-quick:
+	@bash scripts/run_tests.sh --quick $(T)
+
 # Lava dropped into water, timed. A benchmark rather than a test -- see the
 # header of scripts/lagbench.sh for why it is kept out of `test`.
 lagbench:
 	@bash scripts/lagbench.sh $(THREADS)
 
-.PHONY: all run clean test powderlike lagbench
+.PHONY: all run clean test test-quick powderlike lagbench

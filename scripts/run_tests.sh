@@ -3,8 +3,14 @@
 # run_tests.sh -- build and run the test suite.
 #
 #     make test                 everything
+#     make test-quick           everything but the slow few (see QUICK_SKIP)
 #     make test T=melee_test    one of them
-#     bash scripts/run_tests.sh [name ...]
+#     bash scripts/run_tests.sh [--quick] [-j N] [name ...]
+#
+# Tests build and run in parallel, one per core (-j N or JOBS=N to change it;
+# -j 1 is the old serial run). A handful that cannot share the machine run
+# afterwards, one at a time -- see SERIAL. Output lines arrive in the order
+# tests finish; the summary at the bottom is what to read.
 #
 # Until this existed there was no way to run the tests at all. Each one is a
 # standalone main() that links every src/*.cpp except main.cpp, and the only
@@ -90,21 +96,58 @@ COMMON_OBJ=$(ls "$OBJDIR"/*.o | grep -v 'network_host\.o$' | grep -v 'network_cl
 MISMATCH_OBJ=$(ls "$OBJDIR"/*.o | grep -v '/network\.o$' | grep -v 'network_client\.o$' | tr '\n' ' ')
 MISMATCH_CLI=$(ls "$OBJDIR"/*.o | grep -v '/network\.o$' | grep -v 'network_host\.o$' | tr '\n' ' ')
 
-pass=0; failed=""; broken=""
+# --- options -----------------------------------------------------------------
+JOBS=${JOBS:-$(nproc 2>/dev/null || echo 4)}
+QUICK=0
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --quick) QUICK=1; shift ;;
+        -j)      JOBS="$2"; shift 2 ;;
+        -j*)     JOBS="${1#-j}"; shift ;;
+        *)       break ;;
+    esac
+done
+[ "$JOBS" -ge 1 ] 2>/dev/null || JOBS=1
 
-report() { printf '  %-6s %s\n' "$1" "$2"; }
+# Run AFTER the parallel batch, one at a time. The network tests bind fixed
+# ports and wait on the wall clock, so two at once fight over the port and a
+# loaded machine eats into their timeouts. nav_cost asserts a CPU-time budget
+# for a routing rebuild, which a machine running eleven other tests would blow.
+SERIAL=" lan_address network_smoke network_four network_mismatch nav_cost "
+
+# What --quick leaves out: the slowest sim tests and the multi-second network
+# ones. Measured serially on a 12-thread machine, the full suite's run time was
+# 287 s and these nine were 173 s of it -- bee_routes alone is 75 s and
+# hive_bees 34. Everything else is under 7 s, so in parallel the rest finishes
+# in about the time of its slowest test. Run the full suite before committing;
+# quick is for the edit loop.
+QUICK_SKIP=" bee_routes hive_bees drone_combat heat_lamp deep_layer deep_roster
+             network_smoke network_four network_mismatch "
+
+report() { printf '  %-6s %-24s %6s\n' "$1" "$2" "$3"; }
+now_ms() { echo $(( $(date +%s%N) / 1000000 )); }
+
+# Each test leaves "<status> <ms>" in its .result file, and the summary is
+# built from those once everything has finished. Counting in shell variables,
+# as this used to, does not survive running tests as background jobs: each
+# job is a subshell, and its increments die with it.
+finish() {   # finish <name> <ok|FAIL|BUILD|skip> <start-ms>
+    local ms=$(( $(now_ms) - $3 ))
+    printf '%s %s\n' "$2" "$ms" > "$BINDIR/$1.result"
+    report "$2" "$1" "$(awk -v m="$ms" 'BEGIN { printf "%.1fs", m / 1000 }')"
+}
 
 # --- the ordinary tests ------------------------------------------------------
 run_one() {
-    local name="$1" src="tests/$1.cpp" log="$BINDIR/$1.log"
+    local name="$1" src="tests/$1.cpp" log="$BINDIR/$1.log" t0; t0=$(now_ms)
     if ! $CXX $FLAGS -DCINDERLIFT_BUILD_ID='"test"' "$src" $COMMON_OBJ \
               -o "$BINDIR/$name.prog" $LIBS >"$log" 2>&1; then
-        broken="$broken $name"; report "BUILD" "$name"; return
+        finish "$name" BUILD "$t0"; return
     fi
     if ( cd "$BINDIR" && "./$name.prog" ) >"$log" 2>&1; then
-        pass=$((pass + 1)); report "ok" "$name"
+        finish "$name" ok "$t0"
     else
-        failed="$failed $name"; report "FAIL" "$name"
+        finish "$name" FAIL "$t0"
     fi
 }
 
@@ -113,10 +156,10 @@ run_one() {
 # and must be refused on the build id before any world data moves. Skipped
 # everywhere but Windows, because it is CreateProcess and winsock throughout.
 run_mismatch() {
-    local name=network_mismatch log="$BINDIR/$name.log"
+    local name=network_mismatch log="$BINDIR/network_mismatch.log" t0; t0=$(now_ms)
     case "$(uname -s 2>/dev/null || echo Windows)" in
         MINGW*|MSYS*|CYGWIN*|Windows*) ;;
-        *) report "skip" "$name (Windows only)"; return ;;
+        *) finish "$name" skip "$t0"; return ;;
     esac
     if ! $CXX $FLAGS -DCINDERLIFT_BUILD_ID='"mismatch-host-build"' \
               tests/$name.cpp $MISMATCH_OBJ -o "$BINDIR/${name}_host.prog" $LIBS \
@@ -124,42 +167,80 @@ run_mismatch() {
     || ! $CXX $FLAGS -DCINDERLIFT_BUILD_ID='"mismatch-client-build"' \
               tests/$name.cpp $MISMATCH_CLI -o "$BINDIR/${name}_client.prog" $LIBS \
               >>"$log" 2>&1; then
-        broken="$broken $name"; report "BUILD" "$name"; return
+        finish "$name" BUILD "$t0"; return
     fi
     if ( cd "$BINDIR" && "./${name}_host.prog" "${name}_client.prog" ) >"$log" 2>&1; then
-        pass=$((pass + 1)); report "ok" "$name"
+        finish "$name" ok "$t0"
     else
-        failed="$failed $name"; report "FAIL" "$name"
+        finish "$name" FAIL "$t0"
     fi
 }
 
 # --- the suite is shell as well as C++ ---------------------------------------
 run_shell() {
-    local name="$1" log="$BINDIR/$1.log"
+    local name="$1" log="$BINDIR/$1.log" t0; t0=$(now_ms)
     if bash "tests/$1.sh" >"$log" 2>&1; then
-        pass=$((pass + 1)); report "ok" "$name"
+        finish "$name" ok "$t0"
     else
-        failed="$failed $name"; report "FAIL" "$name"
+        finish "$name" FAIL "$t0"
     fi
 }
 
-echo "running tests"
+run_any() {
+    case "$1" in
+        network_mismatch) run_mismatch ;;
+        *) if [ -e "tests/$1.cpp" ]; then run_one "$1"; else run_shell "$1"; fi ;;
+    esac
+}
+
 SELECT="$*"
 matches() { [ -z "$SELECT" ] && return 0; case " $SELECT " in *" $1 "*) return 0 ;; esac; return 1; }
+listed()  { case " $(echo $2) " in *" $1 "*) return 0 ;; esac; return 1; }   # echo folds the lists' line breaks
 
-for src in tests/*.cpp; do
-    name=$(basename "$src" .cpp)
-    matches "$name" || continue
-    if [ "$name" = network_mismatch ]; then run_mismatch; else run_one "$name"; fi
-done
-for src in tests/*.sh; do
+# Which tests, in which group. Named explicitly (SELECT) always runs, quick or
+# not: asking for a test by name is asking for it.
+ALL=""; PAR=""; SER=""; SKIPPED=""
+for src in tests/*.cpp tests/*.sh; do
     [ -e "$src" ] || continue
-    name=$(basename "$src" .sh)
+    name=$(basename "$src"); name=${name%.*}
     matches "$name" || continue
-    run_shell "$name"
+    if [ "$QUICK" = 1 ] && [ -z "$SELECT" ] && listed "$name" "$QUICK_SKIP"; then
+        SKIPPED="$SKIPPED $name"; continue
+    fi
+    ALL="$ALL $name"
+    rm -f "$BINDIR/$name.result"
+    if listed "$name" "$SERIAL"; then SER="$SER $name"; else PAR="$PAR $name"; fi
+done
+
+T_START=$(now_ms)
+echo "running tests ($JOBS at a time$([ "$QUICK" = 1 ] && echo ', quick'))"
+for name in $PAR; do
+    while [ "$(jobs -rp | wc -l)" -ge "$JOBS" ]; do wait -n; done
+    run_any "$name" &
+done
+wait
+[ -n "$SER" ] && echo "  -- one at a time:$SER"
+for name in $SER; do run_any "$name"; done
+
+pass=0; failed=""; broken=""
+for name in $ALL; do
+    status=BUILD
+    [ -f "$BINDIR/$name.result" ] && read -r status _ < "$BINDIR/$name.result"
+    case "$status" in
+        ok|skip) pass=$((pass + 1)) ;;
+        FAIL)    failed="$failed $name" ;;
+        *)       broken="$broken $name" ;;
+    esac
 done
 
 echo
+WALL=$(( $(now_ms) - T_START ))
+printf 'wall %s; slowest:' "$(awk -v m="$WALL" 'BEGIN { printf "%.1fs", m / 1000 }')"
+for name in $ALL; do
+    [ -f "$BINDIR/$name.result" ] && { read -r _ ms < "$BINDIR/$name.result"; echo "$ms $name"; }
+done | sort -rn | head -5 | awk '{ printf " %s %.1fs", $2, $1 / 1000 }'
+echo
+[ -n "$SKIPPED" ] && printf 'quick: skipped%s\n' "$SKIPPED"
 nfail=$(printf '%s' "$failed" | wc -w)
 nbroken=$(printf '%s' "$broken" | wc -w)
 printf '%d passed, %d failed, %d did not build\n' "$pass" "$nfail" "$nbroken"
