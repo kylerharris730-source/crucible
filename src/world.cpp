@@ -2750,7 +2750,14 @@ void World::pushWind(int cx, int cy, int r, float vx, float vy) {
 
 /* Below this many awake chunks per thread, the pool is not worth waking. */
 static const int WIND_CHUNKS_PER_JOB = 12;
+/* The barrier's counters are Win32 interlocked variables, so they exist only
+   with the lane pool -- like g_laneNext. Without it simWorkers() is 0, every
+   solve is a single job, and windBarrier returns before it would touch them.
+   Unguarded, they broke the browser build, whose win32 shim has no LONG or
+   interlocked calls, and v0.6.12 never reached the web page. */
+#ifdef CINDERLIFT_LANE_POOL
 static volatile LONG g_windBarCount = 0, g_windBarGen = 0;
+#endif
 struct WindJob { World* w; int jobs; };
 static void windJobEntry(void* ctx, int job) {
     const WindJob* j = (const WindJob*)ctx;
@@ -2791,7 +2798,9 @@ void World::updateWind() {
     if (g_windListN < jobs * WIND_CHUNKS_PER_JOB) jobs = imax(1, g_windListN / WIND_CHUNKS_PER_JOB);
     if (jobs <= 1) { windSolve(0, 1); return; }
     WindJob job = { this, jobs };
+#ifdef CINDERLIFT_LANE_POOL
     g_windBarCount = 0;
+#endif
     simParallel(jobs, windJobEntry, &job);
 }
 
@@ -2804,6 +2813,7 @@ void World::updateWind() {
    so none is ever waiting on a thread that is itself stuck in a barrier. */
 static void windBarrier(int jobs) {
     if (jobs <= 1) return;
+#ifdef CINDERLIFT_LANE_POOL
     const LONG gen = g_windBarGen;
     if (InterlockedIncrement(&g_windBarCount) == jobs) {
         g_windBarCount = 0;
@@ -2819,6 +2829,7 @@ static void windBarrier(int jobs) {
         }
         else { SwitchToThread(); spins = 0; }
     }
+#endif
 }
 
 void World::windSolve(int job, int jobs) {
