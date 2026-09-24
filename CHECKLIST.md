@@ -5,7 +5,7 @@ chat, which meant it was re-derived from memory every session and quietly lost
 things. `HANDOFF.md` is **not** this file: it is gitignored scratch, is usually
 stale, and should not be trusted for release state.
 
-Released: **v0.6.12** (2026-09-24). `main` is level with it.
+Released: **v0.6.14** (2026-09-24). `main` is level with it.
 
 ---
 
@@ -30,6 +30,34 @@ Released: **v0.6.12** (2026-09-24). `main` is level with it.
       both with `CINDERLIFT_RTC_LOG=1` and look in `build/rtc.log`.
 
 ## Ship it
+
+- [x] **Cut v0.6.14.** Tagged 2026-09-24, one commit past v0.6.13. The
+      browser build builds again. v0.6.12's parallel wind solve used Win32
+      interlocked calls with no guard, the browser's win32 shim has none, and
+      the Pages deploys for v0.6.12 and v0.6.13 both failed at world.cpp --
+      so cinderlift.com stayed on v0.6.11 while the download moved on, and
+      browser and desktop could not play together (different build ids).
+      Guarded like the rest of the lane pool. Checked after deploy: the site
+      and the download are both 0.6.14.0, build `65691b8b5174`.
+
+      Worth knowing: nothing in CI builds the web page until a release is
+      cut, so a change that breaks only the browser build is found at the
+      worst moment. A web build step in the release workflow, before the
+      tag's Windows release publishes, would catch it first.
+
+- [x] **Cut v0.6.13.** Tagged 2026-09-24, one commit past v0.6.12. Hosts
+      poll the room broker only as often as it matters: every second for two
+      minutes after the room opens, somebody joins or a seat is re-offered;
+      every ten seconds otherwise; once a minute while full. A two-hour game
+      went from about 7,200 worker requests to about 830 (the free tier is
+      100,000 a day). Its web deploy failed with v0.6.12's -- see v0.6.14.
+
+      **Later: push instead of poll.** A Durable Object per room, with the
+      host holding one hibernating WebSocket, would make the broker's cost
+      grow with joins alone. Durable Objects are on the free plan (SQLite
+      backend only; 100k requests and 13,000 GB-s a day; incoming WebSocket
+      messages billed 20:1; hibernating objects cost no duration). Check
+      whether auto-response pings count toward requests before building it.
 
 - [x] **Cut v0.6.12.** An air system, burning gas, and a faster suite.
 
