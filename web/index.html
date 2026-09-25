@@ -383,6 +383,7 @@
        pack. Crafting is C. -->
   <kbd>WASD</kbd> move &middot; <kbd>Space</kbd> jump &middot; <b>left</b> build &middot; <b>right</b> dig &middot;
   <kbd>C</kbd> craft &middot; <kbd>Esc</kbd> menu
+  &middot; <span id="soundHint">Sound: off (Esc menu)</span>
   &middot; <a href="wiki/guide/first-ten-minutes.html" class="more">your first ten minutes &rarr;</a>
 </div>
 
@@ -799,6 +800,8 @@
   // the window afterwards does not re-apply it. The pause menu still adjusts
   // it at any time, and on the web MEMFS is not persistent, so each load
   // starts from what this decides rather than from a previous session.
+  // Sound is the exception: its menu toggle persists separately in
+  // localStorage, with a silent default for a first visit.
   //
   // Mirrors WIN_W/WIN_H in main.cpp. Only the PREDICTION uses these -- the
   // real canvas size is not known until the module has started, and fitCanvas
@@ -916,7 +919,12 @@
       // the default 100% is used.
       try {
         const pct = intendedUiScalePct();
-        FS.writeFile('cinderlift.cfg', 'ui_scale=' + pct + '\n');
+        let soundMuted = '1';
+        try {
+          if (localStorage.getItem('cinderlift.sound_muted') === '0') soundMuted = '0';
+        } catch (e) { /* Keep the quiet default when site storage is blocked. */ }
+        FS.writeFile('cinderlift.cfg', 'ui_scale=' + pct + '\n' +
+          'sound_muted=' + soundMuted + '\n');
         window.__uiScaleWritten = pct;
       } catch (e) {
         console.warn('could not preset ui_scale:', e);

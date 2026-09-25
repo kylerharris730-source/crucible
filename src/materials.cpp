@@ -1116,11 +1116,11 @@ MatInfo MATS[MAT_COUNT] = {
      recoverable gas that burns at ordinary fire heat (below titanium). */
   { "Coke", KIND_POWDER,190,100,50,0,0,0,0,70,2,0,0,0,MAT_EMPTY,0,MAT_EMPTY,degC(150),MAT_COKE_EMBER,0,0x63717D,0x303D49,0x63717D,0x303D49,0 },
   { "Coke Ember",KIND_STATIC,255,0,0,0,0,0,0,255,5,0,degC(215),degC(95),MAT_EMPTY,0,MAT_EMPTY,0,MAT_EMPTY,0,0xFFF2D0,0xFFC16A,0xFFF2D0,0xFFC16A,0 },
-  /* Density 11, one under WIND_AIR_DENSITY (world.cpp): a shade lighter than
-     air, so it rises away from a retort slowly rather than sitting where it
-     was made. "Slowly" is gasRiseChance and gasRiseRun in world.cpp -- the
-     density only decides that it rises at all. */
-  { "Coke Gas",KIND_GAS,11,0,0,4,150,0,0,25,0,0,0,0,MAT_EMPTY,0,MAT_EMPTY,degC(145),MAT_COKE_GAS_EMBER,0,0xABA38C,0x706C60,0xABA38C,0x706C60,0 },
+  /* Density 13, one over WIND_AIR_DENSITY (world.cpp): a shade heavier than
+     air, so it settles slowly into low ground and pools in pits. "Slowly" is
+     gasSinkChance in world.cpp; the density only decides which way it goes.
+     Hot from a retort it still rises at first, on the air its heat lifts. */
+  { "Coke Gas",KIND_GAS,13,0,0,4,150,0,0,25,0,0,0,0,MAT_EMPTY,0,MAT_EMPTY,degC(145),MAT_COKE_GAS_EMBER,0,0xABA38C,0x706C60,0xABA38C,0x706C60,0 },
   {}, /* Cinderling Ember: derives from FuelFire in initMaterials(). */
 
   /* Burning coke gas. Asked for: coke gas "doesn't spread flame and is hard
@@ -1130,14 +1130,15 @@ MatInfo MATS[MAT_COUNT] = {
      flicker that rose off it, and the cells inside -- no air beside them, so
      oxygen-starved and unable to light from heat -- never saw a flame.
 
-     So the burning state is a gas as dense as air. It stays among the cells
+     So the burning state is a gas as dense as the gas it burns (13, a shade
+     over air, sinking as slowly -- gasSinkChance). It stays among the cells
      it is lighting, drifts with them on the wind (its own heat is what lifts
      it, through the air), and lights them by contact -- see
      initContactFire -- which is how the burn gets into the middle of a
      cloud. It ends on a timer (g_matDecay) rather than by cooling, so it
      cannot go out before it has passed the flame on, and coolTemp is 0 for
      that reason. Water puts it out. Blue, because a gas flame is. */
-  { "Coke Gas Ember",KIND_GAS,12,0,0,3,120,0,0,200,1,0,degC(205),0,MAT_EMPTY,0,MAT_EMPTY,0,MAT_EMPTY,MAT_WATER,0xD8E6FF,0x3D5CFF,0xD8E6FF,0x3D5CFF,0 },
+  { "Coke Gas Ember",KIND_GAS,13,0,0,3,120,0,0,200,1,0,degC(205),0,MAT_EMPTY,0,MAT_EMPTY,0,MAT_EMPTY,MAT_WATER,0xD8E6FF,0x3D5CFF,0xD8E6FF,0x3D5CFF,0 },
 };
 
 u32 g_colorLut[MAT_COUNT * 256];

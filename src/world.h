@@ -489,6 +489,12 @@ static const int LATENT_HEAT    = 30;  /* a phase change costs this much
 static const int FIRE_SPREAD    = 34;  /* chance/255 per frame that a flammable
                                           cell catches from each touching flame;
                                           higher = fire races through wood */
+/* The same for coke gas, which is a gas and should catch on touch rather than
+   at wood's pace. At FIRE_SPREAD a spark -- a Fire cell, which rises away on
+   its next turn -- touched a pool of it for a frame and usually lit nothing,
+   and a lit cloud burned slower than it sank, leaving the part that had
+   reached the floor. */
+static const int COKE_GAS_SPREAD = 200;
 /* Chance/255 per frame that a dissolvable cell touching acid is consumed --
    see g_matDissolvedBy. Below FIRE_SPREAD on purpose: fire racing through a
    plank is meant to feel urgent, acid eating a wall is meant to feel like it

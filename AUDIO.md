@@ -170,8 +170,10 @@ It overlaps up to 12 cues. Gameplay hooks now cover local movement and health,
 mining, placement, interaction, crafting, nearby enemy calls and combat,
 machines, ambience, bosses, and rocket launch. Some specialized cues are
 auditionable but await their precise gameplay events; do not wire a cue to an
-unrelated event just to make it fire. Browser builds still compile with silent
-stubs until their audio backend is added.
+unrelated event just to make it fire. The browser uses the same embedded cues
+through Web Audio, with the same cooldowns, distance fade, and 12-voice limit.
+It starts muted on a first visit; the pause-menu sound toggle remembers the
+browser preference for later visits.
 
 For the listening pass in a normal Windows build, press **F6** for the next cue,
 **F7** to replay it, and **F8** for the previous cue. Its name appears on screen.

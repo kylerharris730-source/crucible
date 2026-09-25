@@ -2583,7 +2583,8 @@ void devTick(World& w) {
             const SoundId cue = d.type == DEV_CLOCK ? SFX_CLOCK_PULSE
                 : d.type == DEV_THERMOCOUPLE || d.type == DEV_BLOCK_WATCHER
                     ? SFX_SENSOR_TRIP : SFX_CIRCUIT_SWITCH;
-            audioPlayAt(cue, audioX, audioY, 0.32f);
+            audioPlayAt(cue, audioX, audioY,
+                        cue == SFX_CLOCK_PULSE ? 0.20f : 0.32f);
         }
         if (d.count != audioCountBefore) {
             const SoundId cue = d.type == DEV_PLACER ? SFX_PLACER_CYCLE

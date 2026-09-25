@@ -518,19 +518,25 @@ static const int GAS_RISE_RUN = 4;
 static const int COMBUSTION_RISE_RUN = 1;
 
 static inline int gasRiseRun(u8 mat) {
-    return (mat == MAT_FIRE || mat == MAT_PLASMA || mat == MAT_COKE_GAS)
+    return (mat == MAT_FIRE || mat == MAT_PLASMA)
          ? COMBUSTION_RISE_RUN : GAS_RISE_RUN;
 }
 
-/* Out of 255, how many of its turns in open air a light gas spends rising
-   at all; the rest it wanders unbiased, like a gas as dense as air. Every
-   gas takes every turn except coke gas, which is only a shade lighter than
-   air: asked for "slightly less dense than air so it does rise away
-   slowly". A lighter-than-air density alone would have bought it steam's
-   four-cell climb on every turn; a one-cell climb (above) on a quarter of
-   its turns measured at about 0.12 cells a frame, against steam's 0.44. */
-static inline u8 gasRiseChance(u8 mat) {
-    return mat == MAT_COKE_GAS ? 64 : 255;
+/* Out of 255, how many of its turns in open air a gas HEAVIER than air
+   spends sinking one cell; the rest it wanders unbiased. Zero for everything
+   but coke gas, which is a shade heavier than air -- asked for "slightly
+   heavier than air rather than slightly lighter". It is the mirror of the
+   slow rise it had for a release (a one-cell climb on a quarter of its
+   turns, about 0.1 cells a frame), so it settles into low ground and pools
+   in a pit rather than falling like a liquid. Mercury vapour is heavier
+   still but is left at zero: it condenses on the way down anyway, and it
+   sinks through the wind it drags down with it.
+
+   The burning form sinks with it. Left as dense as air it floated up off a
+   settling cloud and lost touch with it: a cloud lit at one edge burned only
+   half away. */
+static inline u8 gasSinkChance(u8 mat) {
+    return (mat == MAT_COKE_GAS || mat == MAT_COKE_GAS_EMBER) ? 64 : 0;
 }
 static const int FLUID_CONVECTION_REACH       = 3;
 static const int WAX_CONVECTION_REACH         = 1;
@@ -2980,6 +2986,12 @@ void World::updateGas(Lane& L, int x, int y) {
        Not under liquid: a bubble is in water, not in the wind. */
     if (aboveKind != KIND_LIQUID && windDrift(L, x, y)) return;
 
+    /* A slightly heavy gas settling. See gasSinkChance. */
+    if (aboveKind != KIND_LIQUID && m.density > WIND_AIR_DENSITY) {
+        const u8 sink = gasSinkChance(c.mat);
+        if (sink && lchance(L, sink) && tryMove(L, x, y, x, y + 1)) return;
+    }
+
     /* --- diffusion --------------------------------------------------------
        Before trying to rise, a gas has a per-material chance of taking one step
        in a RANDOM direction instead. This is what makes a gas fill a space
@@ -3030,9 +3042,7 @@ void World::updateGas(Lane& L, int x, int y) {
        and a denser one's negative lift makes that wind a downdraught. Under a
        liquid every gas is still a bubble, since all of them are lighter than
        water. */
-    const u8 riseChance = gasRiseChance(c.mat);
-    const bool buoyant = aboveKind == KIND_LIQUID ||
-        (m.density < WIND_AIR_DENSITY && (riseChance == 255 || lchance(L, riseChance)));
+    const bool buoyant = m.density < WIND_AIR_DENSITY || aboveKind == KIND_LIQUID;
     const bool queued = aboveKind == KIND_GAS &&
         (MATS[cells[y * SIM_W + x - 1].mat].kind == KIND_LIQUID ||
          MATS[cells[y * SIM_W + x + 1].mat].kind == KIND_LIQUID);
@@ -4079,7 +4089,9 @@ void World::updateCell(Lane& L, int x, int y) {
                    ignition point of 140 and stalled there while the burning
                    cell cooled past it, so the seam never spread one cell. */
                 if (g_matIgnitesOnContact[nm]
-                    && lchance(L, FIRE_SPREAD)) { ignite = true; break; }
+                    && lchance(L, c.mat == MAT_COKE_GAS ? COKE_GAS_SPREAD : FIRE_SPREAD)) {
+                    ignite = true; break;
+                }
             }
         }
         if (ignite) {

@@ -83,7 +83,7 @@
     X(SFX_BOSS_EFFIGY_CALL, "boss_effigy_call.wav", 1200) \
     X(SFX_BOSS_PHASE, "boss_phase.wav", 900) \
     X(SFX_BOSS_DEFEAT, "boss_defeat.wav", 1600) \
-    X(SFX_CLOCK_PULSE, "clock_pulse.wav", 240) \
+    X(SFX_CLOCK_PULSE, "clock_pulse.wav", 450) \
     X(SFX_SENSOR_TRIP, "sensor_trip.wav", 240) \
     X(SFX_SPARK, "spark.wav", 120) \
     X(SFX_CIRCUIT_SWITCH, "circuit_switch.wav", 180) \

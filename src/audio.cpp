@@ -7,7 +7,12 @@ const char* audioCueName(SoundId id) {
     return id >= 0 && id < SFX_COUNT ? cueNames[id] : "unknown sound";
 }
 
+#ifdef __EMSCRIPTEN__
+/* A fresh browser visit is silent until the player opts in. */
+static bool muted = true;
+#else
 static bool muted = false;
+#endif
 bool audioMuted() { return muted; }
 
 #ifdef _WIN32
@@ -344,8 +349,205 @@ void audioSetMuted(bool value) {
     LeaveCriticalSection(&g_voiceLock);
 }
 
+#elif defined(__EMSCRIPTEN__)
+#include <emscripten.h>
+#include <math.h>
+#include <stdint.h>
+#include "audio_embedded.h"
+
+#define SOUND_COOLDOWN(id, path, cooldown) cooldown,
+static const int cooldownMs[SFX_COUNT] = { SOUND_CUES(SOUND_COOLDOWN) };
+#undef SOUND_COOLDOWN
+
+static bool ready = false;
+static double lastPlay[SFX_COUNT];
+static bool played[SFX_COUNT];
+static float listenerX, listenerY;
+static uint32_t miningPitchState = 0xC2A65u;
+
+/* Keep the sound bank in the wasm: there are no loose asset requests to race
+   the first menu click, and the same embedded WAVs ship in the Windows build. */
+EM_JS(int, webAudioInit, (), {
+    const Audio = window.AudioContext || window.webkitAudioContext;
+    if (!Audio) return 0;
+    try {
+        const ctx = new Audio();
+        const bank = window.__cinderliftAudio = {
+            ctx: ctx, samples: [], voices: [], muted: true
+        };
+        const resume = () => {
+            if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+        };
+        /* SDL dispatches the click to the game on a later frame. Resume in
+           the DOM gesture itself, before the game handles the mute button. */
+        document.addEventListener('pointerdown', resume, true);
+        document.addEventListener('keydown', resume, true);
+        document.addEventListener('touchend', resume, true);
+        bank.resume = resume;
+        return 1;
+    } catch (e) {
+        console.warn('Cinderlift audio unavailable:', e);
+        return 0;
+    }
+});
+
+EM_JS(int, webAudioRegister, (int id, const unsigned char* ptr, int size), {
+    const bank = window.__cinderliftAudio;
+    if (!bank || size < 44) return 0;
+    const bytes = HEAPU8.subarray(ptr, ptr + size);
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const fourcc = (at, value) =>
+        bytes[at] === value.charCodeAt(0) && bytes[at + 1] === value.charCodeAt(1) &&
+        bytes[at + 2] === value.charCodeAt(2) && bytes[at + 3] === value.charCodeAt(3);
+    if (!fourcc(0, 'RIFF') || !fourcc(8, 'WAVE')) return 0;
+    let formatOk = false, dataAt = -1, dataSize = 0;
+    for (let at = 12; at + 8 <= size;) {
+        const len = view.getUint32(at + 4, true);
+        const start = at + 8;
+        if (len > size - start) return 0;
+        if (fourcc(at, 'fmt ') && len >= 16)
+            formatOk = view.getUint16(start, true) === 1 &&
+                view.getUint16(start + 2, true) === 1 &&
+                view.getUint32(start + 4, true) === 22050 &&
+                view.getUint16(start + 14, true) === 16;
+        if (fourcc(at, 'data')) { dataAt = start; dataSize = len; }
+        at = start + len + (len & 1);
+    }
+    if (!formatOk || dataAt < 0 || !dataSize || (dataSize & 1)) return 0;
+    const count = dataSize / 2;
+    const buffer = bank.ctx.createBuffer(1, count, 22050);
+    const channel = buffer.getChannelData(0);
+    for (let i = 0; i < count; ++i)
+        channel[i] = view.getInt16(dataAt + i * 2, true) / 32768;
+    bank.samples[id] = buffer;
+    return 1;
+});
+
+EM_JS(int, webAudioPlay, (int id, float gain, float pan, float rate, int priority), {
+    const bank = window.__cinderliftAudio;
+    if (!bank || bank.muted || bank.ctx.state !== 'running' || !bank.samples[id]) return 0;
+    if (bank.voices.length >= 12) {
+        let weakest = -1;
+        for (let i = 0; i < bank.voices.length; ++i)
+            if (bank.voices[i].priority < priority &&
+                (weakest < 0 || bank.voices[i].priority < bank.voices[weakest].priority))
+                weakest = i;
+        if (weakest < 0) return 0;
+        const stolen = bank.voices.splice(weakest, 1)[0];
+        stolen.source.stop();
+    }
+    const ctx = bank.ctx;
+    const source = ctx.createBufferSource();
+    source.buffer = bank.samples[id];
+    source.playbackRate.value = rate;
+    const left = ctx.createGain(), right = ctx.createGain();
+    left.gain.value = gain * (pan > 0 ? 1 - pan : 1);
+    right.gain.value = gain * (pan < 0 ? 1 + pan : 1);
+    const merger = ctx.createChannelMerger(2);
+    source.connect(left); source.connect(right);
+    left.connect(merger, 0, 0); right.connect(merger, 0, 1);
+    merger.connect(ctx.destination);
+    const voice = { source: source, priority: priority };
+    bank.voices.push(voice);
+    source.onended = () => {
+        const at = bank.voices.indexOf(voice);
+        if (at >= 0) bank.voices.splice(at, 1);
+        source.disconnect(); left.disconnect(); right.disconnect(); merger.disconnect();
+    };
+    source.start();
+    return 1;
+});
+
+EM_JS(void, webAudioMute, (int value), {
+    const hint = document.getElementById('soundHint');
+    if (hint) hint.textContent = value ? 'Sound: off (Esc menu)' : 'Sound: on (Esc menu)';
+    const bank = window.__cinderliftAudio;
+    if (bank) {
+        bank.muted = !!value;
+        if (value) {
+            for (const voice of bank.voices) voice.source.stop();
+            bank.voices.length = 0;
+        } else {
+            bank.resume();
+        }
+    }
+    try { localStorage.setItem('cinderlift.sound_muted', value ? '1' : '0'); }
+    catch (e) { /* Site data may be disabled; the current session still works. */ }
+});
+
+EM_JS(void, webAudioShutdown, (), {
+    const bank = window.__cinderliftAudio;
+    if (!bank) return;
+    for (const voice of bank.voices) voice.source.stop();
+    bank.voices.length = 0;
+    bank.ctx.close().catch(() => {});
+    window.__cinderliftAudio = null;
+});
+
+void audioInit() {
+    if (ready) return;
+    ready = webAudioInit() != 0;
+    if (!ready) return;
+    webAudioMute(muted ? 1 : 0);
+    for (int i = 0; i < SFX_COUNT && i < EMBEDDED_SFX_COUNT; ++i)
+        webAudioRegister(i, EMBEDDED_SFX[i].data, EMBEDDED_SFX[i].size);
+    miningPitchState ^= (uint32_t)emscripten_get_now();
+    if (!miningPitchState) miningPitchState = 0xC2A65u;
+}
+void audioUpdate() {}
+void audioShutdown() { if (ready) { webAudioShutdown(); ready = false; } }
+void audioSetMuted(bool value) {
+    if (muted == value) return;
+    muted = value;
+    webAudioMute(value ? 1 : 0);
+}
+
+static int priority(SoundId id) {
+    if (id == SFX_PLAYER_DAMAGE || id == SFX_PLAYER_DEATH ||
+        id == SFX_BOSS_PHASE || id == SFX_BOSS_DEFEAT ||
+        id == SFX_ROCKET_IGNITE || id == SFX_VICTORY) return 3;
+    if ((id >= SFX_TOOL_FIRE_LIGHT && id <= SFX_MELEE_HIT) ||
+        (id >= SFX_BOSS_BROOD_CALL && id <= SFX_BOSS_EFFIGY_CALL) ||
+        id == SFX_EXPLOSION) return 2;
+    if ((id >= SFX_STEP_EARTH && id <= SFX_STEP_WET) ||
+        id == SFX_CAVE_DRIP || id == SFX_SURFACE_WIND ||
+        id == SFX_FIRE_CRACKLE || id == SFX_LAVA_BUBBLE) return 0;
+    return 1;
+}
+
+static float miningPlaybackPitch() {
+    miningPitchState ^= miningPitchState << 13;
+    miningPitchState ^= miningPitchState >> 17;
+    miningPitchState ^= miningPitchState << 5;
+    return 0.94f + 0.12f * (float)(miningPitchState & 0xffffu) / 65535.0f;
+}
+
+static void play(SoundId id, float gain, float pan) {
+    if (muted || !ready || id < 0 || id >= SFX_COUNT) return;
+    const double now = emscripten_get_now();
+    if (played[id] && now - lastPlay[id] < cooldownMs[id]) return;
+    if (gain < 0.0f) gain = 0.0f;
+    if (gain > 1.0f) gain = 1.0f;
+    const float pitch = id == SFX_MINE ? miningPlaybackPitch() : 1.0f;
+    if (!webAudioPlay(id, gain, pan, pitch, priority(id))) return;
+    lastPlay[id] = now;
+    played[id] = true;
+}
+
+void audioPlay(SoundId id, float gain) { play(id, gain, 0.0f); }
+void audioSetListener(float x, float y) { listenerX = x; listenerY = y; }
+void audioPlayAt(SoundId id, float x, float y, float gain) {
+    const float dx = x - listenerX, dy = y - listenerY;
+    const float distance = sqrtf(dx * dx + dy * dy);
+    if (distance >= 360.0f) return;
+    const float fade = distance < 64.0f ? 1.0f : (360.0f - distance) / 296.0f;
+    float pan = dx / 240.0f;
+    if (pan < -0.75f) pan = -0.75f;
+    if (pan > 0.75f) pan = 0.75f;
+    play(id, gain * fade, pan);
+}
+
 #else
-/* The browser build keeps the event API; its playback backend comes next. */
 void audioInit() {}
 void audioUpdate() {}
 void audioShutdown() {}

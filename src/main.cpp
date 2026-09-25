@@ -10348,7 +10348,7 @@ static bool gameFrame(const LARGE_INTEGER& freq) {
         if (inLiquid && !g_audioInLiquid) audioPlay(SFX_WATER_SPLASH, 0.45f);
         g_audioInLiquid = inLiquid;
         if (groundedBeforeTick && !g_player.onGround && g_player.vy < -0.5f)
-            audioPlay(SFX_PLAYER_JUMP, 0.30f);
+            audioPlay(SFX_PLAYER_JUMP, 0.24f);
         if (!groundedBeforeTick && g_player.onGround && airBeforeTick > 4)
             audioPlay(g_player.lastFall > 55.0f ? SFX_PLAYER_FALL_HURT : SFX_PLAYER_LAND,
                       g_player.lastFall > 55.0f ? 0.65f : 0.30f);

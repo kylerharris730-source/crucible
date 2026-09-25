@@ -140,10 +140,17 @@ def build(name: str) -> tuple[Synth, float]:
             s.data[i] *= i / (0.004 * RATE)
         return s, 0.43
 
+    if name == "PLAYER_JUMP":
+        s = Synth(name, 0.18)
+        s.tone(0, 0.15, 145, 255, 0.24, "triangle", decay=2.5)
+        for i in range(min(len(s.data), round(0.014 * RATE))):
+            s.data[i] *= i / (0.014 * RATE)
+        return s, 0.38
+
     if name.startswith("PLAYER_") or name in {"EQUIP", "THROW"}:
         duration = 0.55 if name in {"PLAYER_DEATH", "PLAYER_RESPAWN"} else 0.26
         s = Synth(name, duration)
-        if name in {"PLAYER_JUMP", "PLAYER_RESPAWN", "PLAYER_HEAL"}:
+        if name in {"PLAYER_RESPAWN", "PLAYER_HEAL"}:
             s.tone(0, duration * 0.8, 185 * pitch, 450 * pitch, 0.27, "pulse", 0.27)
             s.tone(0.035, duration * 0.7, 93 * pitch, 210 * pitch, 0.16, "sine")
         elif name in {"PLAYER_LAND", "PLAYER_FALL_HURT"}:
@@ -305,7 +312,15 @@ def build(name: str) -> tuple[Synth, float]:
             s.tone(0.37, 0.45, 390, 130, 0.27, "triangle")
         return s, 0.73
 
-    if name in {"CLOCK_PULSE", "SENSOR_TRIP", "SPARK", "CIRCUIT_SWITCH",
+    if name == "CLOCK_PULSE":
+        s = Synth(name, 0.14)
+        s.tone(0, 0.11, 170, 135, 0.20, "sine", decay=3.0)
+        s.grit(0.010, 0.035, 0.055, 8, 6.0, lowpass=0.12)
+        for i in range(min(len(s.data), round(0.008 * RATE))):
+            s.data[i] *= i / (0.008 * RATE)
+        return s, 0.31
+
+    if name in {"SENSOR_TRIP", "SPARK", "CIRCUIT_SWITCH",
                 "PIPE_TRANSFER", "PLACER_CYCLE", "MINER_CYCLE", "SPOUT_CYCLE",
                 "DRAIN_CYCLE", "STATION_CRAFT", "HIVE_RELEASE"}:
         s = Synth(name, 0.30)
