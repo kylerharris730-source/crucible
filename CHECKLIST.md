@@ -5,7 +5,7 @@ chat, which meant it was re-derived from memory every session and quietly lost
 things. `HANDOFF.md` is **not** this file: it is gitignored scratch, is usually
 stale, and should not be trusted for release state.
 
-Released: **v0.6.15** (2026-09-24). `main` is level with it.
+Released: **v0.6.16** (2026-09-24). `main` is level with it.
 
 ---
 
@@ -30,6 +30,17 @@ Released: **v0.6.15** (2026-09-24). `main` is level with it.
       both with `CINDERLIFT_RTC_LOG=1` and look in `build/rtc.log`.
 
 ## Ship it
+
+- [x] **Cut v0.6.16.** Tagged 2026-09-24, one commit past v0.6.15. Sound
+      in the browser: the same embedded cues through Web Audio, muted on a
+      first visit, with the pause-menu toggle remembered in localStorage.
+      Coke gas is now a shade heavier than air and pools in low ground; its
+      flame sinks with it and catches on touch. Softer, shorter jump and
+      clock-pulse sounds.
+
+      Needs you: listen in a normal browser window (not the app's pane),
+      where audio is blocked until the first click -- unmuting from the Esc
+      menu should play straight away.
 
 - [x] **Cut v0.6.15.** Tagged 2026-09-24, one commit past v0.6.14. Sound
       no longer stutters the game. Reported from another computer: the
