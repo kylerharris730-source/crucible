@@ -5,7 +5,7 @@ chat, which meant it was re-derived from memory every session and quietly lost
 things. `HANDOFF.md` is **not** this file: it is gitignored scratch, is usually
 stale, and should not be trusted for release state.
 
-Released: **v0.6.16** (2026-09-24). `main` is level with it.
+Released: **v0.6.17** (2026-09-26). `main` is level with it.
 
 ---
 
@@ -30,6 +30,20 @@ Released: **v0.6.16** (2026-09-24). `main` is level with it.
       both with `CINDERLIFT_RTC_LOG=1` and look in `build/rtc.log`.
 
 ## Ship it
+
+- [x] **Cut v0.6.17.** Tagged 2026-09-26, five commits past v0.6.16.
+      Knockback has its own velocity channel, so slow creatures are actually
+      shoved (every behaviour's speed cap used to eat it). Shield drones: one
+      pulse per player, every 17-33 frames -- slimes and shamblers held off,
+      husks and mites land well under half their hits, threshers and
+      ashhounds unaffected. Sigils carry more armour and heat/cold
+      resistance (3/5/5/7 armour, 7/20/30/50 C); Carapace Charm 5 -> 3; Wisp
+      Prism is +3 flat damage instead of pierce. Spouts and drains are
+      silent. The wiki generator links again (needed winmm).
+
+      Needs you: play with one and two shield drones. The pulse sits near a
+      cliff -- at 16-32 frames a crowd of six husks went from 1800 contact
+      damage to 99 -- so nudge push strength rather than frequency.
 
 - [x] **Cut v0.6.16.** Tagged 2026-09-24, one commit past v0.6.15. Sound
       in the browser: the same embedded cues through Web Audio, muted on a
