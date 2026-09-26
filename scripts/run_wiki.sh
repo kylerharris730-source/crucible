@@ -63,7 +63,9 @@ fi
 # -Wall -Wextra stays, because the generator indexes tables by id and an
 # off-by-one there is a wrong page rather than a crash.
 FLAGS="-std=c++11 -O1 -Wall -Wextra -I src"
-LIBS=""
+# winmm for audio.cpp, which opens its sound device through waveOut since
+# v0.6.15; the generator never plays a sound, but it links every src file.
+LIBS="-lwinmm"
 
 # The commit the wiki was generated from, and the game version it describes.
 # Both end up in every page's footer. The output is COMMITTED rather than
