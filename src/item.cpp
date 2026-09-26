@@ -1641,16 +1641,14 @@ void initItems() {
        taking the largest -- see the note on ItemDef::regenPer for why that is
        the rule holding rather than an exception to it.
 
-       Five, raised from two on request. That is a titanium helmet's worth in a
-       trinket slot, and it is deliberately the armour charm rather than a
-       modest one: it comes off the first creature in the game, it competes
-       with every other trinket for the same slots, and at two it was a
-       rounding error next to any worn piece. */
+       Three: raised from two to five on request, then back to three once the
+       sigils carried more armour of their own -- five off the first creature
+       in the game out-armoured the second boss's sigil. */
     ITEMS[ITEM_CARAPACE_CHARM].name      = "Carapace Charm";
     ITEMS[ITEM_CARAPACE_CHARM].kind      = ITEMK_ACCESSORY;
     ITEMS[ITEM_CARAPACE_CHARM].equipSlot = EQ_TRINKET_A;
     ITEMS[ITEM_CARAPACE_CHARM].maxStack  = 1;
-    ITEMS[ITEM_CARAPACE_CHARM].armour    = 5;
+    ITEMS[ITEM_CARAPACE_CHARM].armour    = 3;
     ITEMS[ITEM_CARAPACE_CHARM].colour    = 0xB07848;
     ITEMS[ITEM_CARAPACE_CHARM].sprite    = SPR_ACC_CARAPACE;
 
@@ -1761,15 +1759,17 @@ void initItems() {
     ITEMS[ITEM_CULVERIN_LOADER].colour    = 0x9AA6B4;
     ITEMS[ITEM_CULVERIN_LOADER].sprite    = SPR_ACC_LOADER;
 
-    /* Wisp. Its shot is a beam you can see the whole length of, and what
-       makes a beam a beam is that it does not stop at the first thing it
-       meets. Two more cells of pierce, which is enough to punch a bolt through
-       a wall of creatures and not enough to make cover meaningless. */
+    /* Wisp. Flat damage on every hit, shot or swing: three points, added
+       before any percentage so it stacks with the Whetstone and the sigils.
+       It was two cells of pierce, which on a weapon that already bores through
+       a wall was invisible. Flat rather than a percentage so it is the charm
+       that makes a weak weapon hit harder, where a percentage favours a strong
+       one -- three is most of the Bolt Caster's four. */
     ITEMS[ITEM_WISP_PRISM].name      = "Wisp Prism";
     ITEMS[ITEM_WISP_PRISM].kind      = ITEMK_ACCESSORY;
     ITEMS[ITEM_WISP_PRISM].equipSlot = EQ_TRINKET_A;
     ITEMS[ITEM_WISP_PRISM].maxStack  = 1;
-    ITEMS[ITEM_WISP_PRISM].piercePlus = 2;
+    ITEMS[ITEM_WISP_PRISM].damagePlus = 3;
     ITEMS[ITEM_WISP_PRISM].colour    = 0xE0A8FF;
     ITEMS[ITEM_WISP_PRISM].sprite    = SPR_ACC_PRISM;
 
@@ -1859,7 +1859,9 @@ void initItems() {
     ITEMS[ITEM_FORGE_SIGIL].equipSlot = EQ_TRINKET_A;
     ITEMS[ITEM_FORGE_SIGIL].maxStack  = 1;
     ITEMS[ITEM_FORGE_SIGIL].damagePct = 8;
-    ITEMS[ITEM_FORGE_SIGIL].armour = 1;
+    ITEMS[ITEM_FORGE_SIGIL].armour = 3;
+    ITEMS[ITEM_FORGE_SIGIL].heatResist = 7;
+    ITEMS[ITEM_FORGE_SIGIL].coldResist = 7;
     ITEMS[ITEM_FORGE_SIGIL].colour    = 0xE07A32;
     ITEMS[ITEM_FORGE_SIGIL].sprite    = SPR_SIGIL_FORGE;
 
@@ -1879,7 +1881,9 @@ void initItems() {
     ITEMS[ITEM_SILK_SIGIL].equipSlot = EQ_TRINKET_A;
     ITEMS[ITEM_SILK_SIGIL].maxStack  = 1;
     ITEMS[ITEM_SILK_SIGIL].damagePct = 14;
-    ITEMS[ITEM_SILK_SIGIL].armour = 2;
+    ITEMS[ITEM_SILK_SIGIL].armour = 5;
+    ITEMS[ITEM_SILK_SIGIL].heatResist = 20;
+    ITEMS[ITEM_SILK_SIGIL].coldResist = 20;
     ITEMS[ITEM_SILK_SIGIL].speedPct = 6;
     ITEMS[ITEM_SILK_SIGIL].colour    = 0xC8C0D8;
     ITEMS[ITEM_SILK_SIGIL].sprite    = SPR_SIGIL_SILK;
@@ -1893,9 +1897,10 @@ void initItems() {
     ITEMS[ITEM_PYRE_SIGIL].equipSlot = EQ_TRINKET_A;
     ITEMS[ITEM_PYRE_SIGIL].maxStack  = 1;
     ITEMS[ITEM_PYRE_SIGIL].damagePct = 20;
-    ITEMS[ITEM_PYRE_SIGIL].armour = 3;
+    ITEMS[ITEM_PYRE_SIGIL].armour = 5;
     ITEMS[ITEM_PYRE_SIGIL].speedPct = 10;
-    ITEMS[ITEM_PYRE_SIGIL].heatResist = 25;
+    ITEMS[ITEM_PYRE_SIGIL].heatResist = 30;
+    ITEMS[ITEM_PYRE_SIGIL].coldResist = 30;
     ITEMS[ITEM_PYRE_SIGIL].colour    = 0xFFD46A;
     ITEMS[ITEM_PYRE_SIGIL].sprite    = SPR_SIGIL_PYRE;
 
@@ -1913,10 +1918,10 @@ void initItems() {
     ITEMS[ITEM_ASCENT_SIGIL].equipSlot = EQ_TRINKET_A;
     ITEMS[ITEM_ASCENT_SIGIL].maxStack  = 1;
     ITEMS[ITEM_ASCENT_SIGIL].damagePct = 24;
-    ITEMS[ITEM_ASCENT_SIGIL].armour = 5;
+    ITEMS[ITEM_ASCENT_SIGIL].armour = 7;
     ITEMS[ITEM_ASCENT_SIGIL].speedPct = 16;
-    ITEMS[ITEM_ASCENT_SIGIL].heatResist = 40;
-    ITEMS[ITEM_ASCENT_SIGIL].coldResist = 40;
+    ITEMS[ITEM_ASCENT_SIGIL].heatResist = 50;
+    ITEMS[ITEM_ASCENT_SIGIL].coldResist = 50;
     ITEMS[ITEM_ASCENT_SIGIL].regenPer = 240;
     ITEMS[ITEM_ASCENT_SIGIL].colour    = 0xFFF0C8;
     ITEMS[ITEM_ASCENT_SIGIL].sprite    = SPR_SIGIL_ASCENT;
@@ -2337,7 +2342,7 @@ void initItems() {
         "Three shots in ten come out doubled. No rhythm to keep and nothing to "
         "charge.";
     ITEMS[ITEM_WISP_PRISM].description =
-        "Your shots punch through two more cells before they are spent.";
+        "+3 damage on every hit, shot or swing.";
     ITEMS[ITEM_STOOPER_TALON].description =
         "Falling never hurts you.";
     ITEMS[ITEM_SKIRMISHER_CELL].description =
@@ -2352,13 +2357,13 @@ void initItems() {
         "Leaves short-lived, FuelFire-hot embers with extra flames while you run. They ignite "
         "whatever they touch -- anything you built, and you if you turn back.";
     ITEMS[ITEM_FORGE_SIGIL].description =
-        "Brood Mother's mark. +8% damage and +1 armour.";
+        "Brood Mother's mark. +8% damage, +3 armour, 7C heat and cold resistance.";
     ITEMS[ITEM_SILK_SIGIL].description =
-        "Widow's mark. +14% damage, +2 armour, +6% movement speed.";
+        "Widow's mark. +14% damage, +5 armour, +6% movement speed, 20C heat and cold resistance.";
     ITEMS[ITEM_PYRE_SIGIL].description =
-        "Censer's mark. +20% damage, +3 armour, +10% speed, and heat resistance.";
+        "Censer's mark. +20% damage, +5 armour, +10% speed, 30C heat and cold resistance.";
     ITEMS[ITEM_ASCENT_SIGIL].description =
-        "Effigy's mark. +24% damage, +5 armour, +16% speed, heat and cold resistance, and slow regeneration.";
+        "Effigy's mark. +24% damage, +7 armour, +16% speed, 50C heat and cold resistance, and slow regeneration.";
     ITEMS[ITEM_CINDERWEAVE_HOOD].description =
         "Cinderweave. Light protection, but it shrugs off a furnace.";
     ITEMS[ITEM_CINDERWEAVE_COAT].description =
@@ -2691,7 +2696,7 @@ int Inventory::shotSpeedPct() const { return bestWorn(*this, &ItemDef::shotSpeed
 int Inventory::damagePct()    const { return bestWorn(*this, &ItemDef::damagePct); }
 int Inventory::cooldownPct()  const { return bestWorn(*this, &ItemDef::cooldownPct); }
 int Inventory::contactResistPct() const { return bestWorn(*this, &ItemDef::contactResistPct); }
-int Inventory::piercePlus()       const { return bestWorn(*this, &ItemDef::piercePlus); }
+int Inventory::damagePlus()       const { return bestWorn(*this, &ItemDef::damagePlus); }
 int Inventory::energyBonus()      const { return bestWorn(*this, &ItemDef::energyBonus); }
 int Inventory::airJumps()         const { return bestWorn(*this, &ItemDef::airJumps); }
 int Inventory::fallGuardPct()     const { return bestWorn(*this, &ItemDef::fallGuardPct); }

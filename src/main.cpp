@@ -5638,10 +5638,7 @@ static void fireToolFor(Player& player, Inventory& inventory, const Aim& aim) {
     if (momentum > 0)
         shotDamage = imax(shotDamage + 1,
                           shotDamage + shotDamage * momentum / 100);
-    /* The Wisp Prism. Pierce is a COUNT of cells a shot survives, so this adds
-       rather than scales: a bolt that punched through one wall now punches
-       through three, whatever it started at. */
-    const int shotPierce = s.pierce + inventory.piercePlus();
+    const int shotPierce = s.pierce;
     const float shotSpeed  = accessoryShotSpeed(inventory, s.speed);
     const int rangedRangePct = inventory.rangedRangePct();
     const int shotLife = s.life + s.life * rangedRangePct / 100;
@@ -5718,7 +5715,7 @@ static void fireToolFor(Player& player, Inventory& inventory, const Aim& aim) {
         const bool second = projSpawn(pcx + dx * MUZZLE - fanX * 3.0f,
                                       pcy + dy * MUZZLE - fanY * 3.0f,
                                       dx * cSpeed + fanX, dy * cSpeed + fanY,
-                                      c.power, c.pierce + inventory.piercePlus(),
+                                      c.power, c.pierce,
                                       cLife, c.colour, c.blast,
                                       MAT_EMPTY, cDamage, false, c.gravity,
                                       c.effect, c.bounces, c.homing, owner, 0,
@@ -7897,6 +7894,7 @@ static void drawCreative(HDC hdc) {
            permanent zeroes teaches nothing and takes up the space the row of
            group headings needs. */
         n = 0;
+        if (g_inv.damagePlus())   n += sprintf(s + n, "%sdamage +%d", n ? ", " : "", g_inv.damagePlus());
         if (g_inv.damagePct())    n += sprintf(s + n, "%sdamage +%d%%", n ? ", " : "", g_inv.damagePct());
         if (g_inv.cooldownPct())  n += sprintf(s + n, "%sfire rate +%d%%", n ? ", " : "", g_inv.cooldownPct());
         if (g_inv.shotSpeedPct()) n += sprintf(s + n, "%sshot speed +%d%%", n ? ", " : "", g_inv.shotSpeedPct());

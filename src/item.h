@@ -894,8 +894,8 @@ struct ItemDef {
        effect, which is a decision the player is allowed to make badly. */
     /* Percentage off contact damage from creatures, applied where armour is. */
     i16  contactResistPct;
-    /* Extra cells a fired shot punches through before it is spent. */
-    i16  piercePlus;
+    /* Flat damage added to every hit, shot or swing, before any percentage. */
+    i16  damagePlus;
     /* Added to a held tool's per-frame energy recharge. */
     i16  energyBonus;
     /* Jumps available in midair, on top of the one off the ground. */
@@ -1255,7 +1255,7 @@ struct Inventory {
     /* The five charm columns added with the layer-2 and layer-3 charms. Same
        largest-never-summed rule as everything above them. */
     int  contactResistPct() const;
-    int  piercePlus()       const;
+    int  damagePlus()       const;
     int  energyBonus()      const;
     int  airJumps()         const;
     int  fallGuardPct()     const;

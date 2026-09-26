@@ -383,7 +383,7 @@ int main() {
         inv.equip[EQ_TRINKET_A].count = 1;
         check(inv.contactResistPct() == 30, "the Ballast reaches contact damage");
         inv.equip[EQ_TRINKET_A].item = ITEM_WISP_PRISM;
-        check(inv.piercePlus() == 2, "the Prism reaches pierce");
+        check(inv.damagePlus() == 3, "the Prism reaches flat damage");
         inv.equip[EQ_TRINKET_A].item = ITEM_SKIRMISHER_CELL;
         check(inv.energyBonus() == 2, "the Cell reaches tool recharge");
         inv.equip[EQ_TRINKET_A].item = ITEM_STOOPER_TALON;
@@ -466,8 +466,12 @@ int main() {
                    d.name, (int)d.damagePct, (int)d.armour, (int)d.speedPct);
             if (i > 0) {
                 const ItemDef& prev = ITEMS[ladder[i - 1]];
-                if (d.damagePct <= prev.damagePct || d.armour <= prev.armour ||
-                    d.speedPct < prev.speedPct) rising = false;
+                /* Armour may hold level for a step (Silk and Pyre share 5);
+                   damage may not, so every step is still an upgrade. */
+                if (d.damagePct <= prev.damagePct || d.armour < prev.armour ||
+                    d.speedPct < prev.speedPct ||
+                    d.heatResist <= prev.heatResist ||
+                    d.coldResist <= prev.coldResist) rising = false;
             }
         }
         /* Guaranteed, not one in fifty. A boss you have to kill four times for

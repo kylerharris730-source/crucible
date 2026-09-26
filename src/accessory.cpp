@@ -94,6 +94,9 @@ int accessoryBurstBolts(const Inventory& inv) {
 int accessoryLoaderPct() { return LOADER_DOUBLE_PCT; }
 
 int accessoryShotDamage(const Inventory& inv, int baseDamage) {
+    /* The Wisp Prism's flat bonus first, so the percentages scale it too. Not
+       on a shot that does no damage at all -- a teleport bolt is not a hit. */
+    if (baseDamage > 0) baseDamage += inv.damagePlus();
     const int pct = inv.damagePct();
     if (pct <= 0) return baseDamage;
     /* At least one more point than it did, so a percentage can never round away
