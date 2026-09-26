@@ -2,8 +2,8 @@
 
 This is the baseline for the first complete SFX pass. `src/audio.h` is the cue
 registry and gives every row below a stable `SFX_...` name and a matching
-`res/sfx/*.wav` filename. All 107 cue files now exist. The four **prototype**
-cues were hand-tuned with player feedback; the other 103 are generated first
+`res/sfx/*.wav` filename. All 105 cue files now exist. The four **prototype**
+cues were hand-tuned with player feedback; the other 101 are generated first
 passes awaiting an in-game listening pass. A cue slot is not a promise to make
 noise every time its underlying simulation changes.
 
@@ -137,7 +137,7 @@ their bosses, not separate enemies requiring a cue for every entity slot.
 | Cues | Trigger / intention |
 | --- | --- |
 | `CLOCK_PULSE`, `SENSOR_TRIP`, `SPARK`, `CIRCUIT_SWITCH` | Audible physical or logical state changes. Combinators and watchers share these. |
-| `PIPE_TRANSFER`, `PLACER_CYCLE`, `MINER_CYCLE`, `SPOUT_CYCLE`, `DRAIN_CYCLE` | Successful transport or work cycle, rate-limited by device and distance. |
+| `PIPE_TRANSFER`, `PLACER_CYCLE`, `MINER_CYCLE` | Successful transport or work cycle, rate-limited by device and distance. Spouts and drains stay silent. |
 | `STATION_CRAFT` | Workbench/anvil/chemical/assembly/forge fabrication result. |
 | `HIVE_RELEASE` | Hive launches bees; no continuous spawn ticking. |
 
@@ -165,7 +165,7 @@ can speak through `SENSOR_TRIP`, `CLOCK_PULSE`, `CIRCUIT_SWITCH`, and `SPARK`.
 ## Implementation path
 
 The native Windows player loads `res/sfx/<filename>` and falls back to an
-embedded copy of **all 107** sounds, so the standalone executable is audible.
+embedded copy of **all 105** sounds, so the standalone executable is audible.
 It overlaps up to 12 cues. Gameplay hooks now cover local movement and health,
 mining, placement, interaction, crafting, nearby enemy calls and combat,
 machines, ambience, bosses, and rocket launch. Some specialized cues are

@@ -321,12 +321,12 @@ def build(name: str) -> tuple[Synth, float]:
         return s, 0.31
 
     if name in {"SENSOR_TRIP", "SPARK", "CIRCUIT_SWITCH",
-                "PIPE_TRANSFER", "PLACER_CYCLE", "MINER_CYCLE", "SPOUT_CYCLE",
-                "DRAIN_CYCLE", "STATION_CRAFT", "HIVE_RELEASE"}:
+                "PIPE_TRANSFER", "PLACER_CYCLE", "MINER_CYCLE",
+                "STATION_CRAFT", "HIVE_RELEASE"}:
         s = Synth(name, 0.30)
         s.clicks([0, 0.085] if name in {"PIPE_TRANSFER", "MINER_CYCLE", "PLACER_CYCLE"} else [0],
                  0.28, name not in {"SPARK", "SENSOR_TRIP"})
-        base = (85 if name in {"MINER_CYCLE", "DRAIN_CYCLE"} else 190) * pitch
+        base = (85 if name in {"MINER_CYCLE"} else 190) * pitch
         s.tone(0.01, 0.22, base, base * (1.25 if name in {"STATION_CRAFT", "HIVE_RELEASE"} else 0.76),
                0.20, "pulse", 0.39)
         s.grit(0.01, 0.12, 0.18, 8)

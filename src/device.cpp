@@ -2588,9 +2588,7 @@ void devTick(World& w) {
         }
         if (d.count != audioCountBefore) {
             const SoundId cue = d.type == DEV_PLACER ? SFX_PLACER_CYCLE
-                : d.type == DEV_MINER ? SFX_MINER_CYCLE
-                : d.type == DEV_DRAIN ? SFX_DRAIN_CYCLE
-                : d.type == DEV_SPOUT ? SFX_SPOUT_CYCLE : SFX_COUNT;
+                : d.type == DEV_MINER ? SFX_MINER_CYCLE : SFX_COUNT;
             if (cue != SFX_COUNT) audioPlayAt(cue, audioX, audioY, 0.28f);
         }
 

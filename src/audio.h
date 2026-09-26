@@ -90,8 +90,6 @@
     X(SFX_PIPE_TRANSFER, "pipe_transfer.wav", 300) \
     X(SFX_PLACER_CYCLE, "placer_cycle.wav", 300) \
     X(SFX_MINER_CYCLE, "miner_cycle.wav", 300) \
-    X(SFX_SPOUT_CYCLE, "spout_cycle.wav", 350) \
-    X(SFX_DRAIN_CYCLE, "drain_cycle.wav", 350) \
     X(SFX_STATION_CRAFT, "station_craft.wav", 250) \
     X(SFX_HIVE_RELEASE, "hive_release.wav", 400) \
     X(SFX_FIRE_IGNITE, "fire_ignite.wav", 300) \
