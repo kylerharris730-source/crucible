@@ -213,8 +213,10 @@ int main() {
         if (far < 0) { fprintf(stderr, "could not place long-sword target\n"); return 2; }
         g_entities[far].hp = 100000;
         const int dealt = oneStroke(p, ITEM_SWORD_COPPER, 1.0f, 0.0f, far);
-        const float shove = sqrtf(g_entities[far].vx * g_entities[far].vx +
-                                  g_entities[far].vy * g_entities[far].vy);
+        /* The knockback channel, not vx: a behaviour's speed clamp would
+           otherwise eat the shove on its next tick -- see Entity::kbx. */
+        const float shove = sqrtf(g_entities[far].kbx * g_entities[far].kbx +
+                                  g_entities[far].kby * g_entities[far].kby);
         printf("copper sword at 32 cells: %d damage, %.2f cells/frame shove\n",
                dealt, shove);
         if (dealt != ITEMS[ITEM_SWORD_COPPER].damage || shove < 2.0f) {

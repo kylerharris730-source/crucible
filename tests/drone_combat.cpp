@@ -104,6 +104,41 @@ static float dpsAt(ItemId drone, float dist, int frames) {
     return dpsAgainst(drone, &dist, 1, frames);
 }
 
+/* Contact damage the player takes, standing still, from `count` walkers of
+   `type` coming at them from alternating sides. Not pinned and not killed:
+   kept at full health so this measures how well the drone keeps them OFF, not
+   how fast it kills them. */
+static float walkerContact(int shields, int type, int count, int frames) {
+    World& w = g_testWorld;
+    arena(w);
+    Inventory& inv = g_inv;
+    inv.clear();
+    for (int k = 0; k < shields; ++k) {
+        inv.equip[EQ_DRONE_A + k].item = ITEM_SHIELD_DRONE;
+        inv.equip[EQ_DRONE_A + k].count = 1;
+    }
+    int es[8];
+    for (int k = 0; k < count; ++k) {
+        const float off = (60.0f + 18.0f * (float)(k / 2)) * (k & 1 ? 1.0f : -1.0f);
+        es[k] = entSpawn(w, type, (float)CX + off,
+                         (float)(FLOOR - ENT_DEFS[type].h - 1));
+    }
+    float taken = 0.0f;
+    for (int f = 0; f < frames; ++f) {
+        for (int k = 0; k < count; ++k)
+            if (es[k] >= 0 && g_entities[es[k]].type != ENT_NONE)
+                g_entities[es[k]].hp = 100000;
+        const int hpBefore = g_player.hp;
+        droneTick(w, g_player, inv);
+        projUpdate(w);
+        entTick(w, g_player, inv);
+        taken += (float)(hpBefore - g_player.hp);
+        g_player.hp = PLAYER_HP_MAX;
+        g_player.alive = true;
+    }
+    return taken;
+}
+
 /* Damage that reaches the player from shooters at the four compass points, one
    shot every `every` frames. Four rather than one so this measures a bubble
    rather than one lucky line -- a shield that only covered the side it happened
@@ -211,6 +246,42 @@ int main() {
                fired, stopped);
         check(stopped > 20.0f, "it still helps against a barrage");
         check(stopped < 90.0f, "but a barrage gets through, so it is not immunity");
+    }
+
+    /* --- 5b. and it keeps walkers off -----------------------------------
+       Reported from play: shield drones "dont do much against non projectile
+       attacks". The pulse did push, but every creature clamps its own speed
+       to its walking pace each frame, so a slow walker lost the shove on the
+       very next tick and was back in contact at once. Knockback now has a
+       channel of its own (Entity::kbx) that glides clear of that clamp. */
+    {
+        static const int WALKERS[7] = { ENT_MITE, ENT_SLIME, ENT_HUSK, ENT_SHAMBLER,
+                                        ENT_THRESHER, ENT_ASHHOUND, ENT_HUSK };
+        static const int COUNT[7] = { 2, 2, 2, 2, 2, 2, 6 };
+        float bareAll = 0.0f, oneAll = 0.0f, twoAll = 0.0f;
+        float crowdBare = 0.0f, crowdTwo = 0.0f;
+        bool reached = true;
+        for (int k = 0; k < 7; ++k) {
+            const float bare = walkerContact(0, WALKERS[k], COUNT[k], 1800);
+            const float one  = walkerContact(1, WALKERS[k], COUNT[k], 1800);
+            const float two  = walkerContact(2, WALKERS[k], COUNT[k], 1800);
+            printf("  %d x %-10s for 30 s: %5.0f contact damage bare, %5.0f one shield, "
+                   "%5.0f two\n", COUNT[k], ENT_DEFS[WALKERS[k]].name, bare, one, two);
+            if (bare <= 0.0f) reached = false;
+            if (COUNT[k] > 2) { crowdBare = bare; crowdTwo = two; }
+            bareAll += bare; oneAll += one; twoAll += two;
+        }
+        const float stopped    = 100.0f - oneAll * 100.0f / bareAll;
+        const float stoppedTwo = 100.0f - twoAll * 100.0f / bareAll;
+        printf("Shield against walkers: %.0f%% of contact damage stopped, %.0f%% with two\n",
+               stopped, stoppedTwo);
+        check(reached, "walkers reach an unshielded player");
+        check(stopped > 15.0f, "the shield keeps a share of them off");
+        /* Reported from play: "practically untouchable with 2". The push is
+           one pulse per player; a second bay adds shots stopped, not shoves. */
+        check(stoppedTwo < stopped + 10.0f, "and a second shield does not double the push");
+        check(crowdTwo > crowdBare * 0.35f,
+              "a crowd of husks still reaches a player flying two");
     }
 
     /* --- 6. and none of it touches your bees ------------------------------

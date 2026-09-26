@@ -1215,14 +1215,35 @@ static void moveAxis(const World& w, Entity& e, float dx, float dy) {
                 if (!solidBox(w, (int)nx, (int)e.y - up, d.w, d.h)) {
                     e.x = nx; e.y -= (float)up; climbed = true;
                 }
-            if (!climbed) { e.vx = 0.0f; e.facing = -e.facing; }
+            if (!climbed) { e.vx = 0.0f; e.kbx = 0.0f; e.facing = -e.facing; }
         }
     }
     if (dy != 0.0f) {
         const float ny = e.y + dy;
         if (!solidBox(w, (int)e.x, (int)ny, d.w, d.h, dy > 0 ? SOLID_FLOOR : SOLID_ANY)) e.y = ny;
-        else { if (dy > 0.0f) e.onGround = true; e.vy = 0.0f; }
+        else { if (dy > 0.0f) e.onGround = true; e.vy = 0.0f; e.kby = 0.0f; }
     }
+}
+
+/* Friction on the knockback channel, per frame. Low: a shoved creature
+   slides and tumbles well clear rather than stopping where it was hit, which
+   is what gives a push its defensive value. On the ground a 1.5 shove carries
+   about ten cells; in the air, three times that. */
+static const float KNOCK_DECAY_GROUND = 0.86f;
+static const float KNOCK_DECAY_AIR    = 0.95f;
+
+void entKnock(Entity& e, float kx, float ky) {
+    const float scale = ENT_DEFS[e.type].isBoss ? 0.25f : 1.0f;
+    /* A stagger: the stride it was taking back toward whatever hit it is
+       lost. Without this a walker leaned into the shove at full walking pace
+       from the first frame and gave back most of the distance. */
+    if (scale == 1.0f && e.vx * kx < 0.0f) e.vx = 0.0f;
+    e.kbx += kx * scale;
+    e.kby += ky * scale;
+    /* Capped, so a stack of shoves from several sources in one frame cannot
+       fire a creature across the map. */
+    const float sp = sqrtf(e.kbx * e.kbx + e.kby * e.kby);
+    if (sp > 3.0f) { e.kbx *= 3.0f / sp; e.kby *= 3.0f / sp; }
 }
 
 /* --- the archetypes --------------------------------------------------------
@@ -3947,8 +3968,13 @@ static void entTickMode(World& w, Player& fallbackPlayer, Inventory& fallbackInv
             if (e.vy > ENT_MAX_FALL) e.vy = ENT_MAX_FALL;
             e.onGround = false;
         }
-        moveAxis(w, e, e.vx, 0.0f);
-        moveAxis(w, e, 0.0f, e.vy);
+        moveAxis(w, e, e.vx + e.kbx, 0.0f);
+        moveAxis(w, e, 0.0f, e.vy + e.kby);
+        {
+            const float decay = e.onGround ? KNOCK_DECAY_GROUND : KNOCK_DECAY_AIR;
+            e.kbx *= decay; e.kby *= decay;
+            if (e.kbx * e.kbx + e.kby * e.kby < 0.0025f) e.kbx = e.kby = 0.0f;
+        }
 
         /* --- the world hurts creatures too ------------------------------
            Not a courtesy. If lava and acid only hurt the player, then every
@@ -4089,12 +4115,11 @@ int entHitSegment(float x0, float y0, float x1, float y1,
             const float kd = sqrtf(kx * kx + ky * ky);
             if (kd > 0.001f) { kx /= kd; ky /= kd; }
             else { kx = 1.0f; ky = 0.0f; }
-            e.vx += kx * knockback;
             /* Biased upward. A shove that is purely horizontal slides a walker
                along the floor and it walks straight back; lifting it off the
                ground buys the swinger the frames to step away, which is the
                entire defensive value of knockback. */
-            e.vy += ky * knockback - knockback * 0.45f;
+            entKnock(e, kx * knockback, ky * knockback - knockback * 0.45f);
         }
         if (hitMask) hitMask[i >> 3] |= (u8)(1u << (i & 7));
         ++struck;
@@ -4115,7 +4140,12 @@ int entDamageKnockbackDisc(int cx, int cy, int radius, int damage,
         if (d2 > r2) continue;
         entApplyDamage(e, damage);
         const float len = sqrtf(d2);
-        if (len > 0.01f) { e.vx += dx * knockback / len; e.vy += dy * knockback / len; }
+        if (len > 0.01f) {
+            /* With a lift, for the reason the blade has one: off the ground
+               the shove glides three times as far. */
+            entKnock(e, dx * knockback / len,
+                     dy * knockback / len - knockback * 0.35f);
+        }
         ++hit;
     }
     return hit;

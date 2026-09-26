@@ -117,6 +117,26 @@ static const float SHIELD_SPEED      = 7.5f;
    was always meant to have: an answer to being shot at, not an answer to
    ranged combat. */
 static const int   SHIELD_RECHARGE   = 20;
+/* Frames between the shield's knockback pulses: MIN plus up to SPREAD more,
+   drawn fresh each time, about 25 on average. It was a fixed 24 per drone,
+   and two drones pushed every 12 -- reported as "practically untouchable
+   with 2". Varied rather than a fixed beat, because a fixed beat locks into
+   step with a creature's own attack cooldown: every 24 frames a husk never
+   landed a hit, every 30 it landed nearly all of them. Slow walkers (slimes,
+   shamblers) are held off; husks and mites land well under half their hits,
+   a crowd about half; threshers and ashhounds are too quick for it. */
+static const int   SHIELD_PULSE_MIN    = 17;
+static const int   SHIELD_PULSE_SPREAD = 16;
+
+/* Its own generator, so the shield's timing never shifts the shared sequence
+   that combat and world generation draw from. */
+static u32 g_shieldPulseRng = 0x5EED1234u;
+static int shieldPulseGap() {
+    g_shieldPulseRng ^= g_shieldPulseRng << 13;
+    g_shieldPulseRng ^= g_shieldPulseRng >> 17;
+    g_shieldPulseRng ^= g_shieldPulseRng << 5;
+    return SHIELD_PULSE_MIN + (int)(g_shieldPulseRng % (u32)(SHIELD_PULSE_SPREAD + 1));
+}
 
 static const int ATTACK_DRONE_DAMAGE = 1;
 static const int ATTACK_DRONE_COOLDOWN = 28;
@@ -602,6 +622,10 @@ static void droneTickBank(Drone* drones, const World& w, const Player& p, Invent
     g_taskX = p.centreX(); g_taskY = p.centreY();
     g_homeX = p.centreX(); g_homeY = (float)p.top() - (float)DRONE_HOME_ABOVE;
 
+    int firstShield = -1;
+    for (int i = 0; i < MAX_DRONES && firstShield < 0; ++i)
+        if (equippedDrone(inv, i) == DRONE_SHIELD) firstShield = i;
+
     for (int i = 0; i < MAX_DRONES; ++i) {
         Drone& d = drones[i];
         const u8 want = equippedDrone(inv, i);
@@ -786,11 +810,17 @@ static void droneTickBank(Drone* drones, const World& w, const Player& p, Invent
             shieldIntercept(d);
             if (d.effectCool > 0) --d.effectCool;
             if (d.effectCool == 0) {
-                entDamageKnockbackDisc((int)p.centreX(), (int)p.centreY(), 34,
-                                       droneDamage(inv, 1), 1.25f, true);
+                /* One pulse per player, however many shield drones are
+                   flying: only the first in the bank pushes. Two bays each
+                   pulsing on their own timer shoved twice as often and made
+                   the player untouchable in melee. A second shield drone
+                   still intercepts shots, and its garlic chip still bites. */
+                if (i == firstShield)
+                    entDamageKnockbackDisc((int)p.centreX(), (int)p.centreY(), 34,
+                                           droneDamage(inv, 1), 1.25f, true);
                 if (hasChip(inv, i, ITEM_GARLIC_FIELD_CHIP))
                     entDamageDisc((int)d.x, (int)d.y, 14, droneDamage(inv, 1), true);
-                d.effectCool = 24;
+                d.effectCool = shieldPulseGap();
             }
         }
     }

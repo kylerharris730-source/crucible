@@ -189,7 +189,7 @@ int main() {
     if (shieldTarget < 0) { fprintf(stderr, "could not spawn shield test target\n"); return 37; }
     const int shieldHp = g_entities[shieldTarget].hp;
     droneReset(); droneTick(w, dronePlayer, droneInv);
-    if (g_entities[shieldTarget].hp >= shieldHp || g_entities[shieldTarget].vx <= 0.0f) {
+    if (g_entities[shieldTarget].hp >= shieldHp || g_entities[shieldTarget].kbx <= 0.0f) {
         fprintf(stderr, "shield drone did not pulse damage and knockback\n"); return 38;
     }
     /* Player accessories occupy trinket slots and deliberately do not fit the

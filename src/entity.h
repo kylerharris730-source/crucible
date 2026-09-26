@@ -350,6 +350,13 @@ struct Entity {
     u8    type;        /* ENT_NONE means this slot is free */
     float x, y;        /* top-left of the collision box, in cells */
     float vx, vy;
+    /* Knockback, kept apart from vx/vy. Every behaviour clamps its own
+       velocity to its species' top speed each frame, which ate a shove down to
+       walking pace on the very next tick -- a slow walker shrugged off hits a
+       fast one flew from. This channel is added to the movement AFTER the
+       behaviour has run, and decays on its own: little friction in the air,
+       more on the ground. See entKnock. */
+    float kbx, kby;
     int   hp;
     int   facing;      /* +1 right, -1 left */
     bool  onGround;
@@ -538,6 +545,10 @@ bool entDamageAt(int x, int y, int damage, bool sparingTame = false,
    the player throws it, and a grenade is the player's own doing. */
 int  entDamageDisc(int cx, int cy, int radius, int damage,
                    bool sparingTame = false);
+
+/* Shove a creature by (kx, ky) cells a frame, through the knockback channel
+   rather than its velocity -- see Entity::kbx. Bosses take a quarter. */
+void entKnock(Entity& e, float kx, float ky);
 
 /* Disc damage with a gentle radial push. Used by close-range companions: the
    hit is intentionally small, but creating space is tangible protection. */
