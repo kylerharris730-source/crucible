@@ -119,9 +119,10 @@ SERIAL=" lan_address network_smoke network_four network_mismatch network_guard n
 # ones. Measured serially on a 12-thread machine, the full suite's run time was
 # 287 s and these nine were 173 s of it -- bee_routes alone is 75 s and
 # hive_bees 34. Everything else is under 7 s, so in parallel the rest finishes
-# in about the time of its slowest test. Run the full suite before committing;
-# quick is for the edit loop.
-QUICK_SKIP=" bee_routes hive_bees drone_combat heat_lamp deep_layer deep_roster
+# in about the time of its slowest test. plume_recover joined later: it runs
+# its plume from several seeds and takes most of a minute. Run the full suite
+# before committing; quick is for the edit loop.
+QUICK_SKIP=" bee_routes hive_bees drone_combat heat_lamp deep_layer deep_roster plume_recover
              network_smoke network_four network_mismatch network_guard "
 
 report() { printf '  %-6s %-24s %6s\n' "$1" "$2" "$3"; }
