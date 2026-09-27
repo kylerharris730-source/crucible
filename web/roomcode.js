@@ -91,6 +91,7 @@
     /* Host: hand over a description, get a code to read out. */
     open: async function (offers) {
       var res = await ask('/room', { method: 'POST', body: JSON.stringify({ offers: offers }) });
+      if (res.status === 429) throw new Error((await res.json()).error || 'too many tries');
       if (!res.ok) throw new Error('could not open a room');
       var body = await res.json();
       if (!body.code || !body.key) throw new Error('could not open a room');
@@ -106,6 +107,8 @@
       var res = await ask('/room/' + encodeURIComponent(code) + query, { method: 'GET' });
       if (res.status === 404) throw new Error('no game with that code');
       if (res.status === 409) throw new Error((await res.json()).error || 'that game is full');
+      /* The broker allows each address a few guesses a minute. */
+      if (res.status === 429) throw new Error((await res.json()).error || 'too many tries');
       if (!res.ok) throw new Error('could not read that code');
       return await res.json();
     },

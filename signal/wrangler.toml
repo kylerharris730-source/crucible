@@ -43,3 +43,17 @@ database_name = "cinderlift-signal"
 # This is an identifier, not a secret: it names a database that only this
 # worker, bound by the account it is deployed under, can reach.
 database_id = "2c9ab469-4b96-4cc8-9c10-9ed3562e9ba0"
+
+# Guesses and new rooms per address -- see "guessing codes" in worker.js.
+# Counted per Cloudflare location, which is fine: an address talks to one.
+# `period` may only be 10 or 60. The namespace ids are arbitrary but must be
+# unique within the account.
+[[ratelimits]]
+name = "JOIN_LIMIT"
+namespace_id = "7301"
+simple = { limit = 10, period = 60 }
+
+[[ratelimits]]
+name = "OPEN_LIMIT"
+namespace_id = "7302"
+simple = { limit = 10, period = 60 }

@@ -17,7 +17,9 @@
 
    A random number in a file has none of those problems. It identifies nobody,
    it survives hardware changes, and the worst case is that someone who deletes
-   it starts a new character.
+   it starts a new character. It comes from the operating system's
+   cryptographic generator, because a host hands a remembered pack back to
+   whoever presents it, and a guessable one could be claimed.
 
    Stored under the USER rather than beside the executable, so the game can be
    moved, reinstalled or launched from anywhere and still be you.
@@ -30,3 +32,8 @@ const char* playerIdentity();
 
 /* 32 hex characters plus a terminator. */
 static const int PLAYER_IDENTITY_CHARS = 32;
+
+/* A fresh identity into `out` (PLAYER_IDENTITY_CHARS + 1), without touching
+   the file. playerIdentity() uses it for a first launch; tests use it so they
+   never read or replace the real player's identity. */
+void identityGenerate(char* out);

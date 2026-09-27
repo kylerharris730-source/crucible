@@ -103,11 +103,28 @@ together: an old client cannot host against the new worker. Check it with
 node signal/test.mjs
 ```
 
+## Guessing codes
+
+Five characters is about 28.6 million codes against a handful of live rooms:
+hard to hit by chance, easy by trying them all, and every hit hands over the
+host's offer -- with the host's address in it -- and reserves a seat. So:
+
+- each address gets 10 room lookups and 10 new rooms a minute (the two
+  `[[ratelimits]]` bindings in `wrangler.toml`; over that is a 429);
+- a malformed code, like the page's `PROBE`, is a 404 before any of that or
+  any database read;
+- one address holds at most one unanswered seat per room -- asking again gives
+  up the old one -- and an unanswered seat is released after 45 seconds.
+
+Only a salted hash of the address is kept, in the room row, for as long as the
+room lives.
+
 ## What it stores, and for how long
 
 One row per room: a five-character code, three offers, the host key's hash,
-three short-lived seat claims, answers, and an expiry. Rooms live **ten minutes** and are swept whenever
-the next one is created, so the steady state remains close to empty. Each answer
+three short-lived seat claims (with a salted hash of each claimer's address),
+answers, and an expiry. Rooms live **ten minutes** and are swept whenever the
+next one is created, so the steady state remains close to empty. Each answer
 is removed as the host receives it; the room remains until all seats are claimed
 or its expiry so later guests can keep using the same code.
 

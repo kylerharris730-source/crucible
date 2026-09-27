@@ -52,10 +52,42 @@ const ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 const CODE_LEN = 5;                /* 31^5, about 28.6 million */
 const ROOM_SLOTS = 3;
 /* A guest which reserves an offer but vanishes must not consume a seat for the
-   room's full ten-minute life. ICE normally answers within four seconds; a
-   minute and a half leaves ample room for a slow tab without making a typo a
-   permanent vacancy. */
-const CLAIM_TTL_MS = 90 * 1000;
+   room's full ten-minute life. ICE normally answers within four seconds, and
+   the Windows build gives it fifteen; three quarters of a minute is ample for
+   a slow tab and short enough that a vacated seat comes back quickly. */
+const CLAIM_TTL_MS = 45 * 1000;
+
+/* --- guessing codes ------------------------------------------------------------
+
+   31^5 codes and only a handful of live rooms make a code hard to hit by
+   chance, and trivial to hit by trying them all: every guess that lands hands
+   over the host's offer, with the host's address in it, and reserves a seat.
+   So each address gets a few guesses a minute (JOIN_LIMIT) and a few new rooms
+   a minute (OPEN_LIMIT) -- Cloudflare's rate-limiting bindings, configured in
+   wrangler.toml. A player joining a friend spends one or two, and the
+   client's six rejoin attempts are spaced seconds apart.
+
+   Malformed codes are answered before any of that, or any database read.
+   'PROBE', which the page asks for to see whether the broker is up, is one
+   of them: O is not in the alphabet, so it can never be a room. */
+function wellFormed(code) {
+  if (!code || code.length !== CODE_LEN) return false;
+  for (const c of code) if (!ALPHABET.includes(c)) return false;
+  return true;
+}
+
+function clientAddress(request) {
+  return request.headers.get('CF-Connecting-IP') || 'unknown';
+}
+
+/* True when this request is within its limit. A binding that is not
+   configured -- a local test -- limits nothing. */
+async function withinLimit(binding, key) {
+  if (!binding) return true;
+  try { return (await binding.limit({ key })).success; } catch (e) { return true; }
+}
+
+const SLOW_DOWN = { error: 'too many tries -- wait a minute and try again' };
 
 function newCode() {
   const bytes = new Uint8Array(CODE_LEN);
@@ -118,13 +150,21 @@ async function hostAllowed(request, stored) {
 
 const OBSOLETE = 'this game needs a newer version -- update or reload and try again';
 
+/* `claimers` records, per seat, a salted hash of the address that holds its
+   reservation -- never the address itself -- so one address cannot hold more
+   than one pending seat at a time. See the guest GET. */
 function roomState(text) {
   if (!text) return { claims:[null,null,null], claimedAt:[0,0,0],
-                      answers:[null,null,null], used:[false,false,false] };
+                      answers:[null,null,null], used:[false,false,false],
+                      claimers:[null,null,null] };
   try {
     const state = JSON.parse(text);
     if (state.claims.length === ROOM_SLOTS && state.claimedAt.length === ROOM_SLOTS &&
-        state.answers.length === ROOM_SLOTS && state.used.length === ROOM_SLOTS) return state;
+        state.answers.length === ROOM_SLOTS && state.used.length === ROOM_SLOTS) {
+      if (!Array.isArray(state.claimers) || state.claimers.length !== ROOM_SLOTS)
+        state.claimers = [null, null, null];
+      return state;
+    }
   } catch (e) {}
   return null;
 }
@@ -182,6 +222,8 @@ export default {
     try {
       /* --- host opens a room -------------------------------------------- */
       if (!code && request.method === 'POST') {
+        if (!(await withinLimit(env.OPEN_LIMIT, 'open:' + clientAddress(request))))
+          return json(SLOW_DOWN, 429);
         const offer = await readBody(request);
         let offers;
         try { offers = JSON.parse(offer).offers; } catch (e) {}
@@ -207,9 +249,14 @@ export default {
       }
 
       if (!code) return json({ error: 'not found' }, 404);
+      if (!wellFormed(code)) return json({ error: 'no such code' }, 404);
 
       /* --- guest collects the offer -------------------------------------- */
       if (!tail && request.method === 'GET') {
+        const address = clientAddress(request);
+        if (!(await withinLimit(env.JOIN_LIMIT, 'join:' + address)))
+          return json(SLOW_DOWN, 429);
+        const claimer = (await sha256Hex(code + ':' + address)).slice(0, 16);
         /* Optimistic compare-and-swap makes reservation atomic without a D1
            transaction. Simultaneous guests may both read slot zero, but only
            one can replace the exact state string; the loser retries and takes
@@ -237,6 +284,15 @@ export default {
                             state.claimedAt[i] < now - CLAIM_TTL_MS;
             return !state.claims[i] || expired;
           };
+          /* One pending seat per address. Asking again -- a retry after ICE
+             failed -- gives up the seat it was holding and takes a fresh
+             one, so the retry still works; what it can no longer do is
+             hold all three and keep a room locked by re-asking every
+             minute and a half. */
+          for (let i = 0; i < ROOM_SLOTS; i++)
+            if (state.claimers[i] === claimer && state.claims[i] && !state.answers[i] && !state.used[i]) {
+              state.claims[i] = null; state.claimedAt[i] = 0; state.claimers[i] = null;
+            }
           let slot = -1;
           if (Number.isInteger(prefer) && prefer >= 0 && prefer < ROOM_SLOTS && free(prefer))
             slot = prefer;
@@ -244,6 +300,7 @@ export default {
           if (slot < 0) return json({ error: 'room full' }, 409);
           const claim = newClaim();
           state.claims[slot] = claim; state.claimedAt[slot] = now; state.answers[slot] = null;
+          state.claimers[slot] = claimer;
           const next = JSON.stringify(state);
           const changed = await db.prepare('UPDATE rooms SET answer = ? WHERE code = ? AND answer = ? AND expires > ?')
                                   .bind(next, code, row.answer, now).run();
@@ -305,7 +362,7 @@ export default {
           if (!stored || !state) return json({ error: OBSOLETE }, 409);
           if (!(await hostAllowed(request, stored))) return json({ error: 'not the host' }, 403);
           stored.offers[seat.slot] = seat.offer;
-          state.claims[seat.slot] = null; state.claimedAt[seat.slot] = 0;
+          state.claims[seat.slot] = null; state.claimedAt[seat.slot] = 0; state.claimers[seat.slot] = null;
           state.answers[seat.slot] = null; state.used[seat.slot] = false;
           const next = JSON.stringify(state);
           /* Both columns move together, and the seat state is the one under

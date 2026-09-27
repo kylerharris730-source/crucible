@@ -7,8 +7,10 @@
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <wincrypt.h>
 #else
 #include <stdlib.h>
+#include <unistd.h>
 #endif
 
 /* Where the file lives, per platform.
@@ -55,29 +57,52 @@ static bool hexOnly(const char* s, int n) {
     return true;
 }
 
-/* Enough entropy to not collide between the handful of people who will ever
-   share a world. Deliberately not a cryptographic source: this names a
-   character, it does not protect anything, and pulling in a crypto API for it
-   would be a dependency bought with nothing. */
-static void generateIdentity(char* out) {
-    u32 s0 = (u32)time(0);
-    u32 s1 = (u32)clock();
-    u32 s2 = (u32)(size_t)(void*)out;
+/* Sixteen bytes from the operating system's cryptographic generator.
+
+   This used to be a clock, the process id and a stack address stirred
+   together, on the grounds that the value only names a character. It does
+   more than that: a host hands a remembered pack to whoever presents the
+   identity, so an identity that can be guessed is a pack that can be taken.
+   CryptGenRandom is in advapi32, which every Windows program already links;
+   the browser and Linux get getentropy(), which in a tab is
+   crypto.getRandomValues. */
+static bool systemRandom(u8* out, size_t n) {
 #ifdef _WIN32
-    s1 ^= (u32)GetCurrentProcessId();
-    s1 ^= (u32)GetTickCount();
+    HCRYPTPROV provider = 0;
+    if (!CryptAcquireContextA(&provider, 0, 0, PROV_RSA_FULL, CRYPT_VERIFYCONTEXT | CRYPT_SILENT))
+        return false;
+    const bool ok = CryptGenRandom(provider, (DWORD)n, out) != 0;
+    CryptReleaseContext(provider, 0);
+    return ok;
+#else
+    return getentropy(out, n) == 0;
 #endif
-    u32 x = s0 ^ 0x9E3779B9u;
-    u32 y = s1 ? s1 : 0x85EBCA6Bu;
-    u32 z = s2 ? s2 : 0xC2B2AE35u;
-    static const char HEX[] = "0123456789abcdef";
-    for (int i = 0; i < PLAYER_IDENTITY_CHARS; ++i) {
-        /* xorshift128-ish: three words stirred together so a coarse clock does
-           not make two launches in the same second produce the same name. */
+}
+
+/* Only if the system generator is unavailable, which it should never be.
+   Guessable, but a player with no identity cannot join at all. */
+static void weakRandom(u8* out, size_t n, const void* salt) {
+    u32 x = (u32)time(0) ^ 0x9E3779B9u;
+    u32 y = (u32)clock(); y = y ? y : 0x85EBCA6Bu;
+    u32 z = (u32)(size_t)salt; z = z ? z : 0xC2B2AE35u;
+#ifdef _WIN32
+    y ^= (u32)GetCurrentProcessId() ^ (u32)GetTickCount();
+#endif
+    for (size_t i = 0; i < n; ++i) {
         x ^= x << 13; x ^= x >> 17; x ^= x << 5;
         y ^= y << 11; y ^= y >> 8;  y ^= x;
         z += 0x9E3779B9u; z ^= z >> 15;
-        out[i] = HEX[(x ^ y ^ z) & 0xF];
+        out[i] = (u8)(x ^ y ^ z);
+    }
+}
+
+void identityGenerate(char* out) {
+    u8 bytes[PLAYER_IDENTITY_CHARS / 2];
+    if (!systemRandom(bytes, sizeof(bytes))) weakRandom(bytes, sizeof(bytes), out);
+    static const char HEX[] = "0123456789abcdef";
+    for (int i = 0; i < PLAYER_IDENTITY_CHARS / 2; ++i) {
+        out[i * 2]     = HEX[bytes[i] >> 4];
+        out[i * 2 + 1] = HEX[bytes[i] & 0xF];
     }
     out[PLAYER_IDENTITY_CHARS] = 0;
 }
@@ -102,7 +127,7 @@ const char* playerIdentity() {
                identity would be a different player every launch, which looks
                exactly like the bug this feature removes. */
         }
-        generateIdentity(id);
+        identityGenerate(id);
         f = fopen(path, "wb");
         if (f) {
             fwrite(id, 1, PLAYER_IDENTITY_CHARS, f);
@@ -115,6 +140,6 @@ const char* playerIdentity() {
     /* Nowhere durable to put it. Still return something valid so that joining
        works -- it just will not be remembered, which is the behaviour this
        whole file replaces rather than a new failure. */
-    generateIdentity(id);
+    identityGenerate(id);
     return id;
 }
