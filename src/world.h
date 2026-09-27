@@ -750,13 +750,14 @@ struct World {
     /* --- wind -------------------------------------------------------------
        A coarse velocity field, in cells per frame, that gases drift along.
        Not saved: it is a few seconds of air movement and rebuilds itself from
-       the heat and gas it is sampled from. See the Wind section of world.cpp. */
+       the heat and gas it is sampled from. It carries warm air as well as
+       gas (windCarryHeat). See the Wind section of world.cpp. */
     /* Indexed ay * WIND_PITCH + ax; the tails are the stagger. */
     float windVX[WIND_N + 16], windVY[WIND_N + 32];
     float windP[WIND_N + 48];     /* pressure, the solver's warm start */
     float windLift[WIND_N + 64];  /* smoothed buoyancy, cells/frame^2 upward */
     float windOpen[WIND_N + 80];  /* smoothed fraction of the block air can cross */
-    u8    windAwake[CHUNK_COUNT]; /* frames of wind left; 0 = still, and zeroed */
+    u16   windAwake[CHUNK_COUNT]; /* frames of wind left; 0 = still, and zeroed */
     int   windChunks;             /* stat, for the HUD */
     /* The wind at a cell, interpolated between block centres. */
     void  windAt(int x, int y, float& vx, float& vy) const;
@@ -1155,6 +1156,8 @@ private:
     void updateGas(Lane& L, int x, int y);
     bool updateGasPressure(Lane& L, int x, int y);
     bool windDrift(Lane& L, int x, int y);
+    void windCarryHeat(Lane& L, int x, int y);
+    bool windStill(int ci) const;
     void updateWind();
 public:
     /* One thread's share of a wind solve. Public only because the pool's job

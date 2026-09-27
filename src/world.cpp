@@ -60,6 +60,10 @@ static int g_stripeFelledN[STRIPE_SLOTS];
    spends live-window grace, so it cannot be made by whichever stripe gets
    there first. */
 static u8  g_chunkSim[CHUNK_COUNT];
+/* Whether each chunk was held FROZEN by the live window on the last full
+   pass: work pending, but outside the window and its grace. The wind freezes
+   with it rather than draining away -- see updateWind. */
+static u8  g_chunkFrozen[CHUNK_COUNT];
 
 /* ------------------------------------------------------------------------
    Pressure searches that failed, and how many passes a chunk waits before its
@@ -704,8 +708,9 @@ void World::setCell(Lane& L, int x, int y, u8 mat) {
     c.tint     = (u8)lbits(L, 8);
     /* Stamped with the previous frame so a freshly painted cell is eligible on
        the very next step rather than sitting still for one, which would make
-       the brush feel laggy. */
-    c.flags    = (u8)(((pass - 1) & STAMP_MASK) << STAMP_SHIFT);
+       the brush feel laggy. The direction is the tint's low bit: see
+       spawnCell. */
+    c.flags    = (u8)((((pass - 1) & STAMP_MASK) << STAMP_SHIFT) | (c.tint & F_DIR));
     const MatInfo& m = MATS[mat];
     temp[i] = m.spawnTemp ? m.spawnTemp : (u8)AMBIENT_TEMP;
     dirtyPoint(L, x, y);
@@ -2542,10 +2547,28 @@ bool World::updateGasPressure(Lane& L, int x, int y) {
 
    Cost is bounded the way everything else here is. A chunk's wind runs only
    while gas is being simulated in it and for WIND_LINGER frames after, plus
-   a one-chunk halo so a draught can reach past the edge of the smoke. A chunk
-   that falls asleep has its wind zeroed rather than frozen: still air is the
-   right thing to find when you come back, and it makes a sleeping chunk an
-   open, pressure-free boundary for its awake neighbours.
+   a one-chunk halo so a draught can reach past the edge of the smoke -- and
+   past the linger for as long as its air is still moving, up to
+   WIND_LINGER_MAX. A chunk that falls asleep has its wind zeroed: still air
+   is the right thing to find when you come back, and it makes a sleeping
+   chunk an open, pressure-free boundary for its awake neighbours. But it is
+   only put to sleep once it IS still. Zeroing a chunk mid-draught -- the
+   linger used to be a flat second and a half -- cut a flow in two wherever
+   the gas carried by it happened to thin out for a moment, and the plume
+   started over from nothing when the gas came back.
+
+   A chunk the live window has FROZEN is different again: its cells are
+   holding their state until the camera comes back, so its wind holds too.
+   It is neither solved nor counted down, and resumes where it left off.
+
+   The field also carries heat. Warm AIR is not a parcel -- it is only a
+   temperature on an empty cell -- so without windCarryHeat it stayed where
+   it was warmed, and the only thing that moved it was the straight-up
+   convection in updateHeat. A plume pushed to one side left a warm column
+   there, the column lifted the air, the lifted air drew the plume back into
+   the column and warmed it again: the lean fed itself for twenty seconds.
+   Carried by the wind, the inflow at the plume's foot sweeps that warmth
+   into the plume and up, which is what a real draught does.
 
    Serial and float, once per step before the scan. The scan only READS the
    field, so every stripe sees the same wind and the world still steps the
@@ -2577,7 +2600,19 @@ static const float WIND_MAX           = 2.0f;   /* cells per frame */
 static const float WIND_SWIRL         = 0.05f;
 static const float WIND_VISCOSITY     = 0.5f;
 static const int   WIND_PRESSURE_ITERS = 10;
-static const u8    WIND_LINGER        = 90;
+/* Frames a chunk's wind keeps running after the last gas near it: five
+   seconds, so a flow survives its gas thinning out for a moment. After that
+   it sleeps as soon as its fastest block is slower than WIND_STILL, and at
+   WIND_LINGER_MAX whatever it is doing. The cap is what stops a draught kept
+   alive by a plume two chunks away from holding a trail of chunks awake
+   behind a cloud that has long since moved on. */
+static const u16   WIND_LINGER        = 300;
+static const u16   WIND_LINGER_MAX    = 900;
+static const float WIND_STILL         = 0.01f;   /* cells per frame */
+/* The most of its surplus warmth an air cell hands downwind in a frame. The
+   wind can run at 2 cells a frame; handing on more than half would let a
+   frame's hops overshoot the flow they are following. See windCarryHeat. */
+static const float WIND_HEAT_CARRY_MAX = 0.5f;
 /* How closely a gas parcel follows the air it is in: 1 moves it at the
    wind's own speed, on average. */
 static const float WIND_GAS_DRIFT     = 1.0f;
@@ -2699,7 +2734,18 @@ void World::windWake(int ci) {
             for (int ax = ax0; ax < ax0 + WIND_PER_CHUNK; ++ax) windSources(ax, ay, true);
     }
     /* +1 because updateWind counts every awake chunk down before it runs. */
-    windAwake[ci] = (u8)(WIND_LINGER + 1);
+    windAwake[ci] = (u16)(WIND_LINGER_MAX + 1);
+}
+
+/* Whether a chunk's air has come to rest: every block slower than WIND_STILL. */
+bool World::windStill(int ci) const {
+    const int ax0 = (ci % CHUNKS_X) * WIND_PER_CHUNK, ay0 = (ci / CHUNKS_X) * WIND_PER_CHUNK;
+    for (int ay = ay0; ay < ay0 + WIND_PER_CHUNK; ++ay)
+        for (int ax = ax0; ax < ax0 + WIND_PER_CHUNK; ++ax) {
+            const int w = ay * WIND_PITCH + ax;
+            if (windVX[w] * windVX[w] + windVY[w] * windVY[w] > WIND_STILL * WIND_STILL) return false;
+        }
+    return true;
 }
 
 void World::windReset() {
@@ -2714,6 +2760,7 @@ void World::windReset() {
     memset(g_windDiv, 0, sizeof(g_windDiv));
     /* The last full pass's chunk list belongs to the world that was here. */
     memset(g_chunkSim, 0, sizeof(g_chunkSim));
+    memset(g_chunkFrozen, 0, sizeof(g_chunkFrozen));
     memset(g_windWant, 0, sizeof(g_windWant));
     g_windListN = 0;
     windChunks = 0;
@@ -2774,9 +2821,11 @@ void World::updateWind() {
     /* --- which chunks have wind --------------------------------------------
        Chunks where a gas parcel took a turn last frame (see g_windWant), each
        with its eight neighbours; every awake chunk counts down, and is zeroed
-       at 0. It used to be every simulated chunk, and a poured pool of water
-       paid 0.7 ms a frame for a field nothing in it would ever read: only
-       gases follow the wind, so only gas needs one. */
+       once it is past the linger and still, or at the cap. It used to be
+       every simulated chunk, and a poured pool of water paid 0.7 ms a frame
+       for a field nothing in it would ever read: only gases follow the wind,
+       so only gas needs one. A chunk frozen by the live window keeps its wind
+       and its count exactly as they were. */
     for (int cy = 0; cy < CHUNKS_Y; ++cy)
         for (int cx = 0; cx < CHUNKS_X; ++cx) {
             u8& want = g_windWant[cy * CHUNKS_X + cx];
@@ -2788,8 +2837,13 @@ void World::updateWind() {
         }
     g_windListN = 0;
     for (int ci = 0; ci < CHUNK_COUNT; ++ci) {
-        if (!windAwake[ci]) continue;
-        if (--windAwake[ci] == 0) { windChunkClear(ci); continue; }
+        if (!windAwake[ci] || g_chunkFrozen[ci]) continue;
+        const u16 left = --windAwake[ci];
+        if (left == 0 || (left <= WIND_LINGER_MAX - WIND_LINGER && windStill(ci))) {
+            windAwake[ci] = 0;
+            windChunkClear(ci);
+            continue;
+        }
         g_windList[g_windListN++] = ci;
     }
     windChunks = g_windListN;
@@ -2953,6 +3007,39 @@ bool World::windDrift(Lane& L, int x, int y) {
         if (tryMove(L, x, y, xFirst ? x : x + sx, xFirst ? y + sy : y)) return true;
     }
     return false;
+}
+
+/* Warm (or cold) air carried sideways by the wind: an air cell hands the
+   wind's speed's worth of its difference from ambient to the air cell
+   downwind. Every cell pushes its own surplus and only its own, so a patch of
+   warmth travels with the flow -- the upwind scheme -- and heat is moved,
+   never made. Called only for air off ambient, in a chunk with wind.
+
+   Across only. Up is already the convection rule's job in updateHeat, and
+   carrying heat up the wind as well doubled it: the air round a plasma plume
+   was swept away from it so fast that the plume came out a third shorter. */
+void World::windCarryHeat(Lane& L, int x, int y) {
+    if (!windAwake[(y >> CHUNK_SHIFT) * CHUNKS_X + (x >> CHUNK_SHIFT)]) return;
+    float vx, vy;
+    windAt(x, y, vx, vy);
+    float a = fabsf(vx);
+    if (a < 0.02f) return;
+    if (a > WIND_HEAT_CARRY_MAX) a = WIND_HEAT_CARRY_MAX;
+    const int i = y * SIM_W + x, jx = x + (vx > 0.0f ? 1 : -1), j = y * SIM_W + jx;
+    if (cells[j].mat != MAT_EMPTY) return;
+    const int ex = (int)temp[i] - AMBIENT_TEMP;
+    /* Rounded at random rather than down, or a slow draught would carry
+       nothing at all off a cell a few degrees warm. */
+    const float f = (float)(ex < 0 ? -ex : ex) * a;
+    int move = windFloor(f);
+    if ((float)(lrand(L) & 0xFFFFu) < (f - (float)move) * 65536.0f) ++move;
+    if (!move) return;
+    if (ex < 0) move = -move;
+    const int tj = (int)temp[j] + move;
+    if (tj < 0 || tj > 255) return;
+    temp[i] = (u8)((int)temp[i] - move);
+    temp[j] = (u8)tj;
+    dirtyPoint(L, jx, y);
 }
 
 void World::updateGas(Lane& L, int x, int y) {
@@ -3244,6 +3331,8 @@ void World::updateHeat(Lane& L, int x, int y) {
                 dirtyPoint(L, x, up / SIM_W);
             }
         }
+        /* And sideways, or wherever the draught is going. See windCarryHeat. */
+        windCarryHeat(L, x, y);
     }
 
     /* Long-range conduction, for the good conductors only.
@@ -3564,7 +3653,13 @@ void World::spawnCell(Lane& L, int x, int y, u8 mat) {
     c.mat      = mat;
     c.moisture = 0;
     c.tint     = (u8)lbits(L, 8);
-    c.flags    = (u8)(stamp() << STAMP_SHIFT);
+    /* Which way it tries first, at random -- the tint is a fresh random byte,
+       so its low bit costs no draw. It used to start at 0, which is LEFT, for
+       everything a clone made: a parcel only flips it once a sideways move
+       fails, and a short-lived gas never lives that long, so a plasma plume
+       climbed up-left first on nearly every diagonal and stood a cell and a
+       half left of its clone. */
+    c.flags    = (u8)((stamp() << STAMP_SHIFT) | (c.tint & F_DIR));
     const MatInfo& m = MATS[mat];
     temp[i] = m.spawnTemp ? m.spawnTemp : (u8)AMBIENT_TEMP;
     dirtyPoint(L, x, y);
@@ -4781,13 +4876,22 @@ void World::scanPass(bool fluidPass) {
             const Chunk& ch = cur[idx];
             if (g_pocketWait[idx]) --g_pocketWait[idx];
             if (g_liquidPathWait[idx]) --g_liquidPathWait[idx];
-            if (ch.minX > ch.maxX) { g_chunkSim[idx] = 0; continue; }
-
             /* A plus-shaped live set: the core, plus four independent fingers.
                Corners are intentionally not paid for, preserving the 2x cap. */
-            const bool inLiveWindow = liveCoreMask[idx]
-                                   || (cx >= coreCX0 && cx <= coreCX1 && cy >= liveCY0 && cy <= liveCY1)
-                                   || (cy >= coreCY0 && cy <= coreCY1 && cx >= liveCX0 && cx <= liveCX1);
+            #define IN_LIVE_WINDOW (liveCoreMask[idx] \
+                || (cx >= coreCX0 && cx <= coreCX1 && cy >= liveCY0 && cy <= liveCY1) \
+                || (cy >= coreCY0 && cy <= coreCY1 && cx >= liveCX0 && cx <= liveCX1))
+            if (ch.minX > ch.maxX) {
+                g_chunkSim[idx] = 0;
+                /* A settled chunk has nothing to freeze but its wind, which
+                   only the halo round some gas has. Its grace is not counted
+                   while it is settled, so it goes by the window alone. */
+                if (!fluidPass)
+                    g_chunkFrozen[idx] = windAwake[idx] && !IN_LIVE_WINDOW && !keepAlive[idx];
+                continue;
+            }
+            const bool inLiveWindow = IN_LIVE_WINDOW;
+            #undef IN_LIVE_WINDOW
             /* Grace is counted in frames, so only the full pass spends it. */
             if (inLiveWindow && !fluidPass) liveGrace[idx] = LIVE_GRACE_STEPS;
             const bool lingering = !inLiveWindow && liveGrace[idx] > 0;
@@ -4813,9 +4917,11 @@ void World::scanPass(bool fluidPass) {
                     if (ch.maxY > n.maxY) n.maxY = ch.maxY;
                 }
                 g_chunkSim[idx] = 0;
+                if (!fluidPass) g_chunkFrozen[idx] = 1;
                 continue;
             }
             g_chunkSim[idx] = 1;
+            if (!fluidPass) g_chunkFrozen[idx] = 0;
             if (!fluidPass) ++activeChunks;
         }
     }
