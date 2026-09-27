@@ -5,7 +5,7 @@ chat, which meant it was re-derived from memory every session and quietly lost
 things. `HANDOFF.md` is **not** this file: it is gitignored scratch, is usually
 stale, and should not be trusted for release state.
 
-Released: **v0.6.18** (2026-09-26). `main` is level with it.
+Released: **v0.6.19** (2026-09-26). `main` is level with it.
 
 ---
 
@@ -30,6 +30,17 @@ Released: **v0.6.18** (2026-09-26). `main` is level with it.
       both with `CINDERLIFT_RTC_LOG=1` and look in `build/rtc.log`.
 
 ## Ship it
+
+- [x] **Cut v0.6.19.** Tagged 2026-09-26, two commits past v0.6.18. Room
+      codes are six characters (v0.6.18 hosts still get five); the broker
+      rate-limits lookups and new rooms per address, answers malformed codes
+      without a database read, and lets one address hold one unanswered seat
+      per room. New player identities come from CryptGenRandom/getentropy;
+      existing ones are kept. Worker deployed the same day.
+
+      Worth knowing: Cloudflare's rate limiter is loose -- a burst of forty
+      guesses on the live worker saw two refused. The code length is what
+      actually holds; don't lean on the limiter for anything new.
 
 - [x] **Cut v0.6.18.** Tagged 2026-09-26, one commit past v0.6.17.
       Multiplayer security. The join snapshot no longer carries the
