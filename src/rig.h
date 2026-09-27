@@ -261,6 +261,7 @@ void rigEffigyWalk(PoseKey* keys, int count);
 extern const Clip RIG_EFF_WALK;
 extern const Clip RIG_EFF_IDLE;
 extern const Clip RIG_EFF_RITUAL;
+extern const Clip RIG_EFF_LEAP;
 
 /* --- the gait, GENERATED rather than authored -------------------------------
 

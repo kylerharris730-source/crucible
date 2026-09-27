@@ -21,6 +21,7 @@ u32 g_censerWalk[CENSER_WALK_FRAMES][CENSER_SPR_W * CENSER_SPR_H];
 u32 g_effigyIdle[EFFIGY_IDLE_FRAMES][EFFIGY_SPR_W * EFFIGY_SPR_H];
 u32 g_effigyWalk[EFFIGY_WALK_FRAMES][EFFIGY_SPR_W * EFFIGY_SPR_H];
 u32 g_effigyRitual[EFFIGY_RITUAL_FRAMES][EFFIGY_SPR_W * EFFIGY_SPR_H];
+u32 g_effigyLeap[2][EFFIGY_SPR_W * EFFIGY_SPR_H];
 u32 g_rocketHull[ROCKET_SPR_W * ROCKET_SPR_H];
 u8  g_rocketPart[ROCKET_SPR_W * ROCKET_SPR_H];
 
@@ -1297,6 +1298,7 @@ static void buildEffigyFrames() {
     armBake(&rig, &RIG_EFF_WALK, g_effigyWalk[0]);
     armBake(&rig, &RIG_EFF_IDLE, g_effigyIdle[0]);
     armBake(&rig, &RIG_EFF_RITUAL, g_effigyRitual[0]);
+    armBake(&rig, &RIG_EFF_LEAP, g_effigyLeap[0]);
 }
 
 

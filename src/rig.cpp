@@ -1108,8 +1108,8 @@ void rigEffigyWalk(PoseKey* keys, int count) {
             const int fold  = isin1024(phase + 90);
             /* The hip swings, the knee folds only while the leg is BEHIND the
                body -- a knee that folds on the forward swing kicks. */
-            p.angle[effLegBone(t, 0)] = (i16)((swing * 26) / 1024);
-            p.angle[effLegBone(t, 1)] = (i16)(-(fold > 0 ? fold : 0) * 38 / 1024);
+            p.angle[effLegBone(t, 0)] = (i16)((swing * 22) / 1024);
+            p.angle[effLegBone(t, 1)] = (i16)(-(fold > 0 ? fold : 0) * 30 / 1024);
             p.angle[effLegBone(t, 2)] = (i16)((swing * -8) / 1024);
         }
         for (int t = 0; t < EFF_ARMS; ++t) {
@@ -1118,14 +1118,14 @@ void rigEffigyWalk(PoseKey* keys, int count) {
             const int phase = cyc + (t ? 0 : 180);
             const int swing = isin1024(phase);
             const int turn  = t ? 1 : -1;
-            p.angle[effArmBone(t, 0)] = (i16)((swing * turn * 15) / 1024);
+            p.angle[effArmBone(t, 0)] = (i16)((swing * turn * 12) / 1024);
             p.angle[effArmBone(t, 1)] = (i16)((swing * turn * 9) / 1024);
             p.angle[effArmBone(t, 2)] = (i16)(isin1024(phase-60)*turn*14/1024);
         }
         /* Twice the leg cycle: the body drops on EVERY footfall, and there are
            two of those per stride. The heart lags it, because a weight on a
            chain arrives late. */
-        p.rootDY = (i16)((isin1024(cyc * 2) * ARM_SS * 2) / 1024);
+        p.rootDY = (i16)((isin1024(cyc * 2) * ARM_SS) / 1024);
         p.angle[EFF_HEART] = (i16)((isin1024(cyc * 2 - 60) * 7) / 1024);
         p.angle[EFF_CHEST] = (i16)(isin1024(cyc-30)*3/1024);
         p.angle[EFF_HEAD] = (i16)(-p.angle[EFF_CHEST]);
@@ -1135,6 +1135,7 @@ void rigEffigyWalk(PoseKey* keys, int count) {
 static PoseKey g_effWalkKeys[8];
 static PoseKey g_effIdleKeys[4];
 static PoseKey g_effRitualKeys[8];
+static PoseKey g_effLeapKeys[2];
 
 static void buildEffClips() {
     rigEffigyWalk(g_effWalkKeys, 8);
@@ -1155,7 +1156,7 @@ static void buildEffClips() {
     memset(g_effRitualKeys,0,sizeof(g_effRitualKeys));
     for (int k=0;k<8;++k) {
         PoseKey& p=g_effRitualKeys[k];
-        const int lift=k<5 ? k*12 : 48-(k-4)*4;
+        const int lift=k<4 ? k*14 : (7-k)*14;
         p.angle[EFF_CHEST]=-lift/8;
         p.angle[EFF_HEAD]=lift/5;
         p.angle[EFF_HEART]=isin1024(k*60)*12/1024;
@@ -1166,6 +1167,25 @@ static void buildEffClips() {
             p.angle[effArmBone(t,2)]=side*(lift/2+isin1024(k*50)*10/1024);
         }
     }
+    memset(g_effLeapKeys, 0, sizeof(g_effLeapKeys));
+    for (int k=0;k<2;++k) {
+        PoseKey& p=g_effLeapKeys[k];
+        p.rootDY = (i16)(-ARM_SS * (k ? 1 : 2));
+        p.angle[EFF_CHEST] = k ? 8 : -7;
+        p.angle[EFF_HEAD] = -p.angle[EFF_CHEST];
+        p.angle[EFF_HEART] = k ? -10 : 12;
+        for (int t=0;t<EFF_LEGS;++t) {
+            const int side=t ? 1 : -1;
+            p.angle[effLegBone(t,0)] = (i16)(side * (k ? 12 : 26));
+            p.angle[effLegBone(t,1)] = (i16)(k ? -18 : -42);
+            p.angle[effLegBone(t,2)] = (i16)(k ? 10 : 20);
+        }
+        for (int t=0;t<EFF_ARMS;++t) {
+            const int side=t ? 1 : -1;
+            p.angle[effArmBone(t,0)] = (i16)(side * (k ? 18 : 32));
+            p.angle[effArmBone(t,1)] = (i16)(-side * 12);
+        }
+    }
 }
 
 static const Clip EFF_WALK = { "effwalk", g_effWalkKeys, 8, 16, true, true };
@@ -1173,6 +1193,7 @@ static const Clip EFF_IDLE = { "effidle", g_effIdleKeys, 4, 4, true, true };
 const Clip RIG_EFF_WALK = EFF_WALK;
 const Clip RIG_EFF_IDLE = EFF_IDLE;
 const Clip RIG_EFF_RITUAL = { "effritual",g_effRitualKeys,8,8,false,true };
+const Clip RIG_EFF_LEAP = { "effleap",g_effLeapKeys,2,2,false,true };
 
 struct TentClipInit { TentClipInit() { buildTentClips(); buildSpiderClips(); buildHarvClips(); buildEffClips(); } };
 static TentClipInit g_tentClipInit;

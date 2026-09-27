@@ -178,6 +178,7 @@ static const float CENSER_SPIT_RANGE  = 200.0f;
    half, and takes another second to do it. */
 static const int EFFIGY_CROWN_EVERY = 150;
 static const int EFFIGY_ERUPT_EVERY = 220;
+static const int EFFIGY_ERUPT_WIND = 84;
 
 /* When a wedged Censer gives up pushing and jumps, and how hard.
 
@@ -720,10 +721,10 @@ const EntityDef ENT_DEFS[ENT_COUNT] = {
     /* Contact 36, down from 55. Reported from play as too much, and the table
        agrees with the report: the Censer hits for 34 after its own reduction
        and this was two thirds again on top of that, on a creature you cannot
-       always avoid touching because it is 96 cells wide and walks through the
+       always avoid touching because its silhouette is broad and walks through the
        terrain you would back into. Still the hardest hit in the game, and by a
        margin you can survive learning. */
-    { "The Effigy", EFFIGY_SPR_W, EFFIGY_SPR_H, 6000, 36, 24,
+    { "The Effigy", EFFIGY_BODY_W, EFFIGY_SPR_H, 6000, 36, 24,
       0.22f, 0.025f, false, 0, false,
       EFFIGY_ERUPT_EVERY, 30, 0.0f, 0.0f, true,
       ITEM_ASCENT_CORE, 1, 1, ITEM_ASCENT_SIGIL, 1, SPR_NONE, 0xE85A14,
@@ -1160,6 +1161,58 @@ void entPoison(Entity& e, int frames) {
     if (frames > e.poison) e.poison = frames;
 }
 
+/* The rig is wider than the body that has to pass through terrain. All combat
+   queries use the same pose and centred origin as entDraw, including mirrored
+   frames, so the air around its ribs and legs cannot catch a shot or a player. */
+static const u32* effigyArt(const Entity& e, int slot) {
+    if (e.telegraph > 0)
+        return g_effigyRitual[imin(EFFIGY_RITUAL_FRAMES - 1,
+            e.telegraph * EFFIGY_RITUAL_FRAMES / EFFIGY_ERUPT_WIND)];
+    if (e.phase == 1 && !e.onGround)
+        return g_effigyLeap[e.vy < 0.0f ? 0 : 1];
+    if (fabsf(e.vx) > 0.04f || fabsf(e.vy) > 0.04f) {
+        const int frame = ((int)(e.walkPhase * 8.0f /
+            (float)imax(2, e.height() / 3))) & (EFFIGY_WALK_FRAMES - 1);
+        return g_effigyWalk[frame];
+    }
+    return g_effigyIdle[(g_world.frame / 36u + (u32)slot) % EFFIGY_IDLE_FRAMES];
+}
+
+static bool effigyPixel(const Entity& e, int slot, int x, int y) {
+    const int ox = (int)e.x - EFFIGY_ART_OVERHANG;
+    const int sx = x - ox, sy = y - (int)e.y;
+    if (sx < 0 || sx >= EFFIGY_SPR_W || sy < 0 || sy >= EFFIGY_SPR_H)
+        return false;
+    const int mirrored = e.facing < 0 ? EFFIGY_SPR_W - 1 - sx : sx;
+    return effigyArt(e, slot)[sy * EFFIGY_SPR_W + mirrored] != 0;
+}
+
+static bool entityHitPixel(const Entity& e, int slot, int x, int y) {
+    if (e.type == ENT_EFFIGY) return effigyPixel(e, slot, x, y);
+    return x >= e.left() && x <= e.right() && y >= e.top() && y <= e.bottom();
+}
+
+static bool effigyTouchesPlayer(const Entity& e, int slot, const Player& p) {
+    for (int y = p.top(); y <= p.bottom(); ++y)
+        for (int x = p.left(); x <= p.right(); ++x)
+            if (effigyPixel(e, slot, x, y)) return true;
+    return false;
+}
+
+static bool effigyTouchesDisc(const Entity& e, int slot, int cx, int cy, int radius) {
+    const int artX = (int)e.x - EFFIGY_ART_OVERHANG;
+    const int x0 = imax(artX, cx - radius);
+    const int x1 = imin(artX + EFFIGY_SPR_W - 1, cx + radius);
+    const int y0 = imax(e.top(), cy - radius), y1 = imin(e.top() + EFFIGY_SPR_H - 1, cy + radius);
+    for (int y = y0; y <= y1; ++y)
+        for (int x = x0; x <= x1; ++x) {
+            const int dx = x - cx, dy = y - cy;
+            if (dx * dx + dy * dy <= radius * radius && effigyPixel(e, slot, x, y))
+                return true;
+        }
+    return false;
+}
+
 bool entDamageAt(int x, int y, int damage, bool sparingTame, int poisonFrames,
                  int* damageDealt) {
     for (int i = 0; i < MAX_ENTITIES; ++i) {
@@ -1169,7 +1222,7 @@ bool entDamageAt(int x, int y, int damage, bool sparingTame, int poisonFrames,
            so a bolt that meets a bee carries on to whatever was behind it --
            a bee should not be cover for a mite. */
         if (sparingTame && ENT_DEFS[e.type].tame) continue;
-        if (x < e.left() || x > e.right() || y < e.top() || y > e.bottom()) continue;
+        if (!entityHitPixel(e, i, x, y)) continue;
         const int hpBefore = e.hp;
         entApplyDamage(e, damage);
         if (damageDealt) *damageDealt = hpBefore - e.hp;
@@ -1187,7 +1240,8 @@ int entDamageDisc(int cx, int cy, int radius, int damage, bool sparingTame) {
         if (!e.alive()) continue;
         if (sparingTame && ENT_DEFS[e.type].tame) continue;
         const float dx = e.centreX() - (float)cx, dy = e.centreY() - (float)cy;
-        if (dx * dx + dy * dy > (float)r2) continue;
+        if (e.type == ENT_EFFIGY ? !effigyTouchesDisc(e, i, cx, cy, radius)
+                                  : dx * dx + dy * dy > (float)r2) continue;
         entApplyDamage(e, damage);
         ++hit;
     }
@@ -3450,9 +3504,8 @@ static void censerLimbTick(World& w, Entity& e, const Player& p) {
      stand away    -- the CROWN drops fire on you
      keep moving   -- the GROUND erupts where you were going
 
-   The body itself is the slowest thing in the game and cannot be stopped by
-   terrain. That combination is the design: nothing it does is fast, and none
-   of it can be walked away from indefinitely.
+   The body starts as a slow pursuit threat. With its parts gone it opens its
+   cage, widens the floor attack, throws fire, and jumps toward higher ground.
    ========================================================================== */
 
 /* Where the parts hang, relative to the body's centre. The arms are at the
@@ -3482,15 +3535,14 @@ static const float EFFIGY_ARM_LUNGE = 0.085f;
 static const float EFFIGY_ARM_SPEED = 3.40f;
 
 /* 1.4 seconds to leave three eleven-cell footprints, with nineteen-cell gaps. */
-static const int   EFFIGY_ERUPT_WIND = 84;
 static const int   EFFIGY_ERUPT_HALF = 5;
 static const int   EFFIGY_ERUPT_DEEP = 3;
 
-/* Movement. Slow, and it does not surge -- the Censer's charge exists because
-   it could neither reach nor shoot a player past 200 cells, and this creature
-   has a crown that reaches everywhere. It never needs to hurry. */
+/* Movement. The assembled body is slow; the exposed body gains deliberate
+   pursuit leaps and only uses this smaller hop when thoroughly wedged. */
 static const int   EFFIGY_STUCK = 55;
 static const float EFFIGY_HOP   = 3.0f;
+static const float EFFIGY_PURSUIT_LEAP = 5.2f;
 static const float EFFIGY_STUCK_CELLS = 0.05f; // Below its normal 0.22 pace.
 static const int   EFFIGY_HOP_COOLDOWN = 180;
 static const float EFFIGY_DIG_BELOW    = 30.0f;
@@ -3567,6 +3619,15 @@ static void effigyTick(World& w, Entity& e, const Player& p) {
     }
 
     const bool exposed = effigyPartsAlive(self) == 0;
+    if (exposed && e.partsSpawned == EFFIGY_ARMS + 1 && e.phase == 0) {
+        e.phase = 1;
+        /* Restart an in-progress ritual so its newly widened footprints and
+           volley receive the full warning. */
+        e.shotTimer = e.shotTimer < 0 ? 45 : imin(e.shotTimer, 45);
+        e.telegraph = 0;
+        e.aimHold = 0;
+        audioPlayAt(SFX_BOSS_PHASE, e.centreX(), e.centreY(), 0.9f);
+    }
 
     /* --- the ground -------------------------------------------------------
        Wind-up, then open. aimX/aimY hold the marked spot, chosen when the
@@ -3586,26 +3647,39 @@ static void effigyTick(World& w, Entity& e, const Player& p) {
     }
     if (e.shotTimer <= 0) e.telegraph = -e.shotTimer;
     if (e.shotTimer <= -EFFIGY_ERUPT_WIND) {
-        for (int mark=-1;mark<=1;++mark)
-            effigyErupt(w, (int)e.aimX+mark*30, (int)e.aimY);
+        if (e.phase == 1) {
+            /* The opened cage now casts a wider staggered fissure and sends a
+               fan from the heart. Both commit to the old aim after the same
+               full warning; the volley cannot track a late dodge. */
+            for (int mark=-2;mark<=2;++mark)
+                effigyErupt(w, (int)e.aimX+mark*24, (int)e.aimY);
+            const float heading = atan2f(e.aimY - e.centreY(),
+                                         e.aimX - e.centreX());
+            for (int ray=-3;ray<=3;++ray) {
+                const float angle = heading + ray * 0.18f;
+                projSpawn(e.centreX(), e.centreY()-12.0f,
+                          cosf(angle)*3.6f, sinf(angle)*3.6f,
+                          STR_SOFT, 1, 145, 0xFFB464, 0, MAT_BRIMFIRE,
+                          22, true, 0.0f);
+            }
+        } else {
+            for (int mark=-1;mark<=1;++mark)
+                effigyErupt(w, (int)e.aimX+mark*30, (int)e.aimY);
+        }
         e.telegraph = 0;
-        /* Faster once its parts are gone. Nothing new arrives in the second
-           half -- the same rule the Censer's phases follow, because a boss
-           whose second half is a different fight is two fights. */
         e.shotTimer = exposed ? (d.shotEvery * 3) / 5 : d.shotEvery;
     }
 
     /* --- and it walks -----------------------------------------------------
-       Unrouted, for the reason the Censer's note spells out and more so: the
-       tallest nav class is 24 cells and this creature is 88, so every answer
-       the flow field could give it would be about a creature less than a third
-       its size. It goes through things instead. */
+       The shared flow field's tallest class is 24 cells, far below this body.
+       It pursues horizontally and checks full-body openings locally before
+       an exposed-phase leap, cutting only when terrain leaves no route. */
     const float toward = p.centreX() - e.centreX();
     if (toward >  3.0f) e.facing =  1;
     else if (toward < -3.0f) e.facing = -1;
 
-    const float pace  = d.speed * (exposed ? 1.25f : 1.0f);
-    const float shove = d.accel * (exposed ? 1.15f : 1.0f);
+    const float pace  = d.speed * (exposed ? 1.7f : 1.0f);
+    const float shove = d.accel * (exposed ? 1.5f : 1.0f);
     const bool ritual=e.shotTimer<=0;
     if (ritual) e.vx*=0.75f;
     else if (toward > 6.0f || toward < -6.0f) {
@@ -3625,14 +3699,36 @@ static void effigyTick(World& w, Entity& e, const Player& p) {
     if (walking && movedX < EFFIGY_STUCK_CELLS)
         broodPlough(w, e, (float)e.facing, 0.0f);
 
-    /* Down through the floor at a player underneath it, feet to feet, and
-       both thresholds are scaled to this creature rather than copied: it is
-       88 cells tall and 96 wide, so "underneath me" is a wider window and "far
-       enough below to be worth digging for" is a deeper one. */
+    /* Down through the floor at a player underneath it, feet to feet. */
     const float overhead = toward < 0.0f ? -toward : toward;
     if (!ritual && (float)(p.bottom() - e.bottom()) > EFFIGY_DIG_BELOW
         && overhead < EFFIGY_DIG_OVERHEAD && e.onGround)
         broodPlough(w, e, 0.0f, 1.0f);
+
+    /* In the exposed phase it reads the local space at its ACTUAL size. A
+       clear higher landing or a player above calls for a leap; a roofed wall
+       does not. The old stuck cut remains the fallback for solid rock. */
+    if (e.phase == 1 && !ritual && e.onGround && e.aimHold == 0 &&
+        overhead < 240.0f) {
+        const int ahead = (int)(e.x + (float)e.facing * 18.0f);
+        const int landing = (int)(e.x + (float)e.facing * 38.0f);
+        const bool blocked = solidBox(w, ahead, (int)e.y, d.w, d.h);
+        const bool elevated = p.bottom() < e.bottom() - 32;
+        if (blocked || elevated) {
+            /* Search full-body openings at several heights, including where
+               it will LAND, before committing. This lets it climb a ledge
+               taller than its normal step while refusing a low ceiling. */
+            for (int rise=24;rise<=96;rise+=12) {
+                if (solidBox(w, (int)e.x, (int)e.y-rise, d.w, d.h) ||
+                    solidBox(w, ahead, (int)e.y-rise, d.w, d.h) ||
+                    solidBox(w, landing, (int)e.y-rise, d.w, d.h)) continue;
+                e.vy = -EFFIGY_PURSUIT_LEAP;
+                e.aimHold = 95;
+                e.stuck = 0;
+                break;
+            }
+        }
+    }
 
     /* --- and when it is WEDGED, it cuts its way out ------------------------
        Reported from play: "the effigy needs to destroy blocks if hes stuck."
@@ -4001,8 +4097,10 @@ static void entTickMode(World& w, Player& fallbackPlayer, Inventory& fallbackInv
            imax(1, touchDamage - armour), so a creature with zero contact
            damage still hits for one. A bee landing on you would sting. */
         if (!d.tame && e.touchTimer == 0 && p.alive
-            && e.right()  >= p.left() && e.left() <= p.right()
-            && e.bottom() >= p.top()  && e.top()  <= p.bottom()) {
+            && e.right() + (e.type == ENT_EFFIGY ? EFFIGY_ART_OVERHANG : 0) >= p.left()
+            && e.left() - (e.type == ENT_EFFIGY ? EFFIGY_ART_OVERHANG : 0) <= p.right()
+            && e.bottom() >= p.top()  && e.top()  <= p.bottom()
+            && (e.type != ENT_EFFIGY || effigyTouchesPlayer(e, i, p))) {
             /* Armour first, then the Shambler Ballast's percentage off what
                is left. Subtraction before proportion, because the other order
                would make a percentage charm worth more the WORSE your armour
@@ -4103,7 +4201,15 @@ int entHitSegment(float x0, float y0, float x1, float y1,
            -- so a circular approximation would either miss her flanks or hit
            empty air above her. */
         const float hw = e.width() * 0.5f, hh = e.height() * 0.5f;
-        if (nx < cx - hw || nx > cx + hw || ny < cy - hh || ny > cy + hh) continue;
+        if (e.type == ENT_EFFIGY) {
+            bool touches = false;
+            const int samples = imax(1, (int)(sqrtf(len2) * 2.0f));
+            for (int s = 0; s <= samples && !touches; ++s) {
+                const float q = (float)s / (float)samples;
+                touches = effigyPixel(e, i, (int)(x0 + dx * q), (int)(y0 + dy * q));
+            }
+            if (!touches) continue;
+        } else if (nx < cx - hw || nx > cx + hw || ny < cy - hh || ny > cy + hh) continue;
 
         const int hpBefore = e.hp;
         entApplyDamage(e, damage);
@@ -4137,7 +4243,8 @@ int entDamageKnockbackDisc(int cx, int cy, int radius, int damage,
         if (sparingTame && ENT_DEFS[e.type].tame) continue;
         float dx = e.centreX() - (float)cx, dy = e.centreY() - (float)cy;
         const float d2 = dx * dx + dy * dy;
-        if (d2 > r2) continue;
+        if (e.type == ENT_EFFIGY ? !effigyTouchesDisc(e, i, cx, cy, radius)
+                                  : d2 > r2) continue;
         entApplyDamage(e, damage);
         const float len = sqrtf(d2);
         if (len > 0.01f) {
@@ -4850,8 +4957,10 @@ static void effigyWarnings(u32* px,int camX,int camY) {
         const Entity& e=g_entities[i];
         if (!e.alive() || e.telegraph<=0) continue;
         if (e.type==ENT_EFFIGY) {
-            for (int mark=-1;mark<=1;++mark) {
-                int x=(int)e.aimX+mark*30, y=(int)e.aimY;
+            const int reach = e.phase == 1 ? 2 : 1;
+            const int spacing = e.phase == 1 ? 24 : 30;
+            for (int mark=-reach;mark<=reach;++mark) {
+                int x=(int)e.aimX+mark*spacing, y=(int)e.aimY;
                 // Exact hazard footprint stays lit; rising sparks show the countdown.
                 for (int dx=-EFFIGY_ERUPT_HALF;dx<=EFFIGY_ERUPT_HALF;++dx) {
                     dot(x+dx,y-EFFIGY_ERUPT_DEEP-1,0xFFE3A0);
@@ -4860,6 +4969,16 @@ static void effigyWarnings(u32* px,int camX,int camY) {
                 for (int h=0;h<18;++h) {
                     if (h%3==0) { dot(x-6,y-4-h,0xDC7143); dot(x+6,y-4-h,0xDC7143); }
                     if ((h+e.telegraph/4)%7==0) dot(x,y-4-h,0xFFF2C2);
+                }
+            }
+            if (e.phase == 1) {
+                const float heading=atan2f(e.aimY-e.centreY(),
+                                           e.aimX-e.centreX());
+                for (int ray=-3;ray<=3;++ray) {
+                    const float angle=heading+ray*0.18f;
+                    for (int r=24;r<=48;r+=6)
+                        dot((int)(e.centreX()+cosf(angle)*r),
+                            (int)(e.centreY()-12.0f+sinf(angle)*r),0xFFBE76);
                 }
             }
         } else if (e.type==ENT_EFFIGY_ARM) {
@@ -4893,8 +5012,8 @@ void entDraw(u32* px, int camX, int camY, bool lit) {
         if (rigArtFor(e.type, &art3)) {
             const u32* art = 0;
             const bool moving = fabsf(e.vx) > 0.04f || fabsf(e.vy) > 0.04f;
-            if (e.type==ENT_EFFIGY && e.telegraph>0)
-                art=g_effigyRitual[imin(EFFIGY_RITUAL_FRAMES-1,e.telegraph*EFFIGY_RITUAL_FRAMES/EFFIGY_ERUPT_WIND)];
+            if (e.type==ENT_EFFIGY)
+                art=effigyArt(e, i);
             else if (e.type==ENT_WIDOW && (e.phase==WIDOW_WEB_WIND || e.phase==WIDOW_LEAP_WIND ||
                      e.phase==WIDOW_RECOVER || e.phase==WIDOW_MOULT))
                 art=g_widowIdle[0];
@@ -4912,7 +5031,9 @@ void entDraw(u32* px, int camX, int camY, bool lit) {
                 art = art3.idle + (size_t)frame * art3.w * art3.h;
             }
 
-            const int ox = (int)e.x - camX, oy = (int)e.y - camY;
+            const int ox = (int)e.x - camX -
+                (e.type == ENT_EFFIGY ? EFFIGY_ART_OVERHANG : 0);
+            const int oy = (int)e.y - camY;
             for (int sy = 0; sy < art3.h; ++sy) {
                 for (int sx = 0; sx < art3.w; ++sx) {
                     const int vx = ox + sx, vy = oy + sy;
@@ -4931,6 +5052,9 @@ void entDraw(u32* px, int camX, int camY, bool lit) {
                     if (!out) continue;
                     if (e.type==ENT_EFFIGY && e.telegraph>0 && out==RIG_EFFIGY[3])
                         out=lerpColor(out,0xFFF0B4,imin(220,e.telegraph*2));
+                    if (e.type==ENT_EFFIGY && e.phase==1 &&
+                        (out==RIG_EFFIGY[3] || out==RIG_EFFIGY[1]))
+                        out=lerpColor(out,0xFFAD50,out==RIG_EFFIGY[3] ? 70 : 38);
                     if (lit) out = shadeColor(out, viewShade(vx, vy));
                     if (e.type==ENT_WIDOW && e.telegraph>0 && sourceX>art3.w/2 && sourceY<art3.h*2/3)
                         out=lerpColor(out,e.phase==WIDOW_WEB_WIND ? 0xE8D9FF : 0xFFC286,150);

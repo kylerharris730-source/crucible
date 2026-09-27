@@ -178,8 +178,10 @@ scorch line, which is what a launch would leave and costs no second picture.
 
 ## Effigy final boss
 
-The Effigy uses a 96×112 world canvas (formerly 72×88), with 16 distance-driven
-walk frames, four breathing frames, and an eight-pose fire ritual. Its forward
+The Effigy uses a 96×112 world canvas and a centred 72×112 movement box. Hits
+against the body use the opaque pixels of its current pose. It has 16
+distance-driven walk frames, four breathing frames, an eight-pose fire ritual,
+and separate rising and falling leap poses. Its forward
 toe and eye slit face right in source art; mirror the whole figure for leftward
 travel. The backward-folding shin is anatomy, not permission to point the toes
 backward. Lift the knee during forward recovery, then plant it on the backward
@@ -187,7 +189,9 @@ stroke. Chest sway, counter-rotating head, delayed wrists, and a swinging heart
 give the cage weight. Keep gaps between the ribs visible.
 
 Fire rituals halt the walk and lift the arms. Three fixed floor footprints,
-30 cells apart, remain visible for 84 ticks before brimfire appears. Their edge
+30 cells apart, remain visible for 84 ticks before brimfire appears. Once all
+parts are gone, the core warns five footprints and a seven-ray heart volley,
+then leaps toward reachable high ground. Their edge
 lines are persistent, not a whole-screen flash; rising marks show time passing.
 Render these warnings independently of body visibility and terrain lighting.
 The crown previews its five-ray fan or eight-ray halo for 54 ticks; the arm orbs

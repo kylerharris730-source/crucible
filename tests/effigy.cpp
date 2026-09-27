@@ -259,15 +259,24 @@ int main() {
         static u32 pixels[VIEW_CELLS_W*VIEW_CELLS_H];
         memset(pixels,0,sizeof(pixels));
         entDraw(pixels,x-50,y-40,false);
-        int warnings=0;
-        for (int k=0;k<VIEW_CELLS_W*VIEW_CELLS_H;++k) if (pixels[k]==0xFFE3A0) ++warnings;
+        int warnings=0,rays=0;
+        for (int k=0;k<VIEW_CELLS_W*VIEW_CELLS_H;++k) {
+            if (pixels[k]==0xFFE3A0) ++warnings;
+            if (pixels[k]==0xFFBE76) ++rays;
+        }
         check(warnings>=30,"all three fire footprints are drawn off-body");
+        check(rays>0,"exposed volley shows its seven firing directions");
         run(w,60,px+140,py);
         check((int)e.aimX==x && (int)e.aimY==y,"fire aim stays locked after player dodges");
         check(w.at(x,y).mat!=MAT_BRIMFIRE,"no fire during the first second of warning");
         run(w,24,px+140,py);
-        check(w.at(x,y).mat==MAT_BRIMFIRE && w.at(x-30,y).mat==MAT_BRIMFIRE && w.at(x+30,y).mat==MAT_BRIMFIRE,
-              "only warned locations ignite after the full wind-up");
+        check(e.phase==1 && w.at(x,y).mat==MAT_BRIMFIRE &&
+              w.at(x-48,y).mat==MAT_BRIMFIRE && w.at(x+48,y).mat==MAT_BRIMFIRE,
+              "exposed phase ignites its five warned fissures");
+        int volley=0;
+        for (int j=0;j<MAX_PROJ;++j) if (g_proj[j].alive && g_proj[j].hostile)
+            ++volley;
+        check(volley>=7,"exposed ritual adds a committed seven-ray volley");
     }
 
     {
@@ -317,6 +326,73 @@ int main() {
         }
         check(hops>0 && hops<=3 && spaced,"a real obstruction still permits infrequent recovery hops");
         check(low,"recovery hops use the lower impulse");
+    }
+
+    /* The art can extend outside the narrower movement box, and contains
+       daylight inside it. Both are checked through the real damage path. */
+    {
+        core=arena(w);
+        if (core<0) return 2;
+        Entity& e=g_entities[core]; e.partsSpawned=3;
+        e.vx=e.vy=0.0f; e.onGround=true; e.facing=1;
+        const int frame=(int)((g_world.frame/36u+(u32)core)%EFFIGY_IDLE_FRAMES);
+        const u32* art=g_effigyIdle[frame];
+        const int ox=(int)e.x-EFFIGY_ART_OVERHANG, oy=(int)e.y;
+        int emptyX=-1,emptyY=-1,paintX=-1,paintY=-1;
+        for (int y=0;y<EFFIGY_SPR_H;++y)
+            for (int x=EFFIGY_ART_OVERHANG;x<EFFIGY_SPR_W-EFFIGY_ART_OVERHANG;++x) {
+                if (art[y*EFFIGY_SPR_W+x] && paintX<0)
+                    { paintX=ox+x; paintY=oy+y; }
+                if (!art[y*EFFIGY_SPR_W+x] && emptyX<0)
+                    { emptyX=ox+x; emptyY=oy+y; }
+            }
+        const int before=e.hp;
+        const bool air=entDamageAt(emptyX,emptyY,20);
+        const bool wood=entDamageAt(paintX,paintY,20);
+        check(emptyX>=0 && paintX>=0 && !air && wood && e.hp==before-20,
+              "body takes hits on drawn pixels, not empty canvas");
+    }
+
+    {
+        core=arena(w);
+        if (core<0) return 2;
+        Entity& e=g_entities[core]; e.partsSpawned=3; e.shotTimer=10000;
+        const float px=e.centreX()-90.0f;
+        const float py=(float)(FLOOR-PLAYER_H-90);
+        bool leapt=false;
+        for (int f=0;f<100;++f) {
+            run(w,1,px,py);
+            if (e.vy < -4.5f) leapt=true;
+        }
+        check(e.phase==1 && leapt,"exposed body leaps toward an elevated player");
+    }
+
+    {
+        core=arena(w);
+        if (core<0) return 2;
+        Entity& e=g_entities[core]; e.partsSpawned=3;
+        e.shotTimer=-70; e.telegraph=70;
+        run(w,1,(float)(CX-240),(float)(FLOOR-PLAYER_H));
+        check(e.phase==1 && e.shotTimer==44 && e.telegraph==0,
+              "phase change restarts an unfinished ritual warning");
+    }
+
+    {
+        core=arena(w);
+        if (core<0) return 2;
+        Entity& e=g_entities[core]; e.partsSpawned=3; e.shotTimer=10000;
+        const float px=e.centreX()-210.0f;
+        const float py=(float)(FLOOR-PLAYER_H);
+        run(w,5,px,py);
+        e.shotTimer=10000;
+        const int edge=(int)e.x-1;
+        fill(w,edge-24,FLOOR-60,edge,FLOOR,MAT_WALL);
+        bool leapt=false;
+        for (int f=0;f<25;++f) {
+            run(w,1,px,py);
+            if (e.vy < -4.5f) leapt=true;
+        }
+        check(leapt,"exposed body finds a jump route over a tall ledge");
     }
 
     /* --- 7. no orphans, and it is remembered ------------------------------ */

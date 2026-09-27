@@ -1038,8 +1038,8 @@ MatInfo MATS[MAT_COUNT] = {
      you cannot see is a trap, and a web you can see is a decision. */
   { "Web",   KIND_STATIC, 255,   0,    0,   0,   0,   0,  0,  110,  0,   0,   0,    0,  MAT_EMPTY,   0, MAT_EMPTY, degC(60), MAT_FIRE,   0,  0xD8DCE4, 0xA8AEBC, 0xD8DCE4, 0xA8AEBC, 0 },
   /* --- layer 3 --------------------------------------------------------------
-     Brimstone. spawnTemp degC(58), which is the number that makes the deep a
-     different place to stand: thirty-eight degrees over ambient, so a wall of
+     Brimstone. spawnTemp degC(100), which makes the deep a
+     different place to stand: eighty degrees over ambient, so a wall of
      it warms the air in front of it and that air rises, and the player's own
      heat model starts to notice long before anything catches fire.
 
@@ -1048,7 +1048,7 @@ MatInfo MATS[MAT_COUNT] = {
      torch will not set a wall off, a thermal lance or a lava neighbour will.
      That gap is the whole mechanic; too low and the layer is permanently
      alight, too high and nothing ever happens. */
-  { "Brimstone", KIND_STATIC, 150, 0,  0,   0,   0,   0,  0,   80,  0,   0, degC(58),   0,  MAT_EMPTY,   0, MAT_EMPTY, degC(140), MAT_BRIMFIRE, 0, 0x6E2A20, 0x47180F, 0x6E2A20, 0x47180F, 0 },
+  { "Brimstone", KIND_STATIC, 150, 0,  0,   0,   0,   0,  0,   80,  0,   0, degC(100),   0,  MAT_EMPTY,   0, MAT_EMPTY, degC(140), MAT_BRIMFIRE, 0, 0x6E2A20, 0x47180F, 0x6E2A20, 0x47180F, 0 },
   /* Burning brimstone. Shaped on Ember rather than on Fire, and the difference
      is the point: Fire is a GAS that cools itself to death in about ninety
      frames, and a burning seam of rock has to outlast that or the hazard is

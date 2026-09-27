@@ -135,7 +135,7 @@ enum EntityType {
 
        Hot, all four of them: heatTolerance well past the default, because the
        default 60 C would kill them in their own layer -- brimstone alone runs
-       at 58 and a lit seam is far past that. A creature that cannot survive
+       at 100 C and a lit seam is far past that. A creature that cannot survive
        where it lives is not a creature, it is a bug with a sprite.
 
        They are also FASTER than layer 2 as a group rather than merely tougher,

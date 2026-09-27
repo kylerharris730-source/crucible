@@ -15,7 +15,7 @@
    one would otherwise be:
 
      all four spawn in layer 3, and nothing else does   (the hole is filled)
-     and all four survive their own layer               (58 C rock, hot vents)
+     and all four survive their own layer               (100 C rock, hot vents)
      the Ashhound outruns a Husk and never stops        (fast, persistent)
      the Emberwing ARRIVES where the Bat overshoots     (the request, exactly)
      and is faster than the Wisp, which also arrives    (not a slow Wisp)
@@ -115,13 +115,13 @@ int main() {
         check(inLayer3 >= 4, "the deep has a roster at all");
 
         /* Every one of them has to survive its own layer. Brimstone alone runs
-           at 58 C and the default cook threshold is 60, so a creature left on
+           at 100 C and the default cook threshold is 60, so a creature left on
            the default would die in the rock it lives in -- a bug that shows up
            as an empty layer, not as an error. */
         bool tough = true;
         for (int k = 0; k < 4; ++k) {
             const EntityDef& d = ENT_DEFS[deep[k]];
-            if (d.heatTolerance <= 60) { printf("  %s cooks at %u C\n",
+            if (d.heatTolerance <= degC(100)) { printf("  %s cooks at %u C\n",
                                                 d.name, (unsigned)d.heatTolerance);
                                          tough = false; }
             if (!(d.layerMask & L3)) { printf("  %s is not in layer 3\n", d.name);

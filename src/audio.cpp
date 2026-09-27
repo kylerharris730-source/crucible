@@ -238,7 +238,8 @@ void audioInit() {
 void audioUpdate() {}
 
 static int priority(SoundId id) {
-    if (id == SFX_PLAYER_DAMAGE || id == SFX_PLAYER_DEATH ||
+    if (id == SFX_PLAYER_DAMAGE || id == SFX_PLAYER_DAMAGE_SMALL ||
+        id == SFX_PLAYER_DEATH ||
         id == SFX_BOSS_PHASE || id == SFX_BOSS_DEFEAT ||
         id == SFX_ROCKET_IGNITE || id == SFX_VICTORY) return 3;
     if ((id >= SFX_TOOL_FIRE_LIGHT && id <= SFX_MELEE_HIT) ||
@@ -503,7 +504,8 @@ void audioSetMuted(bool value) {
 }
 
 static int priority(SoundId id) {
-    if (id == SFX_PLAYER_DAMAGE || id == SFX_PLAYER_DEATH ||
+    if (id == SFX_PLAYER_DAMAGE || id == SFX_PLAYER_DAMAGE_SMALL ||
+        id == SFX_PLAYER_DEATH ||
         id == SFX_BOSS_PHASE || id == SFX_BOSS_DEFEAT ||
         id == SFX_ROCKET_IGNITE || id == SFX_VICTORY) return 3;
     if ((id >= SFX_TOOL_FIRE_LIGHT && id <= SFX_MELEE_HIT) ||

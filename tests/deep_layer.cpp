@@ -121,12 +121,13 @@ int main() {
         const int avg = n ? (int)(sum / n) : 0;
         printf("brimstone temperature: %d C over %d cells (ambient is %d C)\n",
                avg - 40, n, (int)AMBIENT_TEMP - 40);
-        check(n > 0 && avg > (int)AMBIENT_TEMP + 20,
-              "and the rock down there is warm on its own");
+        check(n > 0 && MATS[MAT_BRIMSTONE].spawnTemp == degC(100) &&
+              avg > (int)AMBIENT_TEMP + 50,
+              "and brimstone in the deep starts near 100 C");
     }
 
     /* --- and it is somewhere a player can still go ----------------------- */
-    /* The guard on all of the above. Brimstone sits at 58 C and the character
+    /* The guard on all of the above. Brimstone starts at 100 C and the character
        starts taking heat damage at 45, so "the deep is warm" is one tuning
        nudge away from "the deep cannot be entered without gear you can only
        make by going there". This asserts the layer is HOSTILE, not sealed.

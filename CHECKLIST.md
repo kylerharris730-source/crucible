@@ -5,7 +5,8 @@ chat, which meant it was re-derived from memory every session and quietly lost
 things. `HANDOFF.md` is **not** this file: it is gitignored scratch, is usually
 stale, and should not be trusted for release state.
 
-Released: **v0.6.19** (2026-09-26). `main` is level with it.
+Released: **v0.7.0** (2026-09-27). This is the final public beta snapshot;
+new Steam-edition development belongs in the private `cinderlift` repository.
 
 ---
 
@@ -29,7 +30,100 @@ Released: **v0.6.19** (2026-09-26). `main` is level with it.
       what it is for and has not been tried. If it will not connect, run
       both with `CINDERLIFT_RTC_LOG=1` and look in `build/rtc.log`.
 
+## Steam edition — planned after the free beta
+
+The public beta stays playable at its last release. New game content and Steam
+builds come from an independent private copy of this repository, not a GitHub
+fork (a fork of a public repository remains public). This is the larger paid
+edition, not just a change of storefront. Track the final beta tag, the first
+private commit, and save compatibility between them.
+
+### Worlds, saves, and front end
+
+- [ ] **Named worlds and a home screen.** On launch, show Continue / Play,
+      Create World, and Settings rather than dropping straight into the current
+      world. List worlds by player-chosen name with useful metadata and a clear
+      delete confirmation. Make original title-screen art that fits the game's
+      pixel look; carry its logo and visual language into the Steam artwork.
+- [ ] **One explicit in-game exit: Save & Quit.** Replace manual Save, Load,
+      and bare Quit actions with Save & Quit back to the world list. Keep safe
+      background saving and crash recovery so a power loss does not erase an
+      entire session. Finish a write before returning to the menu, surface a
+      write failure, and never silently overwrite another named world.
+- [ ] **Move saves out of the install directory and migrate beta saves.** Give
+      each named world a stable directory/identifier and keep settings separate.
+      Import the existing numbered `cinderlift*.sav` and autosave files without
+      overwriting originals. Test old saves, repeated imports, corrupt saves,
+      world deletion, and Steam reinstall/update behavior.
+
+### Wider world and new surface regions
+
+- [ ] **Make new worlds roughly three times as wide.** Expand the current
+      4096-cell world to about 12288 cells, with the familiar region in the
+      middle and a cold region on one side and hot desert on the other. Review
+      every width-bound array, worldgen assumption, camera/map coordinate,
+      entity and device cap, multiplayer snapshot, save size, generation time,
+      memory use, and frame time. Existing saves currently reject dimensions
+      other than `SIM_W` x `SIM_H`; migrate their old 4096-cell area and all
+      saved positions into the new coordinate system, or provide an explicit
+      legacy-world path before release.
+- [ ] **Cold biome.** Distinct terrain, materials, temperature hazards,
+      resources, scenery and reasons to travel there. Add a surface enemy set
+      that behaves differently from the central region and survives the local
+      climate. Place an explorable temple or similar cold-zone structure with
+      a readable route and reward.
+- [ ] **Hot desert biome.** Distinct sand/rock terrain, heat hazards, resources,
+      scenery and a surface enemy set. Place an explorable pyramid with a
+      deliberate entrance, interior challenge and reward. Check that world
+      physics cannot bury or destroy its critical path on generation.
+- [ ] **Two minor surface bosses.** One cold-zone boss and one desert boss,
+      each with its own encounter, summon or discovery rule, arena, drop and
+      reason to fight. They should complement the four main progression bosses
+      without becoming mandatory replacements for the layer gates. Test their
+      drops and encounter state in saves and multiplayer.
+- [ ] **Rebalance travel and progression for the wider surface.** Check spawn
+      placement, early access to both biomes, travel time, loot distribution,
+      map readability, return trips, and how the shop's new stock relates to
+      biome rewards. The larger world should add destinations, not only walking.
+
+### Steam setup and presentation
+
+- [x] **Pay the Steam Direct app fee.** Paid by 2026-09-27 per owner; record
+      the exact payment date and dashboard eligibility date in Steamworks.
+- [ ] **Start Steamworks onboarding and the release wait.** Sign up at
+      `partner.steamgames.com/steamdirect/`, complete the agreements and submit
+      matching legal, bank, identity, and tax details. Record the actual earliest
+      release date shown in Steamworks. Valve's public Steam Direct page lists
+      30 days from fee payment before release; use the dashboard's actual date.
+- [ ] **Prepare and publish a Coming Soon page.** Make the logo/capsules,
+      library artwork, real gameplay screenshots, description, tags, supported
+      feature claims, content survey, and initial price. Submit the store page
+      for review with time for corrections; it must be public at least 14 days
+      before release. Show current gameplay honestly and mark planned Steam
+      additions as planned until they are playable. The copy, field plan, and
+      asset list are in `STEAM_PAGE.md`.
+- [ ] **Separate the free beta from Steam delivery.** Put one final public beta
+      release and "free playable beta" wording on the website; note its version
+      and that later Steam builds may not join beta multiplayer. Copy the
+      committed history to a new private repository, account for local
+      uncommitted work, and replace its GitHub Release/Pages automation with
+      Steam build delivery. Keep the public site's wiki and download working.
+- [ ] **Steam build and launch check.** Upload the game itself through
+      SteamPipe, not the GitHub self-updating launcher. Test install, launch,
+      updates, save location/import, offline play, and two-house multiplayer
+      from an actual Steam install. Submit the near-final build for Valve's
+      separate review after the store page has been submitted. Run the test
+      suite in CI and review third-party notices and asset rights.
+
 ## Ship it
+
+- [x] **Cut v0.7.0 as the public beta.** The site labels the browser and
+      Windows downloads as the free playable beta and no longer promises the
+      entire game will always be free. Effigy combat now uses opaque sprite
+      pixels for hits, a narrower movement box, a stronger exposed phase with
+      a warned volley and leap, and revised animation. Deep brimstone runs
+      hotter; mining and damage audio are adjusted. The full local test suite
+      passed (100/100) with GCC 14.2 before the release.
 
 - [x] **Cut v0.6.19.** Tagged 2026-09-26, two commits past v0.6.18. Room
       codes are six characters (v0.6.18 hosts still get five); the broker
@@ -371,27 +465,29 @@ Released: **v0.6.19** (2026-09-26). `main` is level with it.
 
 ## Beginner friendliness
 
-- [ ] **A shop.** New ground: there is **no currency and no trading in the
-      game at all** today, so this is three decisions before it is any code.
-      - *What is money?* A new coin item, or an existing material (gold) doing
-        double duty? A coin is cleaner to balance; gold-as-money is one less
-        concept and fits a game about smelting.
-      - *Where does it live?* The crafting-station pattern already exists
-        (`STATION_BENCH`, `STATION_ANVIL`, …) and a shop could be one more
-        placed station with its own panel — cheapest by far, and it reuses the
-        crafting UI. The alternative is a wandering NPC trader, which means new
-        entity behaviour and pathing.
-      - *What is it for?* If it sells what you could mine anyway it is a
-        shortcut that erodes the progression ladder. The beginner-friendly
-        version is probably that it sells the **first** rung of each ladder
-        cheaply (a copper pick, a striker, seeds) so a new player who dug
-        themselves into a hole can recover — and sells nothing past iron.
+- [ ] **A wandering shopkeeper near spawn.** There is no trading in the game
+      yet. Use monster parts directly as payment rather than introducing coins:
+      Chitin for initial stock, Ichor when the next layer opens, and Cinder
+      Hearts when the deep layer opens. New stock should give parts a continuing
+      use and help a stuck player recover without selling boss cores or skipping
+      the material ladder. Keep the NPC near a safe spawn area even after
+      terrain changes; make purchases atomic, check pack capacity, and keep
+      the shop consistent for multiplayer clients.
 - [ ] **Other onboarding ideas** — not started, listed so they are not lost:
       a first-session objective or two, and a way to re-read the controls
       without the pause menu.
 
 ## The wiki
 
+- [ ] **A starter wiki book and in-game guide.** Give every new player,
+      including multiplayer joiners, the book. Open a searchable, two-panel
+      reference with item and recipe icons, ingredients, uses, creature drops,
+      available stations, and "craftable now" filtering, plus the existing
+      website guides. Make it usable offline and at every supported UI scale.
+      Generate factual entries from the same game tables as `tools/wiki.cpp`
+      and share or transform the existing guide sources, so the game and site
+      cannot give contradictory instructions. Provide a way back to the guide
+      if the physical book is lost.
 - [x] **An extensive wiki on the website.** Live at
       <https://cinderlift.com/wiki/>. Built 2026-09-12 over the 33 steps in
       [WIKI_STEPS.md](WIKI_STEPS.md); the design is [WIKI.md](WIKI.md).
