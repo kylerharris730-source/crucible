@@ -369,7 +369,7 @@
   function guest() {
     shell('JOINING',
       'Type the code your friend gave you.',
-      '<input id="mpin" maxlength="5" placeholder="ABC12" ' +
+      '<input id="mpin" maxlength="6" placeholder="ABC234" ' +
       'style="width:100%;text-align:center;font:700 30px/1.4 ui-monospace,monospace;' +
       'letter-spacing:.22em;background:#0d0f15;color:#f0c98a;border:1px solid #2f3646;' +
       'padding:8px;box-sizing:border-box;text-transform:uppercase">' +

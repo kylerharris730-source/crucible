@@ -14,7 +14,7 @@
    speaks exactly the same connection codes as web/webrtc.js ('CLZ'/'CLR' plus
    a JSON-wrapped SDP), so a desktop and a browser can hand each other codes
    and connect; and it signals through the same room broker as
-   web/roomcode.js, so both builds use the same five-character codes.
+   web/roomcode.js, so both builds use the same six-character codes.
 
    Shape of the API is web/netshim.h's on purpose: network.cpp already knows
    how to drive that, and a peer carried by a data channel should look the
@@ -89,7 +89,7 @@ bool rtcUnpackCode(const char* code, std::string* type, std::string* sdp,
                    std::string* error);
 
 /* ============================================================================
-   Rooms: the five-character codes, through the broker in signal/worker.js.
+   Rooms: the six-character codes, through the broker in signal/worker.js.
    Signalling runs on a background thread; these only start and stop it.
    ========================================================================== */
 

@@ -7,7 +7,7 @@
 #include <string>
 
 /* ============================================================================
-   room.cpp -- five-character room codes, for the Windows build.
+   room.cpp -- six-character room codes, for the Windows build.
 
    A port of web/roomcode.js and the supervising half of web/multiplayer.js.
    Same broker (signal/worker.js), same endpoints, same seat rules, so a room
@@ -158,7 +158,8 @@ void hostThread(unsigned session) {
     std::string body = "{\"offers\":[";
     for (int slot = 0; slot < RTC_MAX_LINKS; ++slot)
         body += (slot ? "," : "") + rtcJsonQuote(offers[slot]);
-    body += "]}";
+    /* Six-character codes; a host that did not ask would get five. */
+    body += "],\"codeLength\":6}";
     /* `key` proves to the broker that this is the host: the code is read out
        to friends, so anything it alone unlocked would be open to anybody who
        heard it. Never shown, never logged. */

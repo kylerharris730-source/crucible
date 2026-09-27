@@ -15,7 +15,7 @@ is no channel between the players yet to exchange them over. Without a broker,
 the players do it themselves — the host exchanges a pair of long codes with
 each guest. It works, and it is tedious.
 
-With this, that becomes: **host gets `JXSZT`; up to three friends type `JXSZT`.**
+With this, that becomes: **host gets `JXSZTK`; up to three friends type `JXSZTK`.**
 
 It also allows candidates to be exchanged as they are discovered rather than all
 at once, which makes connections more reliable, not only shorter to set up.
@@ -105,12 +105,17 @@ node signal/test.mjs
 
 ## Guessing codes
 
-Five characters is about 28.6 million codes against a handful of live rooms:
+Six characters is about 887 million codes against a handful of live rooms:
 hard to hit by chance, easy by trying them all, and every hit hands over the
 host's offer -- with the host's address in it -- and reserves a seat. So:
 
+- codes are six characters (a v0.6.18 host, which does not ask for six,
+  still gets five, because that page's join box only takes five);
 - each address gets 10 room lookups and 10 new rooms a minute (the two
-  `[[ratelimits]]` bindings in `wrangler.toml`; over that is a 429);
+  `[[ratelimits]]` bindings in `wrangler.toml`; over that is a 429). This is
+  approximate -- Cloudflare counts per machine and syncs lazily, and on the
+  live worker a burst of forty guesses saw only two refused -- so the code
+  length is the real defence and the limiter a cheap extra;
 - a malformed code, like the page's `PROBE`, is a 404 before any of that or
   any database read;
 - one address holds at most one unanswered seat per room -- asking again gives
@@ -121,7 +126,7 @@ room lives.
 
 ## What it stores, and for how long
 
-One row per room: a five-character code, three offers, the host key's hash,
+One row per room: a six-character code, three offers, the host key's hash,
 three short-lived seat claims (with a salted hash of each claimer's address),
 answers, and an expiry. Rooms live **ten minutes** and are swept whenever the
 next one is created, so the steady state remains close to empty. Each answer

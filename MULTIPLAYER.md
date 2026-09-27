@@ -5,7 +5,7 @@
 - Four players in cooperative survival: one host and up to three joined peers.
 - One player's game is the authoritative host and owns the save.
 - Two ways in. **LAN**: another computer joins by entering the host's IPv4
-  address; port 27841 is fixed. **Online**: the host gets a five-character
+  address; port 27841 is fixed. **Online**: the host gets a six-character
   room code and friends anywhere type it; the connection is direct,
   peer-to-peer WebRTC, with NAT traversal by STUN.
 - Online rooms are the browser build's rooms. The Windows build speaks the
@@ -156,12 +156,12 @@ The command-line equivalents, mainly for repeatable testing, are
 
 ### Online, by room code
 
-On the host, click **Host online**. The button turns into **Room ABCDE --
+On the host, click **Host online**. The button turns into **Room ABCDEF --
 click to copy** once the room is open, and the code is also in the window
 title, so it can be read off the taskbar. On the other computer, type or paste
 (Ctrl+V) the code into the same box an address goes in and click **Join**:
 the box takes either, and tells them apart by the dots. Command-line
-equivalents: `--host-online` and `--join-room ABCDE`.
+equivalents: `--host-online` and `--join-room ABCDEF`.
 
 How it works, and where each piece lives:
 

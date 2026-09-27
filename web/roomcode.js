@@ -8,7 +8,7 @@
 
    This is a CONVENIENCE OVER A PATH THAT CANNOT BREAK, and that framing is the
    whole design. Pasting two long codes by hand needs nothing to exist and will
-   work in ten years. A five-character room code needs a worker, a database and
+   work in ten years. A six-character room code needs a worker, a database and
    a domain to all be alive at the same moment.
 
    So the paste path is never removed, and everything here fails soft: if the
@@ -19,7 +19,7 @@
    What the broker buys, beyond typing less: the host does not have to wait for
    the guest before doing anything. With pasting, the two people have to be
    present and cooperating in a specific order. With a code, the host can send
-   five characters and walk away.
+   six characters and walk away.
    ========================================================================== */
 (function () {
   'use strict';
@@ -90,7 +90,7 @@
 
     /* Host: hand over a description, get a code to read out. */
     open: async function (offers) {
-      var res = await ask('/room', { method: 'POST', body: JSON.stringify({ offers: offers }) });
+      var res = await ask('/room', { method: 'POST', body: JSON.stringify({ offers: offers, codeLength: 6 }) });
       if (res.status === 429) throw new Error((await res.json()).error || 'too many tries');
       if (!res.ok) throw new Error('could not open a room');
       var body = await res.json();

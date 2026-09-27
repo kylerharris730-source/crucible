@@ -25,7 +25,8 @@ async function call(method, path, body, headers = {}) {
 let fail = 0; const check = (ok, what) => { if (!ok) { console.log('FAIL', what); fail++; } else console.log('ok  ', what); };
 
 const opened = await call('POST', '/room', JSON.stringify({ offers: ['CLRa', 'CLRb', 'CLRc'] }));
-check(opened.status === 200 && opened.body.code && opened.body.key?.length === 48, 'open returns a code and a key');
+check(opened.status === 200 && opened.body.code?.length === 5 && opened.body.key?.length === 48,
+      'open returns a code and a key (five characters for a host that does not ask)');
 const { code, key } = opened.body;
 const K = { 'X-Room-Key': key };
 
@@ -49,6 +50,12 @@ check((await call('GET', `/room/${code}/answer`, undefined, K)).status === 204, 
 sql.prepare('INSERT INTO rooms (code, offer, answer, expires) VALUES (?,?,?,?)').run('ABCDE', JSON.stringify({ offers: ['a','b','c'] }), null, Date.now() + 60000);
 check((await call('GET', '/room/ABCDE/answer')).status === 409, 'a keyless room cannot be polled');
 check((await call('POST', '/room/ABCDE/seat', seatBody)).status === 409, 'or re-offered');
+{
+  const six = await call('POST', '/room', JSON.stringify({ offers: ['CLR6a', 'CLR6b', 'CLR6c'], codeLength: 6 }));
+  check(six.status === 200 && /^[A-HJKMNP-Z2-9]{6}$/.test(six.body.code), 'a host that asks gets a six-character code');
+  check((await call('GET', `/room/${six.body.code}`)).body?.offer === 'CLR6a', 'which a guest can join');
+  check((await call('GET', '/room/ZZZZZZZ')).status === 404, 'seven characters is never a room');
+}
 check((await call('GET', '/room/PROBE')).status === 404, "the page's PROBE is a clean 404");
 
 // --- one pending seat per address --------------------------------------------

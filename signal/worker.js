@@ -49,7 +49,13 @@ const MAX_BODY_BYTES   = 16 * 1024;
    copied by people who did not ask to be careful. Ambiguous glyphs in a short
    code are a support burden with no upside. */
 const ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
-const CODE_LEN = 5;                /* 31^5, about 28.6 million */
+/* Six characters, 31^6, about 887 million. Five (28.6 million) was too few
+   once the rate limiter turned out to be loose -- see "guessing codes". A
+   host asks for six with codeLength in its open request; a v0.6.18 host does
+   not ask and still gets five, because that page's join box takes only five,
+   and its guests have to be able to type the code. */
+const CODE_LEN = 6;
+const LEGACY_CODE_LEN = 5;
 const ROOM_SLOTS = 3;
 /* A guest which reserves an offer but vanishes must not consume a seat for the
    room's full ten-minute life. ICE normally answers within four seconds, and
@@ -59,19 +65,28 @@ const CLAIM_TTL_MS = 45 * 1000;
 
 /* --- guessing codes ------------------------------------------------------------
 
-   31^5 codes and only a handful of live rooms make a code hard to hit by
-   chance, and trivial to hit by trying them all: every guess that lands hands
+   A handful of live rooms among millions of codes are hard to hit by chance,
+   and easy to hit by trying them all: every guess that lands hands
    over the host's offer, with the host's address in it, and reserves a seat.
    So each address gets a few guesses a minute (JOIN_LIMIT) and a few new rooms
    a minute (OPEN_LIMIT) -- Cloudflare's rate-limiting bindings, configured in
    wrangler.toml. A player joining a friend spends one or two, and the
    client's six rejoin attempts are spaced seconds apart.
 
+   The limiter is approximate: measured on the live worker, a burst of forty
+   guesses saw two refused, and a steady guess a second saw none. Cloudflare
+   counts per machine and syncs lazily. It is kept because it costs nothing
+   and does bite, but the real defence is the code length -- 887 million
+   codes at even two hundred guesses a minute is months per address to find
+   one of a few live rooms. An exact counter (D1, a Durable Object) would cost
+   a billed request per guess, and a guesser could spend the free tier and
+   take the broker down with it.
+
    Malformed codes are answered before any of that, or any database read.
    'PROBE', which the page asks for to see whether the broker is up, is one
    of them: O is not in the alphabet, so it can never be a room. */
 function wellFormed(code) {
-  if (!code || code.length !== CODE_LEN) return false;
+  if (!code || (code.length !== CODE_LEN && code.length !== LEGACY_CODE_LEN)) return false;
   for (const c of code) if (!ALPHABET.includes(c)) return false;
   return true;
 }
@@ -84,16 +99,17 @@ function clientAddress(request) {
    configured -- a local test -- limits nothing. */
 async function withinLimit(binding, key) {
   if (!binding) return true;
-  try { return (await binding.limit({ key })).success; } catch (e) { return true; }
+  try { return (await binding.limit({ key })).success; }
+  catch (e) { console.log('rate limiter unavailable:', String(e)); return true; }
 }
 
 const SLOW_DOWN = { error: 'too many tries -- wait a minute and try again' };
 
-function newCode() {
-  const bytes = new Uint8Array(CODE_LEN);
+function newCode(length) {
+  const bytes = new Uint8Array(length);
   crypto.getRandomValues(bytes);
   let out = '';
-  for (let i = 0; i < CODE_LEN; i++) out += ALPHABET[bytes[i] % ALPHABET.length];
+  for (let i = 0; i < length; i++) out += ALPHABET[bytes[i] % ALPHABET.length];
   return out;
 }
 
@@ -225,8 +241,12 @@ export default {
         if (!(await withinLimit(env.OPEN_LIMIT, 'open:' + clientAddress(request))))
           return json(SLOW_DOWN, 429);
         const offer = await readBody(request);
-        let offers;
-        try { offers = JSON.parse(offer).offers; } catch (e) {}
+        let offers, codeLength = LEGACY_CODE_LEN;
+        try {
+          const opening = JSON.parse(offer);
+          offers = opening.offers;
+          if (opening.codeLength === CODE_LEN) codeLength = CODE_LEN;
+        } catch (e) {}
         if (!Array.isArray(offers) || offers.length !== ROOM_SLOTS ||
             offers.some(o => typeof o !== 'string' || !o))
           return json({ error: 'bad offers' }, 400);
@@ -238,7 +258,7 @@ export default {
            make a collision vanishingly unlikely, but "vanishingly" is not
            "never" and the cost of handling it is three lines. */
         for (let attempt = 0; attempt < 5; attempt++) {
-          const room = newCode();
+          const room = newCode(codeLength);
           const result = await db
             .prepare('INSERT OR IGNORE INTO rooms (code, offer, answer, expires) VALUES (?, ?, ?, ?)')
             .bind(room, storedOffer, state, Date.now() + ROOM_TTL_SECONDS * 1000)
