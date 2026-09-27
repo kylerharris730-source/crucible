@@ -71,8 +71,10 @@ Then `wrangler deploy` prints a URL like
 `https://cinderlift-signal.<subdomain>.workers.dev`. Put that in `BASE` at the
 top of `web/roomcode.js`, rebuild the site, and the game will start using it.
 
-Cross-origin is fine: the calls are GETs and `text/plain` POSTs, which are
-"simple requests" and do not even trigger a preflight.
+Cross-origin is fine. The guest's calls are GETs and `text/plain` POSTs,
+"simple requests" with no preflight. The host's two calls carry the
+`X-Room-Key` header, so the browser preflights them once and caches the answer
+(`Access-Control-Max-Age`).
 
 ### Checking it
 
@@ -84,10 +86,27 @@ curl https://<your-worker-url>/room/PROBE
 that name. HTML means you are still hitting Pages and the game will quietly keep
 using the paste path.
 
+## The host key
+
+A room code is read out to friends, so it is not a secret. Opening a room
+returns a second value, `key`, that only the host holds; collecting answers
+(`GET /room/CODE/answer`) and re-offering a seat (`POST /room/CODE/seat`) both
+need it in `X-Room-Key`. Without it, anybody who heard or guessed a code could
+collect the guests' answers -- and their addresses -- or replace a seat's offer
+and put themselves in the middle of that guest's connection. Only the key's
+SHA-256 is stored. Rooms opened by a build from before the key are refused.
+
+The worker, the site (`web/roomcode.js`) and the Windows build change
+together: an old client cannot host against the new worker. Check it with
+
+```bash
+node signal/test.mjs
+```
+
 ## What it stores, and for how long
 
-One row per room: a five-character code, three offers, three short-lived seat
-claims, answers, and an expiry. Rooms live **ten minutes** and are swept whenever
+One row per room: a five-character code, three offers, the host key's hash,
+three short-lived seat claims, answers, and an expiry. Rooms live **ten minutes** and are swept whenever
 the next one is created, so the steady state remains close to empty. Each answer
 is removed as the host receives it; the room remains until all seats are claimed
 or its expiry so later guests can keep using the same code.

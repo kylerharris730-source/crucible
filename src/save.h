@@ -106,6 +106,12 @@ bool savePeek(const char* path, SaveSlotInfo* out);
    thumbnail. Defaulted so every existing caller -- the tests, the network's
    join snapshot -- keeps writing exactly what it wrote before. */
 bool saveWrite(const char* path, const World& w, const u8* thumbRgb = 0);
+/* The world as a joining player receives it: saveWrite without the remembered
+   players. Each roster entry carries that player's identity, and the identity
+   is what hands a character back on rejoin -- so sending the roster to every
+   joiner gave each of them the means to claim everybody else's pack. The
+   roster is the host's bookkeeping; a client never reads it. */
+bool saveWriteJoinSnapshot(const char* path, const World& w);
 bool saveRead(const char* path, World& w);
 
 const char* saveError();

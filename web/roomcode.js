@@ -50,6 +50,13 @@
 
   function url(path) { return BASE + path; }
 
+  /* The host key for each room this page opened. The code is read out to
+     friends and is not a secret; this is, and it is what the broker asks for
+     before it hands over answers or lets a seat be re-offered. Kept here, not
+     returned to the caller, so it never lands anywhere the code does. */
+  var hostKeys = {};
+  function hostHeaders(code) { return { 'X-Room-Key': hostKeys[code] || '' }; }
+
   /* Every call goes through here so that "the broker is not there" is one
      answer with one shape, rather than a different exception per endpoint.
      A 404 from a route that was never deployed and a network error from a
@@ -86,7 +93,8 @@
       var res = await ask('/room', { method: 'POST', body: JSON.stringify({ offers: offers }) });
       if (!res.ok) throw new Error('could not open a room');
       var body = await res.json();
-      if (!body.code) throw new Error('could not open a room');
+      if (!body.code || !body.key) throw new Error('could not open a room');
+      hostKeys[body.code] = body.key;
       return body.code;
     },
 
@@ -125,7 +133,8 @@
        being handed the next free one. */
     reopenSeat: async function (code, slot, offer) {
       var res = await ask('/room/' + encodeURIComponent(code) + '/seat',
-                          { method: 'POST', body: JSON.stringify({ slot: slot, offer: offer }) });
+                          { method: 'POST', headers: hostHeaders(code),
+                            body: JSON.stringify({ slot: slot, offer: offer }) });
       if (res.status === 404) throw new Error('that code expired');
       if (!res.ok) throw new Error('could not re-open the seat');
     },
@@ -140,7 +149,8 @@
       while (Date.now() < until) {
         if (cancelled && cancelled()) return null;
         var asked = Date.now();
-        var res = await ask('/room/' + encodeURIComponent(code) + '/answer', { method: 'GET' });
+        var res = await ask('/room/' + encodeURIComponent(code) + '/answer',
+                          { method: 'GET', headers: hostHeaders(code) });
         if (res.status === 200) return await res.json();
         if (res.status === 404) throw new Error('that code expired');
         if (res.status === 409) throw new Error((await res.json()).error || 'room is busy');

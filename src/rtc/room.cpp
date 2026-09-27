@@ -63,9 +63,10 @@ bool nap(unsigned session, int ms) {
 /* --- HTTPS -------------------------------------------------------------------- */
 
 /* Returns the status code, or -1 when the broker could not be reached at all.
-   Like roomcode.js, "unreachable" is one answer whatever the cause. */
+   Like roomcode.js, "unreachable" is one answer whatever the cause. `key` is
+   the room's host key, sent as X-Room-Key, or empty. */
 int request(const wchar_t* method, const std::string& path, const std::string& body,
-            std::string* response) {
+            std::string* response, const std::string& key = std::string()) {
     response->clear();
     static HINTERNET session = 0;
     static std::mutex sessionLock;
@@ -90,8 +91,9 @@ int request(const wchar_t* method, const std::string& path, const std::string& b
                                        WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);
     int status = -1;
     if (req) {
-        const wchar_t* headers = L"Content-Type: application/json\r\n";
-        const BOOL sent = WinHttpSendRequest(req, headers, (DWORD)-1L,
+        std::wstring headers = L"Content-Type: application/json\r\n";
+        if (!key.empty()) headers += L"X-Room-Key: " + std::wstring(key.begin(), key.end()) + L"\r\n";
+        const BOOL sent = WinHttpSendRequest(req, headers.c_str(), (DWORD)-1L,
                                              body.empty() ? WINHTTP_NO_REQUEST_DATA : (LPVOID)body.data(),
                                              (DWORD)body.size(), (DWORD)body.size(), 0);
         if (sent && WinHttpReceiveResponse(req, 0)) {
@@ -157,11 +159,15 @@ void hostThread(unsigned session) {
     for (int slot = 0; slot < RTC_MAX_LINKS; ++slot)
         body += (slot ? "," : "") + rtcJsonQuote(offers[slot]);
     body += "]}";
-    std::string reply, code;
+    /* `key` proves to the broker that this is the host: the code is read out
+       to friends, so anything it alone unlocked would be open to anybody who
+       heard it. Never shown, never logged. */
+    std::string reply, code, key;
     const int status = request(L"POST", "/room", body, &reply);
     if (!current(session)) return;
     if (status == -1 || status == 404) { rtcNetSetFault("Room service unavailable -- use Host LAN"); return; }
-    if (status != 200 || !rtcJsonString(reply, "code", &code) || code.empty()) {
+    if (status != 200 || !rtcJsonString(reply, "code", &code) || code.empty() ||
+        !rtcJsonString(reply, "key", &key) || key.empty()) {
         rtcNetSetFault(brokerError(reply, "Could not open a room").c_str());
         return;
     }
@@ -199,7 +205,7 @@ void hostThread(unsigned session) {
         if (now - lastPoll >= pace) {
             lastPoll = now;
             rtcNetTrace("room: poll (open seats, pace ms)", open, (int)pace);
-            const int got = request(L"GET", "/room/" + code + "/answer", std::string(), &reply);
+            const int got = request(L"GET", "/room/" + code + "/answer", std::string(), &reply, key);
             if (!current(session)) return;
             if (got == 200) {
                 std::string answer; int slot = -1;
@@ -234,7 +240,7 @@ void hostThread(unsigned session) {
                 std::string ignored;
                 request(L"POST", "/room/" + code + "/seat",
                         "{\"slot\":" + std::to_string(slot) + ",\"offer\":" + rtcJsonQuote(offer) + "}",
-                        &ignored);
+                        &ignored, key);
             }
         }
         if (!nap(session, 1000)) return;

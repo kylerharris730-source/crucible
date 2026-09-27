@@ -71,6 +71,53 @@ function newClaim() {
   return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
 }
 
+/* --- the host key -------------------------------------------------------------
+
+   A room code is five characters that the host reads out to friends, so it is
+   not a secret, and anything it alone unlocks is open to whoever overhears or
+   guesses it. Before the key, that was everything: collecting guests' answers
+   (and with them their addresses), and replacing a seat's offer -- which is
+   where the DTLS fingerprint that authenticates the connection travels, so
+   whoever replaced it could sit in the middle of that guest's game.
+
+   Opening a room now also returns a key that only the host holds. The two
+   host operations -- collecting answers and re-offering a seat -- need it in
+   the X-Room-Key header. Only its SHA-256 is stored, inside the offer JSON
+   beside the offers, which guests never see whole. */
+const KEY_HEADER = 'X-Room-Key';
+
+async function sha256Hex(text) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function sameString(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string' || a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
+/* Parses the stored offer column. Null for anything without a key -- a room
+   opened by a build from before the key, which is refused rather than left
+   manageable by anybody. */
+function roomOffers(text) {
+  try {
+    const stored = JSON.parse(text);
+    if (Array.isArray(stored.offers) && stored.offers.length === ROOM_SLOTS &&
+        typeof stored.keyHash === 'string' && stored.keyHash) return stored;
+  } catch (e) {}
+  return null;
+}
+
+async function hostAllowed(request, stored) {
+  const key = request.headers.get(KEY_HEADER);
+  if (!key || key.length > 128) return false;
+  return sameString(await sha256Hex(key), stored.keyHash);
+}
+
+const OBSOLETE = 'this game needs a newer version -- update or reload and try again';
+
 function roomState(text) {
   if (!text) return { claims:[null,null,null], claimedAt:[0,0,0],
                       answers:[null,null,null], used:[false,false,false] };
@@ -85,7 +132,10 @@ function roomState(text) {
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type',
+  'Access-Control-Allow-Headers': 'Content-Type, X-Room-Key',
+  /* The key header makes the host's calls non-simple, so the browser asks
+     first; let it remember the answer rather than doubling every poll. */
+  'Access-Control-Max-Age': '86400',
   'Cache-Control': 'no-store'
 };
 
@@ -135,16 +185,12 @@ export default {
         const offer = await readBody(request);
         let offers;
         try { offers = JSON.parse(offer).offers; } catch (e) {}
-        const multi = Array.isArray(offers) && offers.length === ROOM_SLOTS &&
-                      !offers.some(o => typeof o !== 'string' || !o);
-        /* Keep accepting the previous single-offer client during rollout. The
-           Worker and GitHub Pages cannot change atomically, and either deploy
-           order would otherwise break every room for the few minutes between
-           them. Legacy rooms retain their old plain strings and old lifecycle. */
-        if (!multi && (!offer || (offer.slice(0,3) !== 'CLZ' && offer.slice(0,3) !== 'CLR')))
+        if (!Array.isArray(offers) || offers.length !== ROOM_SLOTS ||
+            offers.some(o => typeof o !== 'string' || !o))
           return json({ error: 'bad offers' }, 400);
-        const storedOffer = multi ? JSON.stringify({ offers }) : offer;
-        const state = multi ? JSON.stringify(roomState(null)) : null;
+        const key = newClaim() + newClaim();
+        const storedOffer = JSON.stringify({ offers, keyHash: await sha256Hex(key) });
+        const state = JSON.stringify(roomState(null));
         await sweep(db);
         /* Retried rather than trusted: 28 million codes and a ten minute life
            make a collision vanishingly unlikely, but "vanishingly" is not
@@ -155,7 +201,7 @@ export default {
             .prepare('INSERT OR IGNORE INTO rooms (code, offer, answer, expires) VALUES (?, ?, ?, ?)')
             .bind(room, storedOffer, state, Date.now() + ROOM_TTL_SECONDS * 1000)
             .run();
-          if (result.meta.changes > 0) return json({ code: room });
+          if (result.meta.changes > 0) return json({ code: room, key });
         }
         return json({ error: 'could not allocate a code' }, 503);
       }
@@ -173,12 +219,10 @@ export default {
           const row = await db.prepare('SELECT offer, answer FROM rooms WHERE code = ? AND expires > ?')
                               .bind(code, now).first();
           if (!row) return json({ error: 'no such code' }, 404);
-          let offers;
-          try { offers = JSON.parse(row.offer).offers; } catch (e) {}
-          if (!Array.isArray(offers)) return json({ offer: row.offer });
+          const stored = roomOffers(row.offer);
           const state = roomState(row.answer);
-          if (!state || !Array.isArray(offers) || offers.length !== ROOM_SLOTS)
-            return json({ error: 'room format is obsolete' }, 409);
+          if (!stored || !state) return json({ error: OBSOLETE }, 409);
+          const offers = stored.offers;
           /* A reconnecting guest asks for the seat it had. Honoured when that
              seat is genuinely free, ignored otherwise -- it is a preference,
              not a reservation, because the host may not have re-opened it yet
@@ -213,32 +257,6 @@ export default {
         const answerBody = await readBody(request);
         let incoming;
         try { incoming = JSON.parse(answerBody); } catch (e) {}
-        /* Legacy answer: same plain packed SDP as before.
-
-           Guarded on the ROOM being legacy too, which is the case that bites
-           during a rollout rather than in steady state. A browser holding a
-           cached copy of the old page reads `offer` out of a new room's reply
-           and ignores the `slot` and `claim` beside it, then posts a bare
-           answer -- and an unguarded UPDATE here would overwrite the room's
-           seat state with that string, evicting every other guest and leaving
-           the host polling a room it can no longer parse. One player with a
-           stale tab could break a game for three. Refuse instead, and say the
-           one thing that fixes it. */
-        if (!incoming || !Number.isInteger(incoming.slot)) {
-          if (!answerBody || (answerBody.slice(0,3) !== 'CLZ' && answerBody.slice(0,3) !== 'CLR'))
-            return json({ error: 'bad answer' }, 400);
-          const existing = await db.prepare('SELECT offer FROM rooms WHERE code = ? AND expires > ?')
-                                   .bind(code, Date.now()).first();
-          if (!existing) return json({ error: 'no such code' }, 404);
-          let multiOffers;
-          try { multiOffers = JSON.parse(existing.offer).offers; } catch (e) {}
-          if (Array.isArray(multiOffers))
-            return json({ error: 'this game needs a newer page -- reload and try again' }, 409);
-          const result = await db.prepare('UPDATE rooms SET answer = ? WHERE code = ? AND expires > ?')
-                                 .bind(answerBody, code, Date.now()).run();
-          if (result.meta.changes === 0) return json({ error: 'no such code' }, 404);
-          return empty(204);
-        }
         if (!incoming || !Number.isInteger(incoming.slot) || incoming.slot < 0 ||
             incoming.slot >= ROOM_SLOTS || typeof incoming.claim !== 'string' ||
             typeof incoming.answer !== 'string' || !incoming.answer)
@@ -282,13 +300,11 @@ export default {
           const row = await db.prepare('SELECT offer, answer FROM rooms WHERE code = ? AND expires > ?')
                               .bind(code, Date.now()).first();
           if (!row) return json({ error: 'no such code' }, 404);
-          let offers;
-          try { offers = JSON.parse(row.offer).offers; } catch (e) {}
-          if (!Array.isArray(offers) || offers.length !== ROOM_SLOTS)
-            return json({ error: 'room format is obsolete' }, 409);
+          const stored = roomOffers(row.offer);
           const state = roomState(row.answer);
-          if (!state) return json({ error: 'room format is obsolete' }, 409);
-          offers[seat.slot] = seat.offer;
+          if (!stored || !state) return json({ error: OBSOLETE }, 409);
+          if (!(await hostAllowed(request, stored))) return json({ error: 'not the host' }, 403);
+          stored.offers[seat.slot] = seat.offer;
           state.claims[seat.slot] = null; state.claimedAt[seat.slot] = 0;
           state.answers[seat.slot] = null; state.used[seat.slot] = false;
           const next = JSON.stringify(state);
@@ -297,7 +313,7 @@ export default {
              instant -- so the compare-and-swap is on it. */
           const changed = await db.prepare(
             'UPDATE rooms SET offer = ?, answer = ?, expires = ? WHERE code = ? AND answer = ?')
-            .bind(JSON.stringify({ offers }), next,
+            .bind(JSON.stringify(stored), next,
                   Date.now() + ROOM_TTL_SECONDS * 1000, code, row.answer).run();
           if (changed.meta.changes > 0) return empty(204);
         }
@@ -314,6 +330,9 @@ export default {
           const row = await db.prepare('SELECT offer, answer, expires FROM rooms WHERE code = ? AND expires > ?')
                               .bind(code, Date.now()).first();
           if (!row) return json({ error: 'no such code' }, 404);
+          const stored = roomOffers(row.offer);
+          if (!stored) return json({ error: OBSOLETE }, 409);
+          if (!(await hostAllowed(request, stored))) return json({ error: 'not the host' }, 403);
           /* Only the host polls this, and it polls for as long as it is
              hosting -- so it is the honest signal that a room is still in
              use, and the room's life is extended from here rather than from
@@ -327,15 +346,8 @@ export default {
             await db.prepare('UPDATE rooms SET expires = ? WHERE code = ?')
                     .bind(Date.now() + ROOM_TTL_SECONDS * 1000, code).run();
           }
-          let legacy = true;
-          try { legacy = !Array.isArray(JSON.parse(row.offer).offers); } catch (e) {}
-          if (legacy) {
-            if (!row.answer) return empty(204);
-            await db.prepare('DELETE FROM rooms WHERE code = ?').bind(code).run();
-            return json({ answer: row.answer });
-          }
           const state = roomState(row.answer);
-          if (!state) return json({ error: 'room format is obsolete' }, 409);
+          if (!state) return json({ error: OBSOLETE }, 409);
           const slot = state.answers.findIndex(Boolean);
           if (slot < 0) return empty(204);
           const answer = state.answers[slot]; state.answers[slot] = null; state.used[slot] = true;

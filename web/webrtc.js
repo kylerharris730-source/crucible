@@ -4,6 +4,7 @@
   'use strict';
   var ICE = [{ urls: 'stun:stun.l.google.com:19302' }];
   var MAX_LINKS = 3, role = 'idle';
+  var HOST_INBOX_LIMIT = 8 * 1024 * 1024;
   var hostBlobs = ['', '', ''], joinBlob = '';
   function fresh() { return { pc:null, chan:null, inbox:[], inboxBytes:0, state:'idle', error:'' }; }
   var links = [fresh(), fresh(), fresh()];
@@ -50,7 +51,12 @@
     dc.onopen=function(){link.state='open';};
     dc.onclose=function(){if(link.state!=='failed')link.state='closed';};
     dc.onerror=function(){link.error='data channel error';link.state='failed';};
-    dc.onmessage=function(e){var b=new Uint8Array(e.data);link.inbox.push(b);link.inboxBytes+=b.length;};
+    /* A host's links carry guests, who send a few hundred bytes a frame; megabytes
+       unread is a flood, and would otherwise grow this without limit. The guest's
+       own link carries the world snapshot and is left alone. See rtcnet.cpp. */
+    dc.onmessage=function(e){var b=new Uint8Array(e.data);
+      if(role==='host'&&link.inboxBytes+b.length>HOST_INBOX_LIMIT){link.inbox=[];link.inboxBytes=0;link.error='a guest flooded the connection';link.state='failed';try{dc.close();}catch(x){}return;}
+      link.inbox.push(b);link.inboxBytes+=b.length;};
   }
   function makeConnection(slot) {
     var link=links[slot], conn=new RTCPeerConnection({iceServers:ICE}); link.pc=conn;

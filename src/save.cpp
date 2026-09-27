@@ -422,6 +422,15 @@ static void encodePlane(void* p) {
     }
 }
 
+static bool g_omitRoster = false;
+
+bool saveWriteJoinSnapshot(const char* path, const World& w) {
+    g_omitRoster = true;
+    const bool ok = saveWrite(path, w);
+    g_omitRoster = false;
+    return ok;
+}
+
 bool saveWrite(const char* path, const World& w, const u8* thumbRgb) {
     g_nStats = 0; g_total = 0; g_err[0] = 0;
 
@@ -539,7 +548,7 @@ bool saveWrite(const char* path, const World& w, const u8* thumbRgb) {
         fwrite(&g_inv, sizeof(Inventory), 1, f);
         s.end();
     }
-    {
+    if (!g_omitRoster) {
         /* Everyone the host has played with, and what they were carrying.
 
            A guest's pack used to exist only for the length of their

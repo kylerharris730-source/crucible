@@ -28,6 +28,7 @@
 #include "codec.h"
 #include <vector>
 #include <deque>
+#include <chrono>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -45,6 +46,24 @@ static const u32 NET_MAGIC = 0x54454E43u; /* CNET on little endian */
 static const u32 NET_PROTOCOL = 14;       /* + sandbox, palette machine and view centre on commands */
 static const u32 NET_STATE_SCHEMA = 18;   /* + air-jump memory, so the feather does not re-fire on a client */
 static const u32 NET_MAX_PACKET = 256u * 1024u * 1024u;
+/* The ceiling a HOST applies to what it receives. Nothing a client sends is
+   more than a few hundred bytes -- hello, commands, actions, chunk hashes --
+   and the 256 MiB above exists only for the world snapshot travelling the
+   other way. Applying that to the host let anybody who could reach the port
+   announce a quarter-gigabyte packet before saying hello and have it
+   buffered, three times over. */
+static const u32 NET_MAX_CLIENT_PACKET = 64u * 1024u;
+/* A connection must finish its hello in this long or give its seat back.
+   Otherwise three idle sockets fill the game and nobody can join. */
+static const u32 NET_HANDSHAKE_MS = 10000;
+/* A rejected peer is left open this long so the reason reaches it, then
+   dropped whether or not it has read it. */
+static const u32 NET_REJECT_LINGER_MS = 1000, NET_REJECT_DEADLINE_MS = 5000;
+
+static u32 netNowMs() {
+    using namespace std::chrono;
+    return (u32)duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
+}
 
 enum PacketType {
     PK_HELLO = 1,
@@ -114,6 +133,10 @@ struct Peer {
        a credential -- see identity.h. The host uses it to give somebody back
        the pack they left with. */
     char identity[PLAYER_IDENTITY_CHARS + 1];
+    /* Host: when this connection was adopted, and whether it has been
+       rejected and is only waiting for the reason to go out. */
+    u32 openedMs, closingMs;
+    bool closing;
     u32 appliedCommand;     /* newest command from THIS peer the host consumed */
     u32 appliedAction;
     int scanCursor, urgentCursor, frame;
@@ -135,6 +158,7 @@ struct Peer {
         identity[0] = 0;
         recv.clear(); send.clear(); sendAt = 0;
         connecting = handshake = ready = false; assigned = PLAYER_NONE;
+        openedMs = netNowMs(); closingMs = 0; closing = false;
         appliedCommand = appliedAction = 0;
         scanCursor = urgentCursor = frame = 0;
         memset(chunkHash, 0, sizeof(chunkHash));
@@ -716,7 +740,7 @@ static const char* CLIENT_SNAPSHOT_SCRATCH = "/net-client-snapshot.tmp";
 static void sendSnapshot(Peer& peer, World& world) {
     const char* path = SNAPSHOT_SCRATCH;
     if (!ensureSnapshotDirectory()) { statusf("Could not create snapshot directory"); return; }
-    if (!saveWrite(path, world)) { statusf("Could not make join snapshot"); return; }
+    if (!saveWriteJoinSnapshot(path, world)) { statusf("Could not make join snapshot"); return; }
     std::vector<u8> bytes;
     if (!readWholeFile(path, bytes)) { remove(path); statusf("Could not read join snapshot"); return; }
     remove(path); queuePacket(peer, PK_WORLD_SNAPSHOT, bytes);
@@ -1066,7 +1090,16 @@ static void applyChunk(World& world, Reader& r) {
     world.dirtyArea(x0, y0, x0 + CHUNK - 1, y0 + CHUNK - 1);
 }
 
+/* Tell a joiner why, then let go of them. Before this the reason was queued
+   and the connection kept: a client that ignored it held the seat for as long
+   as it liked, and could simply say hello again. */
+static void rejectPeer(Peer& peer, const char* reason) {
+    Writer reject; reject.string(reason); queuePacket(peer, PK_REJECT, reject.b);
+    peer.closing = true; peer.closingMs = netNowMs();
+}
+
 static void handlePacket(Peer& peer, u8 type, const u8* data, size_t len, World& world) {
+    if (g_role == NET_HOST && peer.closing) return;
     Reader r(data, len);
     if (type == PK_HELLO && g_role == NET_HOST) {
         char build[80]; const u32 magic = r.u32v(), protocol = r.u32v(); r.string(build, sizeof(build));
@@ -1075,7 +1108,7 @@ static void handlePacket(Peer& peer, u8 type, const u8* data, size_t len, World&
         char who[PLAYER_IDENTITY_CHARS + 1]; who[0] = 0;
         r.string(who, sizeof(who));
         if (!r.ok || magic != NET_MAGIC || protocol != NET_PROTOCOL || strcmp(build, CINDERLIFT_BUILD_ID) != 0) {
-            Writer reject; reject.string("Game builds do not match"); queuePacket(peer, PK_REJECT, reject.b); return;
+            rejectPeer(peer, "Game builds do not match"); return;
         }
         /* One socket must never be handed a second player slot. Without this a
            repeated HELLO would leak sessions until the game reported itself
@@ -1116,7 +1149,7 @@ static void handlePacket(Peer& peer, u8 type, const u8* data, size_t len, World&
                tool instances before overwriting anything. */
             rosterRestore(peer.identity, g_playerSessions[peer.assigned]);
         }
-        if (peer.assigned == PLAYER_NONE) { NET_TRACE("game: reject full (peer, 0)", (int)(&peer - g_peers), 0); Writer reject; reject.string("Game is full"); queuePacket(peer, PK_REJECT, reject.b); return; }
+        if (peer.assigned == PLAYER_NONE) { NET_TRACE("game: reject full (peer, 0)", (int)(&peer - g_peers), 0); rejectPeer(peer, "Game is full"); return; }
         /* No extra tools here. This used to add a Bolt Caster and a Flint
            Striker to every joiner -- written before inventoryStartingKit
            existed, and never taken out once it did -- so a new player had
@@ -1233,10 +1266,11 @@ static void pumpReceive(Peer& peer, World& world) {
         break;
     }
     size_t used = 0;
+    const u32 maxPacket = g_role == NET_HOST ? NET_MAX_CLIENT_PACKET : NET_MAX_PACKET;
     while (peer.live() && peer.recv.size() - used >= 5) {
         const u8* p = &peer.recv[used];
         const u32 len = (u32)p[0] | ((u32)p[1] << 8) | ((u32)p[2] << 16) | ((u32)p[3] << 24);
-        if (len < 1 || len > NET_MAX_PACKET) {
+        if (len < 1 || len > maxPacket) {
             statusf("Invalid network packet size"); disconnectPeer(peer, "Invalid network packet size"); return;
         }
         if (peer.recv.size() - used < (size_t)len + 4) break;
@@ -1361,6 +1395,25 @@ void netPoll(World& world) {
     }
 #endif
     for (int i = 0; i < MAX_PEERS; ++i) if (g_peers[i].live()) pollPeer(g_peers[i], world);
+
+    /* Seats are scarce -- three of them -- so a connection that is not
+       becoming a player gives its seat back. */
+    if (g_role == NET_HOST) {
+        const u32 now = netNowMs();
+        for (int i = 0; i < MAX_PEERS; ++i) {
+            Peer& peer = g_peers[i];
+            if (!peer.live()) continue;
+            if (peer.closing) {
+                const u32 waited = now - peer.closingMs;
+                if ((backlog(peer) == 0 && waited >= NET_REJECT_LINGER_MS) ||
+                    waited >= NET_REJECT_DEADLINE_MS) {
+                    disconnectPeer(peer, 0); statusf("Refused a join");
+                }
+            } else if (peer.assigned == PLAYER_NONE && now - peer.openedMs >= NET_HANDSHAKE_MS) {
+                disconnectPeer(peer, 0); statusf("Dropped a connection that never joined");
+            }
+        }
+    }
 }
 
 void netHostFrame(World& world) {

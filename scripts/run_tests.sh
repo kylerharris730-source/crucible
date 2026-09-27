@@ -113,7 +113,7 @@ done
 # ports and wait on the wall clock, so two at once fight over the port and a
 # loaded machine eats into their timeouts. nav_cost asserts a CPU-time budget
 # for a routing rebuild, which a machine running eleven other tests would blow.
-SERIAL=" lan_address network_smoke network_four network_mismatch nav_cost "
+SERIAL=" lan_address network_smoke network_four network_mismatch network_guard nav_cost "
 
 # What --quick leaves out: the slowest sim tests and the multi-second network
 # ones. Measured serially on a 12-thread machine, the full suite's run time was
@@ -122,7 +122,7 @@ SERIAL=" lan_address network_smoke network_four network_mismatch nav_cost "
 # in about the time of its slowest test. Run the full suite before committing;
 # quick is for the edit loop.
 QUICK_SKIP=" bee_routes hive_bees drone_combat heat_lamp deep_layer deep_roster
-             network_smoke network_four network_mismatch "
+             network_smoke network_four network_mismatch network_guard "
 
 report() { printf '  %-6s %-24s %6s\n' "$1" "$2" "$3"; }
 now_ms() { echo $(( $(date +%s%N) / 1000000 )); }

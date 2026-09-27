@@ -8,6 +8,7 @@
 #include "save.h"
 #include <stdio.h>
 #include <string.h>
+#include <vector>
 
 /* A guest who leaves and comes back gets their pack, not a new one.
 
@@ -155,6 +156,35 @@ int main() {
         }
     }
     remove(path);
+
+    /* --- but a joiner is never handed it ---------------------------------- */
+    /* The identity is what gives a pack back, so a join snapshot carrying the
+       roster handed every joiner the means to claim everybody else's. */
+    rosterRemember(ALICE, stranger);
+    const char* snap = "build/roster_snapshot_test.sav";
+    check(saveWriteJoinSnapshot(snap, g_world), "the join snapshot writes");
+    {
+        std::vector<char> bytes;
+        if (FILE* f = fopen(snap, "rb")) {
+            char buf[65536]; size_t n;
+            while ((n = fread(buf, 1, sizeof(buf), f)) > 0) bytes.insert(bytes.end(), buf, buf + n);
+            fclose(f);
+        }
+        const size_t idLen = strlen(ALICE);
+        bool leaked = false;
+        for (size_t i = 0; !leaked && i + idLen <= bytes.size(); ++i)
+            leaked = memcmp(&bytes[i], ALICE, idLen) == 0;
+        check(!bytes.empty() && !leaked, "the join snapshot does not contain a guest identity");
+    }
+    if (saveRead(snap, g_world)) {
+        PlayerSession probe;
+        memset(&probe, 0, sizeof(probe));
+        check(!rosterRestore(ALICE, probe), "and a client loading it knows nobody");
+    } else {
+        fprintf(stderr, "FAIL: the join snapshot did not read back: %s\n", saveError());
+        ++failures;
+    }
+    remove(snap);
 
     if (failures) {
         fprintf(stderr, "%d roster check(s) failed\n", failures);

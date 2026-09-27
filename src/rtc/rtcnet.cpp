@@ -42,6 +42,7 @@ struct Link {
     std::string code;              /* our finished description, packed       */
     std::deque<std::vector<u8> > inbox;
     size_t inboxHead;              /* bytes of inbox.front() already read    */
+    size_t inboxBytes;             /* unread bytes across the whole inbox    */
     std::string error;
 };
 
@@ -61,6 +62,8 @@ void trace(const char* what, int a, int b) {
 /* Cut to what every browser's SCTP stack takes in one message. webrtc.js
    sends in the same size, for the same reason. */
 const int CHUNK = 16384;
+/* See onMessage. */
+const size_t HOST_INBOX_LIMIT = 8u * 1024u * 1024u;
 /* How much may sit in libdatachannel's send queue before rtcNetSend reports
    "full for now". Without a ceiling a world snapshot would be queued whole,
    which is harmless, but a stalled link would then grow without bound. With
@@ -128,8 +131,20 @@ void RTC_API onMessage(int, const char* message, int size, void* ptr) {
        that does is not speaking this protocol. */
     if (size < 0) return;
     std::unique_lock<std::mutex> hold;
-    if (Link* link = claim(ptr, hold))
+    if (Link* link = claim(ptr, hold)) {
+        /* A host's links carry guests, and a guest sends a few hundred bytes
+           a frame. One that has piled up megabytes the game has not read is
+           flooding, and would otherwise grow this without limit. A guest's
+           own link carries the world snapshot and is left alone. */
+        if (link->host && link->inboxBytes + (size_t)size > HOST_INBOX_LIMIT) {
+            link->inbox.clear(); link->inboxHead = 0; link->inboxBytes = 0;
+            link->error = "a guest flooded the connection";
+            link->state = RTC_LINK_FAILED;
+            return;
+        }
         link->inbox.push_back(std::vector<u8>((const u8*)message, (const u8*)message + size));
+        link->inboxBytes += (size_t)size;
+    }
 }
 
 void wireChannel(int dc, void* ptr) {
@@ -197,7 +212,7 @@ void detach(Link& link, int* pc, int* dc) {
     link.pc = link.dc = -1;
     link.generation++;
     link.state = RTC_LINK_IDLE;
-    link.code.clear(); link.inbox.clear(); link.inboxHead = 0; link.error.clear();
+    link.code.clear(); link.inbox.clear(); link.inboxHead = 0; link.inboxBytes = 0; link.error.clear();
 }
 
 void destroy(int pc, int dc) {
@@ -414,7 +429,7 @@ int rtcNetRecv(int link, u8* buf, int cap) {
         const int left = (int)(head.size() - l.inboxHead);
         const int take = left < cap - wrote ? left : cap - wrote;
         memcpy(buf + wrote, &head[l.inboxHead], (size_t)take);
-        wrote += take; l.inboxHead += (size_t)take;
+        wrote += take; l.inboxHead += (size_t)take; l.inboxBytes -= (size_t)take;
         if (l.inboxHead >= head.size()) { l.inbox.pop_front(); l.inboxHead = 0; }
     }
     return wrote;
