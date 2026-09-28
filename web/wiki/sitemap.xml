@@ -468,6 +468,14 @@
     <changefreq>weekly</changefreq>
   </url>
   <url>
+    <loc>https://cinderlift.com/wiki/materials/sandstone.html</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
+    <loc>https://cinderlift.com/wiki/materials/sun-engine.html</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
     <loc>https://cinderlift.com/wiki/materials/</loc>
     <changefreq>weekly</changefreq>
   </url>
@@ -1176,6 +1184,10 @@
     <changefreq>weekly</changefreq>
   </url>
   <url>
+    <loc>https://cinderlift.com/wiki/items/sun-sigil.html</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
     <loc>https://cinderlift.com/wiki/items/</loc>
     <changefreq>weekly</changefreq>
   </url>
@@ -1313,6 +1325,26 @@
   </url>
   <url>
     <loc>https://cinderlift.com/wiki/creatures/effigy-crown.html</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
+    <loc>https://cinderlift.com/wiki/creatures/dune-hound.html</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
+    <loc>https://cinderlift.com/wiki/creatures/scarab.html</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
+    <loc>https://cinderlift.com/wiki/creatures/tomb-sentinel.html</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
+    <loc>https://cinderlift.com/wiki/creatures/sun-warden.html</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
+    <loc>https://cinderlift.com/wiki/creatures/warden-hand.html</loc>
     <changefreq>weekly</changefreq>
   </url>
   <url>
@@ -1481,6 +1513,10 @@
   </url>
   <url>
     <loc>https://cinderlift.com/wiki/guide/leaving.html</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
+    <loc>https://cinderlift.com/wiki/guide/the-pyramid.html</loc>
     <changefreq>weekly</changefreq>
   </url>
   <url>
