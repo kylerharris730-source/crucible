@@ -14,13 +14,22 @@ name: Publish web build to Pages
 # So this runs when "Publish Windows release" finishes successfully, and
 # builds the tag that release was made from. A release that failed to publish
 # never reaches the page. Run it by hand to republish the newest release --
-# never main. The page, the wiki and the game therefore all change together,
-# at release time; a fix to the wiki waits for the next release like any
-# other change.
+# never main.
+#
+# THE WIKI IS THE EXCEPTION. The game here is the frozen free beta, but the
+# wiki tracks the Steam edition, which is developed in a separate private
+# repository. That repository generates the wiki and pushes ONLY the generated
+# pages into web/wiki/ on this repo's main (its publish-wiki workflow; no game
+# code comes across). A push that touches web/wiki/ therefore redeploys the
+# site: the game is still built from the latest release, and main's wiki is
+# laid over it before upload.
 on:
   workflow_run:
     workflows: ["Publish Windows release"]
     types: [completed]
+  push:
+    branches: [main]
+    paths: ["web/wiki/**"]
   workflow_dispatch:
 
 permissions:
@@ -39,7 +48,7 @@ jobs:
     runs-on: ubuntu-latest
     # A failed or cancelled release run also fires workflow_run; only a
     # successful one means there is a release to show.
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     steps:
       - name: Find the release to publish
         id: release
@@ -92,6 +101,17 @@ jobs:
             test -s "$f" || { echo "missing or empty: $f" >&2; exit 1; }
           done
           ls -lh web/
+
+      - name: Lay the current wiki over the release's
+        # The release tag carries the wiki as it was at that release; main
+        # carries the one the private Steam edition last pushed. Removed
+        # first, so a page that no longer exists does not linger.
+        run: |
+          git fetch --no-tags origin main
+          rm -rf web/wiki
+          git checkout FETCH_HEAD -- web/wiki
+          test -s web/wiki/index.html || { echo "no wiki on main" >&2; exit 1; }
+          grep -o 'Built from[^<]*<code>[^<]*' web/wiki/index.html | head -1 || true
 
       - name: Upload the page
         uses: actions/upload-pages-artifact@v3
