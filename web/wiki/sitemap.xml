@@ -476,6 +476,18 @@
     <changefreq>weekly</changefreq>
   </url>
   <url>
+    <loc>https://cinderlift.com/wiki/materials/snow.html</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
+    <loc>https://cinderlift.com/wiki/materials/rimestone.html</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
+    <loc>https://cinderlift.com/wiki/materials/frost-engine.html</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
     <loc>https://cinderlift.com/wiki/materials/</loc>
     <changefreq>weekly</changefreq>
   </url>
@@ -1200,6 +1212,30 @@
     <changefreq>weekly</changefreq>
   </url>
   <url>
+    <loc>https://cinderlift.com/wiki/items/titanium-warp-wand.html</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
+    <loc>https://cinderlift.com/wiki/items/field-guide.html</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
+    <loc>https://cinderlift.com/wiki/items/wolf-pelt.html</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
+    <loc>https://cinderlift.com/wiki/items/frost-lens.html</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
+    <loc>https://cinderlift.com/wiki/items/harpy-plume.html</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
+    <loc>https://cinderlift.com/wiki/items/frost-sigil.html</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
     <loc>https://cinderlift.com/wiki/items/</loc>
     <changefreq>weekly</changefreq>
   </url>
@@ -1357,6 +1393,26 @@
   </url>
   <url>
     <loc>https://cinderlift.com/wiki/creatures/warden-hand.html</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
+    <loc>https://cinderlift.com/wiki/creatures/frost-wolf.html</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
+    <loc>https://cinderlift.com/wiki/creatures/ice-wraith.html</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
+    <loc>https://cinderlift.com/wiki/creatures/snow-harpy.html</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
+    <loc>https://cinderlift.com/wiki/creatures/hoarfrost-wyrm.html</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
+    <loc>https://cinderlift.com/wiki/creatures/wyrm-segment.html</loc>
     <changefreq>weekly</changefreq>
   </url>
   <url>
@@ -1529,6 +1585,10 @@
   </url>
   <url>
     <loc>https://cinderlift.com/wiki/guide/the-pyramid.html</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
+    <loc>https://cinderlift.com/wiki/guide/the-frost-temple.html</loc>
     <changefreq>weekly</changefreq>
   </url>
   <url>
