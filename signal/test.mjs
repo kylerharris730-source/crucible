@@ -58,19 +58,26 @@ check((await call('POST', '/room/ABCDE/seat', seatBody)).status === 409, 'or re-
 }
 check((await call('GET', '/room/PROBE')).status === 404, "the page's PROBE is a clean 404");
 
-// --- one pending seat per address --------------------------------------------
+// --- one address, several guests ---------------------------------------------
+// A classroom or a household is one address to the broker. Two friends behind it
+// joining together must both keep their seats; only a guest's own retry, naming
+// the claim it held, gives a seat back.
 const two = (await call('POST', '/room', JSON.stringify({ offers: ['CLR1', 'CLR2', 'CLR3'] }))).body;
 const from = ip => ({ 'CF-Connecting-IP': ip });
-const s1 = await call('GET', `/room/${two.code}`, undefined, from('203.0.113.7'));
-const s2 = await call('GET', `/room/${two.code}`, undefined, from('203.0.113.7'));
-const s3 = await call('GET', `/room/${two.code}`, undefined, from('198.51.100.1'));
-const s4 = await call('GET', `/room/${two.code}`, undefined, from('198.51.100.2'));
-check(s1.status === 200 && s2.status === 200, 'one address may ask twice');
-check((await call('POST', `/room/${two.code}/answer`, JSON.stringify({ slot: s1.body.slot, claim: s1.body.claim, answer: 'CLRx' }))).status === 409,
-      'but asking again gives up the seat it held');
-check(s3.status === 200 && s4.status === 200, 'so two other addresses still find seats');
-check(new Set([s2.body.slot, s3.body.slot, s4.body.slot]).size === 3, 'and nobody shares one');
-check((await call('GET', `/room/${two.code}`, undefined, from('192.0.2.9'))).status === 409, 'a fourth address finds it full');
+const school = from('203.0.113.7');
+const s1 = await call('GET', `/room/${two.code}`, undefined, school);
+const s2 = await call('GET', `/room/${two.code}`, undefined, school);
+check(s1.status === 200 && s2.status === 200 && s1.body.slot !== s2.body.slot, 'two guests behind one address get two seats');
+check((await call('POST', `/room/${two.code}/answer`, JSON.stringify({ slot: s1.body.slot, claim: s1.body.claim, answer: 'CLRx' }))).status === 204,
+      'and the first answer still lands');
+const s3 = await call('GET', `/room/${two.code}?release=${s2.body.claim}`, undefined, school);
+check(s3.status === 200, 'a retry naming its old claim gets a seat');
+check((await call('POST', `/room/${two.code}/answer`, JSON.stringify({ slot: s2.body.slot, claim: s2.body.claim, answer: 'CLRy' }))).status === 409,
+      'and the seat it named is given up');
+const s4 = await call('GET', `/room/${two.code}?release=nonsense`, undefined, from('198.51.100.1'));
+check(s4.status === 200, 'naming a claim it never held frees nothing, but still finds the free seat');
+check(new Set([s1.body.slot, s3.body.slot, s4.body.slot]).size === 3, 'and nobody shares one');
+check((await call('GET', `/room/${two.code}`, undefined, from('192.0.2.9'))).status === 409, 'a fourth guest finds it full');
 
 // --- rate limits ---------------------------------------------------------------
 {

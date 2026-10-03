@@ -251,10 +251,15 @@ void hostThread(unsigned session) {
 /* --- guest ------------------------------------------------------------------- */
 
 /* One attempt at taking a seat. The same code for the first join and every
-   rejoin, so the two cannot drift. `seat` is the one to ask for, or -1. */
-bool joinOnce(unsigned session, const std::string& code, int seat, int* gotSeat, std::string* why) {
+   rejoin, so the two cannot drift. `seat` is the one to ask for, or -1.
+   `pending` is the claim from an attempt whose answer never got posted --
+   handed back so the broker frees that seat -- and is updated here. */
+bool joinOnce(unsigned session, const std::string& code, int seat, int* gotSeat,
+              std::string* pending, std::string* why) {
     std::string path = "/room/" + code;
-    if (seat >= 0) path += "?seat=" + std::to_string(seat);
+    char sep = '?';
+    if (seat >= 0) { path += sep + std::string("seat=") + std::to_string(seat); sep = '&'; }
+    if (!pending->empty()) path += sep + std::string("release=") + *pending;
     std::string reply;
     const int status = request(L"GET", path, std::string(), &reply);
     if (!current(session)) return false;
@@ -267,6 +272,7 @@ bool joinOnce(unsigned session, const std::string& code, int seat, int* gotSeat,
         *why = brokerError(reply, "Could not read that code");
         return false;
     }
+    *pending = claim;
     rtcNetBeginJoin(offer.c_str());
     std::string answer;
     for (int i = 0; i < 150 && answer.empty(); ++i) {
@@ -285,6 +291,7 @@ bool joinOnce(unsigned session, const std::string& code, int seat, int* gotSeat,
     if (!current(session)) return false;
     if (posted == 404) { *why = "That code expired"; return false; }
     if (posted != 204 && posted != 200) { *why = brokerError(reply, "Could not send the reply"); return false; }
+    pending->clear();
     *gotSeat = slot;
     return true;
 }
@@ -292,8 +299,8 @@ bool joinOnce(unsigned session, const std::string& code, int seat, int* gotSeat,
 void guestThread(unsigned session, std::string code) {
     setStatus(session, "Looking for that game...");
     int seat = -1;
-    std::string why;
-    if (!joinOnce(session, code, -1, &seat, &why)) {
+    std::string why, pending;
+    if (!joinOnce(session, code, -1, &seat, &pending, &why)) {
         if (current(session)) { rtcNetSetFault(why.c_str()); setStatus(session, why); }
         return;
     }
@@ -317,7 +324,7 @@ void guestThread(unsigned session, std::string code) {
             setStatus(session, text);
             if (!nap(session, attempt * 2000)) return;
             int again = -1;
-            if (joinOnce(session, code, seat, &again, &why)) {
+            if (joinOnce(session, code, seat, &again, &pending, &why)) {
                 seat = again;
                 for (int i = 0; i < 150 && rtcNetState(0) != RTC_LINK_OPEN; ++i)
                     if (!nap(session, 100)) return;

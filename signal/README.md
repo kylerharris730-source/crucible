@@ -118,16 +118,18 @@ host's offer -- with the host's address in it -- and reserves a seat. So:
   length is the real defence and the limiter a cheap extra;
 - a malformed code, like the page's `PROBE`, is a 404 before any of that or
   any database read;
-- one address holds at most one unanswered seat per room -- asking again gives
-  up the old one -- and an unanswered seat is released after 45 seconds.
+- a guest that retries names the claim it held (`?release=`), which gives that
+  seat back first, and an unanswered seat is released after 45 seconds.
 
-Only a salted hash of the address is kept, in the room row, for as long as the
-room lives.
+Seats are deliberately NOT limited per address. A classroom, a dorm or a
+household is one address to the broker, and an earlier one-seat-per-address
+rule made two friends joining together cancel each other's seat. Addresses
+are used only as rate-limit keys and are not stored.
 
 ## What it stores, and for how long
 
 One row per room: a six-character code, three offers, the host key's hash,
-three short-lived seat claims (with a salted hash of each claimer's address),
+three short-lived seat claims,
 answers, and an expiry. Rooms live **ten minutes** and are swept whenever the
 next one is created, so the steady state remains close to empty. Each answer
 is removed as the host receives it; the room remains until all seats are claimed

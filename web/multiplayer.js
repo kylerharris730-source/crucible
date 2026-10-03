@@ -96,6 +96,9 @@
   /* Which seat this client last held, so a reconnection can ask for it
      back rather than being handed the next free one. */
   var lastSeat = null;
+  /* The claim from an attempt that never got its answer posted, handed back
+     on the next attempt so the broker can free that seat. Empty otherwise. */
+  var pendingClaim = '';
 
   function menu() {
     shell('MULTIPLAYER',
@@ -409,8 +412,9 @@
   /* One attempt at joining, so that the first one and every reconnection
      afterwards are the same code rather than two versions that drift. */
   async function joinOnce(code, preferSeat) {
-    var reservation = await CinderSignal.fetchOffer(code, preferSeat);
+    var reservation = await CinderSignal.fetchOffer(code, preferSeat, pendingClaim);
     lastSeat = reservation.slot;
+    pendingClaim = reservation.claim;
     call('webMpJoin', ['null', 'string'], [reservation.offer]);
     var answer = '';
     for (var i = 0; i < 150 && !answer; i++) {
@@ -419,6 +423,7 @@
     }
     if (!answer) throw new Error('could not build a join code');
     await CinderSignal.postAnswer(code, reservation, answer);
+    pendingClaim = '';
     return reservation;
   }
 

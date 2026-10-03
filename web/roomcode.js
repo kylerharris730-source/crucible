@@ -102,8 +102,14 @@
     /* Guest: exchange a code for the host's description. */
     /* `seat` is the slot this client held before it dropped, so a rejoin
        returns to the same player number when that seat is available again. */
-    fetchOffer: async function (code, seat) {
-      var query = (seat === undefined || seat === null) ? '' : '?seat=' + encodeURIComponent(seat);
+    /* `release` is the claim from this client's previous attempt, if it
+       never answered: the broker gives that seat back before handing out
+       another, so a retry cannot strand one. */
+    fetchOffer: async function (code, seat, release) {
+      var params = [];
+      if (seat !== undefined && seat !== null) params.push('seat=' + encodeURIComponent(seat));
+      if (release) params.push('release=' + encodeURIComponent(release));
+      var query = params.length ? '?' + params.join('&') : '';
       var res = await ask('/room/' + encodeURIComponent(code) + query, { method: 'GET' });
       if (res.status === 404) throw new Error('no game with that code');
       if (res.status === 409) throw new Error((await res.json()).error || 'that game is full');
