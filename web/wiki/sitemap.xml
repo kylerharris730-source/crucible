@@ -1276,6 +1276,26 @@
     <changefreq>weekly</changefreq>
   </url>
   <url>
+    <loc>https://cinderlift.com/wiki/items/bolt-rifle.html</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
+    <loc>https://cinderlift.com/wiki/items/ricochet.html</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
+    <loc>https://cinderlift.com/wiki/items/seeker.html</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
+    <loc>https://cinderlift.com/wiki/items/blast-launcher.html</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
+    <loc>https://cinderlift.com/wiki/items/weapon-upgrade-table.html</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
     <loc>https://cinderlift.com/wiki/items/</loc>
     <changefreq>weekly</changefreq>
   </url>
@@ -1573,6 +1593,10 @@
   </url>
   <url>
     <loc>https://cinderlift.com/wiki/devices/launch-assembly.html</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
+    <loc>https://cinderlift.com/wiki/devices/weapon-upgrade-table.html</loc>
     <changefreq>weekly</changefreq>
   </url>
   <url>
