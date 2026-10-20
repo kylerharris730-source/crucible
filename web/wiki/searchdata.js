@@ -404,6 +404,7 @@ window.WIKI_PAGES = [
 ["Making coke","guide/coke-retort.html","guide"],
 ["Going down","guide/going-down.html","guide"],
 ["Fighting back","guide/fighting.html","guide"],
+["Bosses","guide/bosses.html","guide"],
 ["Gearing up","guide/gearing-up.html","guide"],
 ["Farming and eating","guide/farming.html","guide"],
 ["Bees and wax","guide/bees.html","guide"],
@@ -413,4 +414,5 @@ window.WIKI_PAGES = [
 ["The pyramid","guide/the-pyramid.html","guide"],
 ["The frost temple","guide/the-frost-temple.html","guide"],
 ["How heat behaves","guide/heat.html","guide"],
+["Electric heat","guide/electric-heat.html","guide"],
 ];

@@ -1640,6 +1640,10 @@
     <changefreq>weekly</changefreq>
   </url>
   <url>
+    <loc>https://cinderlift.com/wiki/guide/bosses.html</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
     <loc>https://cinderlift.com/wiki/guide/gearing-up.html</loc>
     <changefreq>weekly</changefreq>
   </url>
@@ -1673,6 +1677,10 @@
   </url>
   <url>
     <loc>https://cinderlift.com/wiki/guide/heat.html</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
+    <loc>https://cinderlift.com/wiki/guide/electric-heat.html</loc>
     <changefreq>weekly</changefreq>
   </url>
   <url>

@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Electric heat &middot; Cinderlift wiki</title>
+<link rel="stylesheet" href="../wiki.css">
+<link rel="stylesheet" href="../icons.css">
+<link rel="icon" href="../../favicon.ico">
+<script src="../wiki.js" defer></script>
+</head>
+<body>
+<header class="top">
+<a class="brand" href="../index.html">Cinderlift <span>wiki</span></a>
+<nav>
+<a href="../index.html">Home</a>
+<a class="here" href="../guide/index.html">Guide</a>
+<a href="../materials/index.html">Materials</a>
+<a href="../items/index.html">Items</a>
+<a href="../recipes/index.html">Recipes</a>
+<a href="../creatures/index.html">Creatures</a>
+<a href="../devices/index.html">Devices</a>
+<a href="../search.html">Search</a>
+</nav>
+</header>
+<main>
+<h1>Electric heat</h1>
+<p class="lede">Heat and boil water with a Clock and a wire.</p>
+<p>A pulse of electricity that reaches the dead end of a wire has nowhere to go, and it leaves heat where it stops. A <a href="../devices/clock.html">Clock</a> pulsing a metal wire that ends inside a tank is a heater with no fire, no smoke and no fuel to feed. It is the easiest way to boil water.</p>
+<h2>What you need</h2>
+<ul>
+<li>A <a href="../devices/clock.html">Clock</a>: 3 Copper at the anvil.</li>
+<li>A wire of <a href="../materials/copper.html">Copper</a>, drawn as ordinary material. <a href="../materials/iron.html">Iron</a>, steel, bronze, gold, titanium, tungsten and <a href="../materials/graph.html">Graphene</a> conduct too.</li>
+<li>Something to heat: usually a tank of <a href="../materials/water.html">Water</a>.</li>
+</ul>
+<h2>Build a heater</h2>
+<ol>
+<li>Place the Clock. Every conductor touching its edge receives its pulses.</li>
+<li>Draw the wire from the Clock to where you want the heat, and <em></em>end it inside the thing you are heating<em></em>. The heat is left at the end of the wire, not along it.</li>
+<li>Open the Clock and set it to <strong>every 6 frames</strong>, its fastest. At the default 60 frames a heater barely warms anything.</li>
+<li>Make the wire wider. A pulse travels as one spark per cell of the wire's width, and every one of them leaves heat at the end. A wire three cells wide heats three times as fast as a single strand.</li>
+</ol>
+<p>Copper works best. Iron heats about a fifth slower.</p>
+<p>How fast it boils, measured in an open tank 61 cells wide and 51 deep:</p>
+<div class="tablewrap"><table><thead>
+<tr><th>Wire</th><th>Clock</th><th>Result</th></tr>
+</thead><tbody>
+<tr><td>Copper, 1 cell wide</td><td>every 60 frames</td><td>barely warms</td></tr>
+<tr><td>Copper, 3 cells wide</td><td>every 60 frames</td><td>about 27 °C, never boils</td></tr>
+<tr><td>Copper, 3 cells wide</td><td>every 6 frames</td><td>steam after about 90 seconds</td></tr>
+<tr><td>Copper, 7 cells wide</td><td>every 6 frames</td><td>steam after about 30 seconds</td></tr>
+<tr><td>Iron, 3 cells wide</td><td>every 6 frames</td><td>steam after about 110 seconds</td></tr>
+</tbody></table></div>
+<p>A smaller tank boils sooner. Water conducts heat well, so the whole tank warms, not only the water by the wire.</p>
+<h2>Example: turning coal into fuel</h2>
+<p><a href="../materials/coal.html">Coal</a> touching <a href="../materials/steam.html">Steam</a> becomes <a href="../materials/fuel.html">Fuel</a>. An electric boiler makes that steam:</p>
+<ol>
+<li>Heat a tank of water with a copper wire as above.</li>
+<li>Above the tank, rest the coal on a floor of <a href="../materials/sieve.html">Sieve</a> cells. A sieve stops powder but lets liquids and gases through, so the coal stays put while the steam rises up through the mesh into it.</li>
+<li>Each coal cell that turns into Fuel is now a liquid, and drips down through the sieve. Pipe or channel it into a fuel tank.</li>
+</ol>
+<p>Coal only gets past the sieve once it has been converted, so the tank fills with fuel and nothing else.</p>
+<h2>When it goes wrong</h2>
+<p><strong>Nothing gets warm.</strong> Check the Clock is set to 6 frames and that the wire actually touches the Clock's edge. The heat appears only where the wire ends, so a wire that loops back into itself or ends in open air heats the wrong place.</p>
+<p><strong>The wire melted.</strong> Water holds the wire end at about 100 °C while it lasts. Once the tank boils dry, the end keeps heating. Copper melts at 175 °C, iron at 200 °C and steel at 210 °C. Graphene never melts, which makes it the wire for a heater that runs dry.</p>
+<p><strong>Something exploded.</strong> An overloaded wire end that reaches 212 °C arcs and blows apart. Keep the end in water, use a slower clock, or use a thinner wire.</p>
+<p><strong>The heat leaked into the walls.</strong> Metal and stone carry heat away. Build the tank from something that conducts poorly, such as <a href="../materials/ceramic.html">Ceramic</a>, if you want the heat to stay in the water. See <a href="heat.html">How heat behaves</a>.</p>
+<h2>Next</h2>
+<p><a href="circuits.html">Circuits</a> covers the Clock and the other devices that work with signals.</p>
+<p class="n"><a href="index.html">&larr; all guides</a></p>
+</main>
+<footer>
+<p>Reference data comes from the game&rsquo;s tables. Guides are
+written separately.</p>
+<p class="stamp">Built from <code>c7d476e287e0</code> &middot; Cinderlift 0.7.0.38 &middot; <a href="../../index.html">the game</a></p>
+</footer>
+</body>
+</html>
