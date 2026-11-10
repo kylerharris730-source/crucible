@@ -3,7 +3,7 @@
    wiki.css is the hand-written half; this half is derived. */
 .icon {
     background-image: url("icons.png");
-    background-size: 448px 616px;
+    background-size: 448px 644px;
 }
 .i1 { background-position: -0px -0px; }
 .i2 { background-position: -28px -0px; }
@@ -247,7 +247,7 @@
 .i241 { background-position: -420px -392px; }
 .i242 { background-position: -0px -420px; }
 .i243 { background-position: -28px -420px; }
-.i245 { background-position: -56px -420px; }
+.i244 { background-position: -56px -420px; }
 .i246 { background-position: -84px -420px; }
 .i247 { background-position: -112px -420px; }
 .i248 { background-position: -140px -420px; }
@@ -326,30 +326,42 @@
 .i321 { background-position: -392px -532px; }
 .i322 { background-position: -420px -532px; }
 .i323 { background-position: -0px -560px; }
-.c1 { background-position: -28px -560px; }
-.c2 { background-position: -56px -560px; }
-.c3 { background-position: -84px -560px; }
-.c4 { background-position: -112px -560px; }
-.c5 { background-position: -140px -560px; }
-.c6 { background-position: -168px -560px; }
-.c7 { background-position: -196px -560px; }
-.c8 { background-position: -224px -560px; }
-.c11 { background-position: -252px -560px; }
-.c12 { background-position: -280px -560px; }
-.c13 { background-position: -308px -560px; }
-.c14 { background-position: -336px -560px; }
-.c15 { background-position: -364px -560px; }
-.c16 { background-position: -392px -560px; }
-.c18 { background-position: -420px -560px; }
-.c19 { background-position: -0px -588px; }
-.c20 { background-position: -28px -588px; }
-.c21 { background-position: -56px -588px; }
-.c23 { background-position: -84px -588px; }
-.c25 { background-position: -112px -588px; }
-.c26 { background-position: -140px -588px; }
-.c27 { background-position: -168px -588px; }
-.c28 { background-position: -196px -588px; }
-.c29 { background-position: -224px -588px; }
-.c32 { background-position: -252px -588px; }
-.c33 { background-position: -280px -588px; }
-.c34 { background-position: -308px -588px; }
+.i324 { background-position: -28px -560px; }
+.i325 { background-position: -56px -560px; }
+.i326 { background-position: -84px -560px; }
+.i327 { background-position: -112px -560px; }
+.i328 { background-position: -140px -560px; }
+.i329 { background-position: -168px -560px; }
+.i330 { background-position: -196px -560px; }
+.i331 { background-position: -224px -560px; }
+.i332 { background-position: -252px -560px; }
+.i333 { background-position: -280px -560px; }
+.i334 { background-position: -308px -560px; }
+.i335 { background-position: -336px -560px; }
+.c1 { background-position: -364px -560px; }
+.c2 { background-position: -392px -560px; }
+.c3 { background-position: -420px -560px; }
+.c4 { background-position: -0px -588px; }
+.c5 { background-position: -28px -588px; }
+.c6 { background-position: -56px -588px; }
+.c7 { background-position: -84px -588px; }
+.c8 { background-position: -112px -588px; }
+.c11 { background-position: -140px -588px; }
+.c12 { background-position: -168px -588px; }
+.c13 { background-position: -196px -588px; }
+.c14 { background-position: -224px -588px; }
+.c15 { background-position: -252px -588px; }
+.c16 { background-position: -280px -588px; }
+.c18 { background-position: -308px -588px; }
+.c19 { background-position: -336px -588px; }
+.c20 { background-position: -364px -588px; }
+.c21 { background-position: -392px -588px; }
+.c23 { background-position: -420px -588px; }
+.c25 { background-position: -0px -616px; }
+.c26 { background-position: -28px -616px; }
+.c27 { background-position: -56px -616px; }
+.c28 { background-position: -84px -616px; }
+.c29 { background-position: -112px -616px; }
+.c32 { background-position: -140px -616px; }
+.c33 { background-position: -168px -616px; }
+.c34 { background-position: -196px -616px; }

@@ -29,26 +29,27 @@
 <p>Pipes move stored items between devices. They do not move loose material cells in the world. Circuit wires carry signals about items, while pipes carry the items themselves.</p>
 <h2>Devices</h2>
 <ul>
-<li><strong>Chest:</strong> Stores 30 stacks of anything, tools included. Open it to move items between it and your pack; shift-click moves a whole stack. Mining a chest gives you its contents, and a chest that is destroyed spills them.</li>
+<li><strong>Chest:</strong> Stores 30 stacks of anything, tools included. Open it to move items between it and your pack; shift-click moves a whole stack. Mining a chest gives you its contents, and a chest that is destroyed spills them. Its inventory has <strong>Push to network</strong> and <strong>Pull from network</strong> controls. Push is the default: it sends stored materials. Pull stores incoming materials in available slots and keeps them until you change its mode.</li>
 <li><strong>Item Pipe:</strong> Moves one item at a time between adjacent logistics devices. Pipes connect to neighbors, including elbows and T junctions.</li>
 <li><strong>Pipe Crossover:</strong> Lets horizontal and vertical pipe runs cross without joining. Each direction has its own lane.</li>
-<li><strong>Spout:</strong> Places material cells from its item buffer into the world. It needs a supply of items and can be switched by a physical electrical pulse.</li>
+<li><strong>Spout:</strong> Places material cells from its item buffer into the world. It needs a supply of items and can be switched by a physical electrical pulse. Its optional filter selects which material it accepts and emits. Clear the filter to allow every material. If you change the filter while it holds a different material, that stock stays buffered until you allow it again.</li>
 <li><strong>Drain:</strong> Collects nearby material cells into its buffer. It supports a manual or circuit-controlled material filter and electrical enable/disable.</li>
 <li><strong>Miner:</strong> Clears a square in front of it into its buffer. Connect a pipe to take the items away so its buffer does not fill up.</li>
 <li><strong>Placer:</strong> Fills a square in front of it from its buffer. It accepts items from an adjacent pipe.</li>
 <li><strong>Block Watcher:</strong> Watches in its facing direction. When it sees the selected material, it produces a physical electrical signal and publishes a circuit signal for that material.</li>
 </ul>
 <h2>Connecting a system</h2>
-<p>Place pipes next to compatible devices. A chest can feed a pipe and then a Spout. A Drain can feed a pipe and then a chest. Pipes move one item at a time. Use a Pipe Crossover if two routes must cross without mixing their contents.</p>
+<p>Place pipes next to compatible devices. A chest can feed a pipe and then a Spout. A Drain or Miner can feed a pipe and then a chest set to <em></em>Pull from network<em></em>. A full chest leaves excess stock at its source until space opens. Pipes move one item at a time. Use a Pipe Crossover if two routes must cross without mixing their contents.</p>
 <p>Right-click an aimed device to rotate it toward the cells you want it to use. For example, point a Spout at the spot where it should place material or a Block Watcher at the cell it should monitor.</p>
 <h2>Filters and signals</h2>
 <p>Right-click a Drain to set its manual material filter with the searchable picker. A positive material signal on its circuit network temporarily selects the strongest signaled material instead. See <a href="circuits.html">Circuit networks</a> for wiring and signal setup.</p>
+<p>Spouts use the same searchable picker for their optional filter. A filtered spout can draw a matching material from later slots in a connected chest even when its first material is different.</p>
 <p class="n"><a href="index.html">&larr; all guides</a></p>
 </main>
 <footer>
 <p>Reference data comes from the game&rsquo;s tables. Guides are
 written separately.</p>
-<p class="stamp">Built from <code>c7d476e287e0</code> &middot; Cinderlift 0.7.0.38 &middot; <a href="../../index.html">the game</a></p>
+<p class="stamp">Built from <code>5e00b53d6833</code> &middot; Cinderlift 0.7.0.39+dirty &middot; <a href="../../index.html">the game</a></p>
 </footer>
 </body>
 </html>

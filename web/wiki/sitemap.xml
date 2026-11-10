@@ -496,6 +496,10 @@
     <changefreq>weekly</changefreq>
   </url>
   <url>
+    <loc>https://cinderlift.com/wiki/materials/ore-vein.html</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
     <loc>https://cinderlift.com/wiki/materials/</loc>
     <changefreq>weekly</changefreq>
   </url>
@@ -1296,6 +1300,50 @@
     <changefreq>weekly</changefreq>
   </url>
   <url>
+    <loc>https://cinderlift.com/wiki/items/widowglass-fang.html</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
+    <loc>https://cinderlift.com/wiki/items/grave-strides.html</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
+    <loc>https://cinderlift.com/wiki/items/blind-lantern-lens.html</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
+    <loc>https://cinderlift.com/wiki/items/black-silk-knot.html</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
+    <loc>https://cinderlift.com/wiki/items/hollow-pulse.html</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
+    <loc>https://cinderlift.com/wiki/items/heart-of-the-void.html</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
+    <loc>https://cinderlift.com/wiki/items/crown-of-the-unseen.html</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
+    <loc>https://cinderlift.com/wiki/items/teleport-beacon.html</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
+    <loc>https://cinderlift.com/wiki/items/pyre-seeker.html</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
+    <loc>https://cinderlift.com/wiki/items/red-thread.html</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
+    <loc>https://cinderlift.com/wiki/items/swarm-launcher.html</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
     <loc>https://cinderlift.com/wiki/items/</loc>
     <changefreq>weekly</changefreq>
   </url>
@@ -1492,6 +1540,30 @@
     <changefreq>weekly</changefreq>
   </url>
   <url>
+    <loc>https://cinderlift.com/wiki/creatures/grave-skitter.html</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
+    <loc>https://cinderlift.com/wiki/creatures/pale-harvester.html</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
+    <loc>https://cinderlift.com/wiki/creatures/blind-lantern.html</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
+    <loc>https://cinderlift.com/wiki/creatures/silk-weaver.html</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
+    <loc>https://cinderlift.com/wiki/creatures/hollow-revenant.html</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
+    <loc>https://cinderlift.com/wiki/creatures/the-unseen-mother.html</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
     <loc>https://cinderlift.com/wiki/creatures/</loc>
     <changefreq>weekly</changefreq>
   </url>
@@ -1600,6 +1672,10 @@
     <changefreq>weekly</changefreq>
   </url>
   <url>
+    <loc>https://cinderlift.com/wiki/devices/teleport-beacon.html</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
     <loc>https://cinderlift.com/wiki/devices/</loc>
     <changefreq>weekly</changefreq>
   </url>
@@ -1665,6 +1741,10 @@
   </url>
   <url>
     <loc>https://cinderlift.com/wiki/guide/leaving.html</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
+    <loc>https://cinderlift.com/wiki/guide/the-void.html</loc>
     <changefreq>weekly</changefreq>
   </url>
   <url>
